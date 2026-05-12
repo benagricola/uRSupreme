@@ -161,17 +161,19 @@ namespace TCPTransport {
   inline void service_server() {
     if (!server || !wifi_initialized) return;
 
-    // Reap dropped peers first to free slots
+    // Reap dropped peers first to free slots.
+    // Ownership: Interface wraps std::shared_ptr<InterfaceImpl>, and
+    // Transport::_interfaces stores Interface by value (Transport.h:75),
+    // so it holds its own shared_ptr ref to the impl we created with
+    // `new`. We must drop Transport's ref via deregister_interface()
+    // before clearing our own — once both refs are gone, shared_ptr's
+    // deleter frees the impl. The raw server_peer_impls[i] pointer
+    // becomes dangling at that point; we only use it as a slot marker.
     for (uint8_t i = 0; i < TCP_MAX_SERVER_PEERS; ++i) {
       if (server_peer_impls[i]) {
         if (!server_peer_impls[i]->service()) {
-          // Connection dropped — unregister and free
-          // Note: microReticulum's Transport doesn't currently expose
-          // unregister_interface(). We just clear our handle; the impl
-          // will keep its slot in Transport until next reboot, but it
-          // won't be re-used because _online is false.
+          RNS::Transport::deregister_interface(server_peers[i]);
           server_peers[i].clear();
-          delete server_peer_impls[i];
           server_peer_impls[i] = nullptr;
         }
       }

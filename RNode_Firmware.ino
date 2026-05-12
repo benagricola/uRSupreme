@@ -24,6 +24,9 @@
 #if defined(UDP_TRANSPORT)
 #include "UDPInterface.h"
 #endif
+#if defined(TCP_TRANSPORT)
+#include "TCPTransport.h"
+#endif
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -693,6 +696,11 @@ void setup() {
       udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
       RNS::Transport::register_interface(udp_interface);
       TRACEF("UDPInterface hash: %s", udp_interface.get_hash().toHex().c_str());
+#endif
+
+#if HAS_WIFI && defined(TCP_TRANSPORT)
+      HEAD("Registering TCP Interfaces...", RNS::LOG_TRACE);
+      TCPTransport::setup();
 #endif
 
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
@@ -2229,6 +2237,9 @@ void loop() {
 
   #if HAS_WIFI
     if (wifi_initialized) update_wifi();
+    #if defined(TCP_TRANSPORT)
+      TCPTransport::service();
+    #endif
   #endif
 
   #if HAS_INPUT

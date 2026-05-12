@@ -38,6 +38,9 @@ sx127x *LoRa = &sx127x_modem;
 #elif MODEM == SX1280
 #include "sx128x.h"
 sx128x *LoRa = &sx128x_modem;
+#elif MODEM == LR11XX
+#include "lr11xx.h"
+lr11xx *LoRa = &lr11xx_modem;
 #endif
 
 #include "ROM.h"
@@ -248,7 +251,7 @@ extern RNS::Reticulum reticulum;
 		void led_tx_off() { }
 		void led_id_on()  { }
 		void led_id_off() { }
-	#elif BOARD_MODEL == BOARD_TBEAM_S_V1
+	#elif BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
 		void led_rx_on()  { }
 		void led_rx_off() {	}
 		void led_tx_on()  { }
@@ -1697,6 +1700,8 @@ bool eeprom_model_valid() {
 	if (model == MODEL_16 || model == MODEL_17) {
 	#elif BOARD_MODEL == BOARD_TBEAM_S_V1
 	if (model == MODEL_DB || model == MODEL_DC) {
+	#elif BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+	if (model == MODEL_D3 || model == MODEL_DF || model == MODEL_D7) {
 	#elif BOARD_MODEL == BOARD_XIAO_S3
 	if (model == MODEL_DD || model == MODEL_DE) {
 	#elif BOARD_MODEL == BOARD_LORA32_V1_0

@@ -378,7 +378,7 @@ void setup() {
     boot_seq();
   #endif
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_HELTEC32_V4
+  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1 && BOARD_MODEL != BOARD_TBEAM_S_LR_V1 && BOARD_MODEL != BOARD_HELTEC32_V4
     // Some boards need to wait until the hardware UART is set up before booting
     // the full firmware. In the case of the RAK4631 and Heltec T114, the line below will wait
     // until a serial connection is actually established with a master. Thus, it
@@ -425,7 +425,7 @@ void setup() {
   // pins for the LoRa module
   #if MODEM == SX1276 || MODEM == SX1278
   LoRa->setPins(pin_cs, pin_reset, pin_dio, pin_busy);
-  #elif MODEM == SX1262
+  #elif MODEM == SX1262 || MODEM == LR11XX
   LoRa->setPins(pin_cs, pin_reset, pin_dio, pin_busy, pin_rxen);
   #elif MODEM == SX1280
   LoRa->setPins(pin_cs, pin_reset, pin_dio, pin_busy, pin_rxen, pin_txen);
@@ -1138,7 +1138,7 @@ void add_airtime(uint16_t written) {
       lora_symbols += lora_preamble_symbols + 0.25 + 8;
       packet_cost_ms += lora_symbols * lora_symbol_time_ms;
       
-    #elif MODEM == SX1262 || MODEM == SX1280
+    #elif MODEM == SX1262 || MODEM == SX1280 || MODEM == LR11XX
       if (lora_sf < 7) {
         lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + PHY_HEADER_LORA_SYMBOLS);
         lora_symbols /=                              4*lora_sf;
@@ -1333,7 +1333,7 @@ void serial_callback(uint8_t sbyte) {
         kiss_indicate_txpower();
       } else {
         int txp = sbyte;
-        #if MODEM == SX1262
+        #if MODEM == SX1262 || MODEM == LR11XX
           #if HAS_LORA_PA
             if (txp > PA_MAX_OUTPUT) txp = PA_MAX_OUTPUT;
           #else

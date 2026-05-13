@@ -39,7 +39,54 @@ def embed_spa(env):
     print(f"*** Embedded SPA: {len(html)} bytes -> {len(gz)} bytes gzipped at {dst}")
 
 
+PKCS7_PAD_PATCH_MARKER = "// PATCH-PKCS7-PAD-V1"
 ANNOUNCE_RATCHET_PATCH_MARKER = "// PATCH-RATCHET-V1"
+
+
+def patch_pkcs7_pad(env):
+    """
+    Fix microReticulum's broken PKCS7 padding in
+    microReticulum/src/Cryptography/PKCS7.h::inplace_pad. The current
+    impl writes zero bytes then sets only the last padding byte to the
+    padlen value. Standard PKCS7 requires *every* padding byte to equal
+    the padlen value. microReticulum's own unpad is lenient (only reads
+    the last byte) but Python upstream's `cryptography` library — used
+    by Columba and other current LXMF clients — strictly verifies that
+    all padding bytes equal padlen, so any message we send with
+    padlen != 1 is silently rejected on decryption.
+
+    Empirically: only LXMF messages where the wire length mod 16 == 15
+    (so padlen = 1) were getting through. Patching this makes every
+    plaintext length work.
+    """
+    project_dir = env.subst("$PROJECT_DIR")
+    libdeps = os.path.join(project_dir, ".pio", "libdeps", env.subst("$PIOENV"),
+                           "microReticulum", "src", "Cryptography", "PKCS7.h")
+    if not os.path.exists(libdeps):
+        return
+    with open(libdeps, "r") as f:
+        src = f.read()
+    if PKCS7_PAD_PATCH_MARKER in src:
+        return
+    bad = (
+        "\t\t\tuint8_t pad[padlen];\n"
+        "\t\t\tmemset(pad, 0, padlen);\n"
+        "\t\t\t// set last byte of padding array to size of padding\n"
+        "\t\t\tpad[padlen-1] = (uint8_t)padlen;\n"
+    )
+    good = (
+        "\t\t\t" + PKCS7_PAD_PATCH_MARKER + "\n"
+        "\t\t\tuint8_t pad[padlen];\n"
+        "\t\t\t// Standard PKCS7: every padding byte equals padlen.\n"
+        "\t\t\tmemset(pad, (uint8_t)padlen, padlen);\n"
+    )
+    if bad not in src:
+        print("*** WARNING: PKCS7 pad patch didn't match expected source — skipped")
+        return
+    src = src.replace(bad, good)
+    with open(libdeps, "w") as f:
+        f.write(src)
+    print("*** Patched PKCS7::inplace_pad at", libdeps)
 
 
 def patch_announce_ratchet(env):
@@ -386,6 +433,7 @@ print("*** Running custom script...")
 patch_microreticulum_validate(env)
 patch_announce_reject_logs(env)
 patch_announce_ratchet(env)
+patch_pkcs7_pad(env)
 embed_spa(env)
 platform = env.GetProjectOption("platform")
 print("Platform:", platform)

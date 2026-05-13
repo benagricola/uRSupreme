@@ -254,16 +254,28 @@ function renderAccountList() {
     return;
   }
   for (const a of state.accounts) {
-    const div = document.createElement('div');
-    div.className = 'card';
-    div.innerHTML = `
-      <div><strong>${escapeHtml(a.display_name)}</strong></div>
-      <div class="mono muted">${a.address}</div>
-      <div class="row" style="margin-top:8px">
-        <button onclick="startLogin('${a.id}')">Login</button>
-        <button class="danger" onclick="deleteAccount('${a.id}','${escapeHtml(a.display_name)}')">Delete</button>
-      </div>`;
-    el.appendChild(div);
+    const card = document.createElement('div');
+    card.className = 'card';
+    const nameDiv = document.createElement('div');
+    const nameStrong = document.createElement('strong');
+    nameStrong.textContent = a.display_name;
+    nameDiv.appendChild(nameStrong);
+    const addrDiv = document.createElement('div');
+    addrDiv.className = 'mono muted';
+    addrDiv.textContent = a.address;
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.style.marginTop = '8px';
+    const loginBtn = document.createElement('button');
+    loginBtn.textContent = 'Login';
+    loginBtn.addEventListener('click', () => startLogin(a.id));
+    const delBtn = document.createElement('button');
+    delBtn.className = 'danger';
+    delBtn.textContent = 'Delete';
+    delBtn.addEventListener('click', () => deleteAccount(a.id, a.display_name));
+    row.append(loginBtn, delBtn);
+    card.append(nameDiv, addrDiv, row);
+    el.appendChild(card);
   }
 }
 
@@ -342,19 +354,35 @@ async function loadAnnounces() {
     if (!r.announces || r.announces.length === 0) { el.innerHTML = '<p class="muted">(none yet — wait for an LXMF announce)</p>'; return; }
     el.innerHTML = '';
     for (const a of r.announces) {
-      const div = document.createElement('div');
-      div.style.cssText = 'display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #30363d;font-size:12px';
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #30363d;font-size:12px';
       const ageMin = Math.floor(a.age_ms / 60000);
       const ageStr = ageMin < 1 ? Math.floor(a.age_ms/1000) + 's' : ageMin + 'm';
-      div.innerHTML = `
-        <span style="flex:1">
-          <strong>${escapeHtml(a.display_name || '(no name)')}</strong>
-          <span class="mono muted" style="display:block">${a.dest}</span>
-        </span>
-        <span class="pill">${ageStr} ago</span>
-        <button class="secondary" onclick="document.getElementById('compose-to').value='${a.dest}';document.getElementById('compose-body').focus()">use</button>
-        <button class="secondary" onclick="addAnnounceAsContact('${a.dest}','${escapeHtml(a.display_name || '')}')">+contact</button>`;
-      el.appendChild(div);
+      const left = document.createElement('span');
+      left.style.flex = '1';
+      const nameStrong = document.createElement('strong');
+      nameStrong.textContent = a.display_name || '(no name)';
+      const destSpan = document.createElement('span');
+      destSpan.className = 'mono muted';
+      destSpan.style.display = 'block';
+      destSpan.textContent = a.dest;
+      left.append(nameStrong, destSpan);
+      const agePill = document.createElement('span');
+      agePill.className = 'pill';
+      agePill.textContent = ageStr + ' ago';
+      const useBtn = document.createElement('button');
+      useBtn.className = 'secondary';
+      useBtn.textContent = 'use';
+      useBtn.addEventListener('click', () => {
+        document.getElementById('compose-to').value = a.dest;
+        document.getElementById('compose-body').focus();
+      });
+      const contactBtn = document.createElement('button');
+      contactBtn.className = 'secondary';
+      contactBtn.textContent = '+contact';
+      contactBtn.addEventListener('click', () => addAnnounceAsContact(a.dest, a.display_name || ''));
+      row.append(left, agePill, useBtn, contactBtn);
+      el.appendChild(row);
     }
   } catch (e) {
     el.textContent = 'Load failed: ' + (e.data?.error || e.message);
@@ -377,13 +405,24 @@ async function loadPaths() {
     if (!r.paths || r.paths.length === 0) { el.innerHTML = '<p class="muted">(no known paths yet — wait for an announce)</p>'; return; }
     el.innerHTML = '';
     for (const p of r.paths) {
-      const div = document.createElement('div');
-      div.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 0;font-size:12px';
-      div.innerHTML = `
-        <span class="mono" style="flex:1">${p.dest}</span>
-        <span class="pill">${p.hops}h</span>
-        <button class="secondary" onclick="document.getElementById('compose-to').value='${p.dest}';document.getElementById('compose-body').focus()">use</button>`;
-      el.appendChild(div);
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 0;font-size:12px';
+      const destSpan = document.createElement('span');
+      destSpan.className = 'mono';
+      destSpan.style.flex = '1';
+      destSpan.textContent = p.dest;
+      const hopsPill = document.createElement('span');
+      hopsPill.className = 'pill';
+      hopsPill.textContent = p.hops + 'h';
+      const useBtn = document.createElement('button');
+      useBtn.className = 'secondary';
+      useBtn.textContent = 'use';
+      useBtn.addEventListener('click', () => {
+        document.getElementById('compose-to').value = p.dest;
+        document.getElementById('compose-body').focus();
+      });
+      row.append(destSpan, hopsPill, useBtn);
+      el.appendChild(row);
     }
   } catch (e) {
     el.textContent = 'Load failed: ' + (e.data?.error || e.message);
@@ -484,13 +523,25 @@ function renderContacts() {
     return;
   }
   for (const [addr, name] of entries) {
-    const div = document.createElement('div');
-    div.style.cssText = 'display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #30363d';
-    div.innerHTML = `
-      <span style="flex:1">${escapeHtml(name)} <span class="muted mono">${addr}</span></span>
-      <button class="secondary" onclick="useContact('${addr}')">Use</button>
-      <button class="danger" onclick="removeContact('${addr}')">×</button>`;
-    el.appendChild(div);
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #30363d';
+    const left = document.createElement('span');
+    left.style.flex = '1';
+    left.textContent = name + ' ';
+    const addrSpan = document.createElement('span');
+    addrSpan.className = 'muted mono';
+    addrSpan.textContent = addr;
+    left.appendChild(addrSpan);
+    const useBtn = document.createElement('button');
+    useBtn.className = 'secondary';
+    useBtn.textContent = 'Use';
+    useBtn.addEventListener('click', () => useContact(addr));
+    const delBtn = document.createElement('button');
+    delBtn.className = 'danger';
+    delBtn.textContent = '×';
+    delBtn.addEventListener('click', () => removeContact(addr));
+    row.append(left, useBtn, delBtn);
+    el.appendChild(row);
   }
 }
 
@@ -523,15 +574,28 @@ async function scanWifi() {
     const r = await api('/api/wifi/scan');
     el.innerHTML = '';
     for (const n of r.networks) {
-      const div = document.createElement('div');
-      div.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 0';
-      div.innerHTML = `
-        <span style="flex:1">${escapeHtml(n.ssid)} <span class="muted">${n.rssi} dBm${n.secure?' 🔒':''}</span></span>
-        <button class="secondary" onclick="useScan('${escapeHtml(n.ssid)}')">Use</button>`;
-      el.appendChild(div);
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 0';
+      const left = document.createElement('span');
+      left.style.flex = '1';
+      left.textContent = n.ssid + ' ';
+      const meta = document.createElement('span');
+      meta.className = 'muted';
+      meta.textContent = n.rssi + ' dBm' + (n.secure ? ' 🔒' : '');
+      left.appendChild(meta);
+      const useBtn = document.createElement('button');
+      useBtn.className = 'secondary';
+      useBtn.textContent = 'Use';
+      useBtn.addEventListener('click', () => useScan(n.ssid));
+      row.append(left, useBtn);
+      el.appendChild(row);
     }
   } catch (e) {
-    el.innerHTML = '<p class="muted">Scan failed: ' + (e.data?.error || e.message) + '</p>';
+    el.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'Scan failed: ' + (e.data?.error || e.message);
+    el.appendChild(p);
   }
 }
 

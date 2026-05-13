@@ -2353,44 +2353,47 @@ void sleep_now() {
 
 void button_event(uint8_t event, unsigned long duration) {
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
-    if (display_blanked) {
-      display_unblank();
+    // Unblank the display on any press, but don't otherwise consume the
+    // press — we want the short-press unlock action to fire even if the
+    // display happened to be blanked. The BT toggle stays gated by
+    // was_blanked so a casual wake doesn't accidentally toggle BT.
+    bool was_blanked = display_blanked;
+    if (was_blanked) display_unblank();
+
+    if (duration > 10000) {
+      #if HAS_CONSOLE
+        #if HAS_BLUETOOTH || HAS_BLE
+          bt_stop();
+        #endif
+        console_active = true;
+        console_start();
+      #endif
+    } else if (duration > 5000) {
+      #if HAS_BLUETOOTH || HAS_BLE
+        if (bt_state != BT_STATE_CONNECTED) { bt_enable_pairing(); }
+      #endif
+    } else if (duration > 700) {
+      #if HAS_SLEEP
+        sleep_now();
+      #endif
     } else {
-      if (duration > 10000) {
-        #if HAS_CONSOLE
-          #if HAS_BLUETOOTH || HAS_BLE
-            bt_stop();
-          #endif
-          console_active = true;
-          console_start();
-        #endif
-      } else if (duration > 5000) {
-        #if HAS_BLUETOOTH || HAS_BLE
-          if (bt_state != BT_STATE_CONNECTED) { bt_enable_pairing(); }
-        #endif
-      } else if (duration > 700) {
-        #if HAS_SLEEP
-          sleep_now();
-        #endif
-      } else {
-        #if defined(HAS_LXMF_GATEWAY)
-          // Short button press generates a one-shot LXMF gateway unlock code
-          // valid for 60 s. Code is printed to serial. Required to create
-          // accounts or to log in from a new browser.
-          Web::WebUI::on_button_unlock();
-        #endif
-        #if HAS_BLUETOOTH || HAS_BLE
-        if (bt_state != BT_STATE_CONNECTED) {
-          if (bt_state == BT_STATE_OFF) {
-            bt_start();
-            bt_conf_save(true);
-          } else {
-            bt_stop();
-            bt_conf_save(false);
-          }
+      #if defined(HAS_LXMF_GATEWAY)
+        // Always fire the LXMF unlock code on a short press, including
+        // when the display was blanked. Code is printed to serial and
+        // valid for 60 s — required to create accounts or log in.
+        Web::WebUI::on_button_unlock();
+      #endif
+      #if HAS_BLUETOOTH || HAS_BLE
+      if (!was_blanked && bt_state != BT_STATE_CONNECTED) {
+        if (bt_state == BT_STATE_OFF) {
+          bt_start();
+          bt_conf_save(true);
+        } else {
+          bt_stop();
+          bt_conf_save(false);
         }
-        #endif
       }
+      #endif
     }
   #endif
 }

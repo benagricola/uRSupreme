@@ -39,6 +39,41 @@ def embed_spa(env):
     print(f"*** Embedded SPA: {len(html)} bytes -> {len(gz)} bytes gzipped at {dst}")
 
 
+def patch_announce_reject_logs(env):
+    """
+    Upgrade the two DEBUGF rejection logs in
+    `microReticulum/src/Identity.cpp::validate_announce` to NOTICEF so
+    they survive an NDEBUG build. DEBUGF is compiled to a no-op when
+    NDEBUG is set (Log.h:46-65), which we do for size — so when an
+    announce is rejected for "Invalid signature" or "Destination
+    mismatch" we have no signal at all. Promoting just these two lines
+    keeps the rest of the DEBUG noise off while letting us see why
+    announces are dropped.
+    """
+    project_dir = env.subst("$PROJECT_DIR")
+    libdeps = os.path.join(project_dir, ".pio", "libdeps", env.subst("$PIOENV"),
+                           "microReticulum", "src", "Identity.cpp")
+    if not os.path.exists(libdeps):
+        return
+    with open(libdeps, "r") as f:
+        src = f.read()
+    swaps = [
+        ('DEBUGF("Received invalid announce for %s: Destination mismatch.", packet.destination_hash().toHex().c_str());',
+         'NOTICEF("Received invalid announce for %s: Destination mismatch.", packet.destination_hash().toHex().c_str());'),
+        ('DEBUGF("Received invalid announce for %s: Invalid signature.", packet.destination_hash().toHex().c_str());',
+         'NOTICEF("Received invalid announce for %s: Invalid signature.", packet.destination_hash().toHex().c_str());'),
+    ]
+    changed = False
+    for old, new in swaps:
+        if old in src:
+            src = src.replace(old, new)
+            changed = True
+    if changed:
+        print("*** Promoted announce-reject DEBUGF lines to NOTICEF at", libdeps)
+        with open(libdeps, "w") as f:
+            f.write(src)
+
+
 def patch_microreticulum_validate(env):
     """
     Patch microReticulum's Identity::validate to actually return the result of
@@ -261,6 +296,7 @@ print("PROGNAME:", env.subst("$PROGNAME"))
 
 print("*** Running custom script...")
 patch_microreticulum_validate(env)
+patch_announce_reject_logs(env)
 embed_spa(env)
 platform = env.GetProjectOption("platform")
 print("Platform:", platform)

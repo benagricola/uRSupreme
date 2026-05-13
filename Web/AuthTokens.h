@@ -71,13 +71,16 @@ namespace Web {
         obj["created_ms"]   = t.created_ms;
         obj["last_seen_ms"] = t.last_seen_ms;
       }
-      char buf[1024];
-      size_t n = serializeJson(doc, buf, sizeof(buf));
-      if (n == 0 || n >= sizeof(buf)) {
+      // Use a growable String — at MAX_TOKENS=16 the JSON runs ~2 KB, well
+      // past any reasonable stack-buffer choice.
+      String body;
+      if (serializeJson(doc, body) == 0) {
         WARNING("AuthTokens: save serialization failed");
         return;
       }
-      filesystem.writeFile(STORE_PATH, reinterpret_cast<const uint8_t*>(buf), n);
+      filesystem.writeFile(STORE_PATH,
+                           reinterpret_cast<const uint8_t*>(body.c_str()),
+                           body.length());
     }
 
     // Issue a fresh token for an account. Evicts the oldest token for that

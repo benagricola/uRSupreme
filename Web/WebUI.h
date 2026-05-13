@@ -402,9 +402,12 @@ namespace Web {
     }
 
     static void handle_events() {
-      // SSE-style long-poll. We park briefly, push any pending events, then
-      // return so the client reconnects (EventSource auto-reconnects). This
-      // pattern avoids starving the LoRa modem on the same Arduino task.
+      // Short-poll dressed as SSE: drain any events newer than `since`,
+      // send a retry: hint so the browser reconnects quickly, and return.
+      // This keeps the main Arduino task free to service the LoRa modem
+      // and reticulum.loop() — parking the handler for any meaningful
+      // duration would block both, since handleClient() runs synchronously
+      // inside the same loop iteration.
       LXMF::AccountId caller = require_auth();
       if (caller.empty()) return;
       std::string requested = std::string(server.pathArg(0).c_str());
@@ -415,11 +418,14 @@ namespace Web {
       uint32_t since = (uint32_t)server.arg("since").toInt();
 
       server.sendHeader("Cache-Control", "no-cache");
-      server.sendHeader("Connection", "keep-alive");
+      server.sendHeader("Connection", "close");
       server.setContentLength(CONTENT_LENGTH_UNKNOWN);
       server.send(200, "text/event-stream", "");
+      // Tell EventSource to reconnect every 500 ms instead of the 3 s
+      // browser default. Combined with the immediate return below this
+      // gives sub-second event-delivery latency without busy-parking.
+      server.sendContent("retry: 500\n\n");
 
-      // Drain anything already newer than `since`.
       auto pending = a->inbox->since(since);
       for (const auto& m : pending) {
         JsonDocument item;
@@ -439,39 +445,8 @@ namespace Web {
         _unlock_event_pending = false;
         server.sendContent("data: {\"type\":\"unlock_available\"}\n\n");
       }
-
-      // Park for up to 5s, polling every 200ms, sending heartbeats and any
-      // newly-arrived messages. Quick yield so the rest of the firmware
-      // keeps ticking.
-      uint32_t deadline = millis() + 5000;
-      uint32_t last_seq = a->inbox->next_seq();
-      while (millis() < deadline) {
-        delay(200);
-        uint32_t cur = a->inbox->next_seq();
-        if (cur > last_seq) {
-          auto fresh = a->inbox->since(last_seq);
-          for (const auto& m : fresh) {
-            JsonDocument item;
-            item["type"] = "incoming";
-            JsonObject msg = item["msg"].to<JsonObject>();
-            msg["seq"]    = m.seq;
-            msg["ts"]     = m.ts;
-            msg["peer"]   = m.peer_hash.toHex();
-            msg["title"]  = m.title;
-            msg["body"]   = m.content;
-            msg["sig_ok"] = m.signature_ok;
-            String line;
-            serializeJson(item, line);
-            server.sendContent(String("data: ") + line + "\n\n");
-          }
-          last_seq = cur;
-        }
-        if (_unlock_event_pending) {
-          _unlock_event_pending = false;
-          server.sendContent("data: {\"type\":\"unlock_available\"}\n\n");
-        }
-      }
-      server.sendContent(":heartbeat\n\n");
+      // Connection closes when the handler returns; browser reconnects
+      // after `retry:` ms with an updated `since` query param.
     }
 
     static bool wifi_config_allowed() {

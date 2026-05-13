@@ -1,6 +1,46 @@
+import os
 import time
 import hashlib
 import shutil
+
+
+def patch_microreticulum_validate(env):
+    """
+    Patch microReticulum's Identity::validate to actually return the result of
+    Ed25519PublicKey::verify().
+
+    Upstream bug: Identity.cpp's validate() discards the bool returned by
+    _sig_pub->verify() and unconditionally returns true (only catches
+    exceptions, which the verify path doesn't throw). This silently turns
+    signature verification into a no-op everywhere — including the library's
+    own Identity::validate_announce path.
+
+    Demonstrated by LXMF/Probe.h: alice.validate(bob_signature, msg) returns
+    true with the bug present. With the fix the same probe returns false as
+    expected and the probe reports PASS.
+
+    Upstream report: TODO file an issue on attermann/microReticulum referencing
+    this file and Identity.cpp:652.
+    """
+    project_dir = env.subst("$PROJECT_DIR")
+    libdeps = os.path.join(project_dir, ".pio", "libdeps", env.subst("$PIOENV"),
+                           "microReticulum", "src", "Identity.cpp")
+    if not os.path.exists(libdeps):
+        return
+    with open(libdeps, "r") as f:
+        src = f.read()
+    bad = "\t\t\t_object->_sig_pub->verify(signature, message);\n\t\t\treturn true;\n"
+    good = "\t\t\treturn _object->_sig_pub->verify(signature, message);\n"
+    if bad in src:
+        print("*** Patching microReticulum Identity::validate (upstream bug fix) at", libdeps)
+        src = src.replace(bad, good)
+        with open(libdeps, "w") as f:
+            f.write(src)
+    elif good in src:
+        # already patched
+        pass
+    else:
+        print("*** WARNING: Identity.cpp does not match either patched or known-bad shape — patch skipped")
 
 #
 # Custom targets
@@ -185,6 +225,7 @@ env.Replace(PROGNAME="rnode_firmware_%s" % env.GetProjectOption("custom_variant"
 print("PROGNAME:", env.subst("$PROGNAME"))
 
 print("*** Running custom script...")
+patch_microreticulum_validate(env)
 platform = env.GetProjectOption("platform")
 print("Platform:", platform)
 targets = env.GetProjectOption("targets", [])

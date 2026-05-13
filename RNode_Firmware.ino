@@ -214,6 +214,22 @@ void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
     }
 	}
 #endif  // HAS_SDCARD
+
+#if defined(HAS_LXMF_GATEWAY)
+  // Diagnostic: log every inbound ANNOUNCE packet's destination_hash so we
+  // can see whether announces are reaching the device even if signature
+  // validation rejects them. NDEBUG strips out microReticulum's own
+  // DEBUGF("Received invalid announce ...") lines, so without this we'd be
+  // blind to dropped announces. The cost is one NOTICE log per announce
+  // received, gated to ANNOUNCE packets only to avoid flooding on data.
+  RNS::Packet pkt(raw);
+  if (pkt.unpack() && pkt.packet_type() == RNS::Type::Packet::ANNOUNCE) {
+    NOTICEF("RX ANNOUNCE dest=%s hops=%u data=%u bytes",
+            pkt.destination_hash().toHex().c_str(),
+            (unsigned)pkt.hops(),
+            (unsigned)pkt.data().size());
+  }
+#endif
 }
 
 // CBA transmit packet callback

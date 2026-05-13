@@ -196,6 +196,14 @@ a { color: #58a6ff; }
         <button onclick="addContact()">Add</button>
       </div>
     </div>
+
+    <h2 style="margin-top:16px">Danger zone</h2>
+    <div class="card">
+      <p class="muted">Permanently delete this account from the device. Inbox, outbox, and identity material are removed. This affects only the currently-logged-in account.</p>
+      <div class="row">
+        <button class="danger" onclick="deleteCurrentAccount()">Delete this account</button>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -295,22 +303,39 @@ function renderAccountList() {
     const loginBtn = document.createElement('button');
     loginBtn.textContent = 'Login';
     loginBtn.addEventListener('click', () => startLogin(a.id));
-    const delBtn = document.createElement('button');
-    delBtn.className = 'danger';
-    delBtn.textContent = 'Delete';
-    delBtn.addEventListener('click', () => deleteAccount(a.id, a.display_name));
-    row.append(loginBtn, delBtn);
+    row.append(loginBtn);
     card.append(nameDiv, addrDiv, row);
     el.appendChild(card);
   }
 }
 
-async function deleteAccount(id, name) {
-  if (!confirm('Delete account "' + name + '"? This removes its identity, inbox, and outbox permanently.')) return;
-  // Need to log in first to delete — same bearer-auth gate as everything else.
-  state.account_id = id;
-  alert('To delete, log in to this account first (long-then-short-press the device button, type the identity code), then click Delete again.');
-  show('view-login');
+// Delete the currently logged-in account. Called from the Settings tab's
+// Danger zone after explicit confirmation. Logs out on success since the
+// account no longer exists.
+async function deleteCurrentAccount() {
+  if (!state.account_id) return;
+  const me = state.accounts.find(a => a.id === state.account_id);
+  const name = me ? me.display_name : state.account_id;
+  if (!confirm(
+    'Delete the account "' + name + '" you are logged into?\n\n' +
+    'This permanently removes its identity, inbox, and outbox from the device. ' +
+    'You will be logged out.'
+  )) return;
+  try {
+    await api('/api/accounts/' + state.account_id + '/delete', { method: 'POST' });
+  } catch (e) {
+    alert('Delete failed: ' + (e.data?.error || e.message));
+    return;
+  }
+  // Clear local auth state and refresh — picker will reflect the removal.
+  state.token = null; state.account_id = null;
+  localStorage.removeItem(LS_TOKEN);
+  localStorage.removeItem(LS_ACCT);
+  if (state.evt) { state.evt.close(); state.evt = null; }
+  stopAutoRefresh();
+  document.getElementById('logout-btn').style.display = 'none';
+  document.getElementById('me-address').textContent = '';
+  refresh();
 }
 
 function startLogin(account_id) {

@@ -32,6 +32,7 @@
 #endif
 #if defined(HAS_LXMF_GATEWAY)
 #include "LXMF/LXMFGateway.h"
+#include "Web/WebUI.h"
 #endif
 
 #include <Arduino.h>
@@ -2257,6 +2258,10 @@ void loop() {
     #endif
     #if defined(HAS_LXMF_GATEWAY)
       LXMF::LXMFGateway::loop();
+      if (wifi_initialized) {
+        Web::WebUI::start();   // idempotent — runs once after WiFi STA is up
+        Web::WebUI::loop();
+      }
     #endif
   #endif
 
@@ -2354,6 +2359,12 @@ void button_event(uint8_t event, unsigned long duration) {
           sleep_now();
         #endif
       } else {
+        #if defined(HAS_LXMF_GATEWAY)
+          // Short button press generates a one-shot LXMF gateway unlock code
+          // valid for 60 s. Code is printed to serial. Required to create
+          // accounts or to log in from a new browser.
+          Web::WebUI::on_button_unlock();
+        #endif
         #if HAS_BLUETOOTH || HAS_BLE
         if (bt_state != BT_STATE_CONNECTED) {
           if (bt_state == BT_STATE_OFF) {

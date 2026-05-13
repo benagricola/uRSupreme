@@ -100,6 +100,17 @@ a { color: #58a6ff; }
 <section id="view-accounts" class="hide">
   <h2>Accounts</h2>
   <div id="account-list"></div>
+  <details style="margin-bottom:8px">
+    <summary class="muted" style="cursor:pointer;font-size:12px">Lost a password? Factory reset…</summary>
+    <div class="card" style="border-color:#9a3232;margin-top:6px">
+      <p class="muted">Wipes <em>every</em> account on this device — identities, inboxes, sent messages, and saved auth tokens. Required if every password is lost. Needs the button-press identity code as physical-presence proof.</p>
+      <label>Identity code</label>
+      <input id="reset-picker-identity-code" placeholder="6 hex chars from OLED" maxlength="6">
+      <div class="row" style="margin-top:8px">
+        <button class="danger" onclick="factoryResetFromPicker()">Factory reset device</button>
+      </div>
+    </div>
+  </details>
   <div class="card">
     <label>Create a new account</label>
     <input id="new-display-name" placeholder="Display name">
@@ -323,16 +334,38 @@ function renderAccountList() {
 }
 
 async function factoryReset() {
-  const code = document.getElementById('reset-identity-code').value.trim().toLowerCase();
+  return _factoryResetCommon('reset-identity-code');
+}
+
+async function factoryResetFromPicker() {
+  return _factoryResetCommon('reset-picker-identity-code');
+}
+
+async function _factoryResetCommon(inputId) {
+  const code = document.getElementById(inputId).value.trim().toLowerCase();
   if (code.length !== 6) { alert('Need the 6-char identity code from the device OLED'); return; }
   if (!confirm(
     'FACTORY RESET: this will permanently delete every account, inbox, outbox, and saved login on this device. ' +
     'There is no undo. Continue?'
   )) return;
   try {
-    await api('/api/system/factory_reset', { method: 'POST', body: { identity_code: code } });
+    // Issue the request directly via fetch — the api() helper auto-attaches
+    // a bearer token if one exists, but factory reset is intentionally
+    // *unauthenticated* (only the identity code is required) so a locked-out
+    // user can recover. The endpoint refuses bearer + ignores it either way.
+    const r = await fetch('/api/system/factory_reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identity_code: code }),
+    });
+    if (!r.ok) {
+      const text = await r.text();
+      let data; try { data = JSON.parse(text); } catch { data = {}; }
+      alert('Reset failed: ' + (data.error || ('HTTP ' + r.status)));
+      return;
+    }
   } catch (e) {
-    alert('Reset failed: ' + (e.data?.error || e.message));
+    alert('Reset failed: ' + (e.message || e));
     return;
   }
   localStorage.clear();

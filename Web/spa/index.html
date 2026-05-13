@@ -346,11 +346,10 @@ async function forceAnnounce() {
 
 function openEvents() {
   if (state.evt) state.evt.close();
-  // Note: EventSource doesn't support custom headers, so we pass the token
-  // via query string and the server can be extended to honour it.
-  // For now the SSE stream is short-poll style and we just re-fetch the
-  // inbox on every event.
-  const url = '/api/accounts/' + state.account_id + '/events?since=' + state.last_inbox_seq;
+  // EventSource doesn't support custom headers; auth via query string.
+  const url = '/api/accounts/' + state.account_id + '/events'
+            + '?since=' + state.last_inbox_seq
+            + '&token=' + encodeURIComponent(state.token);
   state.evt = new EventSource(url);
   state.evt.onmessage = (e) => {
     try {

@@ -137,16 +137,23 @@ namespace Web {
       send_json(code, doc);
     }
 
-    // Extract bearer-token account, or send 401 and return empty.
+    // Extract bearer-token account from the Authorization header. Falls
+    // back to a `token` query-string param so EventSource (which can't set
+    // headers) can authenticate. Sends 401 and returns empty on failure.
     static LXMF::AccountId require_auth() {
+      std::string token;
       String h = server.header("Authorization");
-      if (!h.startsWith("Bearer ")) {
+      if (h.startsWith("Bearer ")) {
+        String hex_str = h.substring(7);
+        hex_str.trim();
+        token = std::string(hex_str.c_str());
+      } else if (server.hasArg("token")) {
+        token = std::string(server.arg("token").c_str());
+      } else {
         send_error(401, "missing_bearer");
         return {};
       }
-      String hex_str = h.substring(7);
-      hex_str.trim();
-      LXMF::AccountId acc = AuthTokens::validate(std::string(hex_str.c_str()));
+      LXMF::AccountId acc = AuthTokens::validate(token);
       if (acc.empty()) {
         send_error(401, "invalid_or_expired_token");
       }

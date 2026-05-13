@@ -335,9 +335,52 @@ async function factoryReset() {
     alert('Reset failed: ' + (e.data?.error || e.message));
     return;
   }
-  // Clear local state and show a transient page until the device comes back.
   localStorage.clear();
-  document.body.innerHTML = '<main><h2>Device wiped, rebooting…</h2><p class="muted">All accounts and messages have been removed. Reload this page in 10 seconds.</p></main>';
+  waitForDeviceAndReload('Device wiped, rebooting…');
+}
+
+// Show a full-screen "rebooting" UI and poll /api/info until the device
+// answers. Auto-reloads the page when it comes back — used after any
+// action that triggers ESP.restart() on the device side (radio save,
+// radio reset, factory reset). NOT used after WiFi configure because the
+// device moves to a new network there, so manual reconnect is unavoidable.
+function waitForDeviceAndReload(message) {
+  if (state.evt) { state.evt.close(); state.evt = null; }
+  stopAutoRefresh();
+  document.body.innerHTML =
+    '<main><h2>' + escapeHtml(message) + '</h2>' +
+    '<p class="muted" id="reboot-status">Waiting for device to come back…</p></main>';
+  const statusEl = document.getElementById('reboot-status');
+  let attempts = 0;
+  const startMs = Date.now();
+  // Probe shape: a short-timeout fetch with no-store so the browser
+  // doesn't return cached responses. We poll every 1.5 s and reload as
+  // soon as one probe succeeds.
+  const probe = async () => {
+    attempts++;
+    try {
+      const ctl = new AbortController();
+      const tmo = setTimeout(() => ctl.abort(), 1500);
+      const r = await fetch('/api/info', { cache: 'no-store', signal: ctl.signal });
+      clearTimeout(tmo);
+      if (r.ok) {
+        statusEl.textContent = 'Device responding — reloading…';
+        // Give the SSE / WebServer init a moment to settle.
+        setTimeout(() => location.reload(), 400);
+        return;
+      }
+    } catch {
+      // Still down; keep polling.
+    }
+    const elapsed = Math.floor((Date.now() - startMs) / 1000);
+    statusEl.textContent = 'Waiting for device to come back… (' + elapsed + 's)';
+    if (attempts < 60) {
+      setTimeout(probe, 1500);
+    } else {
+      statusEl.textContent = "Device hasn't come back after 90 s — check serial console.";
+    }
+  };
+  setTimeout(probe, 2500);  // give the device a head start on the reboot
 }
 
 // Delete the currently logged-in account. Called from the Settings tab's
@@ -863,10 +906,10 @@ async function saveRadio() {
   const cr      = parseInt(document.getElementById('radio-cr').value, 10);
   const txp     = parseInt(document.getElementById('radio-txp').value, 10);
   if (!freq_hz || !bw_hz || !sf || !cr || isNaN(txp)) { alert('Fill all radio fields'); return; }
-  if (!confirm('Save radio config and reboot? You will lose the SSE connection briefly.')) return;
+  if (!confirm('Save radio config and reboot?')) return;
   try {
     await api('/api/radio', { method: 'POST', body: { freq_hz, bw_hz, sf, cr, txp } });
-    document.body.innerHTML = '<main><h2>Rebooting…</h2><p class="muted">Wait ~10 s and reload.</p></main>';
+    waitForDeviceAndReload('Saving radio config — rebooting…');
   } catch (e) {
     alert('Save failed: ' + (e.data?.error || e.message));
   }
@@ -876,7 +919,7 @@ async function resetRadio() {
   if (!confirm('Clear saved radio config and reboot?')) return;
   try {
     await api('/api/radio/reset', { method: 'POST', body: {} });
-    document.body.innerHTML = '<main><h2>Rebooting…</h2><p class="muted">Wait ~10 s and reload.</p></main>';
+    waitForDeviceAndReload('Clearing radio config — rebooting…');
   } catch (e) {
     alert('Reset failed: ' + (e.data?.error || e.message));
   }

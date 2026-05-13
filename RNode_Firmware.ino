@@ -534,6 +534,20 @@ void setup() {
       #if HAS_WIFI
         wifi_mode = EEPROM.read(eeprom_addr(ADDR_CONF_WIFI));
         if (wifi_mode == WR_WIFI_STA || wifi_mode == WR_WIFI_AP) { wifi_remote_init(); }
+        #if defined(HAS_LXMF_GATEWAY)
+          // Bootstrap fallback: if WiFi is not configured at all, bring up a
+          // softAP using the device's BT name so the user can reach the web
+          // UI for first-time setup. RAM-only flag, EEPROM is untouched so
+          // a configured device stays in its configured mode.
+          if (!wifi_initialized) {
+            wifi_mode = WR_WIFI_AP;
+            wifi_remote_init();
+            if (wifi_initialized) {
+              Web::WebUI::bootstrap_mode = true;
+              NOTICE("WebUI: WiFi unconfigured — entered bootstrap softAP mode");
+            }
+          }
+        #endif
       #endif
       kiss_indicate_reset();
     }

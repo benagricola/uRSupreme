@@ -19,6 +19,13 @@
 #include "../LXMF/LXMFTypes.h"
 #include "AuthTokens.h"
 
+// EEPROM helpers + WiFi config constants from the existing firmware.
+// Used by the bootstrap-mode WiFi configure endpoint.
+#include "../Config.h"   // WR_WIFI_OFF/STA/AP, config_addr()
+#include "../ROM.h"      // ADDR_CONF_SSID, ADDR_CONF_PSK
+extern void eeprom_update(int mapped_addr, uint8_t byte);
+extern void wr_conf_save(uint8_t mode);
+
 #include <vector>
 #include <string>
 
@@ -40,6 +47,11 @@ namespace Web {
   class WebUI {
   public:
     static constexpr uint32_t UNLOCK_TTL_MS = 60UL * 1000UL;
+
+    // Set by the firmware setup() path when WiFi failed to come up in STA
+    // mode and we fell back to softAP. Toggles /api/wifi/* into the
+    // unauthenticated bootstrap configuration mode.
+    static inline bool bootstrap_mode = false;
 
     // Called once at boot, after WiFi STA is up. Idempotent.
     static void start() {
@@ -178,13 +190,17 @@ namespace Web {
       server.on(UriBraces("/api/accounts/{}/events"),   HTTP_GET,  handle_events);
       // Paths
       server.on("/api/paths/lookup",  HTTP_POST, handle_path_lookup);
+      // WiFi config — unauthenticated, only effective in bootstrap mode or
+      // when no accounts exist on the device. Reboots on save.
+      server.on("/api/wifi/scan",     HTTP_GET,  handle_wifi_scan);
+      server.on("/api/wifi/configure",HTTP_POST, handle_wifi_configure);
     }
 
     static void handle_info() {
       JsonDocument doc;
       doc["fw_version"] = "lxmf-gateway-0.1";
       doc["uptime_ms"]  = (uint32_t)millis();
-      doc["bootstrap"]  = false;  // Step 9 will toggle this
+      doc["bootstrap"]  = bootstrap_mode;
       doc["unlock_pending"] = !unlock().hex6.empty() && !unlock().consumed
                               && millis() < unlock().expires_ms;
       JsonArray accts = doc["accounts"].to<JsonArray>();
@@ -437,6 +453,63 @@ namespace Web {
         }
       }
       server.sendContent(":heartbeat\n\n");
+    }
+
+    static bool wifi_config_allowed() {
+      // Allowed in bootstrap mode, or when no LXMF accounts exist yet
+      // (fresh device — no security boundary to violate).
+      return bootstrap_mode || LXMF::LXMFGateway::account_count() == 0;
+    }
+
+    static void handle_wifi_scan() {
+      if (!wifi_config_allowed()) { send_error(403, "forbidden"); return; }
+      int n = WiFi.scanNetworks();
+      JsonDocument doc;
+      JsonArray arr = doc["networks"].to<JsonArray>();
+      for (int i = 0; i < n; i++) {
+        JsonObject obj = arr.add<JsonObject>();
+        obj["ssid"]    = WiFi.SSID(i);
+        obj["rssi"]    = WiFi.RSSI(i);
+        obj["secure"]  = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+      }
+      WiFi.scanDelete();
+      send_json(200, doc);
+    }
+
+    static void handle_wifi_configure() {
+      if (!wifi_config_allowed()) { send_error(403, "forbidden"); return; }
+      JsonDocument body;
+      if (!read_body_json(body)) return;
+      String ssid = body["ssid"] | "";
+      String psk  = body["psk"]  | "";
+      if (ssid.length() == 0 || ssid.length() > 32) {
+        send_error(400, "invalid_ssid");
+        return;
+      }
+      if (psk.length() > 32) {
+        send_error(400, "invalid_psk");
+        return;
+      }
+      // Write SSID, PSK, and STA mode to EEPROM using the same code paths
+      // as CMD_WIFI_SSID / CMD_WIFI_PSK / CMD_WIFI_MODE in serial_callback.
+      for (uint8_t i = 0; i < 33; i++) {
+        uint8_t c = (i < ssid.length() && i < 32) ? (uint8_t)ssid[i] : 0x00;
+        eeprom_update(config_addr(ADDR_CONF_SSID + i), c);
+      }
+      for (uint8_t i = 0; i < 33; i++) {
+        uint8_t c = (i < psk.length() && i < 32) ? (uint8_t)psk[i] : 0x00;
+        eeprom_update(config_addr(ADDR_CONF_PSK + i), c);
+      }
+      wr_conf_save(WR_WIFI_STA);
+
+      JsonDocument doc;
+      doc["status"]  = "saved";
+      doc["restart"] = true;
+      send_json(200, doc);
+
+      // Reboot so STA mode applies cleanly.
+      delay(500);
+      ESP.restart();
     }
 
     static void handle_path_lookup() {

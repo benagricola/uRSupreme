@@ -128,6 +128,15 @@ a { color: #58a6ff; }
   <h2 style="margin-top:24px">Sent</h2>
   <div id="outbox-list"></div>
 
+  <h2 style="margin-top:24px">Known paths</h2>
+  <div class="card">
+    <p class="muted">Destinations the device has learned about via announces. Click "use" to copy a hash to the compose form. Hash here = lxmf.delivery address if Columba/Sideband announced it.</p>
+    <div class="row">
+      <button class="secondary" onclick="loadPaths()">Refresh</button>
+    </div>
+    <div id="paths-list" class="muted"></div>
+  </div>
+
   <h2 style="margin-top:24px">Radio</h2>
   <div class="card">
     <p class="muted">Saving reboots the device into TNC mode. Common values: freq 868000000 (EU) / 915000000 (NA), bw 125000, sf 8, cr 5, txp 17.</p>
@@ -302,8 +311,29 @@ async function enterMessageView() {
   await loadInbox();
   await loadOutbox();
   await loadRadio();
+  await loadPaths();
   renderContacts();
   openEvents();
+}
+
+async function loadPaths() {
+  const el = document.getElementById('paths-list');
+  try {
+    const r = await api('/api/paths');
+    if (!r.paths || r.paths.length === 0) { el.innerHTML = '<p class="muted">(no known paths yet — wait for an announce)</p>'; return; }
+    el.innerHTML = '';
+    for (const p of r.paths) {
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 0;font-size:12px';
+      div.innerHTML = `
+        <span class="mono" style="flex:1">${p.dest}</span>
+        <span class="pill">${p.hops}h</span>
+        <button class="secondary" onclick="document.getElementById('compose-to').value='${p.dest}';document.getElementById('compose-body').focus()">use</button>`;
+      el.appendChild(div);
+    }
+  } catch (e) {
+    el.textContent = 'Load failed: ' + (e.data?.error || e.message);
+  }
 }
 
 async function loadInbox() {

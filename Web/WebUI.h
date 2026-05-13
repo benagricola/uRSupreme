@@ -228,6 +228,7 @@ namespace Web {
       server.on(UriBraces("/api/accounts/{}/send"),     HTTP_POST, handle_send);
       server.on(UriBraces("/api/accounts/{}/events"),   HTTP_GET,  handle_events);
       // Paths
+      server.on("/api/paths",         HTTP_GET,  handle_paths_list);
       server.on("/api/paths/lookup",  HTTP_POST, handle_path_lookup);
       // WiFi config — gated by bearer token OR identity_code in body.
       // Reboots on save.
@@ -620,6 +621,25 @@ namespace Web {
       send_json(200, doc);
       delay(500);
       ESP.restart();
+    }
+
+    static void handle_paths_list() {
+      if (require_auth().empty()) return;
+      // Dump everything in Transport::_path_table. Each entry is one
+      // destination the device has learned about via an announce, along
+      // with hop count and the timestamp of the announce.
+      const auto& tbl = RNS::Transport::get_path_table();
+      JsonDocument doc;
+      JsonArray arr = doc["paths"].to<JsonArray>();
+      for (const auto& kv : tbl) {
+        JsonObject obj = arr.add<JsonObject>();
+        obj["dest"]  = kv.first.toHex();
+        obj["hops"]  = (int)kv.second._hops;
+        obj["ts"]    = kv.second._timestamp;
+        obj["from"]  = kv.second._received_from.toHex();
+      }
+      doc["count"] = (uint32_t)tbl.size();
+      send_json(200, doc);
     }
 
     static void handle_path_lookup() {

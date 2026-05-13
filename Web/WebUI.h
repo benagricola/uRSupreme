@@ -103,6 +103,25 @@ namespace Web {
       _unlock_event_pending = true;
     }
 
+    // Display accessors so the OLED renderer can show the unlock code
+    // without coupling Display.h to the rest of the WebUI internals. Read
+    // each frame; returns empty / 0 if no unlock is pending.
+    static const std::string& unlock_code_for_display() {
+      static const std::string empty;
+      auto& u = unlock();
+      if (u.hex6.empty() || u.consumed) return empty;
+      if (millis() > u.expires_ms) return empty;
+      return u.hex6;
+    }
+
+    static uint32_t unlock_remaining_ms() {
+      auto& u = unlock();
+      if (u.hex6.empty() || u.consumed) return 0;
+      uint32_t now = millis();
+      if (now > u.expires_ms) return 0;
+      return u.expires_ms - now;
+    }
+
     // Check that the given proof is currently valid. Single-use: marks the
     // unlock as consumed on success.
     static bool consume_unlock_proof(const std::string& proof) {

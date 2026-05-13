@@ -16,6 +16,10 @@
 #include "Graphics.h"
 #include <Adafruit_GFX.h>
 
+#if defined(HAS_LXMF_GATEWAY)
+#include "Web/WebUI.h"
+#endif
+
 #if BOARD_MODEL != BOARD_TECHO
   #if BOARD_MODEL == BOARD_TDECK
     #include <Adafruit_ST7789.h>
@@ -818,6 +822,28 @@ extern char bt_dh[16];
   extern IPAddress wr_device_ip;
 #endif
 void draw_disp_area() {
+  #if defined(HAS_LXMF_GATEWAY)
+    // Override the normal display when an LXMF unlock code is active.
+    // Single-use, 60 s TTL — readable from across the room is the point.
+    const std::string& unlock_code = Web::WebUI::unlock_code_for_display();
+    if (!unlock_code.empty() && device_init_done && !firmware_update_mode) {
+      uint32_t remaining_ms = Web::WebUI::unlock_remaining_ms();
+      disp_area.fillRect(0, 0, disp_area.width(), disp_area.height(), SSD1306_BLACK);
+      disp_area.setFont(SMALL_FONT);
+      disp_area.setTextWrap(false);
+      disp_area.setTextColor(SSD1306_WHITE);
+      disp_area.setTextSize(1);
+      disp_area.setCursor(8, 9);
+      disp_area.print("UNLOCK");
+      disp_area.setTextSize(2);
+      disp_area.setCursor(2, 28);
+      disp_area.print(unlock_code.c_str());
+      disp_area.setTextSize(1);
+      disp_area.setCursor(8, 56);
+      disp_area.printf("%lus left", (unsigned long)((remaining_ms + 999) / 1000));
+      return;
+    }
+  #endif
   if (!device_init_done || firmware_update_mode) {
     uint8_t p_by = 37;
     if (disp_mode == DISP_MODE_LANDSCAPE || firmware_update_mode) {

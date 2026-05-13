@@ -1,0 +1,206 @@
+#pragma once
+
+#include <ArduinoJson.h>
+#include <Log.h>
+#include <microStore/FileSystem.h>
+
+#include <deque>
+#include <string>
+#include <stdint.h>
+
+#include "LXMFTypes.h"
+
+extern microStore::FileSystem filesystem;
+
+namespace LXMF {
+
+  // Bounded per-account ring with JSONL spool persistence.
+  // One instance per LXMFAccount. Used for both inbox (incoming=true) and
+  // outbox (incoming=false) — the on-disk schema is identical, only the
+  // file name differs.
+  //
+  // Persistence: each append() writes one line to <dir>/<filename>. On boot
+  // the constructor reads any existing file back into the RAM ring (up to
+  // ram_capacity entries, most recent kept). Sequence numbers continue from
+  // the highest seen on disk so SSE clients can resume after a reboot.
+  //
+  // No rotation in Phase 1: at ~256 B/message the JSONL grows to ~64 KB
+  // after ~250 messages, which is well within the LittleFS partition.
+  // Rotation can be added later if needed.
+  class LXMFInbox {
+  public:
+    static constexpr size_t DEFAULT_RAM_CAPACITY = 32;
+    static constexpr size_t MAX_LINE_BYTES       = 768;
+
+    LXMFInbox(const std::string& account_dir,
+              const char* filename,
+              size_t ram_capacity = DEFAULT_RAM_CAPACITY)
+      : _path(account_dir + "/" + filename),
+        _ram_capacity(ram_capacity),
+        _next_seq(0) {}
+
+    // Replay the on-disk JSONL into RAM. Idempotent.
+    void load() {
+      _ring.clear();
+      _next_seq = 0;
+      if (!filesystem.exists(_path.c_str())) return;
+      size_t file_size = filesystem.size(_path.c_str());
+      if (file_size == 0) return;
+
+      // Buffer the whole file then split on newline. Keeping it simple at
+      // the cost of memory; sized to roughly the JSONL spool max.
+      std::vector<uint8_t> buf;
+      if (filesystem.readFile(_path.c_str(), buf) == 0) return;
+      buf.push_back('\n');
+
+      size_t start = 0;
+      for (size_t i = 0; i < buf.size(); ++i) {
+        if (buf[i] != '\n') continue;
+        if (i > start) parse_line(reinterpret_cast<const char*>(&buf[start]), i - start);
+        start = i + 1;
+      }
+    }
+
+    // Append a new record. Allocates a seq if rec.seq == 0. Writes one
+    // JSONL line; trims the RAM ring to ram_capacity.
+    bool append(MessageRecord& rec) {
+      if (rec.seq == 0) rec.seq = ++_next_seq;
+      else if (rec.seq > _next_seq) _next_seq = rec.seq;
+
+      JsonDocument doc;
+      doc["seq"]    = rec.seq;
+      doc["ts"]     = rec.ts;
+      doc["peer"]   = rec.peer_hash.toHex();
+      doc["title"]  = rec.title;
+      doc["body"]   = rec.content;
+      doc["in"]     = rec.incoming;
+      doc["sig"]    = rec.signature_ok;
+      doc["status"] = outbox_status_name(rec.status);
+      if (rec.packet_hash.size() > 0) doc["pkt"] = rec.packet_hash.toHex();
+
+      char line[MAX_LINE_BYTES];
+      size_t n = serializeJson(doc, line, sizeof(line) - 1);
+      if (n == 0 || n >= sizeof(line) - 1) {
+        ERROR("LXMFInbox: append serialization failed or oversize");
+        return false;
+      }
+      line[n] = '\n';
+
+      microStore::File f = filesystem.open(_path.c_str(), microStore::File::ModeAppend, true);
+      if (!f) {
+        ERRORF("LXMFInbox: cannot open %s for append", _path.c_str());
+        return false;
+      }
+      size_t written = f.write(reinterpret_cast<const uint8_t*>(line), n + 1);
+      f.close();
+      if (written != n + 1) {
+        ERRORF("LXMFInbox: short write to %s (%u of %u)", _path.c_str(), (unsigned)written, (unsigned)(n + 1));
+        return false;
+      }
+
+      _ring.push_back(rec);
+      while (_ring.size() > _ram_capacity) _ring.pop_front();
+      return true;
+    }
+
+    // Mark a previously-appended record as Delivered (outbox use). Looks
+    // up by packet_hash; updates RAM and rewrites the JSONL spool from the
+    // RAM ring (small N — acceptable cost).
+    bool mark_delivered(const RNS::Bytes& packet_hash) {
+      bool found = false;
+      for (auto& rec : _ring) {
+        if (rec.packet_hash == packet_hash) {
+          rec.status = OutboxStatus::Delivered;
+          found = true;
+        }
+      }
+      if (found) rewrite_spool();
+      return found;
+    }
+
+    // Most recent up-to-N records (oldest first within the slice).
+    std::vector<MessageRecord> recent(size_t limit) const {
+      std::vector<MessageRecord> out;
+      size_t take = std::min(limit, _ring.size());
+      out.reserve(take);
+      auto it = _ring.end();
+      for (size_t i = 0; i < take; ++i) --it;
+      for (; it != _ring.end(); ++it) out.push_back(*it);
+      return out;
+    }
+
+    // Records with seq > since_seq, oldest first. Used by the SSE pump.
+    std::vector<MessageRecord> since(uint32_t since_seq) const {
+      std::vector<MessageRecord> out;
+      for (const auto& rec : _ring) {
+        if (rec.seq > since_seq) out.push_back(rec);
+      }
+      return out;
+    }
+
+    uint32_t next_seq() const { return _next_seq; }
+    size_t   size()     const { return _ring.size(); }
+
+  private:
+    void parse_line(const char* p, size_t n) {
+      JsonDocument doc;
+      if (deserializeJson(doc, p, n) != DeserializationError::Ok) return;
+      MessageRecord rec;
+      rec.seq      = (uint32_t)(doc["seq"] | 0);
+      rec.ts       = (double)(doc["ts"]    | 0.0);
+      std::string peer_hex = doc["peer"]    | "";
+      rec.peer_hash.assignHex(peer_hex.c_str());
+      rec.title    = (const char*)(doc["title"] | "");
+      rec.content  = (const char*)(doc["body"]  | "");
+      rec.incoming = (bool)(doc["in"]  | false);
+      rec.signature_ok = (bool)(doc["sig"] | false);
+      const char* status_str = doc["status"] | "delivered";
+      rec.status = OutboxStatus::Delivered;
+      if (strcmp(status_str, "queued")    == 0) rec.status = OutboxStatus::Queued;
+      else if (strcmp(status_str, "sent") == 0) rec.status = OutboxStatus::Sent;
+      else if (strcmp(status_str, "failed") == 0) rec.status = OutboxStatus::Failed;
+      if (doc["pkt"].is<const char*>()) {
+        std::string pkt_hex = doc["pkt"] | "";
+        rec.packet_hash.assignHex(pkt_hex.c_str());
+      }
+
+      if (rec.seq > _next_seq) _next_seq = rec.seq;
+      _ring.push_back(rec);
+      while (_ring.size() > _ram_capacity) _ring.pop_front();
+    }
+
+    void rewrite_spool() {
+      filesystem.remove(_path.c_str());
+      for (const auto& rec : _ring) {
+        MessageRecord copy = rec;
+        copy.seq = rec.seq;  // keep existing seq
+        // Inline a single-shot append without re-bumping _next_seq.
+        JsonDocument doc;
+        doc["seq"]    = copy.seq;
+        doc["ts"]     = copy.ts;
+        doc["peer"]   = copy.peer_hash.toHex();
+        doc["title"]  = copy.title;
+        doc["body"]   = copy.content;
+        doc["in"]     = copy.incoming;
+        doc["sig"]    = copy.signature_ok;
+        doc["status"] = outbox_status_name(copy.status);
+        if (copy.packet_hash.size() > 0) doc["pkt"] = copy.packet_hash.toHex();
+        char line[MAX_LINE_BYTES];
+        size_t n = serializeJson(doc, line, sizeof(line) - 1);
+        if (n == 0 || n >= sizeof(line) - 1) continue;
+        line[n] = '\n';
+        microStore::File f = filesystem.open(_path.c_str(), microStore::File::ModeAppend, true);
+        if (!f) return;
+        f.write(reinterpret_cast<const uint8_t*>(line), n + 1);
+        f.close();
+      }
+    }
+
+  private:
+    std::string                _path;
+    size_t                     _ram_capacity;
+    uint32_t                   _next_seq;
+    std::deque<MessageRecord>  _ring;
+  };
+
+} // namespace LXMF

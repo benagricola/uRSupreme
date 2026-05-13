@@ -30,6 +30,9 @@
 #if defined(LXMF_PROBE_MULTI_IDENTITY) && LXMF_PROBE_MULTI_IDENTITY
 #include "LXMF/Probe.h"
 #endif
+#if defined(HAS_LXMF_GATEWAY)
+#include "LXMF/LXMFGateway.h"
+#endif
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -737,6 +740,11 @@ void setup() {
 
 #if defined(LXMF_PROBE_MULTI_IDENTITY) && LXMF_PROBE_MULTI_IDENTITY
       LXMFProbe::run();
+#endif
+
+#if defined(HAS_LXMF_GATEWAY)
+      HEAD("Initializing LXMF gateway...", RNS::LOG_TRACE);
+      LXMF::LXMFGateway::setup();
 #endif
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);
@@ -2246,6 +2254,9 @@ void loop() {
     if (wifi_initialized) update_wifi();
     #if defined(TCP_TRANSPORT)
       TCPTransport::service();
+    #endif
+    #if defined(HAS_LXMF_GATEWAY)
+      LXMF::LXMFGateway::loop();
     #endif
   #endif
 

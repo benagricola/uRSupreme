@@ -50,7 +50,7 @@ a { color: #58a6ff; }
 
 <main>
 
-<div id="warn-unauth" class="warn hide">Not authenticated. Press the device button to get an unlock code.</div>
+<div id="warn-unauth" class="warn hide">Not authenticated. Long-then-short-press the device button to get an identity code.</div>
 
 <!-- Bootstrap WiFi setup -->
 <section id="view-bootstrap" class="hide">
@@ -66,6 +66,10 @@ a { color: #58a6ff; }
     <input id="wifi-ssid" placeholder="MyHomeWiFi">
     <label style="margin-top:8px">Password</label>
     <input id="wifi-psk" type="password" placeholder="optional">
+    <hr>
+    <p class="muted">Long-press the device button (~1 s), release, then short-press within 2 s. Read the 6-char identity code from the OLED.</p>
+    <label>Identity code</label>
+    <input id="wifi-identity-code" placeholder="6 hex chars" maxlength="6">
     <div class="row" style="margin-top:10px">
       <button onclick="saveWifi()">Save and reboot</button>
     </div>
@@ -79,9 +83,9 @@ a { color: #58a6ff; }
   <div class="card">
     <label>Create a new account</label>
     <input id="new-display-name" placeholder="Display name">
-    <p class="muted" style="margin-top:8px">Press the device button to enable account creation, then type the first 6 chars of the unlock code shown on the serial console.</p>
+    <p class="muted" style="margin-top:8px">Long-press the device button (~1 s), release, then short-press within 2 s. Read the 6-char identity code from the OLED.</p>
     <div class="row">
-      <input id="new-unlock-code" placeholder="unlock code (6 hex chars)" maxlength="6">
+      <input id="new-identity-code" placeholder="identity code (6 hex chars)" maxlength="6">
       <button onclick="createAccount()">Create</button>
     </div>
   </div>
@@ -91,9 +95,9 @@ a { color: #58a6ff; }
 <section id="view-login" class="hide">
   <h2>Login</h2>
   <div class="card">
-    <p class="muted">Press the device button, then type the first 6 chars of the unlock code shown on the serial console.</p>
-    <label>Unlock code</label>
-    <input id="login-unlock-code" placeholder="6 hex chars" maxlength="6">
+    <p class="muted">Long-press the device button (~1 s), release, then short-press within 2 s. Read the 6-char identity code from the OLED.</p>
+    <label>Identity code</label>
+    <input id="login-identity-code" placeholder="6 hex chars" maxlength="6">
     <div class="row" style="margin-top:8px">
       <button onclick="login()">Login</button>
       <button class="secondary" onclick="show('view-accounts')">Back</button>
@@ -123,6 +127,26 @@ a { color: #58a6ff; }
 
   <h2 style="margin-top:24px">Sent</h2>
   <div id="outbox-list"></div>
+
+  <h2 style="margin-top:24px">Radio</h2>
+  <div class="card">
+    <p class="muted">Saving reboots the device into TNC mode. Common values: freq 868000000 (EU) / 915000000 (NA), bw 125000, sf 8, cr 5, txp 17.</p>
+    <div class="row">
+      <div><label>Frequency (Hz)</label><input id="radio-freq" inputmode="numeric"></div>
+      <div><label>Bandwidth (Hz)</label><input id="radio-bw" inputmode="numeric"></div>
+    </div>
+    <div class="row">
+      <div><label>SF (5-12)</label><input id="radio-sf" inputmode="numeric"></div>
+      <div><label>CR (5-8)</label><input id="radio-cr" inputmode="numeric"></div>
+      <div><label>TXP (dBm)</label><input id="radio-txp" inputmode="numeric"></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button onclick="saveRadio()">Save and reboot</button>
+      <button class="secondary" onclick="loadRadio()">Reload</button>
+      <button class="danger" onclick="resetRadio()">Clear config</button>
+    </div>
+    <div id="radio-status" class="muted mono" style="margin-top:8px"></div>
+  </div>
 
   <h2 style="margin-top:24px">Contacts</h2>
   <div class="card">
@@ -230,10 +254,10 @@ function startLogin(account_id) {
 }
 
 async function login() {
-  const proof = document.getElementById('login-unlock-code').value.trim().toLowerCase();
+  const proof = document.getElementById('login-identity-code').value.trim().toLowerCase();
   if (proof.length !== 6) { alert('Unlock code is 6 hex chars'); return; }
   try {
-    const r = await api('/api/auth/login', { method: 'POST', body: { account_id: state.account_id, unlock_proof: proof } });
+    const r = await api('/api/auth/login', { method: 'POST', body: { account_id: state.account_id, identity_code: proof } });
     state.token = r.token;
     localStorage.setItem(LS_TOKEN, state.token);
     localStorage.setItem(LS_ACCT, state.account_id);
@@ -245,11 +269,11 @@ async function login() {
 
 async function createAccount() {
   const name  = document.getElementById('new-display-name').value.trim();
-  const proof = document.getElementById('new-unlock-code').value.trim().toLowerCase();
+  const proof = document.getElementById('new-identity-code').value.trim().toLowerCase();
   if (!name)  { alert('Display name required'); return; }
   if (proof.length !== 6) { alert('Unlock code is 6 hex chars'); return; }
   try {
-    const r = await api('/api/accounts', { method: 'POST', body: { display_name: name, unlock_proof: proof } });
+    const r = await api('/api/accounts', { method: 'POST', body: { display_name: name, identity_code: proof } });
     state.token = r.token; state.account_id = r.id;
     localStorage.setItem(LS_TOKEN, state.token);
     localStorage.setItem(LS_ACCT, state.account_id);
@@ -277,6 +301,7 @@ async function enterMessageView() {
   document.getElementById('me-address').textContent = a.address || state.account_id;
   await loadInbox();
   await loadOutbox();
+  await loadRadio();
   renderContacts();
   openEvents();
 }
@@ -356,7 +381,7 @@ function openEvents() {
       const data = JSON.parse(e.data);
       if (data.type === 'incoming') {
         loadInbox();
-      } else if (data.type === 'unlock_available') {
+      } else if (data.type === 'identity_code_available') {
         // ignore here — only matters on login/create views
       }
     } catch {}
@@ -432,14 +457,64 @@ function useScan(ssid) {
 }
 
 async function saveWifi() {
-  const ssid = document.getElementById('wifi-ssid').value.trim();
-  const psk  = document.getElementById('wifi-psk').value;
+  const ssid  = document.getElementById('wifi-ssid').value.trim();
+  const psk   = document.getElementById('wifi-psk').value;
+  const code  = document.getElementById('wifi-identity-code').value.trim().toLowerCase();
   if (!ssid) { alert('SSID required'); return; }
+  if (code.length !== 6) { alert('Identity code is 6 hex chars — long-then-short-press the device button'); return; }
   try {
-    await api('/api/wifi/configure', { method: 'POST', body: { ssid, psk } });
+    await api('/api/wifi/configure', { method: 'POST', body: { ssid, psk, identity_code: code } });
     document.body.innerHTML = '<main><h2>Rebooting…</h2><p class="muted">Reconnect to your home network, then visit the device on that network.</p></main>';
   } catch (e) {
     alert('Save failed: ' + (e.data?.error || e.message));
+  }
+}
+
+async function loadRadio() {
+  const el = document.getElementById('radio-status');
+  try {
+    const r = await api('/api/radio');
+    el.textContent = '';
+    document.getElementById('radio-freq').value  = r.freq_hz || '';
+    document.getElementById('radio-bw').value    = r.bw_hz   || '';
+    document.getElementById('radio-sf').value    = r.sf      || '';
+    document.getElementById('radio-cr').value    = r.cr      || '';
+    document.getElementById('radio-txp').value   = r.txp     || '';
+    const lines = [
+      'have_conf:'   + r.have_conf,
+      'radio_online:' + r.radio_online,
+      'op_mode:'     + r.op_mode,
+      'sf:' + r.limits.sf_min + '-' + r.limits.sf_max + ', cr:' + r.limits.cr_min + '-' + r.limits.cr_max + ', txp max:' + r.limits.txp_max,
+    ];
+    el.textContent = lines.join(' | ');
+  } catch (e) {
+    el.textContent = 'Load failed: ' + (e.data?.error || e.message);
+  }
+}
+
+async function saveRadio() {
+  const freq_hz = parseInt(document.getElementById('radio-freq').value, 10);
+  const bw_hz   = parseInt(document.getElementById('radio-bw').value, 10);
+  const sf      = parseInt(document.getElementById('radio-sf').value, 10);
+  const cr      = parseInt(document.getElementById('radio-cr').value, 10);
+  const txp     = parseInt(document.getElementById('radio-txp').value, 10);
+  if (!freq_hz || !bw_hz || !sf || !cr || isNaN(txp)) { alert('Fill all radio fields'); return; }
+  if (!confirm('Save radio config and reboot? You will lose the SSE connection briefly.')) return;
+  try {
+    await api('/api/radio', { method: 'POST', body: { freq_hz, bw_hz, sf, cr, txp } });
+    document.body.innerHTML = '<main><h2>Rebooting…</h2><p class="muted">Wait ~10 s and reload.</p></main>';
+  } catch (e) {
+    alert('Save failed: ' + (e.data?.error || e.message));
+  }
+}
+
+async function resetRadio() {
+  if (!confirm('Clear saved radio config and reboot?')) return;
+  try {
+    await api('/api/radio/reset', { method: 'POST', body: {} });
+    document.body.innerHTML = '<main><h2>Rebooting…</h2><p class="muted">Wait ~10 s and reload.</p></main>';
+  } catch (e) {
+    alert('Reset failed: ' + (e.data?.error || e.message));
   }
 }
 

@@ -823,21 +823,21 @@ extern char bt_dh[16];
 #endif
 void draw_disp_area() {
   #if defined(HAS_LXMF_GATEWAY)
-    // Override the normal display when an LXMF unlock code is active.
+    // Override the normal display when an identity code is active.
     // Single-use, 60 s TTL — readable from across the room is the point.
-    const std::string& unlock_code = Web::WebUI::unlock_code_for_display();
-    if (!unlock_code.empty() && device_init_done && !firmware_update_mode) {
-      uint32_t remaining_ms = Web::WebUI::unlock_remaining_ms();
+    const std::string& id_code = Web::WebUI::identity_code_for_display();
+    if (!id_code.empty() && device_init_done && !firmware_update_mode) {
+      uint32_t remaining_ms = Web::WebUI::identity_code_remaining_ms();
       disp_area.fillRect(0, 0, disp_area.width(), disp_area.height(), SSD1306_BLACK);
       disp_area.setFont(SMALL_FONT);
       disp_area.setTextWrap(false);
       disp_area.setTextColor(SSD1306_WHITE);
       disp_area.setTextSize(1);
       disp_area.setCursor(8, 9);
-      disp_area.print("UNLOCK");
+      disp_area.print("ID CODE");
       disp_area.setTextSize(2);
       disp_area.setCursor(2, 28);
-      disp_area.print(unlock_code.c_str());
+      disp_area.print(id_code.c_str());
       disp_area.setTextSize(1);
       disp_area.setCursor(8, 56);
       disp_area.printf("%lus left", (unsigned long)((remaining_ms + 999) / 1000));

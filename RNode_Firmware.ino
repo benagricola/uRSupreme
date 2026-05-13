@@ -2351,12 +2351,18 @@ void sleep_now() {
   #endif
 }
 
+// Long-short double-press gesture state for the LXMF identity-code path.
+// A press in the 700ms..5000ms range arms the gesture for
+// LXMF_GESTURE_WINDOW_MS; the next sub-700ms press while armed fires the
+// identity-code request. Single short presses (no preceding long press)
+// fall through to the existing BT toggle behaviour.
+static unsigned long lxmf_long_press_armed_ms = 0;
+#define LXMF_GESTURE_WINDOW_MS 2000UL
+
 void button_event(uint8_t event, unsigned long duration) {
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
     // Unblank the display on any press, but don't otherwise consume the
-    // press — we want the short-press unlock action to fire even if the
-    // display happened to be blanked. The BT toggle stays gated by
-    // was_blanked so a casual wake doesn't accidentally toggle BT.
+    // press for action dispatch.
     bool was_blanked = display_blanked;
     if (was_blanked) display_unblank();
 
@@ -2368,20 +2374,31 @@ void button_event(uint8_t event, unsigned long duration) {
         console_active = true;
         console_start();
       #endif
+      lxmf_long_press_armed_ms = 0;
     } else if (duration > 5000) {
       #if HAS_BLUETOOTH || HAS_BLE
         if (bt_state != BT_STATE_CONNECTED) { bt_enable_pairing(); }
       #endif
+      lxmf_long_press_armed_ms = 0;
     } else if (duration > 700) {
       #if HAS_SLEEP
         sleep_now();
       #endif
+      #if defined(HAS_LXMF_GATEWAY)
+        // Arm the long-short gesture. Next short press within
+        // LXMF_GESTURE_WINDOW_MS fires the identity code request.
+        lxmf_long_press_armed_ms = millis();
+      #endif
     } else {
       #if defined(HAS_LXMF_GATEWAY)
-        // Always fire the LXMF unlock code on a short press, including
-        // when the display was blanked. Code is printed to serial and
-        // valid for 60 s — required to create accounts or log in.
-        Web::WebUI::on_button_unlock();
+        unsigned long now = millis();
+        if (lxmf_long_press_armed_ms != 0 &&
+            (now - lxmf_long_press_armed_ms) < LXMF_GESTURE_WINDOW_MS) {
+          lxmf_long_press_armed_ms = 0;
+          Web::WebUI::on_button_request_identity_code();
+          // Gesture consumed — don't also toggle BT this press.
+          return;
+        }
       #endif
       #if HAS_BLUETOOTH || HAS_BLE
       if (!was_blanked && bt_state != BT_STATE_CONNECTED) {

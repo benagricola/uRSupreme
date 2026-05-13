@@ -248,7 +248,10 @@ namespace Web {
 
     static void handle_spa() {
       server.sendHeader("Content-Encoding", "gzip");
-      server.sendHeader("Cache-Control", "no-cache");
+      // no-store, not no-cache: no-cache lets the browser keep a copy and
+      // revalidate, but our handler doesn't implement 304, so stale SPAs
+      // get served. no-store guarantees a fresh fetch every load.
+      server.sendHeader("Cache-Control", "no-store");
       server.send_P(200, "text/html",
                     reinterpret_cast<const char*>(Web::SPA_HTML_GZ),
                     Web::SPA_HTML_GZ_LEN);

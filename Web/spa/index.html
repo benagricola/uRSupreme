@@ -29,6 +29,26 @@ label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
 .msg.in  { border-left: 3px solid #58a6ff; }
 .msg .meta { font-size: 11px; color: #8b949e; font-family: ui-monospace, monospace; display: flex; gap: 8px; margin-bottom: 4px; }
 .msg .body { white-space: pre-wrap; word-break: break-word; }
+
+/* Chat-style bubbles */
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid #30363d; }
+.tab { background: transparent; border: none; color: #8b949e; padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; font-size: 13px; }
+.tab.active { color: #c9d1d9; border-bottom-color: #58a6ff; }
+.tab:hover { color: #c9d1d9; }
+.conv { background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+.conv-head { padding: 10px 12px; display: flex; gap: 8px; align-items: center; cursor: pointer; user-select: none; }
+.conv-head:hover { background: #1c2128; }
+.conv-head .name { font-weight: 600; flex: 1; }
+.conv-head .addr { font-family: ui-monospace, monospace; font-size: 10px; color: #6e7681; }
+.conv-head .last { font-size: 11px; color: #8b949e; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-head .when { font-size: 11px; color: #6e7681; }
+.conv-body { padding: 8px 12px 12px; border-top: 1px solid #30363d; display: flex; flex-direction: column; gap: 6px; }
+.bubble { max-width: 80%; padding: 6px 10px; border-radius: 12px; font-size: 13px; word-break: break-word; white-space: pre-wrap; }
+.bubble.in  { align-self: flex-start; background: #21262d; border: 1px solid #30363d; }
+.bubble.out { align-self: flex-end;   background: #1f6f3a; border: 1px solid #2ea043; }
+.bubble .bmeta { font-size: 10px; opacity: 0.65; margin-top: 2px; font-family: ui-monospace, monospace; }
+.bubble.bad { border-color: #9a3232; }
+.empty-state { padding: 24px 12px; text-align: center; color: #6e7681; font-size: 13px; }
 .warn { background: #5a1e02; border: 1px solid #a04500; color: #ffa657; padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
 .muted { color: #6e7681; font-size: 12px; }
 .mono { font-family: ui-monospace, monospace; font-size: 12px; }
@@ -107,73 +127,74 @@ a { color: #58a6ff; }
 
 <!-- Messaging -->
 <section id="view-messages" class="hide">
-  <h2>Compose</h2>
-  <div class="card">
-    <label>To (LXMF address — 32 hex chars)</label>
-    <input id="compose-to" class="mono" placeholder="abcdef0123456789abcdef0123456789">
-    <label style="margin-top:8px">Title <span class="muted">(optional)</span></label>
-    <input id="compose-title">
-    <label style="margin-top:8px">Message</label>
-    <textarea id="compose-body" rows="3"></textarea>
-    <div class="row" style="margin-top:10px">
-      <button onclick="sendMessage()">Send</button>
-      <button class="secondary" onclick="forceAnnounce()">Announce me</button>
-    </div>
-    <div id="compose-status" class="muted" style="margin-top:8px"></div>
+  <div class="tabs">
+    <button class="tab active" data-tab="tab-chat">Chat</button>
+    <button class="tab" data-tab="tab-settings">Settings</button>
   </div>
 
-  <h2 style="margin-top:24px">Inbox</h2>
-  <div id="inbox-list"></div>
-
-  <h2 style="margin-top:24px">Sent</h2>
-  <div id="outbox-list"></div>
-
-  <h2 style="margin-top:24px">Recent announces</h2>
-  <div class="card">
-    <p class="muted">LXMF endpoints (aspect = lxmf.delivery) that have announced themselves to this node. Only addressable endpoints land here — transport-relay announces are filtered out at the Reticulum layer. The hash shown here is what you send messages to.</p>
-    <div class="row">
-      <button class="secondary" onclick="loadAnnounces()">Refresh</button>
+  <div id="tab-chat">
+    <div class="card">
+      <label>Compose</label>
+      <div class="row">
+        <input id="compose-to" class="mono" placeholder="LXMF address (32 hex)">
+      </div>
+      <div class="row">
+        <input id="compose-title" placeholder="title (optional)">
+      </div>
+      <textarea id="compose-body" rows="2" placeholder="message"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button onclick="sendMessage()">Send</button>
+        <button class="secondary" onclick="forceAnnounce()">Announce me</button>
+      </div>
+      <div id="compose-status" class="muted" style="margin-top:6px"></div>
     </div>
-    <div id="announces-list"></div>
+
+    <h2 style="margin-top:16px">Conversations</h2>
+    <div id="conversations-list"></div>
   </div>
 
-  <h2 style="margin-top:24px">Known paths (all destinations)</h2>
-  <div class="card">
-    <p class="muted">Destinations the device has learned about via announces. Click "use" to copy a hash to the compose form. Hash here = lxmf.delivery address if Columba/Sideband announced it.</p>
-    <div class="row">
-      <button class="secondary" onclick="loadPaths()">Refresh</button>
+  <div id="tab-settings" class="hide">
+    <h2>Recent announces</h2>
+    <div class="card">
+      <p class="muted">LXMF endpoints that announced themselves. Refreshes every 10s automatically.</p>
+      <div id="announces-list"></div>
     </div>
-    <div id="paths-list" class="muted"></div>
-  </div>
 
-  <h2 style="margin-top:24px">Radio</h2>
-  <div class="card">
-    <p class="muted">Saving reboots the device into TNC mode. Common values: freq 868000000 (EU) / 915000000 (NA), bw 125000, sf 8, cr 5, txp 17.</p>
-    <div class="row">
-      <div><label>Frequency (Hz)</label><input id="radio-freq" inputmode="numeric"></div>
-      <div><label>Bandwidth (Hz)</label><input id="radio-bw" inputmode="numeric"></div>
+    <h2 style="margin-top:16px">Known paths</h2>
+    <div class="card">
+      <p class="muted">All destinations known via announces (any aspect). Refreshes every 10s.</p>
+      <div id="paths-list" class="muted"></div>
     </div>
-    <div class="row">
-      <div><label>SF (5-12)</label><input id="radio-sf" inputmode="numeric"></div>
-      <div><label>CR (5-8)</label><input id="radio-cr" inputmode="numeric"></div>
-      <div><label>TXP (dBm)</label><input id="radio-txp" inputmode="numeric"></div>
-    </div>
-    <div class="row" style="margin-top:8px">
-      <button onclick="saveRadio()">Save and reboot</button>
-      <button class="secondary" onclick="loadRadio()">Reload</button>
-      <button class="danger" onclick="resetRadio()">Clear config</button>
-    </div>
-    <div id="radio-status" class="muted mono" style="margin-top:8px"></div>
-  </div>
 
-  <h2 style="margin-top:24px">Contacts</h2>
-  <div class="card">
-    <p class="muted">Stored only in this browser.</p>
-    <div id="contacts-list"></div>
-    <div class="row" style="margin-top:8px">
-      <input id="contact-name" placeholder="Name">
-      <input id="contact-addr" placeholder="LXMF address" class="mono">
-      <button onclick="addContact()">Add</button>
+    <h2 style="margin-top:16px">Radio</h2>
+    <div class="card">
+      <p class="muted">Saving reboots the device. Common: freq 868000000 (EU) / 915000000 (NA), bw 125000, sf 8, cr 5, txp 17.</p>
+      <div class="row">
+        <div><label>Frequency (Hz)</label><input id="radio-freq" inputmode="numeric"></div>
+        <div><label>Bandwidth (Hz)</label><input id="radio-bw" inputmode="numeric"></div>
+      </div>
+      <div class="row">
+        <div><label>SF (5-12)</label><input id="radio-sf" inputmode="numeric"></div>
+        <div><label>CR (5-8)</label><input id="radio-cr" inputmode="numeric"></div>
+        <div><label>TXP (dBm)</label><input id="radio-txp" inputmode="numeric"></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button onclick="saveRadio()">Save and reboot</button>
+        <button class="secondary" onclick="loadRadio()">Reload</button>
+        <button class="danger" onclick="resetRadio()">Clear config</button>
+      </div>
+      <div id="radio-status" class="muted mono" style="margin-top:8px"></div>
+    </div>
+
+    <h2 style="margin-top:16px">Contacts</h2>
+    <div class="card">
+      <p class="muted">Stored only in this browser.</p>
+      <div id="contacts-list"></div>
+      <div class="row" style="margin-top:8px">
+        <input id="contact-name" placeholder="Name">
+        <input id="contact-addr" placeholder="LXMF address" class="mono">
+        <button onclick="addContact()">Add</button>
+      </div>
     </div>
   </div>
 </section>
@@ -193,6 +214,11 @@ let state = {
   contacts: JSON.parse(localStorage.getItem(LS_CONTACTS) || '{}'),
   last_inbox_seq: 0,
   evt: null,
+  inboxMessages: [],
+  outboxMessages: [],
+  expandedPeer: null,
+  activeTab: 'tab-chat',
+  refreshTimer: null,
 };
 
 function show(id) {
@@ -328,6 +354,7 @@ function logout() {
   localStorage.removeItem(LS_TOKEN);
   localStorage.removeItem(LS_ACCT);
   if (state.evt) { state.evt.close(); state.evt = null; }
+  stopAutoRefresh();
   document.getElementById('logout-btn').style.display = 'none';
   document.getElementById('me-address').textContent = '';
   refresh();
@@ -340,11 +367,9 @@ async function enterMessageView() {
   document.getElementById('me-address').textContent = a.address || state.account_id;
   await loadInbox();
   await loadOutbox();
-  await loadAnnounces();
-  await loadRadio();
-  await loadPaths();
   renderContacts();
   openEvents();
+  startAutoRefresh();
 }
 
 async function loadAnnounces() {
@@ -432,35 +457,140 @@ async function loadPaths() {
 async function loadInbox() {
   const r = await api('/api/accounts/' + state.account_id + '/inbox?limit=50');
   state.last_inbox_seq = r.next_since;
-  renderMessages('inbox-list', r.messages, 'in');
+  state.inboxMessages = r.messages || [];
+  renderConversations();
 }
 
 async function loadOutbox() {
   const r = await api('/api/accounts/' + state.account_id + '/outbox?limit=50');
-  renderMessages('outbox-list', r.messages, 'out');
+  state.outboxMessages = r.messages || [];
+  renderConversations();
 }
 
-function renderMessages(elId, msgs, dir) {
-  const el = document.getElementById(elId);
+function renderConversations() {
+  const el = document.getElementById('conversations-list');
   el.innerHTML = '';
-  if (msgs.length === 0) { el.innerHTML = '<p class="muted">(empty)</p>'; return; }
-  for (const m of [...msgs].reverse()) {
-    const div = document.createElement('div');
-    div.className = 'msg ' + dir;
-    const peerName = state.contacts[m.peer] || '';
-    const sigPill = dir === 'in'
-      ? `<span class="pill ${m.sig_ok ? 'ok' : 'bad'}">sig ${m.sig_ok ? 'ok' : 'bad'}</span>`
-      : `<span class="pill">${m.status}</span>`;
-    div.innerHTML = `
-      <div class="meta">
-        <span>${dir === 'in' ? 'from' : 'to'}: ${escapeHtml(peerName) || m.peer}</span>
-        <span>${formatTs(m.ts)}</span>
-        ${sigPill}
-      </div>
-      ${m.title ? '<div><strong>'+escapeHtml(m.title)+'</strong></div>' : ''}
-      <div class="body">${escapeHtml(m.body)}</div>`;
-    el.appendChild(div);
+
+  // Group by peer.
+  const byPeer = new Map();
+  for (const m of state.inboxMessages)  pushMsg(byPeer, m, 'in');
+  for (const m of state.outboxMessages) pushMsg(byPeer, m, 'out');
+
+  // Sort peers by most recent message timestamp, newest first.
+  const peers = [...byPeer.values()].sort((a, b) => b.lastTs - a.lastTs);
+
+  if (peers.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = 'No conversations yet. Compose above, or wait for incoming messages.';
+    el.appendChild(empty);
+    return;
   }
+
+  for (const c of peers) {
+    const conv = document.createElement('div');
+    conv.className = 'conv';
+
+    // Header
+    const head = document.createElement('div');
+    head.className = 'conv-head';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'name';
+    nameSpan.textContent = state.contacts[c.peer] || c.peer.substring(0, 8) + '…';
+    const addrSpan = document.createElement('span');
+    addrSpan.className = 'addr';
+    addrSpan.textContent = c.peer;
+    const lastSpan = document.createElement('span');
+    lastSpan.className = 'last';
+    lastSpan.textContent = c.lastBody;
+    const whenSpan = document.createElement('span');
+    whenSpan.className = 'when';
+    whenSpan.textContent = formatRelTs(c.lastTs);
+    head.append(nameSpan, addrSpan, lastSpan, whenSpan);
+    head.addEventListener('click', () => {
+      state.expandedPeer = state.expandedPeer === c.peer ? null : c.peer;
+      renderConversations();
+    });
+    conv.appendChild(head);
+
+    // Body (only if expanded)
+    if (state.expandedPeer === c.peer) {
+      const body = document.createElement('div');
+      body.className = 'conv-body';
+      // Sort messages oldest → newest within conversation.
+      const msgs = [...c.msgs].sort((a, b) => a.ts - b.ts);
+      for (const m of msgs) {
+        const bub = document.createElement('div');
+        bub.className = 'bubble ' + m.dir + (m.dir === 'in' && m.sig_ok === false ? ' bad' : '');
+        if (m.title) {
+          const t = document.createElement('div');
+          t.style.fontWeight = '600';
+          t.textContent = m.title;
+          bub.appendChild(t);
+        }
+        const bodyDiv = document.createElement('div');
+        bodyDiv.textContent = m.body;
+        bub.appendChild(bodyDiv);
+        const meta = document.createElement('div');
+        meta.className = 'bmeta';
+        const tsStr = formatTs(m.ts);
+        if (m.dir === 'out') meta.textContent = tsStr + ' · ' + (m.status || 'sent');
+        else                 meta.textContent = tsStr + (m.sig_ok === false ? ' · sig BAD' : '');
+        bub.appendChild(meta);
+        body.appendChild(bub);
+      }
+      // Quick-reply
+      const reply = document.createElement('div');
+      reply.className = 'row';
+      reply.style.marginTop = '6px';
+      const replyInput = document.createElement('input');
+      replyInput.placeholder = 'Reply…';
+      const replyBtn = document.createElement('button');
+      replyBtn.textContent = 'Send';
+      const sendReply = async () => {
+        const text = replyInput.value;
+        if (!text) return;
+        replyBtn.disabled = true;
+        try {
+          await api('/api/accounts/' + state.account_id + '/send', { method: 'POST', body: { to: c.peer, title: '', body: text } });
+          replyInput.value = '';
+          await loadOutbox();
+        } catch (e) {
+          alert('Send failed: ' + (e.data?.error || e.message));
+        }
+        replyBtn.disabled = false;
+      };
+      replyBtn.addEventListener('click', sendReply);
+      replyInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendReply(); });
+      reply.append(replyInput, replyBtn);
+      body.appendChild(reply);
+      conv.appendChild(body);
+    }
+
+    el.appendChild(conv);
+  }
+}
+
+function pushMsg(byPeer, m, dir) {
+  let c = byPeer.get(m.peer);
+  if (!c) {
+    c = { peer: m.peer, msgs: [], lastTs: 0, lastBody: '' };
+    byPeer.set(m.peer, c);
+  }
+  c.msgs.push({ ...m, dir });
+  if (m.ts > c.lastTs) {
+    c.lastTs = m.ts;
+    c.lastBody = (dir === 'out' ? '→ ' : '') + (m.body || '');
+  }
+}
+
+function formatRelTs(ts) {
+  if (!ts) return '';
+  const ageS = (Date.now() / 1000) - ts;
+  if (ageS < 60)    return Math.floor(ageS) + 's';
+  if (ageS < 3600)  return Math.floor(ageS / 60) + 'm';
+  if (ageS < 86400) return Math.floor(ageS / 3600) + 'h';
+  return new Date(ts * 1000).toLocaleDateString();
 }
 
 async function sendMessage() {
@@ -677,6 +807,47 @@ function escapeHtml(s) {
 }
 
 document.getElementById('logout-btn').addEventListener('click', logout);
+
+// Tab switching: bind once on load, drive visibility from data-tab.
+for (const t of document.querySelectorAll('.tab')) {
+  t.addEventListener('click', () => switchTab(t.dataset.tab));
+}
+
+function switchTab(name) {
+  state.activeTab = name;
+  for (const t of document.querySelectorAll('.tab')) {
+    t.classList.toggle('active', t.dataset.tab === name);
+  }
+  for (const id of ['tab-chat', 'tab-settings']) {
+    document.getElementById(id).classList.toggle('hide', id !== name);
+  }
+  // Refresh the settings views on entry so they don't show stale data
+  // from when the user last opened them.
+  if (name === 'tab-settings') {
+    loadAnnounces();
+    loadPaths();
+    loadRadio();
+  }
+}
+
+// Periodic auto-refresh for settings views. Polls every 10 s, but only
+// while the Settings tab is visible to keep main-loop load low on the
+// device.
+function startAutoRefresh() {
+  if (state.refreshTimer) return;
+  state.refreshTimer = setInterval(() => {
+    if (state.activeTab === 'tab-settings' && state.token) {
+      loadAnnounces();
+      loadPaths();
+    }
+  }, 10000);
+}
+
+function stopAutoRefresh() {
+  if (!state.refreshTimer) return;
+  clearInterval(state.refreshTimer);
+  state.refreshTimer = null;
+}
 
 refresh();
 </script>

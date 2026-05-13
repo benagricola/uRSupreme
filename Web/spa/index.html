@@ -432,21 +432,34 @@ async function loadPaths() {
     for (const p of r.paths) {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 0;font-size:12px';
+      const left = document.createElement('span');
+      left.style.flex = '1';
       const destSpan = document.createElement('span');
       destSpan.className = 'mono';
-      destSpan.style.flex = '1';
       destSpan.textContent = p.dest;
+      left.appendChild(destSpan);
+      if (p.display_name) {
+        const nameSpan = document.createElement('span');
+        nameSpan.style.marginLeft = '6px';
+        nameSpan.textContent = p.display_name;
+        left.appendChild(nameSpan);
+      }
       const hopsPill = document.createElement('span');
       hopsPill.className = 'pill';
       hopsPill.textContent = p.hops + 'h';
+      const ageMin = Math.floor(p.age_ms / 60000);
+      const agePill = document.createElement('span');
+      agePill.className = 'pill';
+      agePill.textContent = (ageMin < 1 ? Math.floor(p.age_ms/1000) + 's' : ageMin + 'm') + ' ago';
       const useBtn = document.createElement('button');
       useBtn.className = 'secondary';
       useBtn.textContent = 'use';
       useBtn.addEventListener('click', () => {
         document.getElementById('compose-to').value = p.dest;
         document.getElementById('compose-body').focus();
+        switchTab('tab-chat');
       });
-      row.append(destSpan, hopsPill, useBtn);
+      row.append(left, hopsPill, agePill, useBtn);
       el.appendChild(row);
     }
   } catch (e) {

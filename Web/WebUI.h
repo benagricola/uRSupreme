@@ -367,7 +367,7 @@ namespace Web {
 
     static void handle_announces() {
       if (require_auth().empty()) return;
-      const auto& ring = LXMF::AnnounceLog::records();
+      const auto& ring = LXMF::AnnounceLog::announces();
       JsonDocument doc;
       JsonArray arr = doc["announces"].to<JsonArray>();
       uint32_t now = millis();
@@ -662,20 +662,27 @@ namespace Web {
 
     static void handle_paths_list() {
       if (require_auth().empty()) return;
-      // Dump everything in Transport::_path_table. Each entry is one
-      // destination the device has learned about via an announce, along
-      // with hop count and the timestamp of the announce.
-      const auto& tbl = RNS::Transport::get_path_table();
+      // We read from AnnounceLog::paths() rather than Transport's path
+      // table because microReticulum's get_path_table() returns the
+      // in-memory _path_table which is dead code in current versions
+      // (see Transport.cpp:2204-2216 — the surrounding logic was
+      // migrated to the microStore-backed _new_path_table which has no
+      // public iteration API). Our path log is fed by an
+      // AnnounceHandler registered with nullptr aspect_filter, so it
+      // sees every announce regardless of aspect.
+      const auto& ring = LXMF::AnnounceLog::paths();
       JsonDocument doc;
       JsonArray arr = doc["paths"].to<JsonArray>();
-      for (const auto& kv : tbl) {
+      uint32_t now = millis();
+      for (auto it = ring.rbegin(); it != ring.rend(); ++it) {
         JsonObject obj = arr.add<JsonObject>();
-        obj["dest"]  = kv.first.toHex();
-        obj["hops"]  = (int)kv.second._hops;
-        obj["ts"]    = kv.second._timestamp;
-        obj["from"]  = kv.second._received_from.toHex();
+        obj["dest"]   = it->destination.toHex();
+        obj["age_ms"] = (uint32_t)(now - it->received_ms);
+        if (!it->display_name.empty()) obj["display_name"] = it->display_name;
+        // Live hop count from Transport.
+        obj["hops"]   = (int)RNS::Transport::hops_to(it->destination);
       }
-      doc["count"] = (uint32_t)tbl.size();
+      doc["count"] = (uint32_t)ring.size();
       send_json(200, doc);
     }
 

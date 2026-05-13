@@ -146,6 +146,10 @@ def patch_announce_reject_logs(env):
          'NOTICEF("Received invalid announce for %s: Destination mismatch.", packet.destination_hash().toHex().c_str());'),
         ('DEBUGF("Received invalid announce for %s: Invalid signature.", packet.destination_hash().toHex().c_str());',
          'NOTICEF("Received invalid announce for %s: Invalid signature.", packet.destination_hash().toHex().c_str());'),
+        ('DEBUGF("Decryption failed because the token size %lu was invalid.", ciphertext_token.size());',
+         'NOTICEF("Decryption failed because the token size %lu was invalid.", ciphertext_token.size());'),
+        ('DEBUGF("Decryption by %s failed: %s", toString().c_str(), e.what());',
+         'NOTICEF("Decryption by %s failed: %s", toString().c_str(), e.what());'),
     ]
     changed = False
     for old, new in swaps:

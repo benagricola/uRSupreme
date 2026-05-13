@@ -39,6 +39,90 @@ def embed_spa(env):
     print(f"*** Embedded SPA: {len(html)} bytes -> {len(gz)} bytes gzipped at {dst}")
 
 
+ANNOUNCE_RATCHET_PATCH_MARKER = "// PATCH-RATCHET-V1"
+
+
+def patch_announce_ratchet(env):
+    """
+    Teach `microReticulum/src/Identity.cpp::validate_announce` to handle
+    the 32-byte announce ratchet field that newer upstream Reticulum
+    (>=0.7.x) inserts between random_hash and the signature when
+    packet.context_flag == FLAG_SET. Empirically observed because
+    Columba on Android (using upstream Python Reticulum) sends
+    announces with FLAG_SET, microReticulum 0.3.1 doesn't know about
+    the ratchet, so its signed_data construction omits 32 bytes and
+    Ed25519 signature verification fails.
+
+    Upstream Python signed_data layout:
+        destination_hash + public_key + name_hash + random_hash
+            + ratchet + app_data
+
+    The data offsets for the signature and app_data shift by 32 bytes
+    when has_ratchet, so we recompute them.
+
+    Patch is gated on a sentinel marker comment to keep it idempotent.
+    """
+    project_dir = env.subst("$PROJECT_DIR")
+    libdeps = os.path.join(project_dir, ".pio", "libdeps", env.subst("$PIOENV"),
+                           "microReticulum", "src", "Identity.cpp")
+    if not os.path.exists(libdeps):
+        return
+    with open(libdeps, "r") as f:
+        src = f.read()
+    if ANNOUNCE_RATCHET_PATCH_MARKER in src:
+        return  # already patched
+
+    bad = (
+        "\t\t\tBytes signature = packet.data().mid(KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8, SIGLENGTH/8);\n"
+        "\t\t\t//TRACEF(\"Identity::validate_announce: signature:        %s\", signature.toHex().c_str());\n"
+        "\t\t\tBytes app_data;\n"
+        "\t\t\tif (packet.data().size() > (KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8)) {\n"
+        "\t\t\t\tapp_data = packet.data().mid(KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8);\n"
+        "\t\t\t}\n"
+        "\t\t\t//TRACEF(\"Identity::validate_announce: app_data:         %s\", app_data.toHex().c_str());\n"
+        "\t\t\t//TRACEF(\"Identity::validate_announce: app_data text:    %s\", app_data.toString().c_str());\n"
+        "\n"
+        "\t\t\tBytes signed_data;\n"
+        "\t\t\tsigned_data << packet.destination_hash() << public_key << name_hash << random_hash+app_data;\n"
+        "\t\t\t//TRACEF(\"Identity::validate_announce: signed_data:      %s\", signed_data.toHex().c_str());\n"
+        "\n"
+        "\t\t\tif (packet.data().size() <= KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8) {\n"
+        "\t\t\t\tapp_data.clear();\n"
+        "\t\t\t}\n"
+    )
+    good = (
+        "\t\t\t" + ANNOUNCE_RATCHET_PATCH_MARKER + "\n"
+        "\t\t\tconst size_t header_len = KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8;\n"
+        "\t\t\tconst bool has_ratchet = (packet.context_flag() == RNS::Type::Packet::FLAG_SET);\n"
+        "\t\t\tBytes ratchet;\n"
+        "\t\t\tif (has_ratchet && packet.data().size() >= header_len + RATCHETSIZE/8) {\n"
+        "\t\t\t\tratchet = packet.data().mid(header_len, RATCHETSIZE/8);\n"
+        "\t\t\t}\n"
+        "\t\t\tconst size_t sig_offset = header_len + (has_ratchet ? RATCHETSIZE/8 : 0);\n"
+        "\t\t\tBytes signature = packet.data().mid(sig_offset, SIGLENGTH/8);\n"
+        "\t\t\tBytes app_data;\n"
+        "\t\t\tif (packet.data().size() > (sig_offset + SIGLENGTH/8)) {\n"
+        "\t\t\t\tapp_data = packet.data().mid(sig_offset + SIGLENGTH/8);\n"
+        "\t\t\t}\n"
+        "\n"
+        "\t\t\tBytes signed_data;\n"
+        "\t\t\tsigned_data << packet.destination_hash() << public_key << name_hash << random_hash;\n"
+        "\t\t\tif (has_ratchet) signed_data << ratchet;\n"
+        "\t\t\tsigned_data << app_data;\n"
+        "\n"
+        "\t\t\tif (packet.data().size() <= sig_offset + SIGLENGTH/8) {\n"
+        "\t\t\t\tapp_data.clear();\n"
+        "\t\t\t}\n"
+    )
+    if bad not in src:
+        print("*** WARNING: announce-ratchet patch didn't find expected source — skipped")
+        return
+    src = src.replace(bad, good)
+    with open(libdeps, "w") as f:
+        f.write(src)
+    print("*** Patched Identity::validate_announce to handle announce ratchet at", libdeps)
+
+
 def patch_announce_reject_logs(env):
     """
     Upgrade the two DEBUGF rejection logs in
@@ -297,6 +381,7 @@ print("PROGNAME:", env.subst("$PROGNAME"))
 print("*** Running custom script...")
 patch_microreticulum_validate(env)
 patch_announce_reject_logs(env)
+patch_announce_ratchet(env)
 embed_spa(env)
 platform = env.GetProjectOption("platform")
 print("Platform:", platform)

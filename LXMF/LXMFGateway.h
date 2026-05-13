@@ -174,6 +174,14 @@ namespace LXMF {
       return n;
     }
 
+    // Used by AnnounceLog to drop echoes of our own accounts.
+    static bool is_own_destination(const RNS::Bytes& dest) {
+      for (auto& a : accounts_storage()) {
+        if (a.active && a.lxmf.address() == dest) return true;
+      }
+      return false;
+    }
+
   private:
     static std::array<LXMFAccount, LXMF_GATEWAY_MAX_ACCOUNTS>& accounts_storage() {
       static std::array<LXMFAccount, LXMF_GATEWAY_MAX_ACCOUNTS> s;
@@ -294,5 +302,10 @@ namespace LXMF {
     static inline bool _setup_done = false;
     static inline std::vector<LXMFAccount*> _active_view;
   };
+
+  // Implementation of the AnnounceLog shim declared in AnnounceLog.h.
+  inline bool announce_log_is_own_account(const RNS::Bytes& destination_hash) {
+    return LXMFGateway::is_own_destination(destination_hash);
+  }
 
 } // namespace LXMF

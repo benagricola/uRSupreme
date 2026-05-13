@@ -17,6 +17,7 @@
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
+#include "../LXMF/AnnounceLog.h"
 #include "AuthTokens.h"
 #include "SPAEmbedded.h"
 
@@ -221,8 +222,12 @@ namespace Web {
       server.on("/api/auth/logout",   HTTP_POST, handle_logout);
       // Accounts
       server.on("/api/accounts",      HTTP_POST, handle_create_account);
-      server.on(UriBraces("/api/accounts/{}"), HTTP_GET, handle_get_account);
+      server.on(UriBraces("/api/accounts/{}"), HTTP_GET,    handle_get_account);
+      server.on(UriBraces("/api/accounts/{}"), HTTP_DELETE, handle_delete_account);
+      server.on(UriBraces("/api/accounts/{}/delete"), HTTP_POST, handle_delete_account);
       server.on(UriBraces("/api/accounts/{}/announce"), HTTP_POST, handle_announce);
+      // Announces (recent LXMF endpoint announces seen by the device)
+      server.on("/api/announces",     HTTP_GET, handle_announces);
       server.on(UriBraces("/api/accounts/{}/inbox"),    HTTP_GET,  handle_inbox);
       server.on(UriBraces("/api/accounts/{}/outbox"),   HTTP_GET,  handle_outbox);
       server.on(UriBraces("/api/accounts/{}/send"),     HTTP_POST, handle_send);
@@ -341,6 +346,35 @@ namespace Web {
       doc["announce_interval_ms"] = a->announce_interval_ms;
       doc["inbox_size"]           = a->inbox  ? (uint32_t)a->inbox->size()  : 0;
       doc["outbox_size"]          = a->outbox ? (uint32_t)a->outbox->size() : 0;
+      send_json(200, doc);
+    }
+
+    static void handle_delete_account() {
+      LXMF::AccountId caller = require_auth();
+      if (caller.empty()) return;
+      std::string requested = std::string(server.pathArg(0).c_str());
+      if (caller != requested) { send_error(403, "forbidden"); return; }
+      AuthTokens::revoke_for_account(requested);
+      if (!LXMF::LXMFGateway::delete_account(requested)) {
+        send_error(404, "unknown_account");
+        return;
+      }
+      server.send(204, "text/plain", "");
+    }
+
+    static void handle_announces() {
+      if (require_auth().empty()) return;
+      const auto& ring = LXMF::AnnounceLog::records();
+      JsonDocument doc;
+      JsonArray arr = doc["announces"].to<JsonArray>();
+      uint32_t now = millis();
+      for (auto it = ring.rbegin(); it != ring.rend(); ++it) {
+        JsonObject obj = arr.add<JsonObject>();
+        obj["dest"]         = it->destination.toHex();
+        obj["display_name"] = it->display_name;
+        obj["age_ms"]       = (uint32_t)(now - it->received_ms);
+      }
+      doc["count"] = (uint32_t)ring.size();
       send_json(200, doc);
     }
 

@@ -128,7 +128,16 @@ a { color: #58a6ff; }
   <h2 style="margin-top:24px">Sent</h2>
   <div id="outbox-list"></div>
 
-  <h2 style="margin-top:24px">Known paths</h2>
+  <h2 style="margin-top:24px">Recent announces</h2>
+  <div class="card">
+    <p class="muted">LXMF endpoints (aspect = lxmf.delivery) that have announced themselves to this node. Only addressable endpoints land here — transport-relay announces are filtered out at the Reticulum layer. The hash shown here is what you send messages to.</p>
+    <div class="row">
+      <button class="secondary" onclick="loadAnnounces()">Refresh</button>
+    </div>
+    <div id="announces-list"></div>
+  </div>
+
+  <h2 style="margin-top:24px">Known paths (all destinations)</h2>
   <div class="card">
     <p class="muted">Destinations the device has learned about via announces. Click "use" to copy a hash to the compose form. Hash here = lxmf.delivery address if Columba/Sideband announced it.</p>
     <div class="row">
@@ -252,9 +261,18 @@ function renderAccountList() {
       <div class="mono muted">${a.address}</div>
       <div class="row" style="margin-top:8px">
         <button onclick="startLogin('${a.id}')">Login</button>
+        <button class="danger" onclick="deleteAccount('${a.id}','${escapeHtml(a.display_name)}')">Delete</button>
       </div>`;
     el.appendChild(div);
   }
+}
+
+async function deleteAccount(id, name) {
+  if (!confirm('Delete account "' + name + '"? This removes its identity, inbox, and outbox permanently.')) return;
+  // Need to log in first to delete — same bearer-auth gate as everything else.
+  state.account_id = id;
+  alert('To delete, log in to this account first (long-then-short-press the device button, type the identity code), then click Delete again.');
+  show('view-login');
 }
 
 function startLogin(account_id) {
@@ -310,10 +328,46 @@ async function enterMessageView() {
   document.getElementById('me-address').textContent = a.address || state.account_id;
   await loadInbox();
   await loadOutbox();
+  await loadAnnounces();
   await loadRadio();
   await loadPaths();
   renderContacts();
   openEvents();
+}
+
+async function loadAnnounces() {
+  const el = document.getElementById('announces-list');
+  try {
+    const r = await api('/api/announces');
+    if (!r.announces || r.announces.length === 0) { el.innerHTML = '<p class="muted">(none yet — wait for an LXMF announce)</p>'; return; }
+    el.innerHTML = '';
+    for (const a of r.announces) {
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #30363d;font-size:12px';
+      const ageMin = Math.floor(a.age_ms / 60000);
+      const ageStr = ageMin < 1 ? Math.floor(a.age_ms/1000) + 's' : ageMin + 'm';
+      div.innerHTML = `
+        <span style="flex:1">
+          <strong>${escapeHtml(a.display_name || '(no name)')}</strong>
+          <span class="mono muted" style="display:block">${a.dest}</span>
+        </span>
+        <span class="pill">${ageStr} ago</span>
+        <button class="secondary" onclick="document.getElementById('compose-to').value='${a.dest}';document.getElementById('compose-body').focus()">use</button>
+        <button class="secondary" onclick="addAnnounceAsContact('${a.dest}','${escapeHtml(a.display_name || '')}')">+contact</button>`;
+      el.appendChild(div);
+    }
+  } catch (e) {
+    el.textContent = 'Load failed: ' + (e.data?.error || e.message);
+  }
+}
+
+function addAnnounceAsContact(addr, suggestedName) {
+  const name = prompt('Save contact name for ' + addr + ':', suggestedName || '');
+  if (!name) return;
+  state.contacts[addr] = name;
+  localStorage.setItem(LS_CONTACTS, JSON.stringify(state.contacts));
+  renderContacts();
+  alert('Saved.');
 }
 
 async function loadPaths() {

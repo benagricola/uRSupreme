@@ -32,6 +32,7 @@
 #endif
 #if defined(HAS_LXMF_GATEWAY)
 #include "LXMF/LXMFGateway.h"
+#include "LXMF/AnnounceLog.h"
 #include "Web/WebUI.h"
 #endif
 
@@ -760,6 +761,7 @@ void setup() {
 #if defined(HAS_LXMF_GATEWAY)
       HEAD("Initializing LXMF gateway...", RNS::LOG_TRACE);
       LXMF::LXMFGateway::setup();
+      LXMF::AnnounceLog::setup();
 #endif
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);

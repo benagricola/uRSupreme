@@ -27,6 +27,9 @@
 #if defined(TCP_TRANSPORT)
 #include "TCPTransport.h"
 #endif
+#if defined(LXMF_PROBE_MULTI_IDENTITY) && LXMF_PROBE_MULTI_IDENTITY
+#include "LXMF/Probe.h"
+#endif
 
 #include <Arduino.h>
 #include <SPI.h>
@@ -731,6 +734,10 @@ void setup() {
       RNS::Destination destination(identity, RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
 #endif
       RNS::Destination destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
+
+#if defined(LXMF_PROBE_MULTI_IDENTITY) && LXMF_PROBE_MULTI_IDENTITY
+      LXMFProbe::run();
+#endif
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);
       if (op_mode == MODE_TNC) {

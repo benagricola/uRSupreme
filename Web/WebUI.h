@@ -18,6 +18,7 @@
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
 #include "AuthTokens.h"
+#include "SPAEmbedded.h"
 
 // EEPROM helpers + WiFi config constants from the existing firmware.
 // Used by the bootstrap-mode WiFi configure endpoint.
@@ -175,6 +176,9 @@ namespace Web {
     // ---- Routes ----
 
     static void register_routes() {
+      // SPA — single embedded HTML file, served gzipped at / and /index.html
+      server.on("/",            HTTP_GET, handle_spa);
+      server.on("/index.html",  HTTP_GET, handle_spa);
       // Public
       server.on("/api/info",          HTTP_GET,  handle_info);
       // Auth
@@ -194,6 +198,14 @@ namespace Web {
       // when no accounts exist on the device. Reboots on save.
       server.on("/api/wifi/scan",     HTTP_GET,  handle_wifi_scan);
       server.on("/api/wifi/configure",HTTP_POST, handle_wifi_configure);
+    }
+
+    static void handle_spa() {
+      server.sendHeader("Content-Encoding", "gzip");
+      server.sendHeader("Cache-Control", "no-cache");
+      server.send_P(200, "text/html",
+                    reinterpret_cast<const char*>(Web::SPA_HTML_GZ),
+                    Web::SPA_HTML_GZ_LEN);
     }
 
     static void handle_info() {

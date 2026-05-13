@@ -4,6 +4,41 @@ import hashlib
 import shutil
 
 
+def embed_spa(env):
+    """
+    Generate Web/SPAEmbedded.h from Web/spa/index.html on every build.
+    The HTML is the source of truth; the .h file is checked in to keep
+    PR diffs reviewable but is overwritten if the .html is newer.
+    """
+    project_dir = env.subst("$PROJECT_DIR")
+    src = os.path.join(project_dir, "Web", "spa", "index.html")
+    dst = os.path.join(project_dir, "Web", "SPAEmbedded.h")
+    if not os.path.exists(src):
+        return
+    if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+        return
+    with open(src, "rb") as f:
+        html = f.read()
+    # gzip for serving via Content-Encoding: gzip (saves ~60% on the wire)
+    import gzip
+    gz = gzip.compress(html, compresslevel=9)
+    body = ", ".join("0x{:02x}".format(b) for b in gz)
+    header = (
+        "// Auto-generated from Web/spa/index.html — do not edit by hand.\n"
+        "#pragma once\n"
+        "#include <pgmspace.h>\n"
+        "namespace Web {\n"
+        f"  static const size_t SPA_HTML_GZ_LEN = {len(gz)};\n"
+        "  static const uint8_t SPA_HTML_GZ[] PROGMEM = {\n"
+        f"    {body}\n"
+        "  };\n"
+        "}\n"
+    )
+    with open(dst, "w") as f:
+        f.write(header)
+    print(f"*** Embedded SPA: {len(html)} bytes -> {len(gz)} bytes gzipped at {dst}")
+
+
 def patch_microreticulum_validate(env):
     """
     Patch microReticulum's Identity::validate to actually return the result of
@@ -226,6 +261,7 @@ print("PROGNAME:", env.subst("$PROGNAME"))
 
 print("*** Running custom script...")
 patch_microreticulum_validate(env)
+embed_spa(env)
 platform = env.GetProjectOption("platform")
 print("Platform:", platform)
 targets = env.GetProjectOption("targets", [])

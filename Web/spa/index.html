@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>uR LXMF</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background: #0d1117; color: #c9d1d9; line-height: 1.4; }
+header { padding: 12px 16px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; gap: 12px; align-items: center; }
+header h1 { font-size: 16px; font-weight: 600; margin: 0; flex: 1; }
+header .me { font-family: ui-monospace, monospace; font-size: 11px; color: #8b949e; }
+main { padding: 16px; max-width: 760px; margin: 0 auto; }
+section { margin-bottom: 24px; }
+h2 { font-size: 14px; font-weight: 600; margin: 0 0 8px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.04em; }
+button, input, textarea, select { font-family: inherit; font-size: 14px; border-radius: 6px; border: 1px solid #30363d; background: #0d1117; color: #c9d1d9; padding: 6px 10px; }
+button { background: #238636; border-color: #2ea043; cursor: pointer; }
+button:hover { background: #2ea043; }
+button.secondary { background: #21262d; border-color: #30363d; }
+button.danger { background: #da3633; border-color: #f85149; }
+input, textarea, select { width: 100%; }
+input[readonly] { color: #6e7681; }
+label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
+.row { display: flex; gap: 8px; margin-bottom: 10px; }
+.row > * { flex: 1; }
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+.msg { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.msg.out { border-left: 3px solid #2ea043; }
+.msg.in  { border-left: 3px solid #58a6ff; }
+.msg .meta { font-size: 11px; color: #8b949e; font-family: ui-monospace, monospace; display: flex; gap: 8px; margin-bottom: 4px; }
+.msg .body { white-space: pre-wrap; word-break: break-word; }
+.warn { background: #5a1e02; border: 1px solid #a04500; color: #ffa657; padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
+.muted { color: #6e7681; font-size: 12px; }
+.mono { font-family: ui-monospace, monospace; font-size: 12px; }
+hr { border: none; border-top: 1px solid #30363d; margin: 16px 0; }
+a { color: #58a6ff; }
+.hide { display: none !important; }
+.pill { display: inline-block; padding: 1px 6px; font-size: 10px; border-radius: 10px; background: #30363d; }
+.pill.ok  { background: #1f6f3a; }
+.pill.bad { background: #9a3232; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>uR LXMF</h1>
+  <span class="me mono" id="me-address"></span>
+  <button class="secondary" id="logout-btn" style="display:none">logout</button>
+</header>
+
+<main>
+
+<div id="warn-unauth" class="warn hide">Not authenticated. Press the device button to get an unlock code.</div>
+
+<!-- Bootstrap WiFi setup -->
+<section id="view-bootstrap" class="hide">
+  <h2>First-time WiFi setup</h2>
+  <div class="card">
+    <p class="muted">This device is in bootstrap mode. Configure WiFi so you can reach the gateway from your home network.</p>
+    <div class="row">
+      <button class="secondary" onclick="scanWifi()">Scan</button>
+    </div>
+    <div id="scan-results"></div>
+    <hr>
+    <label>SSID</label>
+    <input id="wifi-ssid" placeholder="MyHomeWiFi">
+    <label style="margin-top:8px">Password</label>
+    <input id="wifi-psk" type="password" placeholder="optional">
+    <div class="row" style="margin-top:10px">
+      <button onclick="saveWifi()">Save and reboot</button>
+    </div>
+  </div>
+</section>
+
+<!-- Account picker / create -->
+<section id="view-accounts" class="hide">
+  <h2>Accounts</h2>
+  <div id="account-list"></div>
+  <div class="card">
+    <label>Create a new account</label>
+    <input id="new-display-name" placeholder="Display name">
+    <p class="muted" style="margin-top:8px">Press the device button to enable account creation, then type the first 6 chars of the unlock code shown on the serial console.</p>
+    <div class="row">
+      <input id="new-unlock-code" placeholder="unlock code (6 hex chars)" maxlength="6">
+      <button onclick="createAccount()">Create</button>
+    </div>
+  </div>
+</section>
+
+<!-- Login -->
+<section id="view-login" class="hide">
+  <h2>Login</h2>
+  <div class="card">
+    <p class="muted">Press the device button, then type the first 6 chars of the unlock code shown on the serial console.</p>
+    <label>Unlock code</label>
+    <input id="login-unlock-code" placeholder="6 hex chars" maxlength="6">
+    <div class="row" style="margin-top:8px">
+      <button onclick="login()">Login</button>
+      <button class="secondary" onclick="show('view-accounts')">Back</button>
+    </div>
+  </div>
+</section>
+
+<!-- Messaging -->
+<section id="view-messages" class="hide">
+  <h2>Compose</h2>
+  <div class="card">
+    <label>To (LXMF address — 32 hex chars)</label>
+    <input id="compose-to" class="mono" placeholder="abcdef0123456789abcdef0123456789">
+    <label style="margin-top:8px">Title <span class="muted">(optional)</span></label>
+    <input id="compose-title">
+    <label style="margin-top:8px">Message</label>
+    <textarea id="compose-body" rows="3"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button onclick="sendMessage()">Send</button>
+      <button class="secondary" onclick="forceAnnounce()">Announce me</button>
+    </div>
+    <div id="compose-status" class="muted" style="margin-top:8px"></div>
+  </div>
+
+  <h2 style="margin-top:24px">Inbox</h2>
+  <div id="inbox-list"></div>
+
+  <h2 style="margin-top:24px">Sent</h2>
+  <div id="outbox-list"></div>
+
+  <h2 style="margin-top:24px">Contacts</h2>
+  <div class="card">
+    <p class="muted">Stored only in this browser.</p>
+    <div id="contacts-list"></div>
+    <div class="row" style="margin-top:8px">
+      <input id="contact-name" placeholder="Name">
+      <input id="contact-addr" placeholder="LXMF address" class="mono">
+      <button onclick="addContact()">Add</button>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script>
+const LS_TOKEN = 'urlxmf.token';
+const LS_ACCT  = 'urlxmf.account';
+const LS_CONTACTS = 'urlxmf.contacts';
+
+let state = {
+  token: localStorage.getItem(LS_TOKEN) || null,
+  account_id: localStorage.getItem(LS_ACCT) || null,
+  accounts: [],
+  info: null,
+  contacts: JSON.parse(localStorage.getItem(LS_CONTACTS) || '{}'),
+  last_inbox_seq: 0,
+  evt: null,
+};
+
+function show(id) {
+  for (const s of document.querySelectorAll('section')) s.classList.add('hide');
+  document.getElementById(id).classList.remove('hide');
+}
+
+async function api(path, opts = {}) {
+  const headers = opts.headers || {};
+  if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+  if (opts.body && typeof opts.body !== 'string') {
+    headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  const r = await fetch(path, { ...opts, headers });
+  if (r.status === 204) return null;
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { _raw: text }; }
+  if (!r.ok) {
+    console.warn(path, r.status, data);
+    const err = new Error(data.error || ('HTTP ' + r.status));
+    err.status = r.status; err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+async function refresh() {
+  state.info = await api('/api/info');
+  state.accounts = state.info.accounts || [];
+
+  if (state.info.bootstrap) {
+    show('view-bootstrap');
+    return;
+  }
+
+  if (state.token && state.account_id) {
+    // Verify token still valid by hitting the account endpoint.
+    try {
+      await api('/api/accounts/' + state.account_id);
+      enterMessageView();
+      return;
+    } catch (e) {
+      if (e.status === 401) {
+        state.token = null; localStorage.removeItem(LS_TOKEN);
+      }
+    }
+  }
+  renderAccountList();
+  show('view-accounts');
+}
+
+function renderAccountList() {
+  const el = document.getElementById('account-list');
+  el.innerHTML = '';
+  if (state.accounts.length === 0) {
+    el.innerHTML = '<p class="muted">No accounts yet — create one below.</p>';
+    return;
+  }
+  for (const a of state.accounts) {
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `
+      <div><strong>${escapeHtml(a.display_name)}</strong></div>
+      <div class="mono muted">${a.address}</div>
+      <div class="row" style="margin-top:8px">
+        <button onclick="startLogin('${a.id}')">Login</button>
+      </div>`;
+    el.appendChild(div);
+  }
+}
+
+function startLogin(account_id) {
+  state.account_id = account_id;
+  show('view-login');
+}
+
+async function login() {
+  const proof = document.getElementById('login-unlock-code').value.trim().toLowerCase();
+  if (proof.length !== 6) { alert('Unlock code is 6 hex chars'); return; }
+  try {
+    const r = await api('/api/auth/login', { method: 'POST', body: { account_id: state.account_id, unlock_proof: proof } });
+    state.token = r.token;
+    localStorage.setItem(LS_TOKEN, state.token);
+    localStorage.setItem(LS_ACCT, state.account_id);
+    enterMessageView();
+  } catch (e) {
+    alert('Login failed: ' + (e.data?.error || e.message));
+  }
+}
+
+async function createAccount() {
+  const name  = document.getElementById('new-display-name').value.trim();
+  const proof = document.getElementById('new-unlock-code').value.trim().toLowerCase();
+  if (!name)  { alert('Display name required'); return; }
+  if (proof.length !== 6) { alert('Unlock code is 6 hex chars'); return; }
+  try {
+    const r = await api('/api/accounts', { method: 'POST', body: { display_name: name, unlock_proof: proof } });
+    state.token = r.token; state.account_id = r.id;
+    localStorage.setItem(LS_TOKEN, state.token);
+    localStorage.setItem(LS_ACCT, state.account_id);
+    enterMessageView();
+  } catch (e) {
+    alert('Create failed: ' + (e.data?.error || e.message));
+  }
+}
+
+function logout() {
+  api('/api/auth/logout', { method: 'POST' }).catch(()=>{});
+  state.token = null; state.account_id = null;
+  localStorage.removeItem(LS_TOKEN);
+  localStorage.removeItem(LS_ACCT);
+  if (state.evt) { state.evt.close(); state.evt = null; }
+  document.getElementById('logout-btn').style.display = 'none';
+  document.getElementById('me-address').textContent = '';
+  refresh();
+}
+
+async function enterMessageView() {
+  show('view-messages');
+  document.getElementById('logout-btn').style.display = '';
+  const a = (state.accounts.find(x => x.id === state.account_id)) || {};
+  document.getElementById('me-address').textContent = a.address || state.account_id;
+  await loadInbox();
+  await loadOutbox();
+  renderContacts();
+  openEvents();
+}
+
+async function loadInbox() {
+  const r = await api('/api/accounts/' + state.account_id + '/inbox?limit=50');
+  state.last_inbox_seq = r.next_since;
+  renderMessages('inbox-list', r.messages, 'in');
+}
+
+async function loadOutbox() {
+  const r = await api('/api/accounts/' + state.account_id + '/outbox?limit=50');
+  renderMessages('outbox-list', r.messages, 'out');
+}
+
+function renderMessages(elId, msgs, dir) {
+  const el = document.getElementById(elId);
+  el.innerHTML = '';
+  if (msgs.length === 0) { el.innerHTML = '<p class="muted">(empty)</p>'; return; }
+  for (const m of [...msgs].reverse()) {
+    const div = document.createElement('div');
+    div.className = 'msg ' + dir;
+    const peerName = state.contacts[m.peer] || '';
+    const sigPill = dir === 'in'
+      ? `<span class="pill ${m.sig_ok ? 'ok' : 'bad'}">sig ${m.sig_ok ? 'ok' : 'bad'}</span>`
+      : `<span class="pill">${m.status}</span>`;
+    div.innerHTML = `
+      <div class="meta">
+        <span>${dir === 'in' ? 'from' : 'to'}: ${escapeHtml(peerName) || m.peer}</span>
+        <span>${formatTs(m.ts)}</span>
+        ${sigPill}
+      </div>
+      ${m.title ? '<div><strong>'+escapeHtml(m.title)+'</strong></div>' : ''}
+      <div class="body">${escapeHtml(m.body)}</div>`;
+    el.appendChild(div);
+  }
+}
+
+async function sendMessage() {
+  const to    = document.getElementById('compose-to').value.trim().toLowerCase();
+  const title = document.getElementById('compose-title').value;
+  const body  = document.getElementById('compose-body').value;
+  const status = document.getElementById('compose-status');
+  if (!/^[0-9a-f]{32}$/.test(to)) { status.textContent = 'Destination must be 32 hex chars'; return; }
+  if (!body) { status.textContent = 'Empty message'; return; }
+  status.textContent = 'Sending…';
+  try {
+    const r = await api('/api/accounts/' + state.account_id + '/send', { method: 'POST', body: { to, title, body } });
+    status.textContent = 'Sent (seq ' + r.queued_seq + ')';
+    document.getElementById('compose-body').value = '';
+    document.getElementById('compose-title').value = '';
+    loadOutbox();
+  } catch (e) {
+    status.textContent = 'Send failed: ' + (e.data?.error || e.message);
+  }
+}
+
+async function forceAnnounce() {
+  const status = document.getElementById('compose-status');
+  try {
+    await api('/api/accounts/' + state.account_id + '/announce', { method: 'POST' });
+    status.textContent = 'Announced.';
+  } catch (e) {
+    status.textContent = 'Announce failed: ' + (e.data?.error || e.message);
+  }
+}
+
+function openEvents() {
+  if (state.evt) state.evt.close();
+  // Note: EventSource doesn't support custom headers, so we pass the token
+  // via query string and the server can be extended to honour it.
+  // For now the SSE stream is short-poll style and we just re-fetch the
+  // inbox on every event.
+  const url = '/api/accounts/' + state.account_id + '/events?since=' + state.last_inbox_seq;
+  state.evt = new EventSource(url);
+  state.evt.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.type === 'incoming') {
+        loadInbox();
+      } else if (data.type === 'unlock_available') {
+        // ignore here — only matters on login/create views
+      }
+    } catch {}
+  };
+  state.evt.onerror = () => {
+    // EventSource auto-reconnects.
+  };
+}
+
+function renderContacts() {
+  const el = document.getElementById('contacts-list');
+  el.innerHTML = '';
+  const entries = Object.entries(state.contacts);
+  if (entries.length === 0) {
+    el.innerHTML = '<p class="muted">(none yet)</p>';
+    return;
+  }
+  for (const [addr, name] of entries) {
+    const div = document.createElement('div');
+    div.style.cssText = 'display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #30363d';
+    div.innerHTML = `
+      <span style="flex:1">${escapeHtml(name)} <span class="muted mono">${addr}</span></span>
+      <button class="secondary" onclick="useContact('${addr}')">Use</button>
+      <button class="danger" onclick="removeContact('${addr}')">×</button>`;
+    el.appendChild(div);
+  }
+}
+
+function addContact() {
+  const name = document.getElementById('contact-name').value.trim();
+  const addr = document.getElementById('contact-addr').value.trim().toLowerCase();
+  if (!name || !/^[0-9a-f]{32}$/.test(addr)) { alert('Need a name and 32-hex address'); return; }
+  state.contacts[addr] = name;
+  localStorage.setItem(LS_CONTACTS, JSON.stringify(state.contacts));
+  document.getElementById('contact-name').value = '';
+  document.getElementById('contact-addr').value = '';
+  renderContacts();
+}
+
+function removeContact(addr) {
+  delete state.contacts[addr];
+  localStorage.setItem(LS_CONTACTS, JSON.stringify(state.contacts));
+  renderContacts();
+}
+
+function useContact(addr) {
+  document.getElementById('compose-to').value = addr;
+  document.getElementById('compose-body').focus();
+}
+
+async function scanWifi() {
+  const el = document.getElementById('scan-results');
+  el.innerHTML = '<p class="muted">Scanning…</p>';
+  try {
+    const r = await api('/api/wifi/scan');
+    el.innerHTML = '';
+    for (const n of r.networks) {
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 0';
+      div.innerHTML = `
+        <span style="flex:1">${escapeHtml(n.ssid)} <span class="muted">${n.rssi} dBm${n.secure?' 🔒':''}</span></span>
+        <button class="secondary" onclick="useScan('${escapeHtml(n.ssid)}')">Use</button>`;
+      el.appendChild(div);
+    }
+  } catch (e) {
+    el.innerHTML = '<p class="muted">Scan failed: ' + (e.data?.error || e.message) + '</p>';
+  }
+}
+
+function useScan(ssid) {
+  document.getElementById('wifi-ssid').value = ssid;
+  document.getElementById('wifi-psk').focus();
+}
+
+async function saveWifi() {
+  const ssid = document.getElementById('wifi-ssid').value.trim();
+  const psk  = document.getElementById('wifi-psk').value;
+  if (!ssid) { alert('SSID required'); return; }
+  try {
+    await api('/api/wifi/configure', { method: 'POST', body: { ssid, psk } });
+    document.body.innerHTML = '<main><h2>Rebooting…</h2><p class="muted">Reconnect to your home network, then visit the device on that network.</p></main>';
+  } catch (e) {
+    alert('Save failed: ' + (e.data?.error || e.message));
+  }
+}
+
+function formatTs(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  return d.toLocaleString();
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.getElementById('logout-btn').addEventListener('click', logout);
+
+refresh();
+</script>
+</body>
+</html>

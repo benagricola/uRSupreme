@@ -103,7 +103,11 @@ a { color: #58a6ff; }
   <div class="card">
     <label>Create a new account</label>
     <input id="new-display-name" placeholder="Display name">
-    <p class="muted" style="margin-top:8px">Long-press the device button (~1 s), release, then short-press within 2 s. Read the 6-char identity code from the OLED.</p>
+    <label style="margin-top:8px">Password</label>
+    <input id="new-password" type="password" placeholder="min 8 characters">
+    <label style="margin-top:8px">Confirm password</label>
+    <input id="new-password-confirm" type="password" placeholder="repeat">
+    <p class="muted" style="margin-top:8px">Long-press the device button (~1 s), release, then short-press within 2 s. Read the 6-char identity code from the OLED. Required only to <em>create</em> a new account — physical-presence proof.</p>
     <div class="row">
       <input id="new-identity-code" placeholder="identity code (6 hex chars)" maxlength="6">
       <button onclick="createAccount()">Create</button>
@@ -115,9 +119,9 @@ a { color: #58a6ff; }
 <section id="view-login" class="hide">
   <h2>Login</h2>
   <div class="card">
-    <p class="muted">Long-press the device button (~1 s), release, then short-press within 2 s. Read the 6-char identity code from the OLED.</p>
-    <label>Identity code</label>
-    <input id="login-identity-code" placeholder="6 hex chars" maxlength="6">
+    <p class="muted">Enter the password you set when this account was created. No physical-presence proof is needed for login — the password is the only key.</p>
+    <label>Password</label>
+    <input id="login-password" type="password" placeholder="account password">
     <div class="row" style="margin-top:8px">
       <button onclick="login()">Login</button>
       <button class="secondary" onclick="show('view-accounts')">Back</button>
@@ -199,9 +203,18 @@ a { color: #58a6ff; }
 
     <h2 style="margin-top:16px">Danger zone</h2>
     <div class="card">
-      <p class="muted">Permanently delete this account from the device. Inbox, outbox, and identity material are removed. This affects only the currently-logged-in account.</p>
+      <p class="muted">Permanently delete this account from the device. Inbox, outbox, and identity material are removed. Only affects the currently-logged-in account.</p>
       <div class="row">
         <button class="danger" onclick="deleteCurrentAccount()">Delete this account</button>
+      </div>
+    </div>
+
+    <div class="card" style="border-color:#9a3232">
+      <p class="muted"><strong>Factory reset</strong> — wipes <em>every</em> account on this device, including identities, inboxes, sent messages, and saved auth tokens. The only escape if a password is lost. Requires the button-press identity code as physical-presence proof.</p>
+      <label>Identity code</label>
+      <input id="reset-identity-code" placeholder="6 hex chars from OLED" maxlength="6">
+      <div class="row" style="margin-top:8px">
+        <button class="danger" onclick="factoryReset()">Factory reset device</button>
       </div>
     </div>
   </div>
@@ -309,6 +322,24 @@ function renderAccountList() {
   }
 }
 
+async function factoryReset() {
+  const code = document.getElementById('reset-identity-code').value.trim().toLowerCase();
+  if (code.length !== 6) { alert('Need the 6-char identity code from the device OLED'); return; }
+  if (!confirm(
+    'FACTORY RESET: this will permanently delete every account, inbox, outbox, and saved login on this device. ' +
+    'There is no undo. Continue?'
+  )) return;
+  try {
+    await api('/api/system/factory_reset', { method: 'POST', body: { identity_code: code } });
+  } catch (e) {
+    alert('Reset failed: ' + (e.data?.error || e.message));
+    return;
+  }
+  // Clear local state and show a transient page until the device comes back.
+  localStorage.clear();
+  document.body.innerHTML = '<main><h2>Device wiped, rebooting…</h2><p class="muted">All accounts and messages have been removed. Reload this page in 10 seconds.</p></main>';
+}
+
 // Delete the currently logged-in account. Called from the Settings tab's
 // Danger zone after explicit confirmation. Logs out on success since the
 // account no longer exists.
@@ -344,13 +375,14 @@ function startLogin(account_id) {
 }
 
 async function login() {
-  const proof = document.getElementById('login-identity-code').value.trim().toLowerCase();
-  if (proof.length !== 6) { alert('Unlock code is 6 hex chars'); return; }
+  const password = document.getElementById('login-password').value;
+  if (!password) { alert('Password required'); return; }
   try {
-    const r = await api('/api/auth/login', { method: 'POST', body: { account_id: state.account_id, identity_code: proof } });
+    const r = await api('/api/auth/login', { method: 'POST', body: { account_id: state.account_id, password } });
     state.token = r.token;
     localStorage.setItem(LS_TOKEN, state.token);
     localStorage.setItem(LS_ACCT, state.account_id);
+    document.getElementById('login-password').value = '';
     enterMessageView();
   } catch (e) {
     alert('Login failed: ' + (e.data?.error || e.message));
@@ -358,15 +390,26 @@ async function login() {
 }
 
 async function createAccount() {
-  const name  = document.getElementById('new-display-name').value.trim();
-  const proof = document.getElementById('new-identity-code').value.trim().toLowerCase();
+  const name      = document.getElementById('new-display-name').value.trim();
+  const password  = document.getElementById('new-password').value;
+  const confirm   = document.getElementById('new-password-confirm').value;
+  const proof     = document.getElementById('new-identity-code').value.trim().toLowerCase();
   if (!name)  { alert('Display name required'); return; }
-  if (proof.length !== 6) { alert('Unlock code is 6 hex chars'); return; }
+  if (password.length < 8) { alert('Password must be at least 8 characters'); return; }
+  if (password !== confirm) { alert('Passwords do not match'); return; }
+  if (proof.length !== 6) { alert('Identity code is 6 hex chars'); return; }
   try {
-    const r = await api('/api/accounts', { method: 'POST', body: { display_name: name, identity_code: proof } });
+    const r = await api('/api/accounts', {
+      method: 'POST',
+      body: { display_name: name, password, password_confirm: confirm, identity_code: proof }
+    });
     state.token = r.token; state.account_id = r.id;
     localStorage.setItem(LS_TOKEN, state.token);
     localStorage.setItem(LS_ACCT, state.account_id);
+    // Clear the secret fields out of the DOM.
+    document.getElementById('new-password').value = '';
+    document.getElementById('new-password-confirm').value = '';
+    document.getElementById('new-identity-code').value = '';
     enterMessageView();
   } catch (e) {
     alert('Create failed: ' + (e.data?.error || e.message));

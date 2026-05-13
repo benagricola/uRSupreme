@@ -43,6 +43,13 @@ namespace LXMF {
     uint32_t             last_announce_ms = 0;
     uint32_t             announce_interval_ms = LXMF_DEFAULT_ANNOUNCE_INTERVAL_MS;
     bool                 active = false;
+    // Password hash (PBKDF2-HMAC-SHA256) + per-account salt. Set at
+    // account creation; required for login. Empty if account is from an
+    // older firmware build that didn't set passwords (in which case
+    // login is blocked until the account is recreated — there is no
+    // password-recovery path, by design).
+    RNS::Bytes           password_hash;
+    RNS::Bytes           password_salt;
 
     std::string dir() const { return std::string(LXMF_GATEWAY_ROOT "/accounts/") + id; }
     std::string identity_path() const { return dir() + "/identity.dat"; }
@@ -74,9 +81,13 @@ namespace LXMF {
       }
     }
 
-    // Generate a fresh identity, persist it, instantiate the account.
-    // Returns the new account_id, or empty string on failure / cap.
-    static AccountId create_account(const std::string& display_name) {
+    // Generate a fresh identity + password hash, persist, instantiate.
+    // Returns the new account_id, or empty string on failure / cap /
+    // password too short.
+    static AccountId create_account(const std::string& display_name,
+                                    const std::string& password,
+                                    RNS::Bytes (*hash_fn)(const std::string&, const RNS::Bytes&),
+                                    RNS::Bytes (*new_salt_fn)()) {
       if (!_setup_done) {
         WARNING("LXMFGateway::create_account: setup() not called yet");
         return {};
@@ -86,6 +97,7 @@ namespace LXMF {
         WARNING("LXMFGateway::create_account: account cap reached");
         return {};
       }
+      // Caller checks password length; we don't trust hash_fn to do so.
       RNS::Identity id;  // fresh keypair
       const std::string id_hex = id.hexhash();
       if (id_hex.empty()) {
@@ -97,6 +109,8 @@ namespace LXMF {
       slot->id           = acc_id;
       slot->display_name = display_name;
       slot->identity     = id;
+      slot->password_salt = new_salt_fn();
+      slot->password_hash = hash_fn(password, slot->password_salt);
 
       ensure_account_dir(*slot);
       if (!id.to_file(slot->identity_path().c_str())) {
@@ -111,6 +125,22 @@ namespace LXMF {
       NOTICEF("LXMFGateway: created account %s (%s) → %s",
               acc_id.c_str(), display_name.c_str(), slot->address_hex().c_str());
       return acc_id;
+    }
+
+    // Test a candidate password against the stored hash for this account.
+    // verify_fn computes the PBKDF2 hash of the candidate with the
+    // account's salt and constant-time compares against the stored hash.
+    static bool check_password(const AccountId& acc_id,
+                               const std::string& candidate,
+                               bool (*verify_fn)(const std::string&, const RNS::Bytes&, const RNS::Bytes&)) {
+      LXMFAccount* a = account_by_id_mut(acc_id);
+      if (!a) return false;
+      if (a->password_hash.size() == 0 || a->password_salt.size() == 0) {
+        // Pre-password account from an older firmware — refuse login;
+        // user must factory-reset to recover.
+        return false;
+      }
+      return verify_fn(candidate, a->password_salt, a->password_hash);
     }
 
     // Tear down and remove an account from disk.
@@ -219,11 +249,13 @@ namespace LXMF {
       doc["display_name"]         = a.display_name;
       doc["created_ms"]           = (uint32_t)millis();
       doc["announce_interval_ms"] = a.announce_interval_ms;
-      char buf[256];
-      size_t n = serializeJson(doc, buf, sizeof(buf));
-      if (n > 0 && n < sizeof(buf)) {
-        filesystem.writeFile(a.meta_path().c_str(), reinterpret_cast<const uint8_t*>(buf), n);
-      }
+      if (a.password_hash.size() > 0) doc["password_hash"] = a.password_hash.toHex();
+      if (a.password_salt.size() > 0) doc["password_salt"] = a.password_salt.toHex();
+      String body;
+      serializeJson(doc, body);
+      filesystem.writeFile(a.meta_path().c_str(),
+                           reinterpret_cast<const uint8_t*>(body.c_str()),
+                           body.length());
     }
 
     static void read_meta(LXMFAccount& a) {
@@ -234,6 +266,10 @@ namespace LXMF {
       if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
       a.display_name         = (const char*)(doc["display_name"] | "LXMF Account");
       a.announce_interval_ms = (uint32_t)(doc["announce_interval_ms"] | LXMF_DEFAULT_ANNOUNCE_INTERVAL_MS);
+      std::string ph = (const char*)(doc["password_hash"] | "");
+      std::string ps = (const char*)(doc["password_salt"] | "");
+      if (!ph.empty()) a.password_hash.assignHex(ph.c_str());
+      if (!ps.empty()) a.password_salt.assignHex(ps.c_str());
     }
 
     static void activate(LXMFAccount& a) {

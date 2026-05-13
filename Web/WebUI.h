@@ -19,6 +19,7 @@
 #include "../LXMF/LXMFTypes.h"
 #include "../LXMF/AnnounceLog.h"
 #include "AuthTokens.h"
+#include "PasswordHash.h"
 #include "SPAEmbedded.h"
 
 // EEPROM helpers + WiFi config constants from the existing firmware.
@@ -228,6 +229,9 @@ namespace Web {
       server.on(UriBraces("/api/accounts/{}/announce"), HTTP_POST, handle_announce);
       // Announces (recent LXMF endpoint announces seen by the device)
       server.on("/api/announces",     HTTP_GET, handle_announces);
+      // System — full wipe, gated by identity_code (physical presence).
+      // Only path to recovery if every account password is forgotten.
+      server.on("/api/system/factory_reset", HTTP_POST, handle_factory_reset);
       server.on(UriBraces("/api/accounts/{}/inbox"),    HTTP_GET,  handle_inbox);
       server.on(UriBraces("/api/accounts/{}/outbox"),   HTTP_GET,  handle_outbox);
       server.on(UriBraces("/api/accounts/{}/send"),     HTTP_POST, handle_send);
@@ -277,16 +281,20 @@ namespace Web {
     static void handle_login() {
       JsonDocument body;
       if (!read_body_json(body)) return;
-      const char* acc_str   = body["account_id"]   | "";
-      const char* proof_str = body["identity_code"] | "";
+      const char* acc_str = body["account_id"] | "";
+      const char* pw_str  = body["password"]   | "";
       if (!*acc_str) { send_error(400, "missing_account_id"); return; }
+      if (!*pw_str)  { send_error(400, "missing_password");   return; }
       LXMF::AccountId acc_id = acc_str;
       if (!LXMF::LXMFGateway::account_by_id(acc_id)) {
         send_error(404, "unknown_account");
         return;
       }
-      if (!consume_identity_code(proof_str)) {
-        send_error(401, "identity_code_required");
+      // Knowledge-factor only — physical-presence button gesture is
+      // explicitly NOT a path to login because a stolen device could
+      // otherwise be unlocked by anyone with hands on it.
+      if (!LXMF::LXMFGateway::check_password(acc_id, pw_str, PasswordHash::verify)) {
+        send_error(401, "invalid_password");
         return;
       }
       std::string token = AuthTokens::issue(acc_id);
@@ -314,14 +322,28 @@ namespace Web {
     static void handle_create_account() {
       JsonDocument body;
       if (!read_body_json(body)) return;
-      const char* name      = body["display_name"] | "";
-      const char* proof_str = body["identity_code"] | "";
+      const char* name      = body["display_name"]     | "";
+      const char* proof_str = body["identity_code"]    | "";
+      const char* pw        = body["password"]         | "";
+      const char* pw_conf   = body["password_confirm"] | "";
       if (!*name) { send_error(400, "missing_display_name"); return; }
+      if (strlen(pw) < PasswordHash::MIN_PASSWORD_LEN) {
+        send_error(400, "password_too_short");
+        return;
+      }
+      if (strcmp(pw, pw_conf) != 0) {
+        send_error(400, "password_mismatch");
+        return;
+      }
+      // Physical-presence proof still required for account creation —
+      // the password becomes the login factor afterwards, but creating
+      // accounts on a stolen device should not be possible remotely.
       if (!consume_identity_code(proof_str)) {
         send_error(401, "identity_code_required");
         return;
       }
-      LXMF::AccountId acc_id = LXMF::LXMFGateway::create_account(name);
+      LXMF::AccountId acc_id = LXMF::LXMFGateway::create_account(
+          name, pw, PasswordHash::derive, PasswordHash::new_salt);
       if (acc_id.empty()) {
         send_error(500, "create_failed");
         return;
@@ -363,6 +385,42 @@ namespace Web {
         return;
       }
       server.send(204, "text/plain", "");
+    }
+
+    static void handle_factory_reset() {
+      JsonDocument body;
+      if (!read_body_json(body)) return;
+      // Physical-presence required, regardless of any active session —
+      // factory reset wipes ALL accounts and all messages, so the
+      // proof-of-possession bar applies just like account creation.
+      const char* proof = body["identity_code"] | "";
+      if (!consume_identity_code(proof)) {
+        send_error(401, "identity_code_required");
+        return;
+      }
+      NOTICE("WebUI: factory reset triggered — wiping /lxmf and rebooting");
+
+      // Walk every active account, deregister + remove its files.
+      // Iterate by value-copy because delete_account mutates the slot.
+      std::vector<LXMF::AccountId> ids;
+      for (const auto* a : LXMF::LXMFGateway::active_accounts()) {
+        if (a) ids.push_back(a->id);
+      }
+      for (const auto& id : ids) LXMF::LXMFGateway::delete_account(id);
+
+      // Belt-and-braces: remove anything else in /lxmf/.
+      filesystem.remove("/lxmf/auth_tokens.json");
+      filesystem.remove("/lxmf/button_unlock.json");
+      // We deliberately do NOT touch the Reticulum transport identity
+      // (stored at /transport_identity) or path_store — those are
+      // device-level state, not per-account secrets.
+
+      JsonDocument doc;
+      doc["status"]  = "wiped";
+      doc["restart"] = true;
+      send_json(200, doc);
+      delay(500);
+      ESP.restart();
     }
 
     static void handle_announces() {

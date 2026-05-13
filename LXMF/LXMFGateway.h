@@ -192,14 +192,18 @@ namespace LXMF {
     }
 
     static void ensure_root() {
-      if (!filesystem.exists(LXMF_GATEWAY_ROOT)) filesystem.mkdir(LXMF_GATEWAY_ROOT);
+      // Note: PosixFileSystem::exists() does open(O_RDONLY) which fails
+      // for directories. Use isDirectory() for dir-existence checks.
+      // mkdir() is internally idempotent so a redundant call is harmless,
+      // but the explicit guard keeps log noise down.
+      if (!filesystem.isDirectory(LXMF_GATEWAY_ROOT)) filesystem.mkdir(LXMF_GATEWAY_ROOT);
       const char* accts = LXMF_GATEWAY_ROOT "/accounts";
-      if (!filesystem.exists(accts)) filesystem.mkdir(accts);
+      if (!filesystem.isDirectory(accts)) filesystem.mkdir(accts);
     }
 
     static void ensure_account_dir(const LXMFAccount& a) {
       const std::string d = a.dir();
-      if (!filesystem.exists(d.c_str())) filesystem.mkdir(d.c_str());
+      if (!filesystem.isDirectory(d.c_str())) filesystem.mkdir(d.c_str());
     }
 
     static void write_meta(const LXMFAccount& a) {
@@ -244,7 +248,14 @@ namespace LXMF {
 
     static void load_existing_accounts() {
       const char* accts = LXMF_GATEWAY_ROOT "/accounts";
-      if (!filesystem.exists(accts)) return;
+      // PosixFileSystem::exists() returns false for directories (it does
+      // open(O_RDONLY) which fails on dirs). Use isDirectory() here so we
+      // don't silently skip account loading. Same applies in ensure_root()
+      // and ensure_account_dir().
+      if (!filesystem.isDirectory(accts)) {
+        NOTICEF("LXMFGateway: %s is not a directory — no accounts to load", accts);
+        return;
+      }
       auto entries = filesystem.listDirectory(accts);
       size_t loaded = 0;
       for (const auto& entry : entries) {

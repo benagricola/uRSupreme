@@ -679,6 +679,9 @@ namespace Web {
         obj["dest"]   = it->destination.toHex();
         obj["age_ms"] = (uint32_t)(now - it->received_ms);
         if (!it->display_name.empty()) obj["display_name"] = it->display_name;
+        // aspect: lxmf.delivery / lxmf.propagation / nomadnetwork.node /
+        // empty (= transport identity or unrecognised application).
+        obj["aspect"] = it->aspect.empty() ? "transport" : it->aspect;
         // Live hop count from Transport.
         obj["hops"]   = (int)RNS::Transport::hops_to(it->destination);
       }

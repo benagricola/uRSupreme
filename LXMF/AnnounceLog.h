@@ -19,6 +19,7 @@
 #include <Transport.h>
 #include <Bytes.h>
 #include <Identity.h>
+#include <Destination.h>
 
 #include <deque>
 #include <string>
@@ -32,6 +33,7 @@ namespace LXMF {
     uint32_t    received_ms;
     RNS::Bytes  destination;
     std::string display_name;  // empty for non-LXMF announces
+    std::string aspect;        // detected aspect tuple, e.g. "lxmf.delivery", "lxmf.propagation", or "" if unrecognised
   };
 
   // Implemented below (in LXMFGateway.h) to break the include cycle.
@@ -87,11 +89,30 @@ namespace LXMF {
           }
         }
 
+        // Identify which aspect tuple this announce is for by recomputing
+        // the destination hash for each well-known aspect and comparing.
+        // The aspect_filter mechanism in Transport already does this for
+        // filter matching; we replicate it here for labelling so the
+        // operator can see at a glance whether the announce was for
+        // lxmf.delivery (chat-addressable), lxmf.propagation (propnode),
+        // nomadnetwork.node (Nomad Network), or unknown/bare-identity.
+        std::string aspect;
+        static const char* candidates[] = {
+          "lxmf.delivery", "lxmf.propagation", "nomadnetwork.node"
+        };
+        for (const char* a : candidates) {
+          if (RNS::Destination::hash_from_name_and_identity(a, announced_identity) == destination_hash) {
+            aspect = a;
+            break;
+          }
+        }
+
         auto& ring = _lxmf_only ? AnnounceLog::announces() : AnnounceLog::paths();
         for (auto& rec : ring) {
           if (rec.destination == destination_hash) {
             rec.received_ms = millis();
             if (!display_name.empty()) rec.display_name = display_name;
+            if (!aspect.empty())       rec.aspect       = aspect;
             return;
           }
         }
@@ -99,11 +120,13 @@ namespace LXMF {
         rec.received_ms = millis();
         rec.destination = destination_hash;
         rec.display_name = display_name;
+        rec.aspect       = aspect;
         ring.push_back(rec);
         while (ring.size() > CAPACITY) ring.pop_front();
-        NOTICEF("LXMF::AnnounceLog: %s announce %s (%s)",
+        NOTICEF("LXMF::AnnounceLog: %s announce %s aspect=%s (%s)",
                 _lxmf_only ? "lxmf" : "path",
                 destination_hash.toHex().c_str(),
+                aspect.empty() ? "transport/unknown" : aspect.c_str(),
                 display_name.c_str());
       }
 

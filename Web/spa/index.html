@@ -444,6 +444,11 @@ async function loadPaths() {
         nameSpan.textContent = p.display_name;
         left.appendChild(nameSpan);
       }
+      const aspectPill = document.createElement('span');
+      aspectPill.className = 'pill';
+      aspectPill.textContent = p.aspect || 'transport';
+      // Highlight chat-addressable aspects in green.
+      if (p.aspect === 'lxmf.delivery') aspectPill.classList.add('ok');
       const hopsPill = document.createElement('span');
       hopsPill.className = 'pill';
       hopsPill.textContent = p.hops + 'h';
@@ -459,7 +464,7 @@ async function loadPaths() {
         document.getElementById('compose-body').focus();
         switchTab('tab-chat');
       });
-      row.append(left, hopsPill, agePill, useBtn);
+      row.append(left, aspectPill, hopsPill, agePill, useBtn);
       el.appendChild(row);
     }
   } catch (e) {

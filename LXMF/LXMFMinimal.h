@@ -6,7 +6,7 @@
 // (varna9000's LXMF_Minimal.h, 641 lines). Key changes from the original:
 //
 //   - Multi-instance: dispatch via static std::map<destination_hash, LXMFMinimal*>
-//     instead of a single static _instance. Each account hosts its own
+//     instead of a single static _instance. Each identity hosts its own
 //     LXMFMinimal and they share the underlying static callback trampoline.
 //   - Announce is explicit (not auto-fired in init), so the gateway can
 //     schedule announces centrally.
@@ -32,6 +32,8 @@
 #include <Identity.h>
 #include <Destination.h>
 #include <Packet.h>
+#include <Link.h>
+#include <Resource.h>
 #include <Transport.h>
 #include <Bytes.h>
 #include <Log.h>
@@ -168,9 +170,42 @@ namespace LXMF {
   } // namespace RawMsgPack
 
 
+  // LXMF wire-size thresholds.
+  //
+  // OPPORTUNISTIC_MAX = LXMF packet sent to a SINGLE destination, fits in
+  // one encrypted radio packet. Empirically anything <= 295 bytes is safe
+  // on our profile (Packet::ENCRYPTED_MDU ~ 399 minus header/IV margin).
+  //
+  // LINK_PACKET_MAX_CONTENT = LXMF packet sent inside an established Link
+  // as a single DATA packet. Link::MDU is 431; LXMF_OVERHEAD is 80
+  // (HASH_LEN + SIG_LEN), giving an effective 319-byte payload max with
+  // some safety margin.
+  //
+  // Anything larger goes through a Resource transfer over the same Link.
+  static constexpr size_t LXMF_OPPORTUNISTIC_MAX   = 295;
+  static constexpr size_t LXMF_LINK_PACKET_MAX     = 319;
+
   class LXMFMinimal {
   public:
     using DeliveryCallback = std::function<void(const MessageRecord&)>;
+
+    // Async state for an outbound DIRECT-mode send. We open a Link to the
+    // peer in send_message and queue the wire bytes here keyed by the
+    // link's hash; when the Link establishes, the static callback pops
+    // the entry and dispatches the actual payload as either an in-link
+    // Packet or a Resource. On completion (PROOF / Resource COMPLETE /
+    // link closure / timeout) the entry is removed and the gateway is
+    // notified via the delivery callback so the MessageRecord status
+    // can advance.
+    struct PendingLinkSend {
+      RNS::Bytes   wire;
+      RNS::Link    link;
+      uint64_t     started_ms = 0;
+      RNS::Bytes   dest_hash;
+      RNS::Bytes   resource_hash;     // set after Resource is built (if >319 B)
+      LXMFMinimal* owner = nullptr;
+      MessageRecord rec;
+    };
 
     LXMFMinimal()
       : _identity(RNS::Type::NONE),
@@ -199,13 +234,18 @@ namespace LXMF {
       registry()[_destination.hash()] = this;
       _destination.set_packet_callback(_static_packet_callback);
 
+      // Accept inbound links (for DIRECT-mode LXMF deliveries) and route
+      // them to the static trampoline that will register per-link callbacks.
+      _destination.accepts_links(true);
+      _destination.set_link_established_callback(_static_inbound_link_established);
+
       _initialized = true;
-      NOTICEF("LXMF: account %s delivery destination ready (%s)",
+      NOTICEF("LXMF: identity %s delivery destination ready (%s)",
               display_name, _destination.hash().toHex().c_str());
       return true;
     }
 
-    // Tear down the dispatch registration. Call from destructor / account delete.
+    // Tear down the dispatch registration. Call from destructor / identity delete.
     void shutdown() {
       if (!_initialized) return;
       registry().erase(_destination.hash());
@@ -216,7 +256,7 @@ namespace LXMF {
 
     void set_delivery_callback(DeliveryCallback cb) { _on_delivery = std::move(cb); }
 
-    // LXMF address of this account (16-byte destination hash, hex-encoded).
+    // LXMF address of this identity (16-byte destination hash, hex-encoded).
     std::string address_hex() const {
       if (!_initialized) return "";
       return _destination.hash().toHex();
@@ -248,18 +288,20 @@ namespace LXMF {
     bool send_message(const RNS::Bytes& dest_hash,
                       const std::string& title,
                       const std::string& content,
-                      MessageRecord& out_rec) {
-      if (!_initialized) return false;
+                      MessageRecord& out_rec,
+                      const char** out_err = nullptr) {
+      auto fail = [&](const char* msg) { if (out_err) *out_err = msg; return false; };
+      if (!_initialized) return fail("LXMF gateway not initialised");
       if (dest_hash.size() != HASH_LEN) {
         ERROR("LXMF: send_message: destination hash must be 16 bytes");
-        return false;
+        return fail("Destination address is the wrong length (expected 16 bytes).");
       }
 
       RNS::Identity remote_identity = RNS::Identity::recall(dest_hash);
       if (!remote_identity) {
         WARNINGF("LXMF: cannot send to %s — recipient identity unknown",
                  dest_hash.toHex().c_str());
-        return false;
+        return fail("Recipient is unknown — wait for an announce from that address, or trigger one on the recipient. (We have no public key for that destination yet.)");
       }
 
       RNS::Destination remote_dest(
@@ -276,15 +318,15 @@ namespace LXMF {
 
       double ts = get_timestamp();
       size_t n = RawMsgPack::pack_float64(&mp[mp_pos], sizeof(mp) - mp_pos, ts);
-      if (n == 0) { ERROR("LXMF: send: timestamp pack failed"); return false; }
+      if (n == 0) { ERROR("LXMF: send: timestamp pack failed"); return fail("Internal error packing timestamp."); }
       mp_pos += n;
 
       n = RawMsgPack::pack_bin_str(&mp[mp_pos], sizeof(mp) - mp_pos, title);
-      if (n == 0) { ERROR("LXMF: send: title pack failed"); return false; }
+      if (n == 0) { ERROR("LXMF: send: title pack failed"); return fail("Title is too long for the LXMF packet."); }
       mp_pos += n;
 
       n = RawMsgPack::pack_bin_str(&mp[mp_pos], sizeof(mp) - mp_pos, content);
-      if (n == 0) { ERROR("LXMF: send: content pack failed"); return false; }
+      if (n == 0) { ERROR("LXMF: send: content pack failed"); return fail("Message body is too long to fit in a single LXMF packet (opportunistic mode caps around 200 chars)."); }
       mp_pos += n;
 
       mp[mp_pos++] = 0xC0;  // fields: nil
@@ -305,28 +347,22 @@ namespace LXMF {
         signature = _identity.sign(signed_part);
       } catch (const std::exception& e) {
         ERRORF("LXMF: send: signing failed: %s", e.what());
-        return false;
+        return fail("Signing failed — identity may be misconfigured.");
       }
       if (signature.size() != SIG_LEN) {
         ERRORF("LXMF: send: unexpected signature length %u", (unsigned)signature.size());
-        return false;
+        return fail("Internal error: signature was not the expected length.");
       }
 
       // Build the on-wire LXMF blob: src_hash || sig || payload
       size_t total = HASH_LEN + SIG_LEN + mp_pos;
-      if (total > 400) {
-        WARNING("LXMF: send: payload exceeds opportunistic packet size");
-        return false;
+      if (total > 1 * 1024 * 1024) {
+        return fail("Message body is too large (> 1 MiB).");
       }
-      uint8_t wire[400];
-      size_t wp = 0;
-      memcpy(&wire[wp], src_hash.data(), HASH_LEN); wp += HASH_LEN;
-      memcpy(&wire[wp], signature.data(), SIG_LEN); wp += SIG_LEN;
-      memcpy(&wire[wp], mp, mp_pos); wp += mp_pos;
-
-      RNS::Bytes packet_data(wire, wp);
-      RNS::Packet packet(remote_dest, packet_data);
-      packet.send();
+      RNS::Bytes wire;
+      wire.append(src_hash.data(), HASH_LEN);
+      wire.append(signature.data(), SIG_LEN);
+      wire.append(mp, mp_pos);
 
       out_rec.ts           = ts;
       out_rec.peer_hash    = dest_hash;
@@ -334,11 +370,41 @@ namespace LXMF {
       out_rec.content      = content;
       out_rec.incoming     = false;
       out_rec.signature_ok = true;
-      out_rec.status       = OutboxStatus::Sent;
-      out_rec.packet_hash  = packet.get_hash();
 
-      NOTICEF("LXMF: sent message to %s (%u bytes)",
-              dest_hash.toHex().c_str(), (unsigned)wp);
+      // OPPORTUNISTIC: single packet to the SINGLE destination. Fast path
+      // for short messages; status -> Sent immediately. This is what works
+      // today and we keep the existing behaviour for compatibility.
+      if (total <= LXMF_OPPORTUNISTIC_MAX) {
+        RNS::Packet packet(remote_dest, wire);
+        packet.send();
+        out_rec.status      = OutboxStatus::Sent;
+        out_rec.packet_hash = packet.get_hash();
+        NOTICEF("LXMF: sent OPPORTUNISTIC to %s (%u bytes)",
+                dest_hash.toHex().c_str(), (unsigned)total);
+        return true;
+      }
+
+      // DIRECT-mode: open a Link to the peer; on link_established the
+      // static callback will pop our queued send and dispatch as either
+      // an in-link PACKET (<= 319 B) or a RESOURCE (> 319 B), then teardown.
+      // The MessageRecord transitions Queued -> Sent (after PROOF/COMPLETE)
+      // -> Delivered via the gateway's status update path.
+      RNS::Link link(remote_dest,
+                     _static_outbound_link_established,
+                     _static_outbound_link_closed);
+      RNS::Bytes link_hash = link.hash();
+      PendingLinkSend ps;
+      ps.wire        = wire;
+      ps.link        = link;
+      ps.started_ms  = (uint64_t)millis();
+      ps.dest_hash   = dest_hash;
+      ps.owner       = this;
+      ps.rec         = out_rec;
+      pending_link_sends()[link_hash] = std::move(ps);
+      out_rec.status      = OutboxStatus::Queued;
+      out_rec.packet_hash = link_hash;  // placeholder; real packet hash once sent
+      NOTICEF("LXMF: opening Link to %s for %u-byte DIRECT send",
+              dest_hash.toHex().c_str(), (unsigned)total);
       return true;
     }
 
@@ -367,6 +433,14 @@ namespace LXMF {
       return r;
     }
 
+    // Outbound link state, keyed by link.hash(). Each pending send sits
+    // here from the time send_message kicks off the link establishment
+    // until the resource (or in-link packet) concludes / link closes.
+    static std::map<RNS::Bytes, PendingLinkSend>& pending_link_sends() {
+      static std::map<RNS::Bytes, PendingLinkSend> p;
+      return p;
+    }
+
     // Static trampoline: looks up the LXMFMinimal* by the packet's
     // destination hash and dispatches to that instance.
     static void _static_packet_callback(const RNS::Bytes& data, const RNS::Packet& packet) {
@@ -378,6 +452,241 @@ namespace LXMF {
         return;
       }
       it->second->_on_packet(data, packet);
+    }
+
+    // ------------------------------------------------------------------
+    // DIRECT-mode (Link + optional Resource) wiring (plan step 10)
+    //
+    // OUTBOUND flow:
+    //  send_message > 295 B
+    //    -> open Link(dest, _static_outbound_link_established, ...)
+    //    -> store PendingLinkSend keyed by link.hash()
+    //    -> link establishes asynchronously
+    //  _static_outbound_link_established(link)
+    //    -> if wire <= 319: send as in-link Packet, status -> Sent,
+    //       wait for Link teardown
+    //    -> else: construct Resource(wire, link,
+    //                                _static_outbound_resource_concluded)
+    //       and record resource_hash in the pending entry
+    //
+    // INBOUND flow:
+    //  peer opens Link to our delivery destination
+    //    -> _static_inbound_link_established(link)
+    //    -> link.set_resource_strategy(ACCEPT_ALL)
+    //    -> link.set_packet_callback(_static_inbound_link_packet)
+    //    -> link.set_resource_concluded_callback(_static_inbound_resource_concluded)
+    //  peer sends short LXMF wire: in-link Packet path
+    //    -> _static_inbound_link_packet  -> _deliver_lxmf_payload
+    //  peer sends long LXMF wire: Resource path
+    //    -> _static_inbound_resource_concluded -> _deliver_lxmf_payload
+    // ------------------------------------------------------------------
+
+    static void _static_outbound_link_established(RNS::Link& link) {
+      auto& m = pending_link_sends();
+      auto it = m.find(link.hash());
+      if (it == m.end()) {
+        WARNINGF("LXMF: outbound link established but no pending send for %s",
+                 link.hash().toHex().c_str());
+        return;
+      }
+      PendingLinkSend& ps = it->second;
+      NOTICEF("LXMF: outbound link established to %s (%u-byte payload)",
+              ps.dest_hash.toHex().c_str(), (unsigned)ps.wire.size());
+
+      if (ps.wire.size() <= LXMF_LINK_PACKET_MAX) {
+        // Single in-link DATA packet path.
+        try {
+          RNS::Packet pkt(link, ps.wire);
+          pkt.send();
+          ps.rec.status = OutboxStatus::Sent;
+          ps.rec.packet_hash = pkt.get_hash();
+        }
+        catch (const std::exception& e) {
+          ERRORF("LXMF: in-link packet send failed: %s", e.what());
+          ps.rec.status = OutboxStatus::Failed;
+        }
+        if (ps.owner && ps.owner->_on_delivery) {
+          try { ps.owner->_on_delivery(ps.rec); } catch (...) {}
+        }
+        link.teardown();
+        m.erase(it);
+      }
+      else {
+        // Resource transfer.
+        RNS::Resource res(ps.wire, link,
+                          /*advertise=*/true, /*auto_compress=*/false,
+                          _static_outbound_resource_concluded,
+                          /*progress=*/nullptr,
+                          /*timeout=*/0.0);
+        ps.resource_hash = res.hash();
+        DEBUGF("LXMF: outbound resource advertised %s",
+               ps.resource_hash.toHex().c_str());
+      }
+    }
+
+    static void _static_outbound_link_closed(RNS::Link& link) {
+      auto& m = pending_link_sends();
+      auto it = m.find(link.hash());
+      if (it == m.end()) return;
+      PendingLinkSend& ps = it->second;
+      // If the send already concluded successfully it'll have been
+      // erased; getting here means an abnormal close.
+      if (ps.rec.status != OutboxStatus::Sent &&
+          ps.rec.status != OutboxStatus::Delivered) {
+        ps.rec.status = OutboxStatus::Failed;
+        WARNINGF("LXMF: link closed before send completed (peer %s)",
+                 ps.dest_hash.toHex().c_str());
+        if (ps.owner && ps.owner->_on_delivery) {
+          try { ps.owner->_on_delivery(ps.rec); } catch (...) {}
+        }
+      }
+      m.erase(it);
+    }
+
+    static void _static_outbound_resource_concluded(const RNS::Resource& res) {
+      auto& m = pending_link_sends();
+      // Find the pending send whose resource_hash matches.
+      for (auto it = m.begin(); it != m.end(); ) {
+        if (it->second.resource_hash == res.hash()) {
+          PendingLinkSend& ps = it->second;
+          const auto st = res.status();
+          if (st == RNS::Type::Resource::COMPLETE) {
+            ps.rec.status = OutboxStatus::Delivered;
+            NOTICEF("LXMF: outbound resource COMPLETE for %s",
+                    ps.dest_hash.toHex().c_str());
+          }
+          else {
+            ps.rec.status = OutboxStatus::Failed;
+            WARNINGF("LXMF: outbound resource FAILED for %s (status=%d)",
+                     ps.dest_hash.toHex().c_str(), (int)st);
+          }
+          if (ps.owner && ps.owner->_on_delivery) {
+            try { ps.owner->_on_delivery(ps.rec); } catch (...) {}
+          }
+          // Teardown the link; erase the entry.
+          const_cast<RNS::Link&>(res.link()).teardown();
+          it = m.erase(it);
+        }
+        else {
+          ++it;
+        }
+      }
+    }
+
+    static void _static_inbound_link_established(RNS::Link& link) {
+      // The destination this link landed on tells us which LXMFMinimal
+      // instance owns it. (Multi-identity firmware can host several.)
+      const RNS::Bytes our_dest_hash = link.destination().hash();
+      auto& reg = registry();
+      auto it = reg.find(our_dest_hash);
+      if (it == reg.end() || it->second == nullptr) {
+        WARNINGF("LXMF: inbound link to unknown destination %s",
+                 our_dest_hash.toHex().c_str());
+        return;
+      }
+      NOTICEF("LXMF: inbound link established on %s",
+              our_dest_hash.toHex().c_str());
+
+      // Accept all Resources on this link; route in-link packets +
+      // resource conclusions to the static trampolines that look up
+      // the owning LXMFMinimal by the link's destination.
+      link.set_resource_strategy(RNS::Type::Link::ACCEPT_ALL);
+      link.set_packet_callback(_static_inbound_link_packet);
+      link.set_resource_concluded_callback(_static_inbound_resource_concluded);
+    }
+
+    static void _static_inbound_link_packet(const RNS::Bytes& plaintext,
+                                            const RNS::Packet& packet) {
+      // Find the owning LXMFMinimal via the link's destination hash.
+      const RNS::Link& link = packet.destination_link();
+      if (!link) return;
+      const RNS::Bytes our_dest_hash = link.destination().hash();
+      auto& reg = registry();
+      auto it = reg.find(our_dest_hash);
+      if (it == reg.end() || it->second == nullptr) return;
+      NOTICEF("LXMF: inbound in-link PACKET on %s (%u bytes)",
+              our_dest_hash.toHex().c_str(), (unsigned)plaintext.size());
+      it->second->_deliver_lxmf_payload(plaintext, packet.get_hash());
+    }
+
+    static void _static_inbound_resource_concluded(const RNS::Resource& res) {
+      if (res.status() != RNS::Type::Resource::COMPLETE) {
+        WARNINGF("LXMF: inbound resource FAILED/CORRUPT (status=%d)",
+                 (int)res.status());
+        return;
+      }
+      const RNS::Link& link = res.link();
+      const RNS::Bytes our_dest_hash = link.destination().hash();
+      auto& reg = registry();
+      auto it = reg.find(our_dest_hash);
+      if (it == reg.end() || it->second == nullptr) return;
+      const RNS::Bytes& plaintext = res.plaintext();
+      NOTICEF("LXMF: inbound RESOURCE COMPLETE on %s (%u bytes)",
+              our_dest_hash.toHex().c_str(), (unsigned)plaintext.size());
+      it->second->_deliver_lxmf_payload(plaintext, res.hash());
+    }
+
+    // Common parse + signature-verify + delivery path used by all three
+    // inbound modes (OPPORTUNISTIC Packet, in-link Packet, Resource).
+    void _deliver_lxmf_payload(const RNS::Bytes& wire,
+                               const RNS::Bytes& packet_or_resource_hash) {
+      if (wire.size() < HEADER_LEN + 5) {
+        WARNING("LXMF: incoming payload too short for LXMF header");
+        return;
+      }
+      const uint8_t* raw = wire.data();
+      size_t raw_len = wire.size();
+
+      RNS::Bytes source_hash(raw, HASH_LEN);
+      RNS::Bytes signature(raw + HASH_LEN, SIG_LEN);
+      const uint8_t* payload = raw + HEADER_LEN;
+      size_t payload_len = raw_len - HEADER_LEN;
+
+      double msg_ts = 0;
+      std::string title;
+      std::string content;
+      if (!_parse_lxmf_payload(payload, payload_len, &msg_ts, &title, &content)) {
+        WARNING("LXMF: malformed payload");
+        return;
+      }
+      if (msg_ts > 0) calibrate_time(msg_ts);
+
+      bool sig_ok = false;
+      RNS::Identity sender = RNS::Identity::recall(source_hash);
+      if (sender) {
+        RNS::Bytes hashed_part;
+        hashed_part.append(_destination.hash().data(), HASH_LEN);
+        hashed_part.append(source_hash.data(), HASH_LEN);
+        hashed_part.append(payload, payload_len);
+        RNS::Bytes mh = RNS::Identity::full_hash(hashed_part);
+        RNS::Bytes signed_part;
+        signed_part.append(hashed_part);
+        signed_part.append(mh);
+        sig_ok = sender.validate(signature, signed_part);
+      }
+      else {
+        WARNINGF("LXMF: sender %s identity not known — signature cannot be verified",
+                 source_hash.toHex().c_str());
+      }
+
+      if (_on_delivery) {
+        MessageRecord rec;
+        rec.ts           = msg_ts;
+        rec.peer_hash    = source_hash;
+        rec.title        = title;
+        rec.content      = content;
+        rec.incoming     = true;
+        rec.signature_ok = sig_ok;
+        rec.status       = OutboxStatus::Delivered;
+        rec.packet_hash  = packet_or_resource_hash;
+        try { _on_delivery(rec); }
+        catch (const std::bad_alloc&) {
+          ERROR("LXMF: delivery callback bad_alloc");
+        }
+        catch (const std::exception& e) {
+          ERRORF("LXMF: delivery callback exception: %s", e.what());
+        }
+      }
     }
 
     void _on_packet(const RNS::Bytes& data, const RNS::Packet& packet) {

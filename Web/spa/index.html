@@ -744,10 +744,11 @@ summary:hover { color: var(--text); }
       <div class="popover-label" id="status-radio-label">RADIO</div>
       <div id="status-radio-line"></div>
     </div>
-    <div class="muted mono" id="status-radio-cfg-1" style="font-size:11px;margin-top:6px"></div>
-    <div class="muted mono" id="status-radio-cfg-2" style="font-size:11px"></div>
-    <div class="muted mono" id="status-radio-stats" style="font-size:11px;margin-top:4px"></div>
-    <div class="muted mono" id="status-radio-rate"  style="font-size:11px"></div>
+    <div class="muted mono" id="status-radio-cfg-1"    style="font-size:11px;margin-top:6px"></div>
+    <div class="muted mono" id="status-radio-cfg-2"    style="font-size:11px"></div>
+    <div class="muted mono" id="status-radio-airtime"  style="font-size:11px;margin-top:4px"></div>
+    <div class="muted mono" id="status-radio-stats"    style="font-size:11px"></div>
+    <div class="muted mono" id="status-radio-rate"     style="font-size:11px"></div>
   </div>
   <div class="popover-section">
     <div class="popover-row">
@@ -1929,10 +1930,20 @@ function renderStatusPopover() {
     $('status-radio-cfg-2').textContent = '';
   }
   const s = r.stats || {};
+  // Airtime gets its own line above the packet counters because it's
+  // the regulatory-meaningful metric — packet counts are diagnostic.
+  // Short-form "s" / "l" tag (short-term / long-term, matching what
+  // the radio settings tab shows).
+  if (s.airtime_pct !== undefined || s.longterm_airtime_pct !== undefined) {
+    $('status-radio-airtime').textContent =
+      'Airtime: ' + (s.airtime_pct || 0) + '% s · '
+                  + (s.longterm_airtime_pct || 0) + '% l';
+  } else {
+    $('status-radio-airtime').textContent = '';
+  }
   if (s.rx_packets !== undefined || s.tx_packets !== undefined) {
     $('status-radio-stats').textContent =
-      'RX ' + (s.rx_packets || 0) + ' pkt · TX ' + (s.tx_packets || 0) + ' pkt' +
-      ' · airtime ' + (s.airtime_pct || 0) + '% (st), ' + (s.longterm_airtime_pct || 0) + '% (lt)';
+      'RX ' + (s.rx_packets || 0) + ' pkt · TX ' + (s.tx_packets || 0) + ' pkt';
   } else {
     $('status-radio-stats').textContent = '';
   }

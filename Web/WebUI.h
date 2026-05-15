@@ -372,8 +372,9 @@ namespace Web {
 
     static void register_routes() {
       // SPA — single embedded HTML file, served gzipped at / and /index.html
-      server.on("/",            HTTP_GET, handle_spa);
-      server.on("/index.html",  HTTP_GET, handle_spa);
+      server.on("/",              HTTP_GET, handle_spa);
+      server.on("/index.html",    HTTP_GET, handle_spa);
+      server.on("/alpine.min.js", HTTP_GET, handle_alpine_js);
       // Public
       server.on("/api/info",          HTTP_GET,  handle_info);
       // Auth
@@ -425,6 +426,18 @@ namespace Web {
       server.send_P(200, "text/html",
                     reinterpret_cast<const char*>(Web::SPA_HTML_GZ),
                     Web::SPA_HTML_GZ_LEN);
+    }
+
+    static void handle_alpine_js() {
+      server.sendHeader("Content-Encoding", "gzip");
+      // Alpine doesn't change between SPA versions, so let the browser
+      // cache it indefinitely — it's the largest asset by far. The
+      // filename includes no hash today; if we ever bump versions we'll
+      // need to either rename or bust the cache from the SPA loader.
+      server.sendHeader("Cache-Control", "public, max-age=31536000, immutable");
+      server.send_P(200, "application/javascript",
+                    reinterpret_cast<const char*>(Web::SPA_ALPINE_JS_GZ),
+                    Web::SPA_ALPINE_JS_GZ_LEN);
     }
 
     static void handle_info() {

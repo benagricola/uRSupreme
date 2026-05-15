@@ -6,16 +6,21 @@ import shutil
 
 def embed_spa(env):
     """
-    Generate Web/SPAEmbedded.h from Web/spa/index.html on every build.
-    The HTML is the source of truth; the .h file is checked in to keep
-    PR diffs reviewable but is overwritten if the .html is newer.
+    Generate Web/SPAEmbedded.h from Web/spa/index.html (and the
+    vendored alpine.min.js) on every build. The HTML is the source of
+    truth; the .h file is checked in to keep PR diffs reviewable but
+    is overwritten if any source asset is newer.
     """
     project_dir = env.subst("$PROJECT_DIR")
     src = os.path.join(project_dir, "Web", "spa", "index.html")
+    alpine = os.path.join(project_dir, "Web", "spa", "alpine.min.js")
     dst = os.path.join(project_dir, "Web", "SPAEmbedded.h")
     if not os.path.exists(src):
         return
-    if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+    src_mtime = os.path.getmtime(src)
+    if os.path.exists(alpine):
+        src_mtime = max(src_mtime, os.path.getmtime(alpine))
+    if os.path.exists(dst) and os.path.getmtime(dst) >= src_mtime:
         return
     with open(src, "rb") as f:
         html = f.read()
@@ -32,220 +37,26 @@ def embed_spa(env):
         "  static const uint8_t SPA_HTML_GZ[] PROGMEM = {\n"
         f"    {body}\n"
         "  };\n"
-        "}\n"
     )
+    if os.path.exists(alpine):
+        with open(alpine, "rb") as f:
+            js = f.read()
+        gz_js = gzip.compress(js, compresslevel=9)
+        js_body = ", ".join("0x{:02x}".format(b) for b in gz_js)
+        header += (
+            f"  static const size_t SPA_ALPINE_JS_GZ_LEN = {len(gz_js)};\n"
+            "  static const uint8_t SPA_ALPINE_JS_GZ[] PROGMEM = {\n"
+            f"    {js_body}\n"
+            "  };\n"
+        )
+        print(f"*** Embedded Alpine: {len(js)} bytes -> {len(gz_js)} bytes gzipped")
+    header += "}\n"
     with open(dst, "w") as f:
         f.write(header)
     print(f"*** Embedded SPA: {len(html)} bytes -> {len(gz)} bytes gzipped at {dst}")
 
 
-PKCS7_PAD_PATCH_MARKER = "// PATCH-PKCS7-PAD-V1"
-ANNOUNCE_RATCHET_PATCH_MARKER = "// PATCH-RATCHET-V1"
 
-
-def patch_pkcs7_pad(env):
-    """
-    Fix microReticulum's broken PKCS7 padding in
-    microReticulum/src/Cryptography/PKCS7.h::inplace_pad. The current
-    impl writes zero bytes then sets only the last padding byte to the
-    padlen value. Standard PKCS7 requires *every* padding byte to equal
-    the padlen value. microReticulum's own unpad is lenient (only reads
-    the last byte) but Python upstream's `cryptography` library — used
-    by Columba and other current LXMF clients — strictly verifies that
-    all padding bytes equal padlen, so any message we send with
-    padlen != 1 is silently rejected on decryption.
-
-    Empirically: only LXMF messages where the wire length mod 16 == 15
-    (so padlen = 1) were getting through. Patching this makes every
-    plaintext length work.
-    """
-    project_dir = env.subst("$PROJECT_DIR")
-    libdeps = os.path.join(project_dir, ".pio", "libdeps", env.subst("$PIOENV"),
-                           "microReticulum", "src", "Cryptography", "PKCS7.h")
-    if not os.path.exists(libdeps):
-        return
-    with open(libdeps, "r") as f:
-        src = f.read()
-    if PKCS7_PAD_PATCH_MARKER in src:
-        return
-    bad = (
-        "\t\t\tuint8_t pad[padlen];\n"
-        "\t\t\tmemset(pad, 0, padlen);\n"
-        "\t\t\t// set last byte of padding array to size of padding\n"
-        "\t\t\tpad[padlen-1] = (uint8_t)padlen;\n"
-    )
-    good = (
-        "\t\t\t" + PKCS7_PAD_PATCH_MARKER + "\n"
-        "\t\t\tuint8_t pad[padlen];\n"
-        "\t\t\t// Standard PKCS7: every padding byte equals padlen.\n"
-        "\t\t\tmemset(pad, (uint8_t)padlen, padlen);\n"
-    )
-    if bad not in src:
-        print("*** WARNING: PKCS7 pad patch didn't match expected source — skipped")
-        return
-    src = src.replace(bad, good)
-    with open(libdeps, "w") as f:
-        f.write(src)
-    print("*** Patched PKCS7::inplace_pad at", libdeps)
-
-
-def patch_announce_ratchet(env):
-    """
-    Teach `microReticulum/src/Identity.cpp::validate_announce` to handle
-    the 32-byte announce ratchet field that newer upstream Reticulum
-    (>=0.7.x) inserts between random_hash and the signature when
-    packet.context_flag == FLAG_SET. Empirically observed because
-    Columba on Android (using upstream Python Reticulum) sends
-    announces with FLAG_SET, microReticulum 0.3.1 doesn't know about
-    the ratchet, so its signed_data construction omits 32 bytes and
-    Ed25519 signature verification fails.
-
-    Upstream Python signed_data layout:
-        destination_hash + public_key + name_hash + random_hash
-            + ratchet + app_data
-
-    The data offsets for the signature and app_data shift by 32 bytes
-    when has_ratchet, so we recompute them.
-
-    Patch is gated on a sentinel marker comment to keep it idempotent.
-    """
-    project_dir = env.subst("$PROJECT_DIR")
-    libdeps = os.path.join(project_dir, ".pio", "libdeps", env.subst("$PIOENV"),
-                           "microReticulum", "src", "Identity.cpp")
-    if not os.path.exists(libdeps):
-        return
-    with open(libdeps, "r") as f:
-        src = f.read()
-    if ANNOUNCE_RATCHET_PATCH_MARKER in src:
-        return  # already patched
-
-    bad = (
-        "\t\t\tBytes signature = packet.data().mid(KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8, SIGLENGTH/8);\n"
-        "\t\t\t//TRACEF(\"Identity::validate_announce: signature:        %s\", signature.toHex().c_str());\n"
-        "\t\t\tBytes app_data;\n"
-        "\t\t\tif (packet.data().size() > (KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8)) {\n"
-        "\t\t\t\tapp_data = packet.data().mid(KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8);\n"
-        "\t\t\t}\n"
-        "\t\t\t//TRACEF(\"Identity::validate_announce: app_data:         %s\", app_data.toHex().c_str());\n"
-        "\t\t\t//TRACEF(\"Identity::validate_announce: app_data text:    %s\", app_data.toString().c_str());\n"
-        "\n"
-        "\t\t\tBytes signed_data;\n"
-        "\t\t\tsigned_data << packet.destination_hash() << public_key << name_hash << random_hash+app_data;\n"
-        "\t\t\t//TRACEF(\"Identity::validate_announce: signed_data:      %s\", signed_data.toHex().c_str());\n"
-        "\n"
-        "\t\t\tif (packet.data().size() <= KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8 + SIGLENGTH/8) {\n"
-        "\t\t\t\tapp_data.clear();\n"
-        "\t\t\t}\n"
-    )
-    good = (
-        "\t\t\t" + ANNOUNCE_RATCHET_PATCH_MARKER + "\n"
-        "\t\t\tconst size_t header_len = KEYSIZE/8 + NAME_HASH_LENGTH/8 + RANDOM_HASH_LENGTH/8;\n"
-        "\t\t\tconst bool has_ratchet = (packet.context_flag() == RNS::Type::Packet::FLAG_SET);\n"
-        "\t\t\tBytes ratchet;\n"
-        "\t\t\tif (has_ratchet && packet.data().size() >= header_len + RATCHETSIZE/8) {\n"
-        "\t\t\t\tratchet = packet.data().mid(header_len, RATCHETSIZE/8);\n"
-        "\t\t\t}\n"
-        "\t\t\tconst size_t sig_offset = header_len + (has_ratchet ? RATCHETSIZE/8 : 0);\n"
-        "\t\t\tBytes signature = packet.data().mid(sig_offset, SIGLENGTH/8);\n"
-        "\t\t\tBytes app_data;\n"
-        "\t\t\tif (packet.data().size() > (sig_offset + SIGLENGTH/8)) {\n"
-        "\t\t\t\tapp_data = packet.data().mid(sig_offset + SIGLENGTH/8);\n"
-        "\t\t\t}\n"
-        "\n"
-        "\t\t\tBytes signed_data;\n"
-        "\t\t\tsigned_data << packet.destination_hash() << public_key << name_hash << random_hash;\n"
-        "\t\t\tif (has_ratchet) signed_data << ratchet;\n"
-        "\t\t\tsigned_data << app_data;\n"
-        "\n"
-        "\t\t\tif (packet.data().size() <= sig_offset + SIGLENGTH/8) {\n"
-        "\t\t\t\tapp_data.clear();\n"
-        "\t\t\t}\n"
-    )
-    if bad not in src:
-        print("*** WARNING: announce-ratchet patch didn't find expected source — skipped")
-        return
-    src = src.replace(bad, good)
-    with open(libdeps, "w") as f:
-        f.write(src)
-    print("*** Patched Identity::validate_announce to handle announce ratchet at", libdeps)
-
-
-def patch_announce_reject_logs(env):
-    """
-    Upgrade the two DEBUGF rejection logs in
-    `microReticulum/src/Identity.cpp::validate_announce` to NOTICEF so
-    they survive an NDEBUG build. DEBUGF is compiled to a no-op when
-    NDEBUG is set (Log.h:46-65), which we do for size — so when an
-    announce is rejected for "Invalid signature" or "Destination
-    mismatch" we have no signal at all. Promoting just these two lines
-    keeps the rest of the DEBUG noise off while letting us see why
-    announces are dropped.
-    """
-    project_dir = env.subst("$PROJECT_DIR")
-    libdeps = os.path.join(project_dir, ".pio", "libdeps", env.subst("$PIOENV"),
-                           "microReticulum", "src", "Identity.cpp")
-    if not os.path.exists(libdeps):
-        return
-    with open(libdeps, "r") as f:
-        src = f.read()
-    swaps = [
-        ('DEBUGF("Received invalid announce for %s: Destination mismatch.", packet.destination_hash().toHex().c_str());',
-         'NOTICEF("Received invalid announce for %s: Destination mismatch.", packet.destination_hash().toHex().c_str());'),
-        ('DEBUGF("Received invalid announce for %s: Invalid signature.", packet.destination_hash().toHex().c_str());',
-         'NOTICEF("Received invalid announce for %s: Invalid signature.", packet.destination_hash().toHex().c_str());'),
-        ('DEBUGF("Decryption failed because the token size %lu was invalid.", ciphertext_token.size());',
-         'NOTICEF("Decryption failed because the token size %lu was invalid.", ciphertext_token.size());'),
-        ('DEBUGF("Decryption by %s failed: %s", toString().c_str(), e.what());',
-         'NOTICEF("Decryption by %s failed: %s", toString().c_str(), e.what());'),
-    ]
-    changed = False
-    for old, new in swaps:
-        if old in src:
-            src = src.replace(old, new)
-            changed = True
-    if changed:
-        print("*** Promoted announce-reject DEBUGF lines to NOTICEF at", libdeps)
-        with open(libdeps, "w") as f:
-            f.write(src)
-
-
-def patch_microreticulum_validate(env):
-    """
-    Patch microReticulum's Identity::validate to actually return the result of
-    Ed25519PublicKey::verify().
-
-    Upstream bug: Identity.cpp's validate() discards the bool returned by
-    _sig_pub->verify() and unconditionally returns true (only catches
-    exceptions, which the verify path doesn't throw). This silently turns
-    signature verification into a no-op everywhere — including the library's
-    own Identity::validate_announce path.
-
-    Demonstrated by LXMF/Probe.h: alice.validate(bob_signature, msg) returns
-    true with the bug present. With the fix the same probe returns false as
-    expected and the probe reports PASS.
-
-    Upstream report: TODO file an issue on attermann/microReticulum referencing
-    this file and Identity.cpp:652.
-    """
-    project_dir = env.subst("$PROJECT_DIR")
-    libdeps = os.path.join(project_dir, ".pio", "libdeps", env.subst("$PIOENV"),
-                           "microReticulum", "src", "Identity.cpp")
-    if not os.path.exists(libdeps):
-        return
-    with open(libdeps, "r") as f:
-        src = f.read()
-    bad = "\t\t\t_object->_sig_pub->verify(signature, message);\n\t\t\treturn true;\n"
-    good = "\t\t\treturn _object->_sig_pub->verify(signature, message);\n"
-    if bad in src:
-        print("*** Patching microReticulum Identity::validate (upstream bug fix) at", libdeps)
-        src = src.replace(bad, good)
-        with open(libdeps, "w") as f:
-            f.write(src)
-    elif good in src:
-        # already patched
-        pass
-    else:
-        print("*** WARNING: Identity.cpp does not match either patched or known-bad shape — patch skipped")
 
 #
 # Custom targets
@@ -430,10 +241,10 @@ env.Replace(PROGNAME="rnode_firmware_%s" % env.GetProjectOption("custom_variant"
 print("PROGNAME:", env.subst("$PROGNAME"))
 
 print("*** Running custom script...")
-patch_microreticulum_validate(env)
-patch_announce_reject_logs(env)
-patch_announce_ratchet(env)
-patch_pkcs7_pad(env)
+# microReticulum patches used to be applied here. They're now committed
+# directly to the local microReticulum repo at ../microReticulum, on the
+# ur-patches branch (one commit per fix). platformio.ini's lib_deps
+# uses symlink:// to that repo so the build picks them up natively.
 embed_spa(env)
 platform = env.GetProjectOption("platform")
 print("Platform:", platform)

@@ -1,394 +1,2392 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#161b22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="uR LXMF">
+<link rel="apple-touch-icon" href="data:image/png;base64,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">
+<link rel="icon" type="image/png" href="data:image/png;base64,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">
+<link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoidVIgTFhNRiIsInNob3J0X25hbWUiOiJ1UiBMWE1GIiwic3RhcnRfdXJsIjoiLyIsInNjb3BlIjoiLyIsImRpc3BsYXkiOiJzdGFuZGFsb25lIiwib3JpZW50YXRpb24iOiJhbnkiLCJiYWNrZ3JvdW5kX2NvbG9yIjoiIzBkMTExNyIsInRoZW1lX2NvbG9yIjoiIzE2MWIyMiIsImljb25zIjpbeyJzcmMiOiJkYXRhOmltYWdlL3BuZztiYXNlNjQsaVZCT1J3MEtHZ29BQUFBTlNVaEVVZ0FBQU1BQUFBREFDQVlBQUFCUzNHd0hBQUFKOFVsRVFWUjQydTNkYTNCVWR4bkg4ZDllazJ6dVFDQVhrUHRsdUJrb3BvQUQ3UXVnTHdSRTJqZEZCNmZUc1crOFZLdUlsaG1WcWJVemFnSEYxazdyT09ONEE0YUJhbW01R0RvdFdCd2d0Q2tRUWhOSUtMQWhtM0JaeU82U1pMTzd2bWh4MUNGY2NqWjd6dG56L2J5RlBadHo4dnorei9QZnk0a0VBQUFBQUFBQUFBQUFBQUFBQUFBQUFBRHN4bVgzRTZpdVdaRGkxMml1K2lNSFhRVEFwSUp2Q3dhcFFKTlZWbFhaTmhBdXV4VTlCVyt2UUZnOURDNDdGRDVGYi84d1dEVUlMZ29mVGc2Q2k4S0hrNFBnb3ZEaDVDQzRyRkQ4Rkw2emcyQm1DTndVUDh6VUZneWErbDZPeTZ6Q1orU0JGVVlpbHhuRlQrSERLaU9SbStLSGswY2lOOFVQSjRmQVRmSER5U0Z3YzZuaFpJTWVBRlovV0xrTHVDbCtPRGtFYm9vZlRnNEJld0N3QjJEMWgxTzdBQjBBZEFCV2Z6aTFDOUFCUUFkZzlZZFR1d0FkQUhRQVZuODR0UXZRQVVBSEFBZ0E0dzhjT0FiUkFVQUhBQWdBUUFDWS8rR3NmUUFkQUhRQWdBQUFCQUFnQUFBQkFBZ0FRQUNBN09YbEVsalBndlhINUF1VURPNlRwRkpLSnZ1VTZvc3JtZWhWWCt5NjRqZkQ2bzFjVWZlMW9McXZYbFEwMUt5dXRrYjEzdWdnQU1neUxwZmNIcC9rOGNtamdIeUJFdVZwOUczL2E4LzFrSzQydjZlclRRZDB1V0cvRXIweEFnRG55Q2tlb1lvNUsxVXhaNlVTdlRGMUhOK2o4Kys4cW1pb21UMEFuTVhqRDZoaXprbzkrTjNkbXZibFg4bGZOSndBd0prajFJanFwWnE3WnArR1RWdEVBT0JNM3R4Q3pmenFLeHI1K2RVRUFNN3RCcE8rK0NPVnoxNUJBT0RjRUV4KzdLY0tsSTBsQUhEb0J0bVhwOGtybnlNQWNLN1NDZk5VT240dUFZQnpWYzFiUlFEZ1hNT21MWkxIbDJlTG41VjNnclBRcGJvZGF0eTZwdC9OcXNlZko0OC9Yem5GNVNvb242aVNjUStxYlBvU2VmT0swck9xZW5OVU5HYVdyalVmb2dQQVlsSXBKWHBpNnUzcVZOZkZFNStFWmR0YS9mTzVlVHEzLzJXbGtvbTBQRTN4NkZtTVFMQ1BaTHhiTFh0ZVZPTzJ0V2s1WHQ3UU1RUUE5dE4rYktjNlQrdzFmSnpjMGtyMkFBTzdjQ00xLzlsM0IvejRoajgvclZEOUxsTi9odnBYVit0cTgzdTJEY0g1ZDE5VDJZeEhqQlZXVGo0ZEFQWjA0OEp4SlhxaXhnckxsMHNBWU5OOWNqS2htMWMrTm5RTXUzeHBoZ0RndHVMUnNLSEg5OFd1RXdCemxxOFUxWnVXeXZBWUMxQXNUQUJnWDc1QXNhSEhSeTU5UkFCTWFRRFViaG9XZjU4Q3c4WVkzRWgvU0FBWWdleXBlTXdEaGw3RlNjYTdkZVBDY1FJQWUvck13MDhaZW56SDhkMkdYMFlsQUF4QnBxaWErN2lHVG5uSTBESGFEbSsxemZsbTNhZEJVNmtrVlR3QUhuOUFZeGQvUzZNZWV0TFFjUzQzdnExdzYxRUNZRjRDQ01BZHVWenkrUExreVFrb3A3aENCZVdUVkRKKzdpY2ZoODR0TUhUb1JQeW1tbmF1dDlYbHlNSU93QWgwNnk1dW1lNjhqVnUrcis1ckYyMTFyWGdWQ0duUnRQUEg2amorbHUxK2J2WUFNS1N2TzZMR2JXdlZlV0tQTFgvK0xOd0QwQUV5SmR4YXA5UGIxaXAyK1p4dHo0Rk5NTzViTkhSR1ozZi9RcGNiYW0xL0x0azNBbEdmZytMV2JkRXZIZDJ1Y091UnJPbTBiSUp4YjF3dWVYTUw1YzByektyVHlzTGJvaENBd2VEeDVhbHMrbUtWVFYrc1NOc3BOVzc3Z2JxQ0RYUUFPb0R6RkZSTzFaeHY3bERWL0s4UUFEaDBJdko0TmZsTDZ6Vm0wZGNKQUp4cjNDUFBxT0p6anhFQUsyM1dEQi9DemJwd1A2WTgrcndLUjg1Z0UyeU5BQmd2WG0rdXZWL3B1TjI5UVYxdWo3eTVoZklYRGxOQjVWUU5uZkt3eXFZdmxzY2ZTTXM0TkczVkJoM2R1RnlKK0UwNmdLa241UGFtSVFBRldiY3VwSklKeFdOaFJVTm5GUHJnN3pyMTEyZDA2R2NMMVhaNFMxcU9IeWdicDdGTG5tWUVNcjBCZVAyR2orSExIK3FJMFNVZXZhYlQyOWZwOVBabjAvSVpxbEVMbmxEKzhBa0V3RXdldi9INzBoZFVUbkhVRE45MmVLdk83SG9oTGFQUXhPWHIyQU1ZYk5ZR0EyQjhwaTJzbXVhNGpleUZBNzlYMGNpWkdqRnJtYUhqREptOFVDWGphaFJ1T2FMeTUvdi9nM250NjFvSndPMW4xVDZENDB1cHNaYm95MVh4bURseW9xYlhmNkxTaWZQbEx6QTJBdVkrMmFseTNmbXZSZDRLaDlsQnNOd0lsT3pyTmZUNG5PSnlRNDh2bTc0NEt6ZkI5N1FuaUlWMTlxMmZHenJHcWQ3Nys2dnhkK29Tamd4QW9zZllUVlh6aDQ4MzlQaXF1YXZrWk8xMU94UnRiOHBJOFZzaEJCYnNBRDNxNjQ0TStQRkZvMllPK0taT0kyWXRVOG00R2tjSElKVks2dXllRnpOVy9HYUh3Skt2QXZYZUNCbWE0VWRVTDczL3ViV2tRaE9YclJPa3l3MjE2Z3FleWxqeG14a0NTd1lnMW1sc1l6Umg2UStWTjJ6MFBmOS9mK0V3VlQvMVIva0x5NmorVDUyci9iVWp6dE9TQVlpMEc3dXpzQzlRb3Vxdi9VRkZvMmJldzZaM2lXcSsvWVlDWldPcCt2L1MyVkNyU0Z0anhsWi9zN3FBSlQ4TGRMMjF6dkF4OG9hTTBnUGYySzVRL1JzS3ZmODNSZHFiRkk5Y2tUZFFySnlpNFNvZFAwL0RxNytnb2xHZnBkcHZ2eGxRYSsxbXpWajljbGFmcGlVREVENTNUTWxFWEc2UHo5QnhYRzZQeW1ldlVQbnNGUlQwUUxyQXlYMktYRHF0Z29yc2ZXZmNraU5Rb2llcXEwMEhxVUFMZElGenRiOWhEMkNHOXJxZEZLQUZkSnpZTStEM0JRaUFvZmE3MTNiM21jemF2Y0EvTmhPQWpGLzNaRUl0ZXplWjh0em4zM21Od3YrZkxyQmIwVkF6QWNqNEdQVCs2d3EzSE03b2M3YnUyNlNMaC81RTFmLy9YcUNmTGpEVm45Njd3Mlg2dzNGdXExLzRocjk4Ui9IbzFZdzgzZG5kdjh6cWRtK29DeHpmcldqSEdUcEFwdlZjRDZuK2QwOFkrbnpRM1NUN2V0UzRkWTArZnZ1M1ZIcS9hMUd5MzFlRTB0VUZ6UGhvdEMyK0VkWjE4YVErZU9WeGRZY3ZwZjNZc2M0VzFXMStWSmZxZGxEbGQrc0M5VzhxMW5GMlVFSmcxdmNDYlBPVnlLN2dLUjNkdUZUdHg5THo4bWlpTjZhV3ZSdDBaTVBTZTNyTEg1OTJnZjB2OWZ2dkF3MkJtVitLc2RWM2d1T3hzRTV0K1o2T2JscXUwSWR2RHVqTE16M1hRMnJadTFIL2V1RmhuYXQ5U2NtK0hpcjdQb1RxZHluVzJaSzJFSmo5alRERGQ1R3FybG1RYWdzR1Rmbmh2YmtGR2pKcG9Vckd6bEYreFdUbGxsYkpuejlFYmwrdVVxbWtFdDBSOVVhdUtCcHFWcVN0VVZjK09xQ3U0RW51SDVvaG1maE9jR1ZWbGVxUEhIUTVNZ0NBMFFCd0QwQTRHZ0VBQVFBSUFFQUFBQUlBRUFDQUFBQUVBQ0FBQUFFQUNBQkFBQUFDQUJBQWdBQUFCQUFnQUFBQkFBZ0FRQUFBQWdCa2J3RHFqeHgwVlZaVmNTV1JjVVp2aVVJSEFCMkFTd0FDQUJBQTlnRncxdnhQQndBZGdFc0FBc0FZQkFlT1AzUUEwQUhTZVRDNkFPeTArdE1CUUFkSTl3SHBBckRMNms4SEFCMWdNQTVLRjRBZFZuODZBT2dBZzNWZ3VnQ3N2dm9QZWdjZ0JMQnk4V2RrQkNJRXNHcnhzd2NBZTRCTVBBbGRBRlpjL1RQYUFRZ0JyRmI4R1IrQkNBR3NWUHlTNURMakpLdHJGcVFrcVMwWTVEZU8veFQrclVVeWs4L3JNdk9rcTJzV3BBZ0JNcjNxbXpZQ01STEJTc1Z2ZWdkZ0pHTGtNYlA0TFJNQWdrRGhFd0NDUU9FVEFJSkE0Uk9BZm9OQUdPeFY5Rll1ZkZzRm9MOHdFQWpyRmJ3ZGl0N1dBYmhiSUpCNWRpcDRBQUFBQUFBQUFBQUFBQUFBQUFBQUFNZ1Mvd2FNY05ZdFVvRzVSUUFBQUFCSlJVNUVya0pnZ2c9PSIsInNpemVzIjoiMTkyeDE5MiIsInR5cGUiOiJpbWFnZS9wbmciLCJwdXJwb3NlIjoiYW55IG1hc2thYmxlIn0seyJzcmMiOiJkYXRhOmltYWdlL3BuZztiYXNlNjQsaVZCT1J3MEtHZ29BQUFBTlNVaEVVZ0FBQWdBQUFBSUFDQVlBQUFEMGVOVDZBQUFkUDBsRVFWUjQydTNkZVpoZGRaa244UGZXcmFwVVZaS3E3RnNsSkNRc0lRbExDQVJCVVJFUUJ4ZEVhY2NOM0o0UmU3REZ4a2U3aHg3SHNVWEhGaHNIUlZuVUJoWFhGbW1CSUNvWUlheUJrSVVBV2Fpa0tuc2xsYVNTU3UxMTc1MC9GRnFjaUVsVkpibm5ucy9uZVh3ZVJWSTU5LzJkdXUvMzk1NXo3bzBBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUtDNFpKU0EvVGxsL3RrRlZZRFNzV3p4SXUvM0NBQm84b0J3SUFDZzJlL0hsczJiRlExS3lLVDZlcUVBQVVERDErU0Jnd3NIQW9FQVFFS2J2bVlQREZZb0VBWUVBRFI4UUNBUUNBUUFqblRqMS9TQkl4a0dCQUVCQUUwZkVBYjBGd0dBd1c3OG1qNlFsREFnQ0FnQURMRHhhL3BBa3NPQUlDQUFZTGNQbUFyb1BRSUFHajhnQ0NBQWFQNGFQNUNxSUNBRUNBQWF2OFlQQ0FJSUFCby9nQ0NBQUtEeEF3Z0NDQUJKYnY0YVA4Q0JCUUVoUUFDdzZ3Y3dEVUFBc09zSE1BMWdvTXFVUVBNSEtFWi8rdjc1U3Q5K2lnbUF4ZzlnR29BSmdPWVBZQnFBQUtENUF3Z0J2TVFZUmVNSFNCeVhCRXdBTkg4QTB3RFRBQUZBOHdjUUFoQUFOSDhBSVlEOWN0MmtIODFmNHdjb1BpL2VGK0NlQUJNQXpSOGdoZE1Ba3dBQlFQTUhFQUlRQURSL0FDRUFBVUR6QnhBQ0JBQTBmd0FoUUFEUS9EVi9BQ0ZBQU5EOEFSQUNCQUROSHdBaFFBQW9yZVlQZ1BkN0FTQ0ZKNFBkUDBCcFR3R0VBQUhnRlU4T0FMelBDd0FwMlAwN0tRRFNGUUxTUGdWSWRRRFEvQUdFQUFFZ3BjMGZnSFJMYXo5SS9TVUF1MzhBNy84Q1FNclNudVlQSUFTa2RRcVF1Z0NnK1FNZ0JLUXNBTGp1RDRBK2tkSUpnTjAvQVBwQ2lnS0EwVDhBQnhJQzBqSUZTRVVBTVBvSFFOOUk2UVRBN2g4QWZTSkZBY0RvSDREK2hJQlNud0w0TWlBQVNLR1NEZ0IyL3dDWUFwZ0FBQUNsSGdEcy9nRXdCVWhaQVBEWUh3RDZTa29uQUhiL0FPZ2pLUW9BZHY4QTZDOHBuZ0RZL1FPZ242UXdBQUFBS1FrQTd2d0g0RkJPQVVycE1vQUpBQUNZQU5qOUEwQWFwZ0FtQUFCZ0FtRDNEd0JwbUFLWUFBQ0FDUUFBSUFBa2dQRS9BSWRUcVZ3R01BRUFBQk9BWk83K0FVQWZTdUVFd1BnZkFIMG5oUUVBQUJBQUFJQlNEUUR1L2dmZ1NFcjYwd0FtQUFCZ0FnQUFDQUJGeXZnZmdHS1E1TXNBSmdBQVlBSUFBQWdBQUlBQVVBeGMvd2VnbUNUMVBnQVRBQUF3QVFBQUJBQUFRQUFBQUFTQXc4NE5nQUFVb3lUZUNHZ0NBQUFtQUFDQUFBQUFDQUFBZ0FBQUFBZ0FBSUFBTU1nOEFnaEFNVXZhbzRBbUFBQmdBZ0FBQ0FBQWdBQUFBQWdBQUlBQUFBQUlBQUNBQUFBQUNBQUFnQUFBQUFnQUFJQUFBQUFJQUFDQUFBQUFDQUFBZ0FBQUFBZ0FBRUJFbENzQmNMQW12L3F5T083dG4xT0lGeFVLVVNqa281RFBSYUdRaTBJdUYvbmVyc2ozZFVlK3R5dHl2VjNSMTdVdmNsMXQwZGZWRm4yZGU2T25mV2YwN05zWnZmdDJSWGZianVodTNSSTliUzFSeU9mVUV3RUFJQkV5bWNoa3NwRXB5LzdoZjFkRVJOV3dnODhSK1Z4MDcyMk96cDBib3JPbE1UcGJtcUo5ZTBPMGIxc1RuYnMzUlJRS2FvMEFBRkJ5T2FJc0cxVWpKa1hWaUVreGNzYXJYdmIvNWJvN1l0KzIxZEcyY1VYczNiZ2k5bTVZRmgwdGpZcUdBQUJReXJKRGFxSnU2dHlvbXpyM3BYL1d2YmM1V2hzV3grNkd4MlBucXQ5SDk1NXRDb1VBQUZEcWh0U09qL0Z6M3hyajU3NDFJaUwyYlYwVkxjODlFTnVYM3h2N3RxNVNJQVFBZ0RRWU5uRm1ESnM0TTZhZGUwVjA3RmdYMjU3K2o5ajY1QjBtQSt5WHh3QUJTbEROMk9reC9ZS3I0cXlySDRxVFAveWRHSFhjYXhRRkV3Q0F0TWlVWldQMENlZkU2QlBPaVgxYlYwZlR3cHRpKzdKN29sRElLNDRKQUFCcE1Hemk4VEg3dlYrTCtaKzZOOGJPZWFPQ0NBQUFwTW5ROGNmR2lSKzRNZVorOUFjeGRQeXhDaUlBQUpBbUk0ODlLK2IvL1QxeDlQbWZpRXpXRldFQkFJRFV5R1RMNCtnM1hobW4vZDB2b21wa3ZZSUlBQUNreWZENjJYSDZsZjhSSTQ0K1hURUVBQURTcEdMb3FKaDcrZTFSLzZyM0tJWUFBRUNhWkxMbGNmdzdyNGtaRjM1R01RUUFBTkptNmptWHg3UnpyMUFJQVFDQXRKbitwcXRpOGxtWEtvUUFBRURhSFBmMno4WDR1VzlUQ0FFQWdGVEpaR0xtMzN3cGFzWk9Wd3NCQUlBMHlWWlV4K3ozZnMySEJRa0FBS1ROOE1sell2b2JQNmtRQWdBQWFYUFVPWmRIM2RTNUNpRUFBSkFtbVV4WkhQT1cvNkVRQWdBQWFWTTNiVjZNUHVFY2hSQUFBRWliR1crNktpS1RVUWdCQUlBMEdUWnBWb3c3NlVLRkVBQUFTSnZKci9ZSmdRSUFBS2t6WXRwcFVUMXFpa0lJQUFDa1NpWVRFK1pkckE0Q0FBQnBJd0FJQUFDa1VQWG9vNkxXQndNbGxnOTJCa3BlNjdvbjR1a2IzenM0UHl5VGliSnNaWlNWVjBRbVd4RVYxWFZSUG5Sa1ZOU01pT3FSazZONjlGRlJQWFphREsrZkhVTnF4NWQ4YlVjZGMyYnNiVnJxSkJNQUFFcGNvUkQ1dnU3STkzVkhSRVJ2Kys2SWxzYjkvcXRENmliRWlHbnpZc3pzODJMMHpOZEZlWFZkeVpWanhOR25PeWNFQUFEK1ZQZWViZEc4ZkVFMEwxOFFaZG1LR0h2aUJWRi81dnRpeFBUNUpmTWE2NmFkRnBteWJCVHlPUXVlTU80QkFEZ004cm5lYUY1MlR6eDk0M3RpMmJjL0VQdTJQRjhTcnlzN3BDYUcxOCsyd0FJQUFIL05yalVQeDVQWFh4Uk5DMitPS0JSS1lBb3d6NklLQUFBY2lFSStGdzMzZmlWVy92REt4SS9QYThaT3Q2QUNBQUFIWS92eUJmSHNENjlNOUNTZ2V2UlJGbElBQU9DZ1E4Q0tYMFhUd3BzRUFBUUFnTFJaOSt1dlJmdTJOWWs4OXFxUjlaRXB5MXBFQVFDQWcxWEk1Mkx0WGRjazh0Z3paZG1vR2pISklnb0FBUFRIcnJXUHhONk5LeEo1N0JYRHgxakFoUEZCUUVWbTFudXVpd21uWGxUVXg3amptZnZpbWU5ZmtjajZUbi9UVlRIdDNPSSs5bzJMYm91MWQzM0JMME5LYlhyayt6SHIzVjlOM0hGbks2c3RuZ2tBQVAwTzJDdC9FL2xjYndJRFFJM0ZFd0FBNks5Y2QzdTBOanhoQW9BQUFKQTJyZXNYbXdBZ0FBQ2tUZHVtWjAwQUVBQUEwbWJmMXVjVkFRRUFJRzE2OXU1STNQY0Q1SHU3TFp3QUFNQkFGQXI1NkduYmthd0EwQ2NBQ0FBQURGaHZSNnNKQUFJQVFOcmtlN3VTRlZnNjkxbzBBUUNBZ2NvbGJFZmQwN2Jkb2drQUFBeFVwaXhaYjgvZGV3VUFBWUNTVnlnVUZBRU9zV3hGVlhMZUUzSjlpYnRuQVFFQW9EamZuQk1VQURwM05rWFlHQWdBQUF4YzViRGtmTDF1ZS9OYUN5WUFrQTZTUGh6U04rYnl5cWdZT2pJeHg3dHYyeHFMSmdBQU1GQlZJeWNuNm5qM2JWMXQwUVFBQUFacStLUVRFblc4ZXhxWFdEUUJnRlJ3c3c4Y1VzTW16MG5Nc1hac2IwamN4eFlqQU5EZi9xOEVjRWlOT3ZZMWlUblczUTJQV3pBQkFCTUFZS0FxYThjbDZoTEF6dFVQV1RRQkFBRUFHS2dKcDE0VWtja2s0bGo3dXRwaWx3QWdBSkNxQktBRWNBaGtNbVZSZitiN0VuTzhPMWIrTnZKOVBSWk9BQ0E5QXdBQkFBNkY4YWRlRk5XanBpVG1lSnVYM21YUkJBQk1BSUNCeUE2cGlSa1hmam94eDl1eHZTRjJyWDNZd2drQXBHd0VvQVl3eUk1L3h6VXhwSFo4WW81MzQ2SmJ2UmNJQUFBTXhGR3YvY2dmYnY1TGlONzIzYkYxeVowV1RnQWdmUU9BdkNMQUlKbHk5b2ZpbUxkZW5haGpibnpnaHNqM2RsbThoQ3RYQXZxUkFOUUFCaWhiVVIzSHZlUHpNZkcwZHlicXVEdGFHbVBUbzdkYlFBRUFFd0RnWUkwNzZjS1k4ZWJQSk9xTy94YzFMUGh5RkhKOUZsRUF3QVFBT0JCbEZWVXhZZTdiWXZLckw0MWhrMllsOGpWc1gzRnY3Rmo1VzRzcEFDQUFBSytrYXVUa0dESDk5Qmc3Kzd3WWRkeHJJenVrSnJHdnBhZHRSNnkrNDdNV1ZRQWcxZjNmNXdDUTl0MTh0aUl5NVJWUmxxMk04cHE2cUJnNktpcHJSa2JWeVBxb0hqTXRhc1pPaStIMWM2SnkrSmdTeWZ6NWVQNW4veEM5SGEwV1h3QWczUW5BUFFBa3k0anBaOFFicm0xUWlINWE5NnV2eHM1VkR5cEVxUVZaSmFBL3V3RWdIYll0dVRPYUZ0NnNFQUlBaEhzQUlDVjJybm93VnYzOGFvVVFBT0NQL1Q5dkFnQnBhUDdQZk85anZ1MVBBSUNYSlFBMWdCTFc4dHdEbW44S3VBbVFnKy8vbmdLQWtyVngwYTN4d3QxZmNxK1BBQUFtQUpDS1grdGNYNnkrODNPeDVZbWZLSVlBQUgvaGpjSk5nRkJTMnJlL0VNLzk2S3BvMi95c1lnZ0FZQUlBS1VqenNlbXgyK09GZTc3czIvMEVBRGlRL2k4QVFOTHQyL0pjckw3emY4ZWV4aVdLSVFEQWdlOGFnR1RxN1dpTmRmZGRGMXNlLzdFYi9RUUFPT2dFb0FTUXRNYmZ2anMyUFBUZDJQVEk5eVBYM2E0Z0NBRDBad0JnMXdCSjBkVzZOVFkvOHYzWTlOanRrZXZ1VUJBRUFBYVNBQVFBS1BLVUhydldQaEtiSDdzOVdwNzdYUlR5T1RWQkFHQXczbHRjQW9CaTFMNXRUVFF2dXllYWw5MFZuVHMzS2dnQ0FJTy91d0NLUjI5SGF6VGNlMjFzZmZMZjdmWTVZTDRMZ0g3MGY1Y0FvSmhVMUl5SW1aZDhNYzcrL05NeDY5MWZqVkhIdnpZeUdXL3ZtQUJnQWdEcGVFT3ZHaFlUNWwwY0UrWmRISjA3TjhiR2gyK05yWXYvUFhJOWJ2N0RCSURCU1FCS0FFV3VldlNVT082aS94Vm4vdVBDbVB6cXl5S1R0ZDlEQU1BRUFGS2pjdmlZT083dG40djVuN3c3NnFiT1ZSQUVBQWJTL3dVQVNKcWhFNDZMVTYvNFdSeno1bjgwRFVBQW9OOFJRQWtnZ1RLWnNqanE5Zjh0NWwzeHM2Z2FNVWxCQkFBNDJBbUFwd0FneVdxbm5CeW5mZUlYVVR2bFpNVVFBT0NnRW9BYVFNSlZEaDhicC83dGoyTDB6TmNwaGdBQVFLb2FRRVZWblBqQm0yUHNuRGNxaGdBQVFLcWFRTFlpNXJ6L0d6SDYrTmNxaGdBQVFKcGtzdVV4NXdQZmlscVBDUW9BQUtSTHRxSTZUdjdRTFZFMXNsNHhCQUFBMHFSaTZLZzQ2WU0zUjdheVJqRUVBTmlQVEVZTm9FUU5tM1JDekx6a1N3b2hBTUIrK244SUFGREt4czk5YTB3NjQ5MEtVZUo4SGlTcG1nQ1VaU3V0WHdxMXJuc2lucjd4dlFkNW1wZEZwcnd5eXNvcm82SzZMaXFHajRraHRlT2ladXowR0RwdVJ0Uk9PU2xxeGs0djJZblljUmQ5TnZZMExvbjI1clZPSUFFQS92T05NYkVCb0Z3QTRNQVVDdmtvOUhaRnZyY3IranIzUnVldWpmL2Z2MU5STXlKR0hYOTJqSjF6UVl3NTRad29xNmdxbWRkZlZsRVZzOTd6ci9IVTF5K09RajduaENoQkxnSFFuMjEwY3NPTEFNQWc2dTFvamVhbGQ4ZktIM3c4SHY3Q21iSDI3aTlHVit1V2tubDl3K3RueDdUelBtNmhCUUF3QVlDL3BLOXpiMng4Nk4vaThYODVOOWJlOVlYbzYyb3JpZGMxN2R3cll0akVtUlpZQUlCSTlGZUpWbFRYV1VBT3FYeGZUMnhjZEZzODhkVUxZdWVxQjVQLysxNldqWm52dkNiUndSOEJnRUY3UTBod0FCZzZ5Z0p5V0hUdmFZN2wvL2FSV1AvYmJ5VCtDN1JxcDg2TlNXZSsxNklLQUtUK3BNbFdKUGJZSzRlTnRvQWNQb1ZDclAvTi80M25mL1lQaWY4YTdSbHYrcFFBTFFDUStwT21Za2h5SndERHZJRngrRzE5Nm81NDdzZWZTblFJS0srdWpSbHYrcFRGRkFCSTl3UWdtVGZTbFZmWFJublZjQXZJRWRHODlLNTQ0ZTR2SnZvMVREempYVEZzMGl5TEtRQmdBcEFzTldPbld6eU9xSTJMYm90TkQzOHZzY2VmeVpURnNXLzdueFpTQUNDOUFTQ1pIM1pTTS9ab2k4Y1J0L2FlTDhXZXhpV0pQZjZSTTg2STBUTmZieUVGQU5Jb3FkOFVKZ0JRREFxNXZsajVnNytMM3ZiZGlYME5NeTc4ak1jQ1M0Q1BBcVlmQWFBNmtjZGRPK1VraTBkUjZON2JIS3QvOGRtWWMra05pVHorWVJPUGovR25YaFRibHR6NUYvK2RDVjg4OE1DOTdaL1dPeWtFQUJKeDBpVHdScnBNcGl4cWp6ckY0bEUwdHEvNFZUUXZ2U3ZHejMxYklvLy82UE92ak9hbGQ3MzBQUUVIMC9EL1dsZ1FDQVNBbENyK0R3d3ByMDVlQUJnNjRWaFBBRkIwMXZ6eW4yUFU4YStOaXBvUmlUdjI2dEZUWXVMcGwwVCtiWXNIL1dlL0dBZ0VnVVBMUlp4aWEvKzV2Z1FFZ09TOVdZMDRlcjZUaTZMVDI3NDdHdTc5U2lLUC9ibWU4dzVKOC8veklEQ1F5UUlDUUtMayszcUtQd0JVRFV2Y3B3R09tWE8razR1aXRHWHh6MkpQMDlKRU5mN25lczQ3ckgrbklDQUFDQUJGcEhMNG1NVFV0THk2TmtaT1A4UEpSWEVxRkJMekFVR0h1L0h2THdnZ0FKUndBT2hPUmdDb201Q2MzZjhKYjBqME54aFMrdlkwTFkzdHl4ZG8va0tBQUdBQ1VQeHFSazlOVEUwbm5mRmZuVmdVdllaZlhWdVU5d0FkaVpIL2dZUUFRVUFBS0RtRlhFSUNRRUkrVkdmbytHTml4SFEzQUZMOE9uZHVqSzFQL2R5dTN6UkFBRWlyM3M2OWlUak82b1FFZ1BxejN1K2tJakVhNzcraGFLYUF4ZDc4aFFBQm9PVDB0TFVrNGpocjYrY1UvVEVPcVpzUWsrYS95MGxGWW5TMWJvMHRpMytxRUFnQTZRd0FPNUl4QVJnek5TcUhqUzdxWXp6Ni9FOUVXZmtRSnhXSnNtSGh6WkhQOWRyOW13SUlBS2tMQVB0YUVuT3NkVWVmWHJUSE5uVGNNVEh4OUV1Y1VDUnlDckR0cVRzMGZ5RkFBREFCS0Y3alRyeWdLSThya3ltTEU5NzE1Y2lVWloxUUpGTFQ3MjU2NlRQMk5YOGhRQUJJaVZ4M1IrUjZPaEp4ckdObW5SdGxGVlZGZDF4VFh2ZVJxSjA2MThsRVluWHUyaGpibnY2bFFpQUFwTzZYZitmR1JCeG5kc2pRcUgvVnU0dnFtR3FQT2lXbVgvRDNUaUpLWUFyd3JjTTZCVWo2N3Q4VVFBQW9DZTNiWDBqTXNVNDk1Mk9SSFRLMEtJNWxTTjJFT09tRE43bnhqNUxRc1dOOTBYODZJQUlBZy8yTDM3dzJNY2RhT1h4c0hIL3g1NC80Y1pSWDE4WEpILzUyVkE0ZjZ3U2laRFErOE0ySXdxSC9pdkJTMmYyYkFnZ0F5WjhBTkwrUXJGKzJlUmZIeE5QZWVjVCsvb3FobytMVWovMHdoazJhNWVTaDVONEx0ajl6bjBJZ0FLVG5sMzV0NG81NTV0LzhueGh6d2hzTys5OWJNMlphelB2dlA0bGhrMDV3NG1BS1lQZHZDaUFBSkZ0SFMyTml2aFh3UlpteWJNeTU3SVlZZjhwYkR0dmZPZjZVdDhUcG43d3Jhc2JOY05KUXN2WnRlVDVhbm50QUlSQUEwcUNRNjR1OUc1WWw3MlFxSHhLejMzZDl6TGp3MDFHV3JUaGtmMC9WeVBxWTgvNnZ4K3ozWFY4ME55RENvYlQrL2hzVUFRRWdMWFkzTEU3c3NVODk1Mk14LzZvRk1mS1lNd2YxNXc2cEd4OHpMdnhNdk9venY0MXhKNy9aU1VKcXRHMTZKbmF1ZWxBaEVBRFNvTFhoOFVRZmY4MjRHVEgzOHR0ajNzZC9IdU5PK2kvOWZqUXZPNlFteHN3K0wwNjg3RnR4MXRXTFl1bzVsM3ZNajFScXZQOGJnLzR6Uy9YNi80dmNCL0RLeXBXZ09PM1pzQ3p5dWQ1RE9rby9IT3Ftem8yNlMyK0lYRTlIN0ZyelNPeHBYQkx0eld1aVk4ZjY2T3ZjRzMzZCt5SVRtY2dPR1JyWklVT2pzblpjREIwN1BXckd6WWphbzA2SkVkUG1SU2JyTklVOVRVdGo5OXBIWStTeFp5a0dBa0FweS9kMnhkNm1wVEZpK3Z5U2VEM1p5cG9ZTytmOEdEdm5mSXNML2JUKy9oc0VBQWFOU3dCRnpQTy93SjlxWGZkRXRLNWJyQkFJQUNVZkFKYmZHNFZDWGlHQWx6UjZJZ0FCb1BUMXRPMlE5b0dYMmJYMmtkamJ0RlFoRUFCS1hmT3l1eFVCZUJtZkM0QUFrQUk3VnR3WCtkNHVoUUJlc25QVjc2TnQwMHFGUUFBb1piMGRyYkgxcVRzVUFuaVp4Z2RNQVJBQVN0NkdoNzdyWmtEZ1pYWThlMy9zMjdwS0lSQUFTbGxuUzFPMHJQeU5RZ0QvcVZDSXh2dS9xUTRJQUtXdWFlRXRpakJBdmUyN28zbXBteW9wb1NuQU0vZEYrL1lYK3YzbloxWGVYOUwxMmZaUDY1MGtBa0R5N2QyNFBMWXZYNkFRL1pUdjY0NFZ0MzAwT25kdFVBeEthQWlRajZZSHZxVVFDQUNsYnUzZFg0cGNUNGRDSFB5N1pEei9rMC9IbnNhbjFZS1MwN3pzbnVob2FWUUlCSUJTMXIxbld6VDk3a2FGT0VocmZ2blAwV3g2UXFubTIzek8rd0lDUUJwc2VQQTcwYkhEZGEwRHRlN1gxOFdtUjc2dkVKUzBiVXZ1ak01ZEcvdjFaMHYxUGdEWC93V0FrcFB2NjRsbmYzaGw1UHQ2Rk9PdmFGcDRrN3VrU2M4VVlPRk5Db0VBVU9yYU5qOGJhKys2UmlGZVFlUDkzNHlHZTY5VkNOSXpCWGp5anVocTNXb0tZUGN2QUpTNnpZLzkwQ050ZjhHNis2NkxkYisrVGlGSWxYeXVOemI4M3VQQ0NBQ3BzT3FPcTZOdDg3TUs4VWVGZkM1Vy9menFhSHpBMko5MDJ2TEVUNk5uNy9aVVR3SHMvZ1dBVk1oMWQ4U3lXeTZMOW0xcjFLS25JMWJjZG5sc2VlS25UZ3pTT3dYbzY0Nm1CNyt0RUFnQWFkRGIwUnBMYjdrMDFVOEdkTzdjR0V0dXVDUjJQci9RQ1lFcHdHTS9qdDcyWGFtY0F0ajlDd0NwMDlQV0VrdHZmbjkwYkc5STNXdmZ0ZnFoZVBMNmkyTGYxdFZPQklpSVhHOW5iSGp3Ty8zKzgwa05BWnEvQUpCYTNYdTJ4VlBmZUVkcWRzR0ZYRjgwTFBpWFdQYmREMGRmNXg0bkFQeUpUWS8rSUhvN1dsTVRBalIvQVNEMStycjJ4WXBiUDFyeXp3TzNiMzhobnJyaG5kSDArMXNpQ2dVTEQzOCtCZWp1aUkyTGJsVUlCSUEwS1JUeTBYRHZ0ZkhNOS80MmV0cDJsTlJyeStkNlkvMXZybzhucjN0THRHMWFhYkhobGFZQUQzOHYrcnJhU240S1lQY3ZBUEJuZHF6OFRUeitsZk5qODJNL0tvbGRjc3Z6djR2Ri8zcGhyUC90MXlPZjY3WEE4RmYwZGJYRnBvZS9ONkNmVWV3aFFQTWZtSElsS08wM2dOVy8rR3hzVy9LTE9PN3RuNHZoazA5TTNHdlkyN1EwR241MWJleHVlTUtDd2tIYXVPaldtSEwyaHlJN1pPaUFROEJ6UGVkcC9DWUFKTTJlcHFYeDVQVnZqMlhmL2tEc2JuZzhFY2U4KzRYSFl1a3RsOFpUTjF5aStVTS85WGEweHFaSGJ4K1VuMVVzMHdETjN3U0FmdGkxNXVIWXRlYmhxSjF5Y2t3NSswTXhadmE1a2Eyc0tacmo2K3RxaTIxTDdvek5qLzBvMnB2WFdqQVlCQnNlL0U1TWZzMWxrYTJvSHBRUWNDUW5BWnIvNE1vazVVQlBtWDkySVNKaXkrYk5WbTJRWkN1cVkvU3NOOFQ0a3krTTBUTmZIMlVWVlVlZzZlK0xuYzh2ak8wckZzVE9WUTlGdnEvYndrQUNUUGppMFJyL2ZreXFyNCtJaUdXTEZ4VjlmelVCU0xGY2IyZHNYNzRndGk5ZkVObkttcWlkZWtyVVRUMzFqLzg1SmNxcjZ3N0pMcjl0MDhwb1hmOWs3Rjc3U094cFdocUZmTTVpUU1LODJKUVBaUkN3NHhjQU9CeGhvS2NqZHE5OU5IYXZmZlFQL3lDVGlaclJVNk42ek5Tb0dqazVxa1pOanVwUms2T3FibUprcTRaRldVVlZaQ3VxSTF0Wi9kTGtJSi9yaVVKZmIvUjF0VVZ2KzY3bzJiY3J1bHUzUnVmT3B1aG9hWXoyNXJYUjBkTG8yWDBRQkRSK0FZQ2lWU2hFUjB2akh4bzJ3RUUyN1lNSkJCcStBQUJBaVFZQ2lvL0hBQUZBQUFBQUJBQUFRQUFBQUFRQUFFQUFBQUFFQUFCQUFBQUFCQUFBUUFBQUFBUUFBRUFBQUFBRUFBQkFBQUFBQkFBQVFBQUFBQVFBQUVBQUFBQUJBQUFRQUFBQUFRQUFFQUFBQUFFQUFCQUFBQUFCQUFBUUFBQUFBUUFBRUFBQUFBRUFBQkFBQUFBQkFBQVFBQUFBQVFBQUVBQUFBQUVBQUFRQUFFQUFBQUFFQUFCQUFBQUFCQUFBUUFBQUFBUUFBRUFBQUFBRUFBQkFBQUFBQkFBQVFBQUFBQVFBQUVBQUFBQUVBQUJBQUFBQWtoY0FsaTFlbEltSW1GUmZiOVVBS0RvdjlxY1grNVVBQUFBSUFBQ0FBQUFBQ0FBQWdBQUFBQWdBQUVBS0E0QkhBUUVvUmtsN0JOQUVBQUJNQUFBQUFRQUFFQUFBQUFIZ2lIRWpJQURGSklrM0FKb0FBSUFKQUFBZ0FBQUFBa0F4Y1I4QUFNVWdxZGYvVFFBQXdBUUFBQkFBaXB6TEFBQWNTVWtlLzVzQUFJQUpBQUFnQUNTSXl3QUE2RHNwQ2dCSnZlNENRR2xJY2g5eUNRQUFVaWp4QWNEVEFBQWNUa20vKzk4RUFBQk1BQUFBQVNCaFhBWUE0SEFvbGZHL0NRQUFtQUNZQWdCQUduYi9KZ0FBWUFKZ0NnQUFhZGo5bXdBQWdBbEFhYVkxQU5CUFVoQUFmRDhBQVBwTGlpY0FwZ0FBNkNNcEN3Q21BQURvS3ltZEFIZ2lBSURCMlAyWDZxYlNVd0FBa0VJbEhRQk1BUUN3K3pjQkFBRFNFZ0JNQVFDdyswLzVCRUFJQUVDZlNGRUE4RmdnQVBwR1NpY0FMZ1VBY0NDNy83UnNHc3ZTdk1nQWtOYStrS29BNEZJQUFQcEVTaWNBTGdVQXNML2RmOW8yaWFtOEJDQUVBSkRtNXAvYUFMQy94UWZBKzc4QWtLSXBBQURwbHRaK1VHYlJwVUNBdE83KzA3d1pUUDBsQUNFQVFQTVhBSndVaWdEZ2ZWNEFTTnNVd01rQmtJN203ejR3QWNESkFPRDlYZ0J3VXJnZkFLQ1VkLythdndBZ0JBQm8vZ0lBUWdDQTVpOEFJQVFBYVA0Q2dCQWdCQUJvL2dLQUVBQ0E1aThBQ0FFQWFQNENnQkFBZ09hZkFJcDBrRTZaZjNiaHhmKytaZk5tQlFFb2tzYXYrWnNBSEpaSmdHa0FnT1l2QUFnQkFHaitBb0FRQUlEbVg5d1ViUkM0THdCQTR6Y0JNQTFRRUFETlh3QVFBZ0RRL0l1UEloNENMZ2tBYVB3bUFLWUJDZ0tnK1pzQXBIVVNZQm9BY1BDTlgvTVhBRW9tQ0FnQkFIYjlBb0JwQUFCMi9RS0FJQUNnOGF1S0FDQUlBR2o4Q0FDQ0FJREdqd0JRd2lGQUVBQkt2ZkZyL2dJQWdnQ2c4U01BOEpmQ2dDQUFKTG54YS9vQ0FLWUNnTjArQWdBRENRTENBRkNNVFYvakZ3QVFCZ0JOSHdHQXd4VUVoQUhnY0RWOWpWOEFRQ0FBTkh3RUFJbzVEQWdGd0lFMmUwMWZBQ0FGZ1VBNGdIUTNlUTFmQUVBb0FGSkVzeGNBUURnQVRSNEFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQW9CdjhQKzQ0MFF0SUo4Zk1BQUFBQVNVVk9SSzVDWUlJPSIsInNpemVzIjoiNTEyeDUxMiIsInR5cGUiOiJpbWFnZS9wbmciLCJwdXJwb3NlIjoiYW55IG1hc2thYmxlIn1dfQ==">
 <title>uR LXMF</title>
 <style>
-* { box-sizing: border-box; }
-body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background: #0d1117; color: #c9d1d9; line-height: 1.4; }
-header { padding: 12px 16px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; gap: 12px; align-items: center; }
-header h1 { font-size: 16px; font-weight: 600; margin: 0; flex: 1; }
-header .me { font-family: ui-monospace, monospace; font-size: 11px; color: #8b949e; }
-main { padding: 16px; max-width: 760px; margin: 0 auto; }
-section { margin-bottom: 24px; }
-h2 { font-size: 14px; font-weight: 600; margin: 0 0 8px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.04em; }
-button, input, textarea, select { font-family: inherit; font-size: 14px; border-radius: 6px; border: 1px solid #30363d; background: #0d1117; color: #c9d1d9; padding: 6px 10px; }
-button { background: #238636; border-color: #2ea043; cursor: pointer; }
-button:hover { background: #2ea043; }
-button.secondary { background: #21262d; border-color: #30363d; }
-button.danger { background: #da3633; border-color: #f85149; }
-input, textarea, select { width: 100%; }
-input[readonly] { color: #6e7681; }
-label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
-.row { display: flex; gap: 8px; margin-bottom: 10px; }
-.row > * { flex: 1; }
-.card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 8px; }
-.msg { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
-.msg.out { border-left: 3px solid #2ea043; }
-.msg.in  { border-left: 3px solid #58a6ff; }
-.msg .meta { font-size: 11px; color: #8b949e; font-family: ui-monospace, monospace; display: flex; gap: 8px; margin-bottom: 4px; }
-.msg .body { white-space: pre-wrap; word-break: break-word; }
+:root {
+  --bg:         #0d1117;
+  --bg-elev:    #161b22;
+  --bg-elev-2: #1c2128;
+  --bg-hover:   #21262d;
+  --border:     #30363d;
+  --text:       #c9d1d9;
+  --text-mute:  #8b949e;
+  --text-dim:   #6e7681;
+  --accent:     #58a6ff;
+  --accent-2:   #1f6f3a;
+  --accent-3:   #2ea043;
+  --danger:     #da3633;
+  --danger-2:  #f85149;
+  --warn:       #ffa657;
+  --warn-bg:    #5a1e02;
+  --warn-bd:    #a04500;
+  --bubble-in:  #21262d;
+  --bubble-out: #1f6f3a;
+}
 
-/* Chat-style bubbles */
-.tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid #30363d; }
-.tab { background: transparent; border: none; color: #8b949e; padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; font-size: 13px; }
-.tab.active { color: #c9d1d9; border-bottom-color: #58a6ff; }
-.tab:hover { color: #c9d1d9; }
-.conv { background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
-.conv-head { padding: 10px 12px; display: flex; gap: 8px; align-items: center; cursor: pointer; user-select: none; }
-.conv-head:hover { background: #1c2128; }
-.conv-head .name { font-weight: 600; flex: 1; }
-.conv-head .addr { font-family: ui-monospace, monospace; font-size: 10px; color: #6e7681; }
-.conv-head .last { font-size: 11px; color: #8b949e; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.conv-head .when { font-size: 11px; color: #6e7681; }
-.conv-body { padding: 8px 12px 12px; border-top: 1px solid #30363d; display: flex; flex-direction: column; gap: 6px; }
-.bubble { max-width: 80%; padding: 6px 10px; border-radius: 12px; font-size: 13px; word-break: break-word; white-space: pre-wrap; }
-.bubble.in  { align-self: flex-start; background: #21262d; border: 1px solid #30363d; }
-.bubble.out { align-self: flex-end;   background: #1f6f3a; border: 1px solid #2ea043; }
-.bubble .bmeta { font-size: 10px; opacity: 0.65; margin-top: 2px; font-family: ui-monospace, monospace; }
-.bubble.bad { border-color: #9a3232; }
-.empty-state { padding: 24px 12px; text-align: center; color: #6e7681; font-size: 13px; }
-.warn { background: #5a1e02; border: 1px solid #a04500; color: #ffa657; padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
-.muted { color: #6e7681; font-size: 12px; }
-.mono { font-family: ui-monospace, monospace; font-size: 12px; }
-hr { border: none; border-top: 1px solid #30363d; margin: 16px 0; }
-a { color: #58a6ff; }
-.hide { display: none !important; }
-.pill { display: inline-block; padding: 1px 6px; font-size: 10px; border-radius: 10px; background: #30363d; }
-.pill.ok  { background: #1f6f3a; }
-.pill.bad { background: #9a3232; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; overscroll-behavior: contain; }
+html { background: var(--bg); }
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.4;
+  font-size: 14px;
+}
+
+button, input, textarea, select {
+  font-family: inherit;
+  font-size: 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  padding: 8px 12px;
+}
+button { background: var(--accent-2); border-color: var(--accent-3); cursor: pointer; }
+button:hover { background: var(--accent-3); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.secondary { background: var(--bg-elev-2); border-color: var(--border); }
+button.secondary:hover { background: var(--bg-hover); }
+button.ghost { background: transparent; border-color: transparent; padding: 6px 8px; }
+button.ghost:hover { background: var(--bg-hover); }
+button.danger { background: var(--danger); border-color: var(--danger-2); }
+button.icon {
+  background: transparent; border: 1px solid transparent;
+  width: 44px; height: 44px; min-width: 44px; min-height: 44px;
+  padding: 0; font-size: 18px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text);
+}
+button.icon:hover { background: var(--bg-hover); border-color: var(--border); }
+button.icon:disabled { opacity: 0.4; cursor: not-allowed; }
+button.icon svg { width: 20px; height: 20px; display: block; }
+input, textarea, select { width: 100%; min-height: 36px; }
+input[readonly] { color: var(--text-dim); }
+label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom: 4px; }
+
+.hide, [hidden] { display: none !important; }
+.muted { color: var(--text-mute); font-size: 12px; }
+.mono  { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+.warn {
+  background: var(--warn-bg); border: 1px solid var(--warn-bd); color: var(--warn);
+  padding: 8px 12px; border-radius: 6px; font-size: 13px; margin: 12px;
+}
+.row { display: flex; gap: 8px; }
+.row > * { flex: 1; }
+.empty-state { padding: 32px 16px; text-align: center; color: var(--text-dim); font-size: 13px; }
+
+/* Stand-alone "page" views (bootstrap, identity picker, login) — single
+   centered card with full-screen height. */
+.page {
+  display: flex; flex-direction: column;
+  min-height: 100vh; min-height: 100dvh;
+  padding: 16px;
+  align-items: center; justify-content: center;
+}
+.page .card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  width: 100%;
+  max-width: 420px;
+}
+.page h2 { margin: 0 0 12px; font-size: 16px; }
+
+/* ============================== APP SHELL ============================== */
+#view-app {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  grid-template-rows: 56px 1fr;
+  grid-template-areas:
+    "topbar topbar"
+    "list   thread";
+  height: 100vh; height: 100dvh;
+  overflow: hidden;
+}
+
+/* App-wide top bar — same row across both panes. The middle is
+   deliberately left empty so the top-centered toasts can land in it
+   without overlapping any control. Identity details live on the
+   left, announce icon next to them, radio + settings on the right. */
+#topbar {
+  grid-area: topbar;
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px 6px 14px;
+  padding-top: calc(6px + env(safe-area-inset-top));
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  z-index: 5;
+  min-width: 0;
+}
+#topbar #self-info { min-width: 0; line-height: 1.15; }
+#topbar #self-info .name { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+#topbar #self-info .addr { font-size: 10px; color: var(--text-dim); font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+#topbar .spacer { flex: 1; min-width: 16px; }
+
+/* Announce icon: pulse when auto-announce is enabled (state.announceAutoOn
+   toggles the class). Countdown badge sits next to the icon. */
+#btn-announce-top.pulsing svg {
+  animation: announce-pulse 2s ease-in-out infinite;
+  color: var(--accent-3);
+}
+@keyframes announce-pulse {
+  0%, 100% { opacity: 0.45; transform: scale(1);   }
+  50%      { opacity: 1;    transform: scale(1.12); }
+}
+#announce-countdown {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+  min-width: 36px;
+  text-align: left;
+  margin-left: -4px;
+}
+#announce-countdown[hidden] { display: none; }
+@media (max-width: 720px) {
+  #topbar #self-info .name, #topbar #self-info .addr { max-width: 36vw; }
+  #announce-countdown { display: none; }
+}
+
+#pane-list {
+  grid-area: list;
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elev);
+  min-width: 0;
+  overflow: hidden;
+}
+#list-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px 8px 14px;
+  background: var(--bg-elev);
+}
+#search-wrap { padding: 0 14px 8px; background: var(--bg-elev); }
+#search { background: var(--bg); }
+#conv-list { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+#self-footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  display: flex; gap: 10px; align-items: center;
+  font-size: 12px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+}
+#self-footer .name { font-weight: 600; }
+#self-footer .addr { color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 10px; }
+
+.conv-row {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--bg-elev-2);
+  cursor: pointer;
+  min-height: 60px;
+}
+.conv-row:hover { background: var(--bg-elev-2); }
+.conv-row.active { background: var(--bg-hover); }
+.conv-row .middle { min-width: 0; }
+.conv-row .name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-row .last { color: var(--text-mute); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-row .meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.conv-row .when { color: var(--text-dim); font-size: 11px; }
+.conv-row .unread {
+  background: var(--accent); color: var(--bg);
+  font-size: 10px; font-weight: 600;
+  border-radius: 10px; padding: 1px 7px;
+  min-width: 18px; text-align: center;
+}
+
+/* Section headers inside the conversation list — small uppercase
+   label for the "Chats" / "Discovered" groupings. */
+.list-section {
+  padding: 8px 14px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.list-group > summary.list-section {
+  list-style: none;
+  cursor: pointer;
+}
+.list-group > summary.list-section::before {
+  content: '▸ ';
+  display: inline-block;
+  transition: transform 0.12s ease;
+}
+.list-group[open] > summary.list-section::before {
+  transform: rotate(90deg);
+}
+
+/* Avatar identicon — rendered into a <span> by JS as an SVG. The
+   data-online attribute adds a small green dot in the bottom-right
+   corner to signal the peer was heard via announce in the last 60s. */
+.idc { display: inline-block; line-height: 0; flex-shrink: 0; position: relative; }
+.idc svg { display: block; border-radius: 6px; }
+.idc[data-online]::after {
+  content: '';
+  position: absolute;
+  bottom: -1px; right: -1px;
+  width: 11px; height: 11px;
+  background: var(--accent-3);
+  border: 2px solid var(--bg-elev);
+  border-radius: 50%;
+}
+.conv-row .seen { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+.conv-row .seen.online { color: var(--accent-3); font-weight: 600; }
+
+/* ============================== THREAD PANE ============================== */
+#pane-thread { grid-area: thread; display: flex; flex-direction: column; min-width: 0; background: var(--bg); overflow: hidden; }
+#thread-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+#thread-header .name { font-weight: 600; }
+#thread-header .addr { color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 11px; }
+#thread-header .peer-info { flex: 1; min-width: 0; }
+#thread-header .btn-back { display: none; }
+
+#thread-msgs {
+  flex: 1; overflow-y: auto; overscroll-behavior: contain;
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+#thread-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  flex-direction: column; gap: 12px; color: var(--text-dim);
+}
+
+.bubble {
+  max-width: 78%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  font-size: 14px;
+  word-break: break-word;
+  white-space: pre-wrap;
+  line-height: 1.35;
+}
+.bubble.in  { align-self: flex-start; background: var(--bubble-in);  border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.bubble.out { align-self: flex-end;   background: var(--bubble-out); border: 1px solid var(--accent-3); border-bottom-right-radius: 4px; }
+.bubble.bad { border-color: var(--danger); }
+.bubble .bmeta { font-size: 10px; opacity: 0.7; margin-top: 4px; font-family: ui-monospace, monospace; }
+
+#compose {
+  display: flex; align-items: flex-end; gap: 6px;
+  padding: 8px 10px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+#compose textarea {
+  resize: none;
+  flex: 1;
+  font-size: 16px;  /* prevent iOS auto-zoom */
+  min-height: 40px; max-height: 120px;
+  background: var(--bg);
+  padding: 9px 12px;
+}
+
+/* ============================== SETTINGS MODAL (tabbed) ============================== */
+/* Tall modal that hosts every configuration screen behind a tab bar.
+   Replaces the slide-out drawer + separate page-style radio view so
+   all "settings"-shaped UI uses one display method. */
+.modal.modal-tall {
+  width: 100%; max-width: 560px;
+  max-height: calc(100vh - 96px);
+  display: flex; flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+/* Settings modal anchors to a fixed top offset (just below the top
+   bar) so switching tabs of different heights doesn't shift the box
+   vertically. Other modals (new-conv, identity-code) stay centred. */
+#modal-settings.modal-bg {
+  align-items: flex-start;
+  padding-top: calc(72px + env(safe-area-inset-top));
+}
+@media (max-width: 720px) {
+  #modal-settings.modal-bg {
+    padding-top: calc(64px + env(safe-area-inset-top));
+  }
+}
+.modal-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.modal-header h3 { flex: 1; margin: 0; font-size: 15px; font-weight: 600; }
+.modal-body {
+  flex: 1; overflow-y: auto; padding: 14px;
+  display: flex; flex-direction: column;
+}
+.modal-body .card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.modal-body .list-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--bg-elev-2);
+  font-size: 13px;
+}
+.modal-body .list-row:last-child { border-bottom: none; }
+
+/* Tab bar inside the settings modal. */
+.tab-bar {
+  display: flex;
+  gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  overflow-x: auto;
+}
+.tab-bar .tab {
+  background: transparent; border: none;
+  color: var(--text-mute);
+  font-size: 13px; font-weight: 500;
+  padding: 10px 14px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab-bar .tab:hover { color: var(--text); }
+.tab-bar .tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.tab-bar .tab[hidden] { display: none; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ============================== MODAL ============================== */
+.modal-bg {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 200;
+  padding: 16px;
+}
+.modal {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  width: 100%; max-width: 380px;
+}
+.modal h3 { margin: 0 0 12px; font-size: 15px; }
+
+/* ============================== STATUS INDICATOR + POPOVER ============================== */
+/* Small coloured dot in the bottom-right of the radio antenna icon
+   to signal radio_online / offline / unconfigured at a glance. */
+#btn-status { position: relative; }
+#btn-status::after {
+  content: '';
+  position: absolute;
+  bottom: 6px; right: 6px;
+  width: 10px; height: 10px;
+  border: 2px solid var(--bg-elev);
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+#btn-status[data-state="online"]::after  { background: var(--accent-3); }
+#btn-status[data-state="offline"]::after { background: var(--danger); }
+#btn-status[data-state="unconf"]::after  { background: var(--warn); }
+
+.popover {
+  position: fixed;
+  top: 60px; right: 10px;
+  width: 300px; max-width: calc(100vw - 20px);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+  z-index: 250;
+  font-size: 13px;
+}
+.popover-section { padding: 8px 0; border-bottom: 1px solid var(--bg-elev-2); }
+.popover-section:last-child { border-bottom: none; padding-bottom: 0; }
+.popover-section:first-child { padding-top: 0; }
+.popover-row { display: flex; align-items: center; gap: 10px; }
+.popover-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-mute); margin: 0; font-weight: 600;
+}
+.pill {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+.pill.ok    { background: var(--accent-2); color: var(--text); }
+.pill.bad   { background: var(--danger);   color: var(--text); }
+.pill.warn  { background: var(--warn-bg);  color: var(--warn);  border: 1px solid var(--warn-bd); }
+
+/* ============================== EMOJI POPUP ============================== */
+#popup-emoji {
+  position: absolute;
+  bottom: 60px; left: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+  width: 280px;
+  z-index: 50;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.emoji-cell {
+  display: flex; align-items: center; justify-content: center;
+  height: 32px; cursor: pointer; border-radius: 4px;
+  font-size: 20px;
+}
+.emoji-cell:hover { background: var(--bg-hover); }
+
+/* ============================== TOASTS ============================== */
+#toast-reconnect {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  background: var(--warn-bg); color: var(--warn);
+  border: 1px solid var(--warn-bd);
+  padding: 6px 12px; border-radius: 16px;
+  font-size: 12px; z-index: 300;
+}
+#toast-stack {
+  /* Centred vertically in the 56px top bar for a single-line toast.
+     (56 − 40) / 2 = 8px from the top. Multi-line toasts naturally
+     extend downward past the bar — that's fine because the middle of
+     the bar is reserved empty space precisely so longer toasts have
+     room to grow into it. */
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top));
+  left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; align-items: center;
+  z-index: 400;
+  max-width: calc(100% - 32px);
+  pointer-events: none;
+}
+.toast {
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  max-width: 420px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  animation: toast-in 0.18s ease-out;
+  pointer-events: auto;
+  cursor: pointer;
+  word-wrap: break-word;
+}
+.toast.info    { border-left-color: var(--accent); }
+.toast.success { border-left-color: var(--accent-3); }
+.toast.warn    { border-left-color: var(--warn); }
+.toast.error   { border-left-color: var(--danger-2); }
+.toast .title { font-weight: 600; margin-bottom: 2px; font-size: 13px; }
+.toast .body  { font-size: 12px; color: var(--text-mute); }
+@keyframes toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes toast-out { from { transform: none; opacity: 1; } to { transform: translateY(8px); opacity: 0; } }
+.toast.dismissing { animation: toast-out 0.18s ease-in forwards; }
+@media (max-width: 720px) {
+  #toast-stack {
+    top: calc(8px + env(safe-area-inset-top));
+    left: 8px; right: 8px;
+    transform: none;
+    align-items: stretch;
+  }
+  .toast { max-width: none; }
+}
+
+/* ============================== MOBILE ============================== */
+/* iPad portrait + small-laptop range — shrink the list pane so the
+   thread isn't squashed at intermediate widths. */
+@media (min-width: 721px) and (max-width: 960px) {
+  #view-app { grid-template-columns: 280px 1fr; }
+  #topbar #self-info .name,
+  #topbar #self-info .addr { max-width: 160px; }
+}
+
+@media (max-width: 720px) {
+  #view-app {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "topbar"
+      "list";
+  }
+  #view-app.thread-open {
+    grid-template-areas:
+      "topbar"
+      "thread";
+  }
+  #pane-list  { display: flex; }
+  #pane-thread { display: none; }
+  #view-app.thread-open #pane-list  { display: none; }
+  #view-app.thread-open #pane-thread { display: flex; }
+  #thread-header .btn-back { display: inline-flex; }
+}
+
+/* Very-short viewports (landscape phones, foldables in landscape):
+   the settings modal needs to fit even when the keyboard is open. */
+@media (max-height: 480px) {
+  #modal-settings.modal-bg { padding-top: calc(56px + env(safe-area-inset-top)); }
+  .modal.modal-tall        { max-height: calc(100vh - 64px); }
+}
+
+/* Identity picker */
+/* Default <summary> shows plain text — add a pointer so users know it's
+   clickable. Same hint applies to anything else expandable. */
+summary { cursor: pointer; }
+summary:hover { color: var(--text); }
+
+.iden-card {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: var(--bg);
+  align-items: center;
+  cursor: pointer;
+}
+.iden-card:hover { background: var(--bg-elev-2); }
+.iden-card .name { font-weight: 600; }
+.iden-card .addr { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-dim); }
 </style>
 </head>
 <body>
 
-<header>
-  <h1>uR LXMF</h1>
-  <span class="me mono" id="me-address"></span>
-  <button class="secondary" id="logout-btn" style="display:none">logout</button>
-</header>
+<div id="toast-reconnect" hidden>Reconnecting…</div>
+<div id="toast-stack"></div>
 
-<main>
-
-<div id="warn-unauth" class="warn hide">Not authenticated. Long-then-short-press the device button to get an identity code.</div>
-
-<!-- Bootstrap WiFi setup -->
-<section id="view-bootstrap" class="hide">
-  <h2>First-time WiFi setup</h2>
+<!-- ===================== BOOTSTRAP WIFI SETUP ===================== -->
+<div id="view-bootstrap" class="page" hidden>
   <div class="card">
-    <p class="muted">This device is in bootstrap mode. Configure WiFi so you can reach the gateway from your home network.</p>
-    <div class="row">
-      <button class="secondary" onclick="scanWifi()">Scan</button>
+    <h2>First-time setup</h2>
+    <p class="muted">This device hasn't been configured for a WiFi network yet. Configure home WiFi so you can reach it from any device on your network — or skip and use it directly from this softAP for standalone / off-grid operation.</p>
+    <div class="row" style="margin-bottom:8px">
+      <select id="bs-ssid"><option value="">— pick a network —</option></select>
+      <button class="secondary" id="bs-rescan">Rescan</button>
     </div>
-    <div id="scan-results"></div>
-    <hr>
-    <label>SSID</label>
-    <input id="wifi-ssid" placeholder="MyHomeWiFi">
-    <label style="margin-top:8px">Password</label>
-    <input id="wifi-psk" type="password" placeholder="optional">
-    <hr>
-    <p class="muted">Long-press the device button (~1 s), release, then short-press within 2 s. Read the 6-char identity code from the OLED.</p>
-    <label>Identity code</label>
-    <input id="wifi-identity-code" placeholder="6 hex chars" maxlength="6">
-    <div class="row" style="margin-top:10px">
-      <button onclick="saveWifi()">Save and reboot</button>
-    </div>
-  </div>
-</section>
-
-<!-- Account picker / create -->
-<section id="view-accounts" class="hide">
-  <h2>Accounts</h2>
-  <div id="account-list"></div>
-  <details style="margin-bottom:8px">
-    <summary class="muted" style="cursor:pointer;font-size:12px">Lost a password? Factory reset…</summary>
-    <div class="card" style="border-color:#9a3232;margin-top:6px">
-      <p class="muted">Wipes <em>every</em> account on this device — identities, inboxes, sent messages, and saved auth tokens. Required if every password is lost. Needs the button-press identity code as physical-presence proof.</p>
-      <label>Identity code</label>
-      <input id="reset-picker-identity-code" placeholder="6 hex chars from OLED" maxlength="6">
-      <div class="row" style="margin-top:8px">
-        <button class="danger" onclick="factoryResetFromPicker()">Factory reset device</button>
-      </div>
-    </div>
-  </details>
-  <div class="card">
-    <label>Create a new account</label>
-    <input id="new-display-name" placeholder="Display name">
-    <label style="margin-top:8px">Password</label>
-    <input id="new-password" type="password" placeholder="min 8 characters">
-    <label style="margin-top:8px">Confirm password</label>
-    <input id="new-password-confirm" type="password" placeholder="repeat">
-    <p class="muted" style="margin-top:8px">Long-press the device button (~1 s), release, then short-press within 2 s. Read the 6-char identity code from the OLED. Required only to <em>create</em> a new account — physical-presence proof.</p>
-    <div class="row">
-      <input id="new-identity-code" placeholder="identity code (6 hex chars)" maxlength="6">
-      <button onclick="createAccount()">Create</button>
-    </div>
-  </div>
-</section>
-
-<!-- Login -->
-<section id="view-login" class="hide">
-  <h2>Login</h2>
-  <div class="card">
-    <p class="muted">Enter the password you set when this account was created. No physical-presence proof is needed for login — the password is the only key.</p>
     <label>Password</label>
-    <input id="login-password" type="password" placeholder="account password">
-    <div class="row" style="margin-top:8px">
-      <button onclick="login()">Login</button>
-      <button class="secondary" onclick="show('view-accounts')">Back</button>
-    </div>
+    <input id="bs-psk" type="password" placeholder="WiFi password" style="margin-bottom:10px">
+    <p class="muted id-code-hint" style="margin-top:14px"></p>
+    <label>Identity code</label>
+    <input id="bs-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:10px">
+    <button id="bs-save" style="width:100%">Save WiFi & reboot</button>
+    <p class="muted" style="margin-top:10px">Tip: leave the password empty for an open network.</p>
+    <hr style="border-color:var(--border);margin:14px 0">
+    <button class="secondary" id="bs-skip" style="width:100%">Skip — use chat from this softAP</button>
+    <p class="muted" style="margin-top:8px">Standalone mode: don't join a WiFi network at all; stay on this device's softAP. You can join a network later from the settings menu.</p>
   </div>
-</section>
+</div>
 
-<!-- Messaging -->
-<section id="view-messages" class="hide">
-  <div class="tabs">
-    <button class="tab active" data-tab="tab-chat">Chat</button>
-    <button class="tab" data-tab="tab-settings">Settings</button>
-  </div>
-
-  <div id="tab-chat">
-    <div class="card">
-      <label>Compose</label>
-      <div class="row">
-        <input id="compose-to" class="mono" placeholder="LXMF address (32 hex)">
-      </div>
-      <div class="row">
-        <input id="compose-title" placeholder="title (optional)">
-      </div>
-      <textarea id="compose-body" rows="2" placeholder="message"></textarea>
-      <div class="row" style="margin-top:8px">
-        <button onclick="sendMessage()">Send</button>
-        <button class="secondary" onclick="forceAnnounce()">Announce me</button>
-      </div>
-      <div id="compose-status" class="muted" style="margin-top:6px"></div>
+<!-- ===================== IDENTITY PICKER ===================== -->
+<div id="view-identities" class="page" hidden>
+  <div class="card">
+    <h2>Identities</h2>
+    <div id="identity-list"></div>
+    <div class="row" style="margin-top:14px">
+      <button id="btn-show-create" style="flex:1">Create new identity</button>
     </div>
-
-    <h2 style="margin-top:16px">Conversations</h2>
-    <div id="conversations-list"></div>
-  </div>
-
-  <div id="tab-settings" class="hide">
-    <h2>Recent announces</h2>
-    <div class="card">
-      <p class="muted">LXMF endpoints that announced themselves. Refreshes every 10s automatically.</p>
-      <div id="announces-list"></div>
-    </div>
-
-    <h2 style="margin-top:16px">Known paths</h2>
-    <div class="card">
-      <p class="muted">All destinations known via announces (any aspect). Refreshes every 10s.</p>
-      <div id="paths-list" class="muted"></div>
-    </div>
-
-    <h2 style="margin-top:16px">Radio</h2>
-    <div class="card">
-      <p class="muted">Saving reboots the device. Common: freq 868000000 (EU) / 915000000 (NA), bw 125000, sf 8, cr 5, txp 17.</p>
-      <div class="row">
-        <div><label>Frequency (Hz)</label><input id="radio-freq" inputmode="numeric"></div>
-        <div><label>Bandwidth (Hz)</label><input id="radio-bw" inputmode="numeric"></div>
-      </div>
-      <div class="row">
-        <div><label>SF (5-12)</label><input id="radio-sf" inputmode="numeric"></div>
-        <div><label>CR (5-8)</label><input id="radio-cr" inputmode="numeric"></div>
-        <div><label>TXP (dBm)</label><input id="radio-txp" inputmode="numeric"></div>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button onclick="saveRadio()">Save and reboot</button>
-        <button class="secondary" onclick="loadRadio()">Reload</button>
-        <button class="danger" onclick="resetRadio()">Clear config</button>
-      </div>
-      <div id="radio-status" class="muted mono" style="margin-top:8px"></div>
-    </div>
-
-    <h2 style="margin-top:16px">Contacts</h2>
-    <div class="card">
-      <p class="muted">Stored only in this browser.</p>
-      <div id="contacts-list"></div>
-      <div class="row" style="margin-top:8px">
-        <input id="contact-name" placeholder="Name">
-        <input id="contact-addr" placeholder="LXMF address" class="mono">
-        <button onclick="addContact()">Add</button>
-      </div>
-    </div>
-
-    <h2 style="margin-top:16px">Danger zone</h2>
-    <div class="card">
-      <p class="muted">Permanently delete this account from the device. Inbox, outbox, and identity material are removed. Only affects the currently-logged-in account.</p>
-      <div class="row">
-        <button class="danger" onclick="deleteCurrentAccount()">Delete this account</button>
-      </div>
-    </div>
-
-    <div class="card" style="border-color:#9a3232">
-      <p class="muted"><strong>Factory reset</strong> — wipes <em>every</em> account on this device, including identities, inboxes, sent messages, and saved auth tokens. The only escape if a password is lost. Requires the button-press identity code as physical-presence proof.</p>
+    <details style="margin-top:14px">
+      <summary class="muted">Lost a password?</summary>
+      <p class="muted">Factory reset wipes <em>every</em> identity on this device — inboxes, sent messages, auth tokens, the lot. Required if every password is forgotten.</p>
+      <p class="muted id-code-hint"></p>
       <label>Identity code</label>
-      <input id="reset-identity-code" placeholder="6 hex chars from OLED" maxlength="6">
-      <div class="row" style="margin-top:8px">
-        <button class="danger" onclick="factoryReset()">Factory reset device</button>
-      </div>
+      <input id="fr-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:8px">
+      <button class="danger" id="btn-factory-reset" style="width:100%">Factory reset</button>
+    </details>
+  </div>
+</div>
+
+<!-- ===================== CREATE IDENTITY ===================== -->
+<div id="view-create" class="page" hidden>
+  <div class="card">
+    <h2>Create identity</h2>
+    <label>Display name</label>
+    <input id="cr-name" placeholder="Your name" style="margin-bottom:10px">
+    <label>Password (≥8 chars)</label>
+    <input id="cr-pw1" type="password" style="margin-bottom:8px">
+    <label>Confirm password</label>
+    <input id="cr-pw2" type="password" style="margin-bottom:10px">
+    <p class="muted id-code-hint"></p>
+    <label>Identity code</label>
+    <input id="cr-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:10px">
+    <div class="row">
+      <button class="secondary" id="btn-create-cancel">Back</button>
+      <button id="btn-create-go">Create</button>
     </div>
   </div>
-</section>
+</div>
 
-</main>
+<!-- ===================== LOGIN ===================== -->
+<div id="view-login" class="page" hidden>
+  <div class="card">
+    <h2 id="login-title">Login</h2>
+    <p class="muted">Enter the password you set when this identity was created. No physical-presence proof is needed for login — the password is the only key.</p>
+    <label>Password</label>
+    <input id="login-pw" type="password" style="margin-bottom:12px">
+    <div class="row">
+      <button class="secondary" id="btn-login-back">Back</button>
+      <button id="btn-login-go">Login</button>
+    </div>
+  </div>
+</div>
+
+<!-- (radio config lives inside #modal-settings under the Radio tab —
+     see below. The first-run wizard opens that modal with the Radio
+     tab pre-selected and "locked" so other tabs are hidden.) -->
+
+<!-- ===================== APP (split-pane chat) ===================== -->
+<div id="view-app" hidden>
+  <header id="topbar">
+    <span class="idc" id="self-idc"></span>
+    <div id="self-info">
+      <div class="name" id="self-name"></div>
+      <div class="addr" id="self-addr"></div>
+    </div>
+    <button class="icon" id="btn-announce-top" title="Announce me — refresh peers' path to this identity">
+      <!-- megaphone -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
+    </button>
+    <span id="announce-countdown" class="muted" hidden></span>
+    <div class="spacer"></div>
+    <!-- Radio + transport status indicator. Colored dot overlay shows
+         online (green) / offline (red) / not-configured (grey). Click
+         to open the status popover below. -->
+    <button class="icon" id="btn-status" title="Radio status" data-state="unknown">
+      <!-- antenna -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M7.76 7.76a6 6 0 0 0 0 8.48"/><path d="M16.24 7.76a6 6 0 0 1 0 8.48"/><circle cx="12" cy="12" r="2"/></svg>
+    </button>
+    <button class="icon" id="btn-settings"  title="Settings">
+      <!-- gear -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+    <button class="icon" id="btn-logout"    title="Log out">
+      <!-- logout: door + arrow -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+    </button>
+  </header>
+  <aside id="pane-list">
+    <header id="list-header">
+      <input id="search" placeholder="Search chats and contacts" style="flex:1">
+      <button class="icon" id="btn-new-conv" title="New conversation">
+        <!-- new chat: pencil-square -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h7"/><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L13 14l-4 1 1-4 8.5-8.5z"/></svg>
+      </button>
+    </header>
+    <div id="conv-list"></div>
+  </aside>
+  <section id="pane-thread">
+    <header id="thread-header" hidden>
+      <button class="icon btn-back" id="btn-back" title="Back">←</button>
+      <span class="idc" id="thread-idc"></span>
+      <div class="peer-info">
+        <div class="name" id="thread-name"></div>
+        <div class="addr" id="thread-addr"></div>
+      </div>
+    </header>
+    <div id="thread-empty" class="empty-state">
+      <div>Select a conversation, or start a new one with <strong>＋</strong>.</div>
+    </div>
+    <div id="thread-msgs" hidden></div>
+    <footer id="compose" hidden>
+      <button class="icon" id="btn-emoji" title="Emoji">
+        <!-- smile -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+      </button>
+      <textarea id="compose-text" placeholder="Message…" rows="1"></textarea>
+      <button class="icon" id="btn-send" title="Send" style="background:var(--accent-2);border-color:var(--accent-3);color:var(--text)">
+        <!-- arrow up -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+      </button>
+    </footer>
+  </section>
+</div>
+
+<!-- ===================== STATUS POPOVER ===================== -->
+<!-- Anchored below #btn-status. Not a modal; clicking elsewhere closes
+     it. Contents refresh on each open from /api/info. -->
+<div id="popover-status" class="popover" hidden>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">Radio</div>
+      <div id="status-radio-line"></div>
+    </div>
+    <div class="muted mono" id="status-radio-cfg-1" style="font-size:11px;margin-top:6px"></div>
+    <div class="muted mono" id="status-radio-cfg-2" style="font-size:11px"></div>
+  </div>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">Transport</div>
+      <div id="status-transport-line"></div>
+    </div>
+    <button class="secondary" id="btn-toggle-transport" style="width:100%;margin-top:8px">…</button>
+    <div class="muted" style="font-size:11px;margin-top:6px">Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots.</div>
+  </div>
+</div>
+
+<!-- ===================== EMOJI PICKER ===================== -->
+<div id="popup-emoji" hidden></div>
+
+<!-- ===================== NEW CONVERSATION MODAL ===================== -->
+<div id="modal-new-conv" class="modal-bg" hidden>
+  <div class="modal" style="max-width:460px">
+    <h3>New conversation</h3>
+    <div id="nc-pick" style="max-height:260px;overflow-y:auto;margin-bottom:12px"></div>
+    <label>Or enter address manually (32 hex)</label>
+    <input id="nc-addr" maxlength="32" placeholder="a5104e44225af3db4430f8e749509946" style="margin-bottom:10px;font-family:ui-monospace,monospace">
+    <label>Contact name (optional, saved locally)</label>
+    <input id="nc-name" placeholder="Their name" style="margin-bottom:14px">
+    <div class="row">
+      <button class="secondary" id="btn-nc-cancel">Cancel</button>
+      <button id="btn-nc-go">Open</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== IDENTITY CODE MODAL ===================== -->
+<div id="modal-id-code" class="modal-bg" hidden>
+  <div class="modal">
+    <h3>Identity code available</h3>
+    <p class="muted">The device button was pressed and an identity code is now available for ~5 minutes. Read the 6 hex chars from the OLED.</p>
+    <p class="muted id-code-hint"></p>
+    <input id="idc-input" maxlength="6" placeholder="abc123" style="margin-bottom:12px;font-family:ui-monospace,monospace">
+    <div class="row">
+      <button class="secondary" id="btn-idc-cancel">Dismiss</button>
+      <button id="btn-idc-ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== SETTINGS MODAL (tabbed) ===================== -->
+<!-- Single modal owns ALL configuration UI. Tabs at top, content
+     below. Opens via the gear icon (default tab: Identity) or the
+     radio icon (Radio tab). Boot-time first-run forces the Radio tab
+     and hides the others until a config is saved. -->
+<div id="modal-settings" class="modal-bg" hidden>
+  <div class="modal modal-tall">
+    <header class="modal-header">
+      <h3 id="settings-title">Settings</h3>
+      <button class="icon" id="btn-close-settings" title="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
+      </button>
+    </header>
+    <div class="tab-bar" id="settings-tabs">
+      <button class="tab" data-tab="identity">Identity</button>
+      <button class="tab" data-tab="radio">Radio</button>
+      <button class="tab" data-tab="ui">App</button>
+      <button class="tab" data-tab="network">Network</button>
+      <button class="tab" data-tab="danger">Reset</button>
+    </div>
+    <div class="modal-body">
+
+      <!-- ============== Identity tab ============== -->
+      <div class="tab-panel" data-panel="identity">
+        <div class="card">
+          <div class="list-row" style="display:flex;align-items:center;gap:10px">
+            <span class="idc" id="id-modal-idc"></span>
+            <div style="min-width:0;flex:1">
+              <div><strong id="id-display-name"></strong></div>
+              <div class="muted mono" id="id-address"></div>
+            </div>
+          </div>
+          <label style="margin-top:12px">Auto-announce</label>
+          <select id="id-announce-interval"></select>
+          <div class="muted" style="margin-top:4px">How often this identity automatically broadcasts an announce so peers can find and route to it. Manual announces via the megaphone icon work regardless of this setting.</div>
+        </div>
+      </div>
+
+      <!-- ============== Radio tab ============== -->
+      <div class="tab-panel" data-panel="radio">
+        <div class="warn" style="margin:0 0 12px">⚠ Radio settings are <strong>device-wide</strong> — they apply to every identity stored on this device, not just the one you're logged into. Changing them reboots the radio and may interrupt active conversations.</div>
+        <p class="muted" id="rd-intro">Pick the region preset that matches your local LoRa community. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.</p>
+        <label>Region preset</label>
+        <select id="rd-preset" style="margin-bottom:6px"></select>
+        <div class="muted" id="rd-preset-note" style="margin-bottom:14px;min-height:14px"></div>
+        <div id="rd-raw">
+          <div class="row" style="margin-bottom:8px">
+            <div>
+              <label>Frequency (Hz)</label>
+              <input id="rd-freq" type="number">
+            </div>
+            <div>
+              <label>Bandwidth (Hz)</label>
+              <input id="rd-bw" type="number">
+            </div>
+          </div>
+          <div class="row" style="margin-bottom:8px">
+            <div>
+              <label>Spreading factor</label>
+              <input id="rd-sf" type="number" min="6" max="12">
+            </div>
+            <div>
+              <label>Coding rate</label>
+              <input id="rd-cr" type="number" min="5" max="8">
+            </div>
+            <div>
+              <label>TX power (dBm)</label>
+              <input id="rd-tx" type="number" min="0" max="22">
+            </div>
+          </div>
+          <p class="muted" style="margin-bottom:14px">SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom — useful for long links.</p>
+        </div>
+        <button id="btn-radio-save" style="width:100%">Save &amp; reboot</button>
+      </div>
+
+      <!-- ============== App / UI tab ============== -->
+      <div class="tab-panel" data-panel="ui">
+        <div class="card">
+          <strong>UI preferences</strong>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:10px 0 0">
+            <input type="checkbox" id="pref-enter-sends" style="width:auto;min-height:auto">
+            <span>Press <kbd>Enter</kbd> to send (Shift+Enter for newline)</span>
+          </label>
+          <div class="muted" style="margin-top:4px">When off: Enter inserts a newline, Shift+Enter sends.</div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <strong>Transport</strong>
+          <div class="list-row">
+            <div id="tp-name">uR device (HTTP)</div>
+            <div class="muted" id="tp-endpoint" style="font-family:ui-monospace,monospace"></div>
+          </div>
+          <button class="secondary" disabled title="More transports coming in Phase 2">Switch transport…</button>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <strong>Contacts</strong>
+          <div class="muted" style="margin-top:4px">Stored in this browser only — they don't leave the device or sync between browsers.</div>
+          <div id="contacts-list" style="margin-top:8px"></div>
+          <label style="margin-top:8px">Address</label>
+          <input id="ct-addr" maxlength="32" style="font-family:ui-monospace,monospace;margin-bottom:6px">
+          <label>Name</label>
+          <input id="ct-name" style="margin-bottom:8px">
+          <button class="secondary" id="btn-ct-save">Save contact</button>
+        </div>
+      </div>
+
+      <!-- ============== Network tab ============== -->
+      <div class="tab-panel" data-panel="network">
+        <div class="card">
+          <strong>Recent announces</strong>
+          <div class="muted" style="margin-top:4px">LXMF endpoints heard on the network. Click an entry to start a chat.</div>
+          <div id="announces-card" style="margin-top:8px"></div>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <strong>Known paths</strong>
+          <div class="muted" style="margin-top:4px">Every announce we've seen, not just LXMF endpoints — Reticulum transport relays, propagation nodes, etc.</div>
+          <div id="paths-card" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <!-- ============== Danger tab ============== -->
+      <div class="tab-panel" data-panel="danger">
+        <div class="card">
+          <strong>Delete this identity</strong>
+          <p class="muted">Permanently delete this identity from the device. Inbox, outbox, and identity material are removed. Only affects the currently logged-in identity.</p>
+          <button class="danger" id="btn-delete-self">Delete this identity</button>
+        </div>
+        <div class="card" style="margin-top:14px">
+          <strong>Factory reset device</strong>
+          <p class="muted">Wipes <em>every</em> identity on this device. Only escape if all passwords are lost.</p>
+          <p class="muted id-code-hint"></p>
+          <label>Identity code</label>
+          <input id="fr2-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:6px">
+          <button class="danger" id="btn-fr2">Factory reset device</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
 
 <script>
-const LS_TOKEN = 'urlxmf.token';
-const LS_ACCT  = 'urlxmf.account';
-const LS_CONTACTS = 'urlxmf.contacts';
+'use strict';
 
-let state = {
-  token: localStorage.getItem(LS_TOKEN) || null,
-  account_id: localStorage.getItem(LS_ACCT) || null,
-  accounts: [],
+// ============================== STATE ==============================
+const LS = {
+  TOKEN:    'urlxmf.token',
+  IDENTITY: 'urlxmf.identity',
+  TRANSPORT:'urlxmf.transport',
+  CONTACTS: 'urlxmf.contacts',
+  PREFS:    'urlxmf.prefs',
+};
+const DEFAULT_PREFS = {
+  enterSends: true,   // true: Enter sends, Shift+Enter newline. false: opposite.
+};
+function loadPrefs() {
+  try { return Object.assign({}, DEFAULT_PREFS, JSON.parse(localStorage.getItem(LS.PREFS) || '{}')); }
+  catch { return Object.assign({}, DEFAULT_PREFS); }
+}
+function savePrefs(p) {
+  state.prefs = Object.assign({}, state.prefs, p);
+  localStorage.setItem(LS.PREFS, JSON.stringify(state.prefs));
+}
+const state = {
   info: null,
-  contacts: JSON.parse(localStorage.getItem(LS_CONTACTS) || '{}'),
-  last_inbox_seq: 0,
-  evt: null,
-  inboxMessages: [],
-  outboxMessages: [],
-  expandedPeer: null,
-  activeTab: 'tab-chat',
-  refreshTimer: null,
+  transport: null,
+  token: localStorage.getItem(LS.TOKEN) || null,
+  identityId: localStorage.getItem(LS.IDENTITY) || null,
+  identities: [],
+  self: null,                       // current identity object {id, display_name, address, ...}
+  conversations: new Map(),         // peer_hex → {peer, display_name, last_ts, last_body, last_in, msgs:[]}
+  openPeer: null,
+  announces: new Map(),             // dest_hex → record
+  paths: new Map(),
+  markers: { inbox_since: 0, announces_since: 0, paths_since: 0 },
+  contacts: JSON.parse(localStorage.getItem(LS.CONTACTS) || '{}'),
+  prefs: loadPrefs(),
+  pendingIdCode: false,
+  pendingIdCodeAction: null,        // function called with the 6-char code
+  reconnectStart: 0,
+  skipBootstrap: false,             // set true by "skip" button on view-bootstrap so subsequent
+                                    // routing doesn't bounce back into bootstrap mode
 };
 
-function show(id) {
-  for (const s of document.querySelectorAll('section')) s.classList.add('hide');
-  document.getElementById(id).classList.remove('hide');
+// Shared copy for the identity-code hint, displayed everywhere a hex code
+// is required. Filled into every <p class="id-code-hint"> by fillIdCodeHints.
+const ID_CODE_HINT = "<strong>Identity code:</strong> a 6-character hex code that proves you're physically holding the device — required for any action sensitive enough that doing it remotely should not be possible. To generate one: long-press the device's user button (~1 s), release, then short-press within 2 s; the code appears on the OLED for 5 minutes.";
+function fillIdCodeHints() {
+  document.querySelectorAll('.id-code-hint').forEach(e => e.innerHTML = ID_CODE_HINT);
 }
 
-async function api(path, opts = {}) {
-  const headers = opts.headers || {};
-  if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
-  if (opts.body && typeof opts.body !== 'string') {
-    headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(opts.body);
+// ============================== UTIL ==============================
+function $(id) { return document.getElementById(id); }
+function el(tag, props, ...children) {
+  const e = document.createElement(tag);
+  if (props) for (const k in props) {
+    if (k === 'class')      e.className = props[k];
+    else if (k === 'text')  e.textContent = props[k];
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), props[k]);
+    else e.setAttribute(k, props[k]);
   }
-  const r = await fetch(path, { ...opts, headers });
-  if (r.status === 204) return null;
-  const text = await r.text();
-  let data;
-  try { data = JSON.parse(text); } catch { data = { _raw: text }; }
-  if (!r.ok) {
-    console.warn(path, r.status, data);
-    const err = new Error(data.error || ('HTTP ' + r.status));
-    err.status = r.status; err.data = data;
-    throw err;
+  for (const c of children) {
+    if (c == null) continue;
+    e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
   }
-  return data;
+  return e;
+}
+function show(viewId) {
+  for (const v of ['view-bootstrap', 'view-identities', 'view-create', 'view-login', 'view-app']) {
+    $(v).hidden = (v !== viewId);
+  }
+}
+function relTime(tsSec) {
+  if (!tsSec) return '';
+  const dMs = Date.now() - tsSec * 1000;
+  if (dMs < 60_000)         return Math.max(0, Math.floor(dMs/1000)) + 's';
+  if (dMs < 3600_000)       return Math.floor(dMs/60_000) + 'm';
+  if (dMs < 86400_000)      return Math.floor(dMs/3_600_000) + 'h';
+  const d = new Date(tsSec * 1000);
+  return d.getDate() + '/' + (d.getMonth()+1);
+}
+function shortHex(h) { return h ? (h.length > 8 ? h.slice(0,8) + '…' : h) : ''; }
+function nameFor(peerHex) {
+  return state.contacts[peerHex] || shortHex(peerHex);
 }
 
-async function refresh() {
-  state.info = await api('/api/info');
-  state.accounts = state.info.accounts || [];
-
-  if (state.info.bootstrap) {
-    show('view-bootstrap');
-    return;
+// ============================== TOAST ==============================
+// Non-blocking notification. Replaces alert() throughout. Kinds:
+//   'info' (default), 'success', 'warn', 'error'.
+// Defaults: errors live ~7s (long enough to read), success ~3s, info ~4s.
+function toast(message, kind = 'info', durationMs) {
+  if (!message) return;
+  if (durationMs == null) durationMs = (kind === 'error' ? 7000 : kind === 'success' ? 3000 : 4000);
+  const stack = $('toast-stack');
+  const node = el('div', { class: 'toast ' + kind, role: 'status' });
+  // If the message has a colon, split into title + body for emphasis.
+  const idx = message.indexOf(':');
+  if (idx > 0 && idx < 32 && message.length > idx + 2) {
+    node.appendChild(el('div', { class: 'title', text: message.slice(0, idx) }));
+    node.appendChild(el('div', { class: 'body',  text: message.slice(idx + 1).trim() }));
+  } else {
+    node.appendChild(el('div', { class: 'title', text: message }));
   }
+  const dismiss = () => {
+    if (node.dataset.dismissing) return;
+    node.dataset.dismissing = '1';
+    node.classList.add('dismissing');
+    setTimeout(() => node.remove(), 200);
+  };
+  node.addEventListener('click', dismiss);
+  stack.appendChild(node);
+  setTimeout(dismiss, durationMs);
+}
 
-  if (state.token && state.account_id) {
-    // Verify token still valid by hitting the account endpoint.
-    try {
-      await api('/api/accounts/' + state.account_id);
-      enterMessageView();
-      return;
-    } catch (e) {
-      if (e.status === 401) {
-        state.token = null; localStorage.removeItem(LS_TOKEN);
+// ============================== IDENTICON ==============================
+// FNV-1a 32-bit hash → 5×5 symmetric grid SVG, colour from HSL(hash mod 360).
+// Cached per address so repeated renders are zero-cost.
+const _idcCache = new Map();
+function fnv1a(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h * 0x01000193) >>> 0;
+  }
+  return h;
+}
+function identicon(addrHex, size = 40) {
+  const key = (addrHex || '') + '@' + size;
+  if (_idcCache.has(key)) return _idcCache.get(key);
+  const h = fnv1a(addrHex || '');
+  const hue = h % 360;
+  const colour = 'hsl(' + hue + ', 55%, 55%)';
+  const cells = [];
+  // 5 wide × 5 tall, mirrored left/right → 15 bit decisions, we take from h.
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < 3; col++) {
+      const bit = (h >> (row * 3 + col)) & 1;
+      if (bit) {
+        cells.push(col, row);
+        if (col !== 2) cells.push(4 - col, row);
       }
     }
   }
-  renderAccountList();
-  show('view-accounts');
+  let rects = '';
+  for (let i = 0; i < cells.length; i += 2) {
+    rects += '<rect x="' + cells[i] + '" y="' + cells[i+1] + '" width="1" height="1" fill="' + colour + '"/>';
+  }
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 5 5" shape-rendering="crispEdges">' +
+      '<rect width="5" height="5" fill="#1c2128"/>' + rects +
+    '</svg>';
+  _idcCache.set(key, svg);
+  return svg;
+}
+function identiconEl(addrHex, size = 40) {
+  const span = el('span', { class: 'idc' });
+  span.innerHTML = identicon(addrHex, size);
+  return span;
 }
 
-function renderAccountList() {
-  const el = document.getElementById('account-list');
-  el.innerHTML = '';
-  if (state.accounts.length === 0) {
-    el.innerHTML = '<p class="muted">No accounts yet — create one below.</p>';
+// ============================== EMOJI ==============================
+const EMOJI = [
+  '😀','😂','😍','🙂','😎','🤔','😢','😡',
+  '👍','👎','👏','🙏','❤️','🔥','✅','❌',
+  '📍','🎉','🤝','💬','📞','📷','💡','⚡',
+];
+function openEmojiPicker(anchorEl, onPick) {
+  const pop = $('popup-emoji');
+  pop.innerHTML = '';
+  for (const e of EMOJI) {
+    pop.appendChild(el('div', { class: 'emoji-cell', text: e, onclick: () => { onPick(e); pop.hidden = true; } }));
+  }
+  const rect = anchorEl.getBoundingClientRect();
+  pop.style.left = Math.max(8, rect.left) + 'px';
+  pop.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+  pop.hidden = false;
+  setTimeout(() => {
+    const dismiss = (ev) => {
+      if (!pop.contains(ev.target) && ev.target !== anchorEl) {
+        pop.hidden = true;
+        document.removeEventListener('click', dismiss);
+      }
+    };
+    document.addEventListener('click', dismiss);
+  }, 0);
+}
+
+// ============================== TRANSPORT ABSTRACTION ==============================
+// All network I/O the SPA does flows through a Transport instance. The HTTP
+// implementation below talks to the uR device's /api/* endpoints; a future
+// WasmReticulumRsTransport will implement the same surface against an
+// in-browser reticulum-rs WASM build. Render and interaction code must not
+// reference fetch / EventSource / /api/* directly.
+class Transport {
+  async connect()                                 { throw new Error('unimplemented'); }
+  async disconnect()                              { throw new Error('unimplemented'); }
+  async getInfo()                                 { throw new Error('unimplemented'); }
+  async login(identityId, password)               { throw new Error('unimplemented'); }
+  async logout()                                  { throw new Error('unimplemented'); }
+  isAuthed()                                      { return false; }
+  async createIdentity(displayName, pw, code)     { throw new Error('unimplemented'); }
+  async deleteIdentity(identityId)                { throw new Error('unimplemented'); }
+  async getIdentity(identityId)                   { throw new Error('unimplemented'); }
+  async getState(identityId, markers)             { throw new Error('unimplemented'); }
+  async send(identityId, destHex, title, content) { throw new Error('unimplemented'); }
+  async announceNow(identityId)                   { throw new Error('unimplemented'); }
+  async lookupPath(destHex)                       { throw new Error('unimplemented'); }
+  subscribe(identityId, markers, onEvent)         { throw new Error('unimplemented'); }
+  async getRadio()                                { throw new Error('unimplemented'); }
+  async setRadio(cfg)                             { throw new Error('unimplemented'); }
+  async resetRadio(code)                          { throw new Error('unimplemented'); }
+  async factoryReset(code)                        { throw new Error('unimplemented'); }
+  async wifiScan()                                { throw new Error('unimplemented'); }
+  async wifiConfigure(ssid, psk, identityCode)    { throw new Error('unimplemented'); }
+  get capabilities() {
+    return { wifiBootstrap: false, factoryReset: false, radioConfig: false, deviceManaged: false };
+  }
+}
+
+class UReticulumHTTPTransport extends Transport {
+  constructor() {
+    super();
+    this.endpoint = location.origin;
+    this.tokenGetter = () => state.token;
+  }
+  get capabilities() {
+    return { wifiBootstrap: true, factoryReset: true, radioConfig: true, deviceManaged: true };
+  }
+  async _req(path, opts = {}) {
+    const headers = Object.assign({}, opts.headers || {});
+    if (opts.body && typeof opts.body !== 'string') {
+      headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(opts.body);
+    }
+    const tok = this.tokenGetter();
+    if (tok && !opts.unauthed) headers['Authorization'] = 'Bearer ' + tok;
+    const r = await fetch(path, Object.assign({}, opts, { headers }));
+    const txt = await r.text();
+    let body; try { body = txt ? JSON.parse(txt) : {}; } catch { body = { _raw: txt }; }
+    if (!r.ok) {
+      // Prefer the server's human-readable `message` over the
+      // machine-readable `error` slug, so the UI shows something useful.
+      const msg = body.message || body.error || ('http ' + r.status);
+      const err = new Error(msg);
+      err.status = r.status; err.body = body; err.error_code = body.error;
+      throw err;
+    }
+    return body;
+  }
+  async connect() { /* HTTP has no persistent connection */ }
+  async disconnect() { /* same */ }
+  async getInfo() { return this._req('/api/info', { unauthed: true }); }
+  async login(identityId, password) {
+    const r = await this._req('/api/auth/login', { method: 'POST', body: { identity_id: identityId, password }, unauthed: true });
+    return { token: r.token, identityId: r.identity_id || identityId, expiresIn: r.expires_in_s };
+  }
+  async logout() { return this._req('/api/auth/logout', { method: 'POST' }); }
+  isAuthed() { return !!this.tokenGetter(); }
+  async createIdentity(displayName, password, code) {
+    return this._req('/api/identities', { method: 'POST',
+      body: { display_name: displayName, password, password_confirm: password, identity_code: code },
+      unauthed: true });
+  }
+  async deleteIdentity(identityId) {
+    return this._req('/api/identities/' + encodeURIComponent(identityId) + '/delete', { method: 'POST' });
+  }
+  async getIdentity(identityId) {
+    return this._req('/api/identities/' + encodeURIComponent(identityId));
+  }
+  async getState(identityId) {
+    return this._req('/api/identities/' + encodeURIComponent(identityId) + '/state');
+  }
+  async send(identityId, destHex, title, content) {
+    return this._req('/api/identities/' + encodeURIComponent(identityId) + '/send',
+      { method: 'POST', body: { to: destHex, title: title || '', content } });
+  }
+  async announceNow(identityId) {
+    return this._req('/api/identities/' + encodeURIComponent(identityId) + '/announce', { method: 'POST' });
+  }
+  async lookupPath(destHex) {
+    return this._req('/api/paths/lookup', { method: 'POST', body: { to: destHex } });
+  }
+  subscribe(identityId, markers, onEvent) {
+    let es = null;
+    let stopped = false;
+    let opened = false;
+    const onOpen = () => {
+      if (state.reconnectStart) {
+        state.reconnectStart = 0;
+        $('toast-reconnect').hidden = true;
+      }
+      opened = true;
+    };
+    const onError = () => {
+      if (!state.reconnectStart) state.reconnectStart = Date.now();
+      // Show "Reconnecting…" if disconnected for > 5s.
+      setTimeout(() => {
+        if (state.reconnectStart && Date.now() - state.reconnectStart > 5000) {
+          $('toast-reconnect').hidden = false;
+          // Trigger a resync on next open.
+          if (!stopped && onEvent) onEvent({ type: '_reconnect' });
+        }
+      }, 5200);
+    };
+    const open = () => {
+      if (stopped) return;
+      const url = '/api/identities/' + encodeURIComponent(identityId) + '/events'
+        + '?token=' + encodeURIComponent(this.tokenGetter() || '')
+        + '&inbox_since=' + (markers.inbox_since || 0)
+        + '&announces_since=' + (markers.announces_since || 0)
+        + '&paths_since=' + (markers.paths_since || 0);
+      es = new EventSource(url);
+      es.onopen = onOpen;
+      es.onmessage = (ev) => {
+        try { onEvent(JSON.parse(ev.data)); } catch (e) { /* ignore */ }
+      };
+      es.onerror = onError;
+    };
+    open();
+    return () => { stopped = true; if (es) es.close(); };
+  }
+  async getRadio() { return this._req('/api/radio'); }
+  async setRadio(cfg) { return this._req('/api/radio', { method: 'POST', body: cfg }); }
+  async setTransportEnabled(enabled) {
+    return this._req('/api/system/transport', { method: 'POST', body: { enabled: !!enabled } });
+  }
+  async setIdentitySettings(identityId, settings) {
+    return this._req('/api/identities/' + encodeURIComponent(identityId) + '/settings',
+      { method: 'POST', body: settings });
+  }
+  async resetRadio(code) { return this._req('/api/radio/reset', { method: 'POST', body: { identity_code: code } }); }
+  async factoryReset(code) { return this._req('/api/system/factory_reset', { method: 'POST', body: { identity_code: code }, unauthed: true }); }
+  async wifiScan() { return this._req('/api/wifi/scan'); }
+  async wifiConfigure(ssid, psk, identityCode) {
+    // identity_code is required from the bootstrap softAP (no token yet); when
+    // called from a logged-in session the bearer token also satisfies the
+    // require_physical_auth check on the device.
+    const body = { ssid, psk };
+    if (identityCode) body.identity_code = identityCode;
+    return this._req('/api/wifi/configure', { method: 'POST', body, unauthed: !!identityCode });
+  }
+}
+
+// ============================== RENDER ==============================
+const _convRowEls = new Map();  // peer_hex → row element
+
+function renderSelf() {
+  if (!state.self) return;
+  $('self-name').textContent = state.self.display_name || '(no name)';
+  $('self-addr').textContent = state.self.address || state.self.id;
+  const idc = $('self-idc');
+  idc.innerHTML = identicon(state.self.address || state.self.id, 32);
+}
+
+function renderConversations() {
+  const wrap = $('conv-list');
+  // Wipe and rebuild. Lightweight enough for the conversation counts we
+  // expect (<200). Inner thread state is kept in state.conversations so
+  // we never lose messages on re-render.
+  wrap.innerHTML = '';
+  _convRowEls.clear();
+
+  // Chats: peers with message history OR explicitly-named contacts.
+  // Discovered: lxmf.delivery announces we've heard for peers we have
+  // neither chatted with nor named.
+  const convs = [...state.conversations.values()]
+    .sort((a, b) => (b.last_ts || 0) - (a.last_ts || 0));
+  const chattedSet = new Set(convs.map(c => c.peer));
+  const discovered = [...state.announces.values()]
+    .filter(a => !chattedSet.has(a.dest))
+    .sort((a, b) => (b.received_ms || 0) - (a.received_ms || 0));
+
+  if (convs.length === 0 && discovered.length === 0) {
+    wrap.appendChild(el('div', { class: 'empty-state' },
+      'No chats or discovered peers yet. Tap ＋ to start a new conversation, or ',
+      el('strong', { text: '📣' }),
+      ' to announce yourself so others can find you.'));
     return;
   }
-  for (const a of state.accounts) {
-    const card = document.createElement('div');
-    card.className = 'card';
-    const nameDiv = document.createElement('div');
-    const nameStrong = document.createElement('strong');
-    nameStrong.textContent = a.display_name;
-    nameDiv.appendChild(nameStrong);
-    const addrDiv = document.createElement('div');
-    addrDiv.className = 'mono muted';
-    addrDiv.textContent = a.address;
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.style.marginTop = '8px';
-    const loginBtn = document.createElement('button');
-    loginBtn.textContent = 'Login';
-    loginBtn.addEventListener('click', () => startLogin(a.id));
-    row.append(loginBtn);
-    card.append(nameDiv, addrDiv, row);
-    el.appendChild(card);
+
+  const makeRow = (peer, name, sub, when, active) => {
+    // Cross-reference state.announces to derive a "last-seen" indicator.
+    // Online (green dot + bold "now") if heard within the last 60s,
+    // otherwise the age string. Peers we've never heard a real
+    // (lxmf.delivery) announce for show no indicator at all.
+    const announce = state.announces.get(peer);
+    const seenStr = announceSeenString(announce);
+    const isOnline = announce && (Date.now() - announce.seenAt) < 60_000;
+    const idc = identiconEl(peer, 44);
+    if (isOnline) idc.setAttribute('data-online', '');
+    const middle = el('div', { class: 'middle' },
+      el('div', { class: 'name', text: name }),
+      el('div', { class: 'last', text: sub }),
+    );
+    if (seenStr) middle.appendChild(el('div', { class: 'seen' + (isOnline ? ' online' : ''), text: seenStr }));
+    const row = el('div', {
+      class: 'conv-row' + (active ? ' active' : ''),
+      onclick: () => selectConversation(peer),
+    },
+      idc,
+      middle,
+      el('div', { class: 'meta' }, el('div', { class: 'when', text: when })),
+    );
+    _convRowEls.set(peer, row);
+    return row;
+  };
+
+  // Format "last seen via announce" string. Returns '' if we've never
+  // heard one. Resolution coarsens with age: seconds-minutes-hours-days.
+  function announceSeenString(rec) {
+    if (!rec || !rec.seenAt) return '';
+    const ageMs = Math.max(0, Date.now() - rec.seenAt);
+    if (ageMs < 60_000) return 'online now';
+    const m = Math.floor(ageMs / 60_000);
+    if (m < 60) return 'seen ' + m + 'm ago';
+    const h = Math.floor(m / 60);
+    if (h < 24) return 'seen ' + h + 'h ago';
+    const d = Math.floor(h / 24);
+    return 'seen ' + d + 'd ago';
+  }
+
+  if (convs.length > 0) {
+    wrap.appendChild(el('div', { class: 'list-section' }, 'Chats'));
+    for (const c of convs) {
+      wrap.appendChild(makeRow(
+        c.peer,
+        nameFor(c.peer),
+        (c.last_in === false ? '↑ ' : '') + (c.last_body || ''),
+        relTime(c.last_ts),
+        c.peer === state.openPeer));
+    }
+  }
+
+  if (discovered.length > 0) {
+    // Use a <details> so the user can collapse the discovery list when
+    // it gets long. Default-open when there are no chats yet (because
+    // the announces ARE the most interesting thing on screen then).
+    const det = el('details', { class: 'list-group' });
+    det.open = (convs.length === 0);
+    det.appendChild(el('summary', { class: 'list-section' },
+      'Discovered (' + discovered.length + ')'));
+    for (const a of discovered) {
+      const ageS = Math.floor((Date.now() - a.received_ms) / 1000);
+      det.appendChild(makeRow(
+        a.dest,
+        a.display_name || nameFor(a.dest),
+        'heard ' + (ageS < 60 ? ageS + 's' : Math.floor(ageS/60) + 'm') + ' ago',
+        a.aspect && a.aspect !== 'lxmf.delivery' ? a.aspect : '',
+        a.dest === state.openPeer));
+    }
+    wrap.appendChild(det);
   }
 }
 
-async function factoryReset() {
-  return _factoryResetCommon('reset-identity-code');
+function renderThread() {
+  const peer = state.openPeer;
+  const empty = $('thread-empty');
+  const hdr   = $('thread-header');
+  const msgsEl = $('thread-msgs');
+  const cmp   = $('compose');
+  if (!peer) {
+    empty.hidden = false;
+    hdr.hidden = true;
+    msgsEl.hidden = true;
+    cmp.hidden = true;
+    $('view-app').classList.remove('thread-open');
+    return;
+  }
+  empty.hidden = true;
+  hdr.hidden = false;
+  msgsEl.hidden = false;
+  cmp.hidden = false;
+  $('view-app').classList.add('thread-open');
+  $('thread-name').textContent = nameFor(peer);
+  $('thread-addr').textContent = peer;
+  $('thread-idc').innerHTML = identicon(peer, 36);
+  msgsEl.innerHTML = '';
+  const c = state.conversations.get(peer);
+  if (!c || c.msgs.length === 0) {
+    msgsEl.appendChild(el('div', { class: 'empty-state' }, 'No messages yet. Say hi.'));
+    return;
+  }
+  for (const m of c.msgs) {
+    const bubble = el('div', { class: 'bubble ' + (m.in ? 'in' : 'out') + (m.sig_ok === false && m.in ? ' bad' : '') });
+    if (m.title) {
+      bubble.appendChild(el('div', { style: 'font-weight:600;margin-bottom:2px', text: m.title }));
+    }
+    bubble.appendChild(document.createTextNode(m.body || ''));
+    const metaParts = [];
+    if (m.ts) metaParts.push(new Date(m.ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+    if (!m.in && m.status) metaParts.push(m.status);
+    if (m.in && m.sig_ok === false) metaParts.push('⚠ bad sig');
+    if (metaParts.length) {
+      bubble.appendChild(el('div', { class: 'bmeta', text: metaParts.join(' · ') }));
+    }
+    msgsEl.appendChild(bubble);
+  }
+  // Scroll to bottom.
+  msgsEl.scrollTop = msgsEl.scrollHeight;
 }
 
-async function factoryResetFromPicker() {
-  return _factoryResetCommon('reset-picker-identity-code');
+function upsertMessage(m) {
+  const peer = m.peer || m.peer_hex;
+  if (!peer) return;
+  let c = state.conversations.get(peer);
+  if (!c) {
+    c = { peer, msgs: [], last_ts: 0, last_body: '', last_in: false };
+    state.conversations.set(peer, c);
+  }
+  // Dedup by seq.
+  if (c.msgs.some(x => x.seq === m.seq && x.in === m.in)) return;
+  c.msgs.push(m);
+  c.msgs.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  const last = c.msgs[c.msgs.length - 1];
+  c.last_ts   = last.ts;
+  c.last_body = last.body || '';
+  c.last_in   = last.in;
 }
 
-async function _factoryResetCommon(inputId) {
-  const code = document.getElementById(inputId).value.trim().toLowerCase();
-  if (code.length !== 6) { alert('Need the 6-char identity code from the device OLED'); return; }
-  if (!confirm(
-    'FACTORY RESET: this will permanently delete every account, inbox, outbox, and saved login on this device. ' +
-    'There is no undo. Continue?'
-  )) return;
+function renderAnnounces() {
+  const wrap = $('announces-card');
+  wrap.innerHTML = '';
+  const arr = [...state.announces.values()].sort((a,b) => b.received_ms - a.received_ms);
+  if (arr.length === 0) { wrap.appendChild(el('div', { class: 'muted', text: 'No announces seen yet.' })); return; }
+  for (const a of arr) {
+    wrap.appendChild(el('div', { class: 'list-row' },
+      el('div', null,
+        identiconEl(a.dest, 20),
+        ' ',
+        el('strong', { text: a.display_name || nameFor(a.dest) }),
+      ),
+      el('div', { class: 'muted mono', text: a.dest }),
+      el('div', { class: 'muted', text: 'aspect=' + (a.aspect || 'transport/unknown') }),
+    ));
+  }
+}
+function renderPaths() {
+  const wrap = $('paths-card');
+  wrap.innerHTML = '';
+  const arr = [...state.paths.values()].sort((a,b) => b.received_ms - a.received_ms);
+  if (arr.length === 0) { wrap.appendChild(el('div', { class: 'muted', text: 'No paths known yet.' })); return; }
+  for (const a of arr) {
+    wrap.appendChild(el('div', { class: 'list-row' },
+      el('div', null,
+        identiconEl(a.dest, 20),
+        ' ',
+        el('strong', { text: a.display_name || nameFor(a.dest) }),
+      ),
+      el('div', { class: 'muted mono', text: a.dest }),
+      el('div', { class: 'muted', text: 'aspect=' + (a.aspect || 'transport/unknown') }),
+    ));
+  }
+}
+
+function renderContacts() {
+  const wrap = $('contacts-list');
+  wrap.innerHTML = '';
+  const entries = Object.entries(state.contacts);
+  if (entries.length === 0) { wrap.appendChild(el('div', { class: 'muted', text: 'No contacts saved.' })); return; }
+  for (const [addr, name] of entries) {
+    wrap.appendChild(el('div', { class: 'list-row', style:'display:flex;gap:8px;align-items:center' },
+      identiconEl(addr, 28),
+      el('div', { style: 'flex:1;min-width:0' },
+        el('div', { text: name }),
+        el('div', { class: 'muted mono', text: addr }),
+      ),
+      el('button', { class: 'ghost', text: '×', onclick: () => { delete state.contacts[addr]; persistContacts(); renderContacts(); renderConversations(); } }),
+    ));
+  }
+}
+
+// ============================== INTERACTIONS ==============================
+async function selectConversation(peer) {
+  state.openPeer = peer;
+  // Update conv row "active" state.
+  for (const [p, row] of _convRowEls) {
+    row.classList.toggle('active', p === peer);
+  }
+  renderThread();
+  // Make sure a record exists even if empty.
+  if (!state.conversations.has(peer)) {
+    state.conversations.set(peer, { peer, msgs: [], last_ts: 0 });
+  }
+}
+
+async function sendMessage() {
+  const text = $('compose-text').value.trim();
+  if (!text || !state.openPeer) return;
+  $('btn-send').disabled = true;
   try {
-    // Issue the request directly via fetch — the api() helper auto-attaches
-    // a bearer token if one exists, but factory reset is intentionally
-    // *unauthenticated* (only the identity code is required) so a locked-out
-    // user can recover. The endpoint refuses bearer + ignores it either way.
-    const r = await fetch('/api/system/factory_reset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identity_code: code }),
+    // Server returns { queued_seq, status } where status is the *actual*
+    // outbox status after the send call (e.g. "sent" if the packet was
+    // handed to Reticulum successfully). Mirror that in the optimistic
+    // local copy so the user doesn't see "queued forever".
+    const r = await state.transport.send(state.identityId, state.openPeer, '', text);
+    upsertMessage({
+      peer: state.openPeer,
+      seq: r.queued_seq || -Date.now(),
+      ts: Date.now() / 1000,
+      title: '',
+      body: text,
+      in: false,
+      sig_ok: true,
+      status: r.status || 'sent',
     });
-    if (!r.ok) {
-      const text = await r.text();
-      let data; try { data = JSON.parse(text); } catch { data = {}; }
-      alert('Reset failed: ' + (data.error || ('HTTP ' + r.status)));
+    $('compose-text').value = '';
+    renderThread();
+    renderConversations();
+  } catch (e) {
+    toast('Send failed: ' + (e.message || e), 'error');
+  } finally {
+    $('btn-send').disabled = false;
+  }
+}
+
+async function forceAnnounce() {
+  const btn = $('btn-announce-top');
+  if (btn) btn.disabled = true;
+  try {
+    await state.transport.announceNow(state.identityId);
+    toast('Announce sent', 'success');
+    // Optimistically reset the countdown to a full interval — server
+    // does the same on its end after a successful send_announce.
+    const ms = Number(state.self && state.self.announce_interval_ms) || 0;
+    seedAnnounceCountdown(ms, ms);
+  } catch (e) {
+    toast('Announce failed: ' + (e.message || e), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ============================== STATUS INDICATOR ==============================
+// Topbar antenna icon's coloured dot reflects radio + transport state.
+// Click opens a popover with live config and a transport toggle.
+// Backing data comes from /api/info; we refresh on open and on a slow
+// background tick so the indicator isn't perpetually stale.
+async function refreshStatus() {
+  try {
+    const info = await state.transport.getInfo();
+    state.lastInfo = info;
+    applyStatusToButton(info);
+    if (!$('popover-status').hidden) renderStatusPopover();
+  } catch (e) {
+    $('btn-status').setAttribute('data-state', 'unknown');
+    $('btn-status').title = 'Status unknown: ' + (e.message || e);
+  }
+}
+function applyStatusToButton(info) {
+  const btn = $('btn-status');
+  const r = info && info.radio;
+  if (!r)                  { btn.setAttribute('data-state', 'unknown'); btn.title = 'Radio status unknown'; return; }
+  if (!r.have_conf)        { btn.setAttribute('data-state', 'unconf');  btn.title = 'Radio not configured — open Settings → Radio'; return; }
+  if (r.online)            { btn.setAttribute('data-state', 'online');
+                             btn.title = 'Radio online · ' + (r.frequency/1e6).toFixed(3) + ' MHz'; return; }
+  btn.setAttribute('data-state', 'offline');
+  btn.title = 'Radio configured but offline';
+}
+function renderStatusPopover() {
+  const info = state.lastInfo || {};
+  const r = info.radio  || {};
+  const t = info.transport || {};
+  const radioLine = $('status-radio-line');
+  radioLine.innerHTML = '';
+  if (!r.have_conf) {
+    radioLine.appendChild(el('span', { class: 'pill warn' }, 'Not configured'));
+  } else if (r.online) {
+    radioLine.appendChild(el('span', { class: 'pill ok' }, 'Online'));
+  } else {
+    radioLine.appendChild(el('span', { class: 'pill bad' }, 'Offline'));
+  }
+  if (r.have_conf) {
+    $('status-radio-cfg-1').textContent =
+      (r.frequency/1e6).toFixed(3) + ' MHz · BW ' + (r.bandwidth/1000) + ' kHz';
+    $('status-radio-cfg-2').textContent =
+      'SF' + r.spreading_factor + ' · CR4/' + r.coding_rate + ' · ' + r.tx_power + ' dBm';
+  } else {
+    $('status-radio-cfg-1').textContent = 'No radio config saved yet.';
+    $('status-radio-cfg-2').textContent = '';
+  }
+  const tLine = $('status-transport-line');
+  tLine.innerHTML = '';
+  tLine.appendChild(el('span', { class: 'pill ' + (t.enabled ? 'ok' : '') },
+                       t.enabled ? 'On — relaying packets' : 'Off — endpoint only'));
+  $('btn-toggle-transport').textContent = t.enabled ? 'Turn transport off' : 'Turn transport on';
+}
+function openStatusPopover() {
+  renderStatusPopover();
+  $('popover-status').hidden = false;
+  // Close on outside click; defer one tick so this click doesn't fire it.
+  setTimeout(() => {
+    const dismiss = (ev) => {
+      if (!$('popover-status').contains(ev.target) && ev.target !== $('btn-status') && !$('btn-status').contains(ev.target)) {
+        $('popover-status').hidden = true;
+        document.removeEventListener('click', dismiss);
+      }
+    };
+    document.addEventListener('click', dismiss);
+  }, 0);
+}
+$('btn-status').addEventListener('click', async () => {
+  if (!$('popover-status').hidden) { $('popover-status').hidden = true; return; }
+  await refreshStatus();
+  openStatusPopover();
+});
+$('btn-toggle-transport').addEventListener('click', async () => {
+  const cur = !!(state.lastInfo && state.lastInfo.transport && state.lastInfo.transport.enabled);
+  $('btn-toggle-transport').disabled = true;
+  try {
+    await state.transport.setTransportEnabled(!cur);
+    toast(cur ? 'Transport disabled' : 'Transport enabled', 'success');
+    await refreshStatus();
+  } catch (e) {
+    toast('Toggle failed: ' + (e.message || e), 'error');
+  } finally {
+    $('btn-toggle-transport').disabled = false;
+  }
+});
+// Slow background refresh — once a minute is enough for an indicator
+// that mainly changes after a reboot or a deliberate toggle.
+setInterval(refreshStatus, 60000);
+
+// ============================== ANNOUNCE COUNTDOWN ==============================
+// Topbar megaphone icon pulses when auto-announce is enabled and shows
+// the time until the next auto-fire next to it. Updates every second.
+// state.nextAnnounceAtMs is the Date.now() epoch ms at which the next
+// auto-announce is expected (best-effort estimate from the server's
+// `next_announce_in_ms` plus local clock).
+function seedAnnounceCountdown(nextInMs, intervalMs) {
+  if (state.self) state.self.announce_interval_ms = intervalMs;
+  if (intervalMs > 0) {
+    state.nextAnnounceAtMs = Date.now() + (nextInMs > 0 ? nextInMs : intervalMs);
+  } else {
+    state.nextAnnounceAtMs = 0;
+  }
+  refreshAnnounceCountdown();
+}
+function refreshAnnounceCountdown() {
+  const btn  = $('btn-announce-top');
+  const lbl  = $('announce-countdown');
+  if (!btn || !lbl) return;
+  const interval = Number(state.self && state.self.announce_interval_ms) || 0;
+  if (interval <= 0) {
+    btn.classList.remove('pulsing');
+    lbl.hidden = true;
+    btn.title = 'Announce me — auto-announce is OFF for this identity';
+    return;
+  }
+  btn.classList.add('pulsing');
+  const remainMs = Math.max(0, (state.nextAnnounceAtMs || 0) - Date.now());
+  lbl.hidden = false;
+  lbl.textContent = formatCountdown(remainMs);
+  btn.title = 'Announce me. Auto-announce in ' + formatCountdown(remainMs);
+  if (remainMs === 0) {
+    // The server should have announced; nudge our local target forward
+    // so we don't sit at 0 forever if the server announce is delayed.
+    state.nextAnnounceAtMs = Date.now() + interval;
+  }
+}
+function formatCountdown(ms) {
+  const s = Math.ceil(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm' + (s % 60 ? ' ' + (s % 60) + 's' : '');
+  const h = Math.floor(m / 60);
+  return h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
+}
+setInterval(refreshAnnounceCountdown, 1000);
+// Re-render the conv list every 30s to keep "last seen" labels fresh.
+// Cheap: state.conversations is small and the DOM diff is wholesale.
+setInterval(() => {
+  if (!$('view-app').hidden) renderConversations();
+}, 30000);
+
+function persistContacts() { localStorage.setItem(LS.CONTACTS, JSON.stringify(state.contacts)); }
+
+// ============================== SSE EVENT DISPATCH ==============================
+function dispatchEvent(ev) {
+  if (ev.type === '_reconnect') {
+    // We've been disconnected long enough — re-fetch /state to resync.
+    refreshState();
+    return;
+  }
+  if (ev.type === 'incoming') {
+    const m = ev.msg || {};
+    state.markers.inbox_since = Math.max(state.markers.inbox_since, m.seq);
+    upsertMessage({
+      peer: m.peer, seq: m.seq, ts: m.ts,
+      title: m.title || '', body: m.body || '',
+      in: true, sig_ok: !!m.sig_ok, status: 'delivered',
+    });
+    renderConversations();
+    if (state.openPeer === m.peer) renderThread();
+  } else if (ev.type === 'announce_seen') {
+    state.markers.announces_since = Math.max(state.markers.announces_since, ev.received_ms);
+    // Convert the device's monotonic age_ms to a wall-clock anchor so
+    // we can refresh "X ago" labels purely client-side.
+    ev.seenAt = Date.now() - (ev.age_ms || 0);
+    state.announces.set(ev.dest, ev);
+    renderAnnounces();
+    renderConversations();  // also surfaces in the Discovered group
+  } else if (ev.type === 'path_seen') {
+    state.markers.paths_since = Math.max(state.markers.paths_since, ev.received_ms);
+    ev.seenAt = Date.now() - (ev.age_ms || 0);
+    state.paths.set(ev.dest, ev);
+    renderPaths();
+  } else if (ev.type === 'identity_code_available') {
+    state.pendingIdCode = true;
+    if (state.pendingIdCodeAction) {
+      // Already waiting to consume — open the modal.
+      openIdCodeModal();
+    }
+  }
+}
+
+async function refreshState() {
+  try {
+    const r = await state.transport.getState(state.identityId);
+    state.self = r.identity;
+    state.markers = r.markers || state.markers;
+    state.announces.clear();
+    for (const a of (r.announces || [])) {
+      a.seenAt = Date.now() - (a.age_ms || 0);
+      state.announces.set(a.dest, a);
+    }
+    state.paths.clear();
+    for (const p of (r.paths || [])) {
+      p.seenAt = Date.now() - (p.age_ms || 0);
+      state.paths.set(p.dest, p);
+    }
+    state.conversations.clear();
+    for (const c of (r.conversations || [])) {
+      const conv = { peer: c.peer, msgs: [], last_ts: c.last_ts, last_body: c.last_body, last_in: c.last_in };
+      for (const m of (c.messages || [])) conv.msgs.push(m);
+      state.conversations.set(c.peer, conv);
+    }
+    renderSelf();
+    renderConversations();
+    renderAnnounces();
+    renderPaths();
+    if (state.openPeer) renderThread();
+  } catch (e) {
+    console.warn('refreshState failed:', e);
+  }
+}
+
+let _unsubscribe = null;
+function startEventStream() {
+  if (_unsubscribe) _unsubscribe();
+  _unsubscribe = state.transport.subscribe(state.identityId, state.markers, dispatchEvent);
+}
+
+// ============================== BOOT / VIEW FLOW ==============================
+async function boot() {
+  state.transport = makeTransportFromStorage();
+  $('tp-endpoint').textContent = state.transport.endpoint || '';
+  await state.transport.connect();
+  let info;
+  try { info = await state.transport.getInfo(); }
+  catch (e) { console.warn('getInfo failed:', e); info = null; }
+  state.info = info;
+  state.identities = (info && info.identities) || [];
+
+  if (info && info.bootstrap && !state.skipBootstrap) { return enterBootstrap(); }
+  if (info && info.identity_code_pending) { state.pendingIdCode = true; }
+
+  if (state.token && state.identityId) {
+    // Validate token by hitting /state.
+    try {
+      const me = await state.transport.getIdentity(state.identityId);
+      state.self = me;
+      await refreshState();
+      enterApp();
       return;
+    } catch (e) {
+      // Token bad — fall through to identity picker.
+      console.warn('token validation failed:', e);
+      state.token = null;
+      localStorage.removeItem(LS.TOKEN);
+    }
+  }
+  enterIdentityPicker();
+}
+
+function makeTransportFromStorage() {
+  const which = localStorage.getItem(LS.TRANSPORT) || 'urhttp';
+  if (which === 'urhttp') return new UReticulumHTTPTransport();
+  // Future: 'wasm-rs' → new WasmReticulumRsTransport();
+  return new UReticulumHTTPTransport();
+}
+
+function enterBootstrap() {
+  show('view-bootstrap');
+  bsRescan();
+}
+function enterIdentityPicker() {
+  show('view-identities');
+  const wrap = $('identity-list');
+  wrap.innerHTML = '';
+  if (state.identities.length === 0) {
+    wrap.appendChild(el('div', { class: 'muted', text: 'No identities yet — create one below.' }));
+  }
+  for (const id of state.identities) {
+    wrap.appendChild(el('div', { class: 'iden-card', onclick: () => enterLogin(id) },
+      identiconEl(id.address, 44),
+      el('div', { style: 'min-width:0' },
+        el('div', { class: 'name', text: id.display_name || '(no name)' }),
+        el('div', { class: 'addr', text: id.address }),
+      ),
+      el('div', null, '→'),
+    ));
+  }
+}
+function enterCreate() {
+  show('view-create');
+  $('cr-name').value = '';
+  $('cr-pw1').value  = '';
+  $('cr-pw2').value  = '';
+  $('cr-code').value = '';
+}
+function enterLogin(identity) {
+  show('view-login');
+  state.identityId = identity.id;
+  $('login-title').textContent = 'Login: ' + (identity.display_name || identity.id);
+  $('login-pw').value = '';
+}
+async function enterApp() {
+  show('view-app');
+  renderSelf();
+  renderConversations();
+  renderAnnounces();
+  renderPaths();
+  renderContacts();
+  startEventStream();
+  refreshStatus();  // populate the topbar indicator
+  // First-run radio check: if the device hasn't been configured yet,
+  // pop the settings modal to the Radio tab in locked mode so the
+  // user can't dismiss it until they've saved. Without a working radio
+  // the rest of the UI is just a museum exhibit.
+  try {
+    const r = await state.transport.getRadio();
+    if (!r.have_conf || !r.radio_online) {
+      openSettingsModal('radio', true);
     }
   } catch (e) {
-    alert('Reset failed: ' + (e.message || e));
-    return;
+    console.warn('getRadio probe failed:', e);
   }
-  localStorage.clear();
-  waitForDeviceAndReload('Device wiped, rebooting…');
+  // Seed the announce countdown from the snapshot we already have.
+  if (state.self) {
+    seedAnnounceCountdown(state.self.next_announce_in_ms || 0,
+                          state.self.announce_interval_ms || 0);
+  }
 }
 
-// Show a full-screen "rebooting" UI and poll /api/info until the device
-// answers. Auto-reloads the page when it comes back — used after any
-// action that triggers ESP.restart() on the device side (radio save,
-// radio reset, factory reset). NOT used after WiFi configure because the
-// device moves to a new network there, so manual reconnect is unavoidable.
+// ============================== BOOTSTRAP VIEW WIRING ==============================
+async function bsRescan() {
+  const sel = $('bs-ssid');
+  sel.innerHTML = '<option value="">— scanning… —</option>';
+  try {
+    const r = await state.transport.wifiScan();
+    sel.innerHTML = '<option value="">— pick a network —</option>';
+    for (const n of (r.networks || [])) {
+      sel.appendChild(el('option', { value: n.ssid }, n.ssid + (n.secure ? ' 🔒' : '')));
+    }
+  } catch (e) { sel.innerHTML = '<option value="">(scan failed)</option>'; }
+}
+$('bs-rescan').addEventListener('click', bsRescan);
+$('bs-save').addEventListener('click', async () => {
+  const ssid = $('bs-ssid').value || '';
+  if (!ssid) { toast('Pick a network first', 'warn'); return; }
+  const code = ($('bs-code').value || '').trim();
+  if (!code) { toast('Enter the identity code from the device OLED', 'warn'); return; }
+  try {
+    await state.transport.wifiConfigure(ssid, $('bs-psk').value, code);
+    waitForDeviceAndReload('Saving WiFi & rebooting…');
+  } catch (e) { toast('Save failed: ' + (e.message || e), 'error'); }
+});
+// Skip — let the user proceed into the chat UI without configuring a home
+// WiFi network. Useful for standalone / off-grid operation from the softAP
+// itself. Routes the same way as a normal boot (identity picker if no
+// identities, login if some exist).
+$('bs-skip').addEventListener('click', async () => {
+  state.skipBootstrap = true;
+  try {
+    const info = await state.transport.getInfo();
+    state.info = info;
+    if (!info.identities || info.identities.length === 0) {
+      enterCreate();
+    } else {
+      enterIdentityPicker();
+    }
+  } catch (e) {
+    toast('Failed to leave bootstrap: ' + (e.message || e), 'error');
+  }
+});
+
+// ============================== IDENTITY PICKER WIRING ==============================
+$('btn-show-create').addEventListener('click', enterCreate);
+$('btn-factory-reset').addEventListener('click', async () => {
+  if (!confirm('FACTORY RESET will permanently erase every identity, message, and saved token on this device. Continue?')) return;
+  try {
+    await state.transport.factoryReset($('fr-code').value);
+    waitForDeviceAndReload('Factory-resetting & rebooting…');
+  } catch (e) { toast('Reset failed: ' + (e.message || e), 'error'); }
+});
+
+// ============================== CREATE WIRING ==============================
+$('btn-create-cancel').addEventListener('click', enterIdentityPicker);
+$('btn-create-go').addEventListener('click', async () => {
+  if ($('cr-pw1').value !== $('cr-pw2').value) { toast('Passwords do not match', 'warn'); return; }
+  if ($('cr-pw1').value.length < 8) { toast('Password must be at least 8 chars', 'warn'); return; }
+  try {
+    const r = await state.transport.createIdentity($('cr-name').value, $('cr-pw1').value, $('cr-code').value);
+    state.token = r.token;
+    state.identityId = r.id;
+    localStorage.setItem(LS.TOKEN, r.token);
+    localStorage.setItem(LS.IDENTITY, r.id);
+    state.identities = ((await state.transport.getInfo()).identities) || [];
+    state.self = state.identities.find(x => x.id === r.id) || { id: r.id, address: r.address, display_name: $('cr-name').value };
+    await refreshState();
+    enterApp();
+  } catch (e) { toast('Create failed: ' + (e.message || e), 'error'); }
+});
+
+// ============================== LOGIN WIRING ==============================
+$('btn-login-back').addEventListener('click', enterIdentityPicker);
+$('btn-login-go').addEventListener('click', async () => {
+  try {
+    const r = await state.transport.login(state.identityId, $('login-pw').value);
+    state.token = r.token;
+    state.identityId = r.identityId;
+    localStorage.setItem(LS.TOKEN, r.token);
+    localStorage.setItem(LS.IDENTITY, r.identityId);
+    state.self = state.identities.find(x => x.id === r.identityId) || null;
+    await refreshState();
+    enterApp();
+  } catch (e) {
+    if (e.status === 401) toast('Wrong password', 'error');
+    else toast('Login failed: ' + (e.message || e), 'error');
+  }
+});
+
+// ============================== APP WIRING ==============================
+$('btn-new-conv').addEventListener('click', () => {
+  $('nc-addr').value = ''; $('nc-name').value = '';
+  renderNewConvPicker();
+  $('modal-new-conv').hidden = false;
+});
+
+// Build the contact / discovered-peer picker for the new-conversation
+// modal. Saved contacts come first, discovered peers (lxmf.delivery
+// announces we've heard but haven't chatted to or saved) come second.
+function renderNewConvPicker() {
+  const wrap = $('nc-pick');
+  wrap.innerHTML = '';
+  const contacts = Object.entries(state.contacts || {});
+  // Discovered = peers announced as lxmf.delivery, not already saved as
+  // a contact and not already in a conversation (no point starting a
+  // "new" one with someone we have chat history with — they're already
+  // in the main left pane).
+  const knownSet = new Set(contacts.map(([addr]) => addr));
+  for (const peer of state.conversations.keys()) knownSet.add(peer);
+  const discovered = [...state.announces.values()]
+    .filter(a => !knownSet.has(a.dest))
+    .sort((a, b) => (b.received_ms || 0) - (a.received_ms || 0));
+
+  const pickRow = (addr, name, sub) => el('div', {
+    class: 'iden-card',
+    style: 'margin-bottom:6px',
+    onclick: () => {
+      $('nc-addr').value = addr;
+      if (name) $('nc-name').value = name;
+    },
+  },
+    identiconEl(addr, 36),
+    el('div', { style: 'min-width:0' },
+      el('div', { class: 'name', text: name || shortHex(addr) }),
+      el('div', { class: 'addr', text: addr }),
+      sub ? el('div', { class: 'muted', style: 'font-size:11px', text: sub }) : null,
+    ),
+    el('div', null, '→'),
+  );
+
+  if (contacts.length > 0) {
+    wrap.appendChild(el('div', { class: 'list-section', style: 'padding:4px 0' }, 'Saved contacts'));
+    for (const [addr, name] of contacts) wrap.appendChild(pickRow(addr, name, null));
+  }
+  if (discovered.length > 0) {
+    wrap.appendChild(el('div', { class: 'list-section', style: 'padding:4px 0;margin-top:6px' }, 'Discovered nearby'));
+    for (const a of discovered) {
+      const ageS = Math.floor((Date.now() - a.received_ms) / 1000);
+      wrap.appendChild(pickRow(a.dest, a.display_name, 'heard ' + (ageS < 60 ? ageS + 's' : Math.floor(ageS/60) + 'm') + ' ago'));
+    }
+  }
+  if (contacts.length === 0 && discovered.length === 0) {
+    wrap.appendChild(el('div', { class: 'muted', text: 'No saved contacts or discovered peers yet. Enter an address below.' }));
+  }
+}
+$('btn-nc-cancel').addEventListener('click', () => { $('modal-new-conv').hidden = true; });
+$('btn-nc-go').addEventListener('click', () => {
+  const addr = $('nc-addr').value.trim().toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(addr)) { toast('Address must be 32 hex characters', 'warn'); return; }
+  const name = $('nc-name').value.trim();
+  if (name) { state.contacts[addr] = name; persistContacts(); renderContacts(); }
+  if (!state.conversations.has(addr)) state.conversations.set(addr, { peer: addr, msgs: [], last_ts: 0 });
+  renderConversations();
+  selectConversation(addr);
+  $('modal-new-conv').hidden = true;
+});
+
+$('btn-back').addEventListener('click', () => { state.openPeer = null; renderThread(); });
+$('btn-announce-top').addEventListener('click', forceAnnounce);
+$('btn-radio-save').addEventListener('click', async () => {
+  try {
+    await state.transport.setRadio({
+      frequency: Number($('rd-freq').value),
+      bandwidth: Number($('rd-bw').value),
+      spreading_factor: Number($('rd-sf').value),
+      coding_rate: Number($('rd-cr').value),
+      tx_power: Number($('rd-tx').value),
+    });
+    waitForDeviceAndReload('Saving radio config & rebooting…');
+  } catch (e) { toast('Save failed: ' + (e.message || e), 'error'); }
+});
+$('btn-send').addEventListener('click', sendMessage);
+$('compose-text').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  // enterSends=true: Enter → send, Shift+Enter → newline (default chat-app)
+  // enterSends=false: Shift+Enter → send, Enter → newline (mirror Slack/Discord)
+  const send = state.prefs.enterSends ? !e.shiftKey : e.shiftKey;
+  if (send) { e.preventDefault(); sendMessage(); }
+});
+$('compose-text').addEventListener('input', (e) => {
+  // Auto-grow textarea.
+  e.target.style.height = 'auto';
+  e.target.style.height = Math.min(120, e.target.scrollHeight) + 'px';
+});
+$('btn-emoji').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  openEmojiPicker(ev.currentTarget, (e) => {
+    const ta = $('compose-text');
+    const start = ta.selectionStart || ta.value.length;
+    const end   = ta.selectionEnd   || ta.value.length;
+    ta.value = ta.value.slice(0, start) + e + ta.value.slice(end);
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = start + e.length;
+  });
+});
+
+$('search').addEventListener('input', (e) => {
+  const q = e.target.value.toLowerCase();
+  const wrap = $('conv-list');
+  for (const child of wrap.children) {
+    const txt = child.textContent.toLowerCase();
+    child.style.display = txt.includes(q) ? '' : 'none';
+  }
+});
+
+// ============================== RADIO REGION PRESETS ==============================
+// Frequency + bandwidth + SF + CR + TX power per region. The frequency is
+// the only strictly region-dependent value (regulatory); the rest are
+// community-conventional defaults that interop with the typical Reticulum
+// network in that region.  Order: most-likely-needed first.  Add or tweak
+// as the community converges on different settings.
+//
+// TX power is the recommended ceiling; users can lower it freely. The
+// hardware may not actually achieve the listed TX power (depends on
+// SX1262 vs LR1121, antenna matching, etc.).
+const RADIO_PRESETS = [
+  { id: 'eu868',  label: 'EU 869.525 MHz',    freq: 869525000, bw: 125000, sf: 7,  cr: 5, tx: 17,
+    note: 'EU 863–870 MHz ISM (SRD860 sub-band). Common Reticulum freq for EU/UK.' },
+  { id: 'eu868-long', label: 'EU 869.525 MHz · long-range', freq: 869525000, bw: 125000, sf: 11, cr: 5, tx: 14,
+    note: 'Higher SF for range; lower TX power to stay within 0.1% duty-cycle on SRD860.' },
+  { id: 'us915',  label: 'US 915 MHz',        freq: 915000000, bw: 125000, sf: 7,  cr: 5, tx: 20,
+    note: 'US 902–928 MHz ISM band. No duty-cycle limits.' },
+  { id: 'au915',  label: 'AU 915 MHz',        freq: 915000000, bw: 125000, sf: 7,  cr: 5, tx: 20,
+    note: 'AU 915–928 MHz ISM.' },
+  { id: 'nz864',  label: 'NZ 864 MHz',        freq: 864000000, bw: 125000, sf: 7,  cr: 5, tx: 14,
+    note: 'NZ 864–868 MHz ISM.' },
+  { id: 'in866',  label: 'IN 866 MHz',        freq: 866000000, bw: 125000, sf: 7,  cr: 5, tx: 14,
+    note: 'IN 865–867 MHz ISM.' },
+  { id: 'as923',  label: 'AS 923 MHz',        freq: 923200000, bw: 125000, sf: 7,  cr: 5, tx: 14,
+    note: 'AS923 region (varies by country — check local rules).' },
+  { id: 'jp920',  label: 'JP 920 MHz',        freq: 920900000, bw: 125000, sf: 7,  cr: 5, tx: 13,
+    note: 'JP 920.6–928 MHz (ARIB STD-T108).' },
+  { id: 'kr920',  label: 'KR 920 MHz',        freq: 920900000, bw: 125000, sf: 7,  cr: 5, tx: 14,
+    note: 'KR 920–925 MHz.' },
+  { id: 'ru868',  label: 'RU 868.9 MHz',      freq: 868900000, bw: 125000, sf: 7,  cr: 5, tx: 14,
+    note: 'RU 868.7–869.2 MHz.' },
+  { id: 'cn470',  label: 'CN 470 MHz',        freq: 470000000, bw: 125000, sf: 7,  cr: 5, tx: 14,
+    note: 'CN 470–510 MHz. Hardware must support 470 band.' },
+];
+function populateRadioPresets() {
+  const sel = $('rd-preset');
+  sel.innerHTML = '';
+  // Empty option first — we don't know the user's region. They must
+  // pick one (or "Custom") which then reveals the raw param fields.
+  sel.appendChild(el('option', { value: '__empty' }, '— Pick a region —'));
+  for (const p of RADIO_PRESETS) {
+    sel.appendChild(el('option', { value: p.id }, p.label));
+  }
+  // "Custom" lives at the bottom — it's the fallback after the named
+  // regions, and ordering it last keeps the common-case picks adjacent
+  // to the placeholder at top.
+  sel.appendChild(el('option', { value: '__custom' }, 'Custom (manual)'));
+}
+function findMatchingPreset() {
+  const freq = Number($('rd-freq').value);
+  const bw   = Number($('rd-bw').value);
+  const sf   = Number($('rd-sf').value);
+  const cr   = Number($('rd-cr').value);
+  const tx   = Number($('rd-tx').value);
+  return RADIO_PRESETS.find(p =>
+    p.freq === freq && p.bw === bw && p.sf === sf && p.cr === cr && p.tx === tx
+  );
+}
+function syncPresetSelect() {
+  const match = findMatchingPreset();
+  $('rd-preset').value = match ? match.id : '__custom';
+  $('rd-preset-note').textContent = match ? match.note : '';
+}
+function applyPreset(p) {
+  $('rd-freq').value = p.freq;
+  $('rd-bw').value   = p.bw;
+  $('rd-sf').value   = p.sf;
+  $('rd-cr').value   = p.cr;
+  $('rd-tx').value   = p.tx;
+  $('rd-preset-note').textContent = p.note;
+}
+function setRawFieldsVisible(visible) {
+  $('rd-raw').style.display = visible ? '' : 'none';
+  $('btn-radio-save').disabled = !visible;
+}
+populateRadioPresets();
+$('rd-preset').addEventListener('change', (e) => {
+  const id = e.target.value;
+  if (id === '__empty') {
+    $('rd-preset-note').textContent = '';
+    setRawFieldsVisible(false);
+    return;
+  }
+  setRawFieldsVisible(true);
+  if (id === '__custom') { $('rd-preset-note').textContent = ''; return; }
+  const p = RADIO_PRESETS.find(x => x.id === id);
+  if (p) applyPreset(p);
+});
+for (const fld of ['rd-freq', 'rd-bw', 'rd-sf', 'rd-cr', 'rd-tx']) {
+  $(fld).addEventListener('input', syncPresetSelect);
+}
+
+// ============================== SETTINGS MODAL ==============================
+// Single tabbed modal hosts every configuration screen. Tabs: identity,
+// radio, ui (App), network, danger. firstRun=true locks the modal to the
+// radio tab and hides everything else until the radio is saved.
+
+async function populateRadioTab() {
+  // Reset and fill from device.
+  $('rd-freq').value = ''; $('rd-bw').value = '';
+  $('rd-sf').value = '';   $('rd-cr').value = '';   $('rd-tx').value = '';
+  $('rd-preset').value = '__empty';
+  $('rd-preset-note').textContent = '';
+  setRawFieldsVisible(false);
+  try {
+    const r = await state.transport.getRadio();
+    if (r.have_conf) {
+      $('rd-freq').value = r.frequency || '';
+      $('rd-bw').value   = r.bandwidth || '';
+      $('rd-sf').value   = r.spreading_factor || '';
+      $('rd-cr').value   = r.coding_rate || '';
+      $('rd-tx').value   = r.tx_power || '';
+      syncPresetSelect();
+      setRawFieldsVisible(true);
+    }
+  } catch (e) {
+    toast('Could not read radio state: ' + (e.message || e), 'error');
+  }
+}
+
+async function populateIdentityTab() {
+  try {
+    const me = await state.transport.getIdentity(state.identityId);
+    state.self = Object.assign({}, state.self || {}, me);
+    $('id-display-name').textContent = me.display_name || me.id;
+    $('id-address').textContent      = me.address || me.id;
+    $('id-modal-idc').innerHTML      = identicon(me.address || me.id, 40);
+    const ms = Number(me.announce_interval_ms || 0);
+    const exact = ANNOUNCE_INTERVALS.find(i => i.ms === ms);
+    $('id-announce-interval').value = exact
+      ? String(exact.ms)
+      : String(ANNOUNCE_INTERVALS.reduce((a, b) => Math.abs(b.ms - ms) < Math.abs(a.ms - ms) ? b : a).ms);
+    // Resync the topbar's announce-countdown anchor based on this fetch.
+    seedAnnounceCountdown(me.next_announce_in_ms || 0, ms);
+  } catch (err) {
+    console.warn('failed to fetch identity:', err);
+  }
+}
+
+function selectSettingsTab(tabId) {
+  const tabs = document.querySelectorAll('#settings-tabs .tab');
+  const panels = document.querySelectorAll('#modal-settings .tab-panel');
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabId));
+  panels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabId));
+  // Lazy-populate per-tab data so the modal opens snappily.
+  if (tabId === 'radio')    populateRadioTab();
+  if (tabId === 'identity') populateIdentityTab();
+  if (tabId === 'network')  { renderAnnounces(); renderPaths(); }
+  if (tabId === 'ui')       { $('pref-enter-sends').checked = !!state.prefs.enterSends; renderContacts(); }
+}
+
+// firstRun=true: must-configure-radio gate. Hide every non-radio tab,
+// hide the close button, suppress dismissal handlers.
+async function openSettingsModal(initialTab, firstRun) {
+  $('modal-settings').hidden = false;
+  $('modal-settings').dataset.firstRun = firstRun ? '1' : '';
+  // Title + tab visibility
+  $('settings-title').textContent = firstRun ? 'Set up your radio' : 'Settings';
+  $('btn-close-settings').style.display = firstRun ? 'none' : '';
+  for (const t of document.querySelectorAll('#settings-tabs .tab')) {
+    t.hidden = firstRun && t.dataset.tab !== 'radio';
+  }
+  // First-run radio intro is more urgent.
+  $('rd-intro').innerHTML = firstRun
+    ? 'Before this device can talk to other LoRa nodes, it needs to know which region to operate in. Pick the preset for your local mesh — both ends of a conversation must use the <em>same</em> region settings, or they won\'t hear each other.'
+    : 'Pick the region preset that matches your local mesh. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won\'t hear each other.';
+  selectSettingsTab(initialTab || 'identity');
+}
+
+function closeSettingsModal() {
+  if ($('modal-settings').dataset.firstRun === '1') return;  // locked
+  $('modal-settings').hidden = true;
+}
+
+// Tab-bar click → switch panel.
+for (const tab of document.querySelectorAll('#settings-tabs .tab')) {
+  tab.addEventListener('click', () => selectSettingsTab(tab.dataset.tab));
+}
+// Close button + backdrop click both dismiss (when not first-run).
+$('btn-close-settings').addEventListener('click', closeSettingsModal);
+$('modal-settings').addEventListener('click', (e) => {
+  if (e.target === $('modal-settings')) closeSettingsModal();
+});
+
+// ============================== SETTINGS — auto-announce interval ==============================
+// Sensible auto-announce intervals. 0 disables. The min the server
+// will accept is 10s — anything below silently rounds up. The default
+// is 5 minutes (LXMF_DEFAULT_ANNOUNCE_INTERVAL_MS server-side).
+const ANNOUNCE_INTERVALS = [
+  { ms: 0,        label: 'Off — manual only' },
+  { ms: 60000,    label: 'Every 1 minute' },
+  { ms: 300000,   label: 'Every 5 minutes' },
+  { ms: 900000,   label: 'Every 15 minutes' },
+  { ms: 1800000,  label: 'Every 30 minutes' },
+  { ms: 3600000,  label: 'Every hour' },
+  { ms: 21600000, label: 'Every 6 hours' },
+  { ms: 86400000, label: 'Every 24 hours' },
+];
+function populateIntervalSelect() {
+  const sel = $('id-announce-interval');
+  sel.innerHTML = '';
+  for (const i of ANNOUNCE_INTERVALS) {
+    sel.appendChild(el('option', { value: String(i.ms) }, i.label));
+  }
+}
+populateIntervalSelect();
+$('id-announce-interval').addEventListener('change', async (e) => {
+  const ms = Number(e.target.value);
+  try {
+    await state.transport.setIdentitySettings(state.identityId, { announce_interval_ms: ms });
+    if (state.self) state.self.announce_interval_ms = ms;
+    toast(ms === 0 ? 'Auto-announce disabled' : 'Auto-announce updated', 'success');
+  } catch (err) {
+    toast('Could not update setting: ' + (err.message || err), 'error');
+  }
+});
+
+$('btn-settings').addEventListener('click', () => openSettingsModal('identity', false));
+$('pref-enter-sends').addEventListener('change', (e) => {
+  savePrefs({ enterSends: !!e.target.checked });
+});
+
+// Escape dismisses whichever overlay is open. Order matters when more
+// than one is somehow open — close the topmost / most-recently-opened
+// first. Popups before transient modals before the big settings modal.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const popup = $('popup-emoji');
+  if (popup && !popup.hidden) { popup.hidden = true; e.preventDefault(); return; }
+  const modals = ['modal-id-code', 'modal-new-conv'];
+  for (const m of modals) {
+    const node = $(m);
+    if (node && !node.hidden) { node.hidden = true; e.preventDefault(); return; }
+  }
+  const settings = $('modal-settings');
+  if (settings && !settings.hidden) {
+    if (settings.dataset.firstRun === '1') return;  // locked
+    settings.hidden = true;
+    e.preventDefault();
+    return;
+  }
+});
+
+$('btn-ct-save').addEventListener('click', () => {
+  const addr = $('ct-addr').value.trim().toLowerCase();
+  const name = $('ct-name').value.trim();
+  if (!/^[0-9a-f]{32}$/.test(addr) || !name) { toast('Invalid address or empty name', 'warn'); return; }
+  state.contacts[addr] = name;
+  persistContacts();
+  renderContacts();
+  renderConversations();
+  $('ct-addr').value = ''; $('ct-name').value = '';
+});
+
+$('btn-delete-self').addEventListener('click', async () => {
+  if (!confirm('Delete this identity (' + (state.self ? state.self.display_name : state.identityId) + ')? Inbox, outbox, identity material — all gone.')) return;
+  try {
+    await state.transport.deleteIdentity(state.identityId);
+    state.token = null; state.identityId = null;
+    localStorage.removeItem(LS.TOKEN); localStorage.removeItem(LS.IDENTITY);
+    location.reload();
+  } catch (e) { toast('Delete failed: ' + (e.message || e), 'error'); }
+});
+
+$('btn-fr2').addEventListener('click', async () => {
+  if (!confirm('FACTORY RESET — every identity, inbox, outbox, token on this device will be wiped. Continue?')) return;
+  try {
+    await state.transport.factoryReset($('fr2-code').value);
+    waitForDeviceAndReload('Factory-resetting & rebooting…');
+  } catch (e) { toast('Reset failed: ' + (e.message || e), 'error'); }
+});
+
+$('btn-logout').addEventListener('click', async () => {
+  try { await state.transport.logout(); } catch {}
+  state.token = null;
+  localStorage.removeItem(LS.TOKEN);
+  if (_unsubscribe) { _unsubscribe(); _unsubscribe = null; }
+  location.reload();
+});
+
+// ============================== IDENTITY CODE MODAL ==============================
+function openIdCodeModal() {
+  $('idc-input').value = '';
+  $('modal-id-code').hidden = false;
+}
+$('btn-idc-cancel').addEventListener('click', () => { $('modal-id-code').hidden = true; });
+$('btn-idc-ok').addEventListener('click', () => {
+  const code = $('idc-input').value;
+  $('modal-id-code').hidden = true;
+  if (state.pendingIdCodeAction) { state.pendingIdCodeAction(code); state.pendingIdCodeAction = null; }
+});
+
+// ============================== REBOOT WAITER ==============================
 function waitForDeviceAndReload(message) {
-  if (state.evt) { state.evt.close(); state.evt = null; }
-  stopAutoRefresh();
-  document.body.innerHTML =
-    '<main><h2>' + escapeHtml(message) + '</h2>' +
-    '<p class="muted" id="reboot-status">Waiting for device to come back…</p></main>';
-  const statusEl = document.getElementById('reboot-status');
-  let attempts = 0;
+  // Replace the page contents with a status div and poll /api/info.
+  document.body.innerHTML = '';
+  const wrap = el('div', { class: 'page' },
+    el('div', { class: 'card' },
+      el('h2', { text: 'Rebooting' }),
+      el('p', { class: 'muted', id: 'rb-status', text: message }),
+    ),
+  );
+  document.body.appendChild(wrap);
   const startMs = Date.now();
-  // Probe shape: a short-timeout fetch with no-store so the browser
-  // doesn't return cached responses. We poll every 1.5 s and reload as
-  // soon as one probe succeeds.
+  let attempts = 0;
   const probe = async () => {
     attempts++;
     try {
@@ -396,622 +2394,20 @@ function waitForDeviceAndReload(message) {
       const tmo = setTimeout(() => ctl.abort(), 1500);
       const r = await fetch('/api/info', { cache: 'no-store', signal: ctl.signal });
       clearTimeout(tmo);
-      if (r.ok) {
-        statusEl.textContent = 'Device responding — reloading…';
-        // Give the SSE / WebServer init a moment to settle.
-        setTimeout(() => location.reload(), 400);
-        return;
-      }
-    } catch {
-      // Still down; keep polling.
-    }
+      if (r.ok) { setTimeout(() => location.reload(), 400); return; }
+    } catch { /* still down */ }
     const elapsed = Math.floor((Date.now() - startMs) / 1000);
-    statusEl.textContent = 'Waiting for device to come back… (' + elapsed + 's)';
-    if (attempts < 60) {
-      setTimeout(probe, 1500);
-    } else {
-      statusEl.textContent = "Device hasn't come back after 90 s — check serial console.";
-    }
+    $('rb-status').textContent = 'Waiting for device to come back… (' + elapsed + 's)';
+    if (attempts < 60) setTimeout(probe, 1500);
+    else $('rb-status').textContent = "Device hasn't come back after 90 s — check serial.";
   };
-  setTimeout(probe, 2500);  // give the device a head start on the reboot
+  setTimeout(probe, 2500);
 }
 
-// Delete the currently logged-in account. Called from the Settings tab's
-// Danger zone after explicit confirmation. Logs out on success since the
-// account no longer exists.
-async function deleteCurrentAccount() {
-  if (!state.account_id) return;
-  const me = state.accounts.find(a => a.id === state.account_id);
-  const name = me ? me.display_name : state.account_id;
-  if (!confirm(
-    'Delete the account "' + name + '" you are logged into?\n\n' +
-    'This permanently removes its identity, inbox, and outbox from the device. ' +
-    'You will be logged out.'
-  )) return;
-  try {
-    await api('/api/accounts/' + state.account_id + '/delete', { method: 'POST' });
-  } catch (e) {
-    alert('Delete failed: ' + (e.data?.error || e.message));
-    return;
-  }
-  // Clear local auth state and refresh — picker will reflect the removal.
-  state.token = null; state.account_id = null;
-  localStorage.removeItem(LS_TOKEN);
-  localStorage.removeItem(LS_ACCT);
-  if (state.evt) { state.evt.close(); state.evt = null; }
-  stopAutoRefresh();
-  document.getElementById('logout-btn').style.display = 'none';
-  document.getElementById('me-address').textContent = '';
-  refresh();
-}
+// ============================== START ==============================
+fillIdCodeHints();
+boot();
 
-function startLogin(account_id) {
-  state.account_id = account_id;
-  show('view-login');
-}
-
-async function login() {
-  const password = document.getElementById('login-password').value;
-  if (!password) { alert('Password required'); return; }
-  try {
-    const r = await api('/api/auth/login', { method: 'POST', body: { account_id: state.account_id, password } });
-    state.token = r.token;
-    localStorage.setItem(LS_TOKEN, state.token);
-    localStorage.setItem(LS_ACCT, state.account_id);
-    document.getElementById('login-password').value = '';
-    enterMessageView();
-  } catch (e) {
-    alert('Login failed: ' + (e.data?.error || e.message));
-  }
-}
-
-async function createAccount() {
-  const name      = document.getElementById('new-display-name').value.trim();
-  const password  = document.getElementById('new-password').value;
-  const confirm   = document.getElementById('new-password-confirm').value;
-  const proof     = document.getElementById('new-identity-code').value.trim().toLowerCase();
-  if (!name)  { alert('Display name required'); return; }
-  if (password.length < 8) { alert('Password must be at least 8 characters'); return; }
-  if (password !== confirm) { alert('Passwords do not match'); return; }
-  if (proof.length !== 6) { alert('Identity code is 6 hex chars'); return; }
-  try {
-    const r = await api('/api/accounts', {
-      method: 'POST',
-      body: { display_name: name, password, password_confirm: confirm, identity_code: proof }
-    });
-    state.token = r.token; state.account_id = r.id;
-    localStorage.setItem(LS_TOKEN, state.token);
-    localStorage.setItem(LS_ACCT, state.account_id);
-    // Clear the secret fields out of the DOM.
-    document.getElementById('new-password').value = '';
-    document.getElementById('new-password-confirm').value = '';
-    document.getElementById('new-identity-code').value = '';
-    enterMessageView();
-  } catch (e) {
-    alert('Create failed: ' + (e.data?.error || e.message));
-  }
-}
-
-function logout() {
-  api('/api/auth/logout', { method: 'POST' }).catch(()=>{});
-  state.token = null; state.account_id = null;
-  localStorage.removeItem(LS_TOKEN);
-  localStorage.removeItem(LS_ACCT);
-  if (state.evt) { state.evt.close(); state.evt = null; }
-  stopAutoRefresh();
-  document.getElementById('logout-btn').style.display = 'none';
-  document.getElementById('me-address').textContent = '';
-  refresh();
-}
-
-async function enterMessageView() {
-  show('view-messages');
-  document.getElementById('logout-btn').style.display = '';
-  const a = (state.accounts.find(x => x.id === state.account_id)) || {};
-  document.getElementById('me-address').textContent = a.address || state.account_id;
-  await loadInbox();
-  await loadOutbox();
-  renderContacts();
-  openEvents();
-  startAutoRefresh();
-}
-
-async function loadAnnounces() {
-  const el = document.getElementById('announces-list');
-  try {
-    const r = await api('/api/announces');
-    if (!r.announces || r.announces.length === 0) { el.innerHTML = '<p class="muted">(none yet — wait for an LXMF announce)</p>'; return; }
-    el.innerHTML = '';
-    for (const a of r.announces) {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #30363d;font-size:12px';
-      const ageMin = Math.floor(a.age_ms / 60000);
-      const ageStr = ageMin < 1 ? Math.floor(a.age_ms/1000) + 's' : ageMin + 'm';
-      const left = document.createElement('span');
-      left.style.flex = '1';
-      const nameStrong = document.createElement('strong');
-      nameStrong.textContent = a.display_name || '(no name)';
-      const destSpan = document.createElement('span');
-      destSpan.className = 'mono muted';
-      destSpan.style.display = 'block';
-      destSpan.textContent = a.dest;
-      left.append(nameStrong, destSpan);
-      const agePill = document.createElement('span');
-      agePill.className = 'pill';
-      agePill.textContent = ageStr + ' ago';
-      const useBtn = document.createElement('button');
-      useBtn.className = 'secondary';
-      useBtn.textContent = 'use';
-      useBtn.addEventListener('click', () => {
-        document.getElementById('compose-to').value = a.dest;
-        document.getElementById('compose-body').focus();
-      });
-      const contactBtn = document.createElement('button');
-      contactBtn.className = 'secondary';
-      contactBtn.textContent = '+contact';
-      contactBtn.addEventListener('click', () => addAnnounceAsContact(a.dest, a.display_name || ''));
-      row.append(left, agePill, useBtn, contactBtn);
-      el.appendChild(row);
-    }
-  } catch (e) {
-    el.textContent = 'Load failed: ' + (e.data?.error || e.message);
-  }
-}
-
-function addAnnounceAsContact(addr, suggestedName) {
-  const name = prompt('Save contact name for ' + addr + ':', suggestedName || '');
-  if (!name) return;
-  state.contacts[addr] = name;
-  localStorage.setItem(LS_CONTACTS, JSON.stringify(state.contacts));
-  renderContacts();
-  alert('Saved.');
-}
-
-async function loadPaths() {
-  const el = document.getElementById('paths-list');
-  try {
-    const r = await api('/api/paths');
-    if (!r.paths || r.paths.length === 0) { el.innerHTML = '<p class="muted">(no known paths yet — wait for an announce)</p>'; return; }
-    el.innerHTML = '';
-    for (const p of r.paths) {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 0;font-size:12px';
-      const left = document.createElement('span');
-      left.style.flex = '1';
-      const destSpan = document.createElement('span');
-      destSpan.className = 'mono';
-      destSpan.textContent = p.dest;
-      left.appendChild(destSpan);
-      if (p.display_name) {
-        const nameSpan = document.createElement('span');
-        nameSpan.style.marginLeft = '6px';
-        nameSpan.textContent = p.display_name;
-        left.appendChild(nameSpan);
-      }
-      const aspectPill = document.createElement('span');
-      aspectPill.className = 'pill';
-      aspectPill.textContent = p.aspect || 'transport';
-      // Highlight chat-addressable aspects in green.
-      if (p.aspect === 'lxmf.delivery') aspectPill.classList.add('ok');
-      const hopsPill = document.createElement('span');
-      hopsPill.className = 'pill';
-      hopsPill.textContent = p.hops + 'h';
-      const ageMin = Math.floor(p.age_ms / 60000);
-      const agePill = document.createElement('span');
-      agePill.className = 'pill';
-      agePill.textContent = (ageMin < 1 ? Math.floor(p.age_ms/1000) + 's' : ageMin + 'm') + ' ago';
-      const useBtn = document.createElement('button');
-      useBtn.className = 'secondary';
-      useBtn.textContent = 'use';
-      useBtn.addEventListener('click', () => {
-        document.getElementById('compose-to').value = p.dest;
-        document.getElementById('compose-body').focus();
-        switchTab('tab-chat');
-      });
-      row.append(left, aspectPill, hopsPill, agePill, useBtn);
-      el.appendChild(row);
-    }
-  } catch (e) {
-    el.textContent = 'Load failed: ' + (e.data?.error || e.message);
-  }
-}
-
-async function loadInbox() {
-  const r = await api('/api/accounts/' + state.account_id + '/inbox?limit=50');
-  state.last_inbox_seq = r.next_since;
-  state.inboxMessages = r.messages || [];
-  renderConversations();
-}
-
-async function loadOutbox() {
-  const r = await api('/api/accounts/' + state.account_id + '/outbox?limit=50');
-  state.outboxMessages = r.messages || [];
-  renderConversations();
-}
-
-function renderConversations() {
-  const el = document.getElementById('conversations-list');
-  el.innerHTML = '';
-
-  // Group by peer.
-  const byPeer = new Map();
-  for (const m of state.inboxMessages)  pushMsg(byPeer, m, 'in');
-  for (const m of state.outboxMessages) pushMsg(byPeer, m, 'out');
-
-  // Sort peers by most recent message timestamp, newest first.
-  const peers = [...byPeer.values()].sort((a, b) => b.lastTs - a.lastTs);
-
-  if (peers.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'empty-state';
-    empty.textContent = 'No conversations yet. Compose above, or wait for incoming messages.';
-    el.appendChild(empty);
-    return;
-  }
-
-  for (const c of peers) {
-    const conv = document.createElement('div');
-    conv.className = 'conv';
-
-    // Header
-    const head = document.createElement('div');
-    head.className = 'conv-head';
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'name';
-    nameSpan.textContent = state.contacts[c.peer] || c.peer.substring(0, 8) + '…';
-    const addrSpan = document.createElement('span');
-    addrSpan.className = 'addr';
-    addrSpan.textContent = c.peer;
-    const lastSpan = document.createElement('span');
-    lastSpan.className = 'last';
-    lastSpan.textContent = c.lastBody;
-    const whenSpan = document.createElement('span');
-    whenSpan.className = 'when';
-    whenSpan.textContent = formatRelTs(c.lastTs);
-    head.append(nameSpan, addrSpan, lastSpan, whenSpan);
-    head.addEventListener('click', () => {
-      state.expandedPeer = state.expandedPeer === c.peer ? null : c.peer;
-      renderConversations();
-    });
-    conv.appendChild(head);
-
-    // Body (only if expanded)
-    if (state.expandedPeer === c.peer) {
-      const body = document.createElement('div');
-      body.className = 'conv-body';
-      // Sort messages oldest → newest within conversation.
-      const msgs = [...c.msgs].sort((a, b) => a.ts - b.ts);
-      for (const m of msgs) {
-        const bub = document.createElement('div');
-        bub.className = 'bubble ' + m.dir + (m.dir === 'in' && m.sig_ok === false ? ' bad' : '');
-        if (m.title) {
-          const t = document.createElement('div');
-          t.style.fontWeight = '600';
-          t.textContent = m.title;
-          bub.appendChild(t);
-        }
-        const bodyDiv = document.createElement('div');
-        bodyDiv.textContent = m.body;
-        bub.appendChild(bodyDiv);
-        const meta = document.createElement('div');
-        meta.className = 'bmeta';
-        const tsStr = formatTs(m.ts);
-        if (m.dir === 'out') meta.textContent = tsStr + ' · ' + (m.status || 'sent');
-        else                 meta.textContent = tsStr + (m.sig_ok === false ? ' · sig BAD' : '');
-        bub.appendChild(meta);
-        body.appendChild(bub);
-      }
-      // Quick-reply
-      const reply = document.createElement('div');
-      reply.className = 'row';
-      reply.style.marginTop = '6px';
-      const replyInput = document.createElement('input');
-      replyInput.placeholder = 'Reply…';
-      const replyBtn = document.createElement('button');
-      replyBtn.textContent = 'Send';
-      const sendReply = async () => {
-        const text = replyInput.value;
-        if (!text) return;
-        replyBtn.disabled = true;
-        try {
-          await api('/api/accounts/' + state.account_id + '/send', { method: 'POST', body: { to: c.peer, title: '', body: text } });
-          replyInput.value = '';
-          await loadOutbox();
-        } catch (e) {
-          alert('Send failed: ' + (e.data?.error || e.message));
-        }
-        replyBtn.disabled = false;
-      };
-      replyBtn.addEventListener('click', sendReply);
-      replyInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendReply(); });
-      reply.append(replyInput, replyBtn);
-      body.appendChild(reply);
-      conv.appendChild(body);
-    }
-
-    el.appendChild(conv);
-  }
-}
-
-function pushMsg(byPeer, m, dir) {
-  let c = byPeer.get(m.peer);
-  if (!c) {
-    c = { peer: m.peer, msgs: [], lastTs: 0, lastBody: '' };
-    byPeer.set(m.peer, c);
-  }
-  c.msgs.push({ ...m, dir });
-  if (m.ts > c.lastTs) {
-    c.lastTs = m.ts;
-    c.lastBody = (dir === 'out' ? '→ ' : '') + (m.body || '');
-  }
-}
-
-function formatRelTs(ts) {
-  if (!ts) return '';
-  const ageS = (Date.now() / 1000) - ts;
-  if (ageS < 60)    return Math.floor(ageS) + 's';
-  if (ageS < 3600)  return Math.floor(ageS / 60) + 'm';
-  if (ageS < 86400) return Math.floor(ageS / 3600) + 'h';
-  return new Date(ts * 1000).toLocaleDateString();
-}
-
-async function sendMessage() {
-  const to    = document.getElementById('compose-to').value.trim().toLowerCase();
-  const title = document.getElementById('compose-title').value;
-  const body  = document.getElementById('compose-body').value;
-  const status = document.getElementById('compose-status');
-  if (!/^[0-9a-f]{32}$/.test(to)) { status.textContent = 'Destination must be 32 hex chars'; return; }
-  if (!body) { status.textContent = 'Empty message'; return; }
-  status.textContent = 'Sending…';
-  try {
-    const r = await api('/api/accounts/' + state.account_id + '/send', { method: 'POST', body: { to, title, body } });
-    status.textContent = 'Sent (seq ' + r.queued_seq + ')';
-    document.getElementById('compose-body').value = '';
-    document.getElementById('compose-title').value = '';
-    loadOutbox();
-  } catch (e) {
-    status.textContent = 'Send failed: ' + (e.data?.error || e.message);
-  }
-}
-
-async function forceAnnounce() {
-  const status = document.getElementById('compose-status');
-  try {
-    await api('/api/accounts/' + state.account_id + '/announce', { method: 'POST' });
-    status.textContent = 'Announced.';
-  } catch (e) {
-    status.textContent = 'Announce failed: ' + (e.data?.error || e.message);
-  }
-}
-
-function openEvents() {
-  if (state.evt) state.evt.close();
-  // EventSource doesn't support custom headers; auth via query string.
-  const url = '/api/accounts/' + state.account_id + '/events'
-            + '?since=' + state.last_inbox_seq
-            + '&token=' + encodeURIComponent(state.token);
-  state.evt = new EventSource(url);
-  state.evt.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data);
-      if (data.type === 'incoming') {
-        loadInbox();
-      } else if (data.type === 'identity_code_available') {
-        // ignore here — only matters on login/create views
-      }
-    } catch {}
-  };
-  state.evt.onerror = () => {
-    // EventSource auto-reconnects.
-  };
-}
-
-function renderContacts() {
-  const el = document.getElementById('contacts-list');
-  el.innerHTML = '';
-  const entries = Object.entries(state.contacts);
-  if (entries.length === 0) {
-    el.innerHTML = '<p class="muted">(none yet)</p>';
-    return;
-  }
-  for (const [addr, name] of entries) {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #30363d';
-    const left = document.createElement('span');
-    left.style.flex = '1';
-    left.textContent = name + ' ';
-    const addrSpan = document.createElement('span');
-    addrSpan.className = 'muted mono';
-    addrSpan.textContent = addr;
-    left.appendChild(addrSpan);
-    const useBtn = document.createElement('button');
-    useBtn.className = 'secondary';
-    useBtn.textContent = 'Use';
-    useBtn.addEventListener('click', () => useContact(addr));
-    const delBtn = document.createElement('button');
-    delBtn.className = 'danger';
-    delBtn.textContent = '×';
-    delBtn.addEventListener('click', () => removeContact(addr));
-    row.append(left, useBtn, delBtn);
-    el.appendChild(row);
-  }
-}
-
-function addContact() {
-  const name = document.getElementById('contact-name').value.trim();
-  const addr = document.getElementById('contact-addr').value.trim().toLowerCase();
-  if (!name || !/^[0-9a-f]{32}$/.test(addr)) { alert('Need a name and 32-hex address'); return; }
-  state.contacts[addr] = name;
-  localStorage.setItem(LS_CONTACTS, JSON.stringify(state.contacts));
-  document.getElementById('contact-name').value = '';
-  document.getElementById('contact-addr').value = '';
-  renderContacts();
-}
-
-function removeContact(addr) {
-  delete state.contacts[addr];
-  localStorage.setItem(LS_CONTACTS, JSON.stringify(state.contacts));
-  renderContacts();
-}
-
-function useContact(addr) {
-  document.getElementById('compose-to').value = addr;
-  document.getElementById('compose-body').focus();
-}
-
-async function scanWifi() {
-  const el = document.getElementById('scan-results');
-  el.innerHTML = '<p class="muted">Scanning…</p>';
-  try {
-    const r = await api('/api/wifi/scan');
-    el.innerHTML = '';
-    for (const n of r.networks) {
-      const row = document.createElement('div');
-      row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:4px 0';
-      const left = document.createElement('span');
-      left.style.flex = '1';
-      left.textContent = n.ssid + ' ';
-      const meta = document.createElement('span');
-      meta.className = 'muted';
-      meta.textContent = n.rssi + ' dBm' + (n.secure ? ' 🔒' : '');
-      left.appendChild(meta);
-      const useBtn = document.createElement('button');
-      useBtn.className = 'secondary';
-      useBtn.textContent = 'Use';
-      useBtn.addEventListener('click', () => useScan(n.ssid));
-      row.append(left, useBtn);
-      el.appendChild(row);
-    }
-  } catch (e) {
-    el.innerHTML = '';
-    const p = document.createElement('p');
-    p.className = 'muted';
-    p.textContent = 'Scan failed: ' + (e.data?.error || e.message);
-    el.appendChild(p);
-  }
-}
-
-function useScan(ssid) {
-  document.getElementById('wifi-ssid').value = ssid;
-  document.getElementById('wifi-psk').focus();
-}
-
-async function saveWifi() {
-  const ssid  = document.getElementById('wifi-ssid').value.trim();
-  const psk   = document.getElementById('wifi-psk').value;
-  const code  = document.getElementById('wifi-identity-code').value.trim().toLowerCase();
-  if (!ssid) { alert('SSID required'); return; }
-  if (code.length !== 6) { alert('Identity code is 6 hex chars — long-then-short-press the device button'); return; }
-  try {
-    await api('/api/wifi/configure', { method: 'POST', body: { ssid, psk, identity_code: code } });
-    document.body.innerHTML = '<main><h2>Rebooting…</h2><p class="muted">Reconnect to your home network, then visit the device on that network.</p></main>';
-  } catch (e) {
-    alert('Save failed: ' + (e.data?.error || e.message));
-  }
-}
-
-async function loadRadio() {
-  const el = document.getElementById('radio-status');
-  try {
-    const r = await api('/api/radio');
-    el.textContent = '';
-    document.getElementById('radio-freq').value  = r.freq_hz || '';
-    document.getElementById('radio-bw').value    = r.bw_hz   || '';
-    document.getElementById('radio-sf').value    = r.sf      || '';
-    document.getElementById('radio-cr').value    = r.cr      || '';
-    document.getElementById('radio-txp').value   = r.txp     || '';
-    const lines = [
-      'have_conf:'   + r.have_conf,
-      'radio_online:' + r.radio_online,
-      'op_mode:'     + r.op_mode,
-      'sf:' + r.limits.sf_min + '-' + r.limits.sf_max + ', cr:' + r.limits.cr_min + '-' + r.limits.cr_max + ', txp max:' + r.limits.txp_max,
-    ];
-    el.textContent = lines.join(' | ');
-  } catch (e) {
-    el.textContent = 'Load failed: ' + (e.data?.error || e.message);
-  }
-}
-
-async function saveRadio() {
-  const freq_hz = parseInt(document.getElementById('radio-freq').value, 10);
-  const bw_hz   = parseInt(document.getElementById('radio-bw').value, 10);
-  const sf      = parseInt(document.getElementById('radio-sf').value, 10);
-  const cr      = parseInt(document.getElementById('radio-cr').value, 10);
-  const txp     = parseInt(document.getElementById('radio-txp').value, 10);
-  if (!freq_hz || !bw_hz || !sf || !cr || isNaN(txp)) { alert('Fill all radio fields'); return; }
-  if (!confirm('Save radio config and reboot?')) return;
-  try {
-    await api('/api/radio', { method: 'POST', body: { freq_hz, bw_hz, sf, cr, txp } });
-    waitForDeviceAndReload('Saving radio config — rebooting…');
-  } catch (e) {
-    alert('Save failed: ' + (e.data?.error || e.message));
-  }
-}
-
-async function resetRadio() {
-  if (!confirm('Clear saved radio config and reboot?')) return;
-  try {
-    await api('/api/radio/reset', { method: 'POST', body: {} });
-    waitForDeviceAndReload('Clearing radio config — rebooting…');
-  } catch (e) {
-    alert('Reset failed: ' + (e.data?.error || e.message));
-  }
-}
-
-function formatTs(ts) {
-  if (!ts) return '';
-  const d = new Date(ts * 1000);
-  return d.toLocaleString();
-}
-
-function escapeHtml(s) {
-  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-document.getElementById('logout-btn').addEventListener('click', logout);
-
-// Tab switching: bind once on load, drive visibility from data-tab.
-for (const t of document.querySelectorAll('.tab')) {
-  t.addEventListener('click', () => switchTab(t.dataset.tab));
-}
-
-function switchTab(name) {
-  state.activeTab = name;
-  for (const t of document.querySelectorAll('.tab')) {
-    t.classList.toggle('active', t.dataset.tab === name);
-  }
-  for (const id of ['tab-chat', 'tab-settings']) {
-    document.getElementById(id).classList.toggle('hide', id !== name);
-  }
-  // Refresh the settings views on entry so they don't show stale data
-  // from when the user last opened them.
-  if (name === 'tab-settings') {
-    loadAnnounces();
-    loadPaths();
-    loadRadio();
-  }
-}
-
-// Periodic auto-refresh for settings views. Polls every 10 s, but only
-// while the Settings tab is visible to keep main-loop load low on the
-// device.
-function startAutoRefresh() {
-  if (state.refreshTimer) return;
-  state.refreshTimer = setInterval(() => {
-    if (state.activeTab === 'tab-settings' && state.token) {
-      loadAnnounces();
-      loadPaths();
-    }
-  }, 10000);
-}
-
-function stopAutoRefresh() {
-  if (!state.refreshTimer) return;
-  clearInterval(state.refreshTimer);
-  state.refreshTimer = null;
-}
-
-refresh();
 </script>
 </body>
 </html>

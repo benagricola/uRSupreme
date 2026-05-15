@@ -849,6 +849,30 @@ void kiss_indicate_error(uint8_t error_code) {
 	serial_write(FEND);
 }
 
+// CMD_LOG frame: FEND, CMD_LOG, level (0=critical .. 5=mem/extreme),
+// then the message body with FEND/FESC escaped per the KISS spec, then
+// FEND. Hosts (reticulum-meshchat, rnsd over a KISS interface, etc.)
+// that don't care about logs just discard frames with this command
+// byte; KISS itself reserves anything outside CMD_DATA for the radio.
+//
+// Caps the body at 240 bytes — anything longer gets truncated, matching
+// the LoRa MTU we're already constrained by. Log lines that long are
+// almost always a sign of an oversized dump that shouldn't be logged.
+void kiss_indicate_log(uint8_t level, const char* msg) {
+	serial_write(FEND);
+	serial_write(CMD_LOG);
+	serial_write(level);
+	size_t n = strlen(msg);
+	if (n > 240) n = 240;
+	for (size_t i = 0; i < n; i++) {
+		uint8_t b = (uint8_t)msg[i];
+		if (b == FEND) { serial_write(FESC); serial_write(TFEND); }
+		else if (b == FESC) { serial_write(FESC); serial_write(TFESC); }
+		else { serial_write(b); }
+	}
+	serial_write(FEND);
+}
+
 void kiss_indicate_radiostate() {
 	serial_write(FEND);
 	serial_write(CMD_RADIO_STATE);
@@ -1862,12 +1886,26 @@ void eeprom_conf_load() {
             lora_txp = EEPROM.read(eeprom_addr(ADDR_CONF_TXP));
             lora_freq = (uint32_t)EEPROM.read(eeprom_addr(ADDR_CONF_FREQ)+0x00) << 24 | (uint32_t)EEPROM.read(eeprom_addr(ADDR_CONF_FREQ)+0x01) << 16 | (uint32_t)EEPROM.read(eeprom_addr(ADDR_CONF_FREQ)+0x02) << 8 | (uint32_t)EEPROM.read(eeprom_addr(ADDR_CONF_FREQ)+0x03);
             lora_bw = (uint32_t)EEPROM.read(eeprom_addr(ADDR_CONF_BW)+0x00) << 24 | (uint32_t)EEPROM.read(eeprom_addr(ADDR_CONF_BW)+0x01) << 16 | (uint32_t)EEPROM.read(eeprom_addr(ADDR_CONF_BW)+0x02) << 8 | (uint32_t)EEPROM.read(eeprom_addr(ADDR_CONF_BW)+0x03);
+            // Airtime caps. 0xFF = sentinel "never set" → keep firmware
+            // default (Config.h's st_airtime_limit / lt_airtime_limit).
+            {
+                uint8_t st_raw = EEPROM.read(eeprom_addr(ADDR_CONF_AIRTIME));
+                uint8_t lt_raw = EEPROM.read(eeprom_addr(ADDR_CONF_LT_AIRTIME));
+                if (st_raw != 0xFF) st_airtime_limit = (float)st_raw / 100.0f;
+                if (lt_raw != 0xFF) lt_airtime_limit = (float)lt_raw / 100.0f;
+            }
         #elif MCU_VARIANT == MCU_NRF52
             lora_sf = eeprom_read(eeprom_addr(ADDR_CONF_SF));
             lora_cr = eeprom_read(eeprom_addr(ADDR_CONF_CR));
             lora_txp = eeprom_read(eeprom_addr(ADDR_CONF_TXP));
             lora_freq = (uint32_t)eeprom_read(eeprom_addr(ADDR_CONF_FREQ)+0x00) << 24 | (uint32_t)eeprom_read(eeprom_addr(ADDR_CONF_FREQ)+0x01) << 16 | (uint32_t)eeprom_read(eeprom_addr(ADDR_CONF_FREQ)+0x02) << 8 | (uint32_t)eeprom_read(eeprom_addr(ADDR_CONF_FREQ)+0x03);
             lora_bw = (uint32_t)eeprom_read(eeprom_addr(ADDR_CONF_BW)+0x00) << 24 | (uint32_t)eeprom_read(eeprom_addr(ADDR_CONF_BW)+0x01) << 16 | (uint32_t)eeprom_read(eeprom_addr(ADDR_CONF_BW)+0x02) << 8 | (uint32_t)eeprom_read(eeprom_addr(ADDR_CONF_BW)+0x03);
+            {
+                uint8_t st_raw = eeprom_read(eeprom_addr(ADDR_CONF_AIRTIME));
+                uint8_t lt_raw = eeprom_read(eeprom_addr(ADDR_CONF_LT_AIRTIME));
+                if (st_raw != 0xFF) st_airtime_limit = (float)st_raw / 100.0f;
+                if (lt_raw != 0xFF) lt_airtime_limit = (float)lt_raw / 100.0f;
+            }
         #endif
 	}
 }

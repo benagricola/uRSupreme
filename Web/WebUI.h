@@ -1188,6 +1188,10 @@ namespace Web {
       if (!require_physical_auth(body)) return;
       // Accept the long field names the SPA uses. (Earlier versions used
       // short names freq_hz/bw_hz/sf/cr/txp — those are gone.)
+      // airtime_limit_pct + longterm_airtime_limit_pct are optional —
+      // when present they're persisted to EEPROM alongside the band
+      // params and applied in-RAM immediately. Missing fields keep the
+      // current (loaded-or-default) values.
       uint32_t freq = (uint32_t)(body["frequency"]        | 0);
       uint32_t bw   = (uint32_t)(body["bandwidth"]        | 0);
       int      sf   = (int)     (body["spreading_factor"] | -1);
@@ -1231,6 +1235,29 @@ namespace Web {
       eeprom_update(eeprom_addr(ADDR_CONF_FREQ)+1, (uint8_t)(freq >> 16));
       eeprom_update(eeprom_addr(ADDR_CONF_FREQ)+2, (uint8_t)(freq >> 8));
       eeprom_update(eeprom_addr(ADDR_CONF_FREQ)+3, (uint8_t)freq);
+      // Optional airtime fields — only touch EEPROM when caller sent them
+      // (vs no-op). Stored as integer percentage (0..99) and converted to
+      // fraction on load. 0xFF sentinel is reserved for "never set".
+      if (body["airtime_limit_pct"].is<int>()) {
+        const int v = body["airtime_limit_pct"];
+        if (v < 0 || v > 99) {
+          snprintf(msg, sizeof(msg),
+                   "airtime_limit_pct must be 0-99 (got %d). 0 disables the cap.", v);
+          send_error_with_message(400, "invalid_radio_params", msg); return;
+        }
+        eeprom_update(eeprom_addr(ADDR_CONF_AIRTIME), (uint8_t)v);
+        st_airtime_limit = (float)v / 100.0f;
+      }
+      if (body["longterm_airtime_limit_pct"].is<int>()) {
+        const int v = body["longterm_airtime_limit_pct"];
+        if (v < 0 || v > 99) {
+          snprintf(msg, sizeof(msg),
+                   "longterm_airtime_limit_pct must be 0-99 (got %d). 0 disables the cap.", v);
+          send_error_with_message(400, "invalid_radio_params", msg); return;
+        }
+        eeprom_update(eeprom_addr(ADDR_CONF_LT_AIRTIME), (uint8_t)v);
+        lt_airtime_limit = (float)v / 100.0f;
+      }
       eeprom_update(eeprom_addr(ADDR_CONF_OK), CONF_OK_BYTE);
 
       JsonDocument doc;

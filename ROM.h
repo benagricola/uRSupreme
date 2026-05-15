@@ -33,6 +33,11 @@
   #define ADDR_CONF_BW   0x9F
   #define ADDR_CONF_FREQ 0xA3
   #define ADDR_CONF_OK   0xA7
+  // Regulatory duty-cycle caps. 0-99 = percent; 0xFF = unset, fall back
+  // to Config.h's firmware default (st=0, lt=0.01 = 1 %). Lives just
+  // after CONF_OK to keep it adjacent to the radio params it governs.
+  #define ADDR_CONF_AIRTIME    0xA8
+  #define ADDR_CONF_LT_AIRTIME 0xA9
 
   #define ADDR_CONF_BT   0xB0
   #define ADDR_CONF_DSET 0xB1

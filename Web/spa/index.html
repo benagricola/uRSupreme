@@ -2287,29 +2287,18 @@ $('btn-clear-conv').addEventListener('click', async () => {
 $('btn-announce-top').addEventListener('click', forceAnnounce);
 $('btn-radio-save').addEventListener('click', async () => {
   try {
-    // Set airtime caps FIRST. /api/radio/airtime doesn't reboot, so we
-    // get both values in before /api/radio triggers the reset. Airtime
-    // is RAM-only on the firmware side (not EEPROM-persisted yet) so it
-    // will revert on every boot — see #57 follow-up.
-    const atShort = Number($('rd-airtime').value);
-    const atLong  = Number($('rd-airtime-lt').value);
-    if (!Number.isNaN(atShort) || !Number.isNaN(atLong)) {
-      try {
-        await state.transport.setAirtime({
-          airtime_limit_pct:          atShort,
-          longterm_airtime_limit_pct: atLong,
-        });
-      } catch (e) {
-        // Non-fatal — radio params still save.
-        console.warn('airtime set failed:', e);
-      }
-    }
+    // Single save path — /api/radio now persists airtime caps alongside
+    // the band params so a region preset's regulatory limits survive a
+    // reboot. Old separate /api/radio/airtime endpoint remains for live
+    // tweaks without a reboot but isn't part of the user-driven save.
     await state.transport.setRadio({
       frequency: Number($('rd-freq').value),
       bandwidth: Number($('rd-bw').value),
       spreading_factor: Number($('rd-sf').value),
       coding_rate: Number($('rd-cr').value),
       tx_power: Number($('rd-tx').value),
+      airtime_limit_pct:          Number($('rd-airtime').value),
+      longterm_airtime_limit_pct: Number($('rd-airtime-lt').value),
     });
     waitForDeviceAndReload('Saving radio config & rebooting…');
   } catch (e) { toast('Save failed: ' + (e.message || e), 'error'); }
@@ -2368,6 +2357,12 @@ const RADIO_PRESETS = [
   { id: 'eu868-long', label: 'EU 869.525 MHz · long-range', freq: 869525000, bw: 125000, sf: 11, cr: 5, tx: 14,
     airtime: 10, lt_airtime: 10,
     note: 'Same g3 sub-band, higher SF for range. 10 % duty cycle.' },
+  { id: 'uk869',  label: 'UK 869.525 MHz',    freq: 869525000, bw: 125000, sf: 7,  cr: 5, tx: 17,
+    airtime: 10, lt_airtime: 10,
+    note: 'UK SRD860 (Ofcom IR 2030). 869.4-869.65 MHz: 10 % duty cycle, 500 mW ERP — same regulatory regime as EU at this frequency, separate label so UK users can pick a familiar one.' },
+  { id: 'uk868-1pc',  label: 'UK 868.3 MHz (1 % duty)', freq: 868300000, bw: 125000, sf: 7,  cr: 5, tx: 14,
+    airtime: 1, lt_airtime: 1,
+    note: 'UK 868.0-868.6 MHz general sub-band. 1 % duty cycle, 25 mW ERP. More headroom in TX-power than the g3 sub-band but much tighter on airtime.' },
   { id: 'us915',  label: 'US 915 MHz',        freq: 915000000, bw: 125000, sf: 7,  cr: 5, tx: 20,
     airtime: 0, lt_airtime: 0,
     note: 'US 902-928 MHz ISM. No duty-cycle limits.' },

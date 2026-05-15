@@ -2115,14 +2115,19 @@ function renderStatusPopover() {
     $('status-radio-cfg-2').textContent = '';
   }
   const s = r.stats || {};
-  // Airtime gets its own line above the packet counters because it's
-  // the regulatory-meaningful metric — packet counts are diagnostic.
-  // Short-form "s" / "l" tag (short-term / long-term, matching what
-  // the radio settings tab shows).
+  // Airtime: current usage / regulatory cap, short-term and
+  // long-term. Shown as "now/cap" so it's obvious which number is
+  // the live channel-utilisation reading vs the configured ceiling.
   if (s.airtime_pct !== undefined || s.longterm_airtime_pct !== undefined) {
-    $('status-radio-airtime').textContent =
-      'Airtime: ' + (s.airtime_pct || 0) + '% s · '
-                  + (s.longterm_airtime_pct || 0) + '% l';
+    const st_now = s.airtime_pct || 0;
+    const lt_now = s.longterm_airtime_pct || 0;
+    const st_cap = s.airtime_limit_pct;
+    const lt_cap = s.longterm_airtime_limit_pct;
+    const stStr = st_cap !== undefined ? st_now + '%/' + st_cap + '% s'
+                                       : st_now + '% s';
+    const ltStr = lt_cap !== undefined ? lt_now + '%/' + lt_cap + '% l'
+                                       : lt_now + '% l';
+    $('status-radio-airtime').textContent = 'Airtime: ' + stStr + ' · ' + ltStr;
   } else {
     $('status-radio-airtime').textContent = '';
   }

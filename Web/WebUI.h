@@ -11,6 +11,7 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <esp_wifi.h>
+#include <mbedtls/base64.h>
 #include <WebServer.h>
 #include <uri/UriBraces.h>
 #include <ArduinoJson.h>
@@ -415,6 +416,7 @@ namespace Web {
       // Paths
       server.on("/api/paths",         HTTP_GET,  handle_paths_list);
       server.on("/api/paths/lookup",  HTTP_POST, handle_path_lookup);
+      server.on("/api/paths/estimate",HTTP_GET,  handle_path_estimate);
       // WiFi config — gated by bearer token OR identity_code in body.
       // Reboots on save.
       server.on("/api/wifi/scan",     HTTP_GET,  handle_wifi_scan);
@@ -1010,6 +1012,14 @@ namespace Web {
       send_json(200, doc);
     }
 
+    // Per-message + per-attachment caps for outbound attachments.
+    // Constrained by available heap on ESP32-S3 — `server.arg("plain")`
+    // copies the request body into a String, then ArduinoJson holds a
+    // reference, then base64 decode allocates the raw bytes. Peak
+    // ~2.3× the raw attachment size. 48 KB/message is comfortable.
+    static constexpr size_t OUTBOUND_ATTACHMENT_MAX_TOTAL = 48 * 1024;
+    static constexpr size_t OUTBOUND_ATTACHMENT_MAX_EACH  = 48 * 1024;
+
     static void handle_send() {
       LXMF::IdentityId caller = require_auth();
       if (caller.empty()) return;
@@ -1022,11 +1032,6 @@ namespace Web {
       // The SPA sends `content`; legacy / external clients may still send
       // `body`. Accept either, preferring `content`.
       std::string content = (const char*)(body["content"] | (body["body"] | ""));
-      if (content.empty()) {
-        send_error_with_message(400, "missing_content",
-            "Message body is empty. Type something in the compose box before sending.");
-        return;
-      }
       RNS::Bytes to = hex_to_bytes(to_hex, LXMF::HASH_LEN);
       if (to.size() != LXMF::HASH_LEN) {
         char msg[120];
@@ -1036,9 +1041,76 @@ namespace Web {
         send_error_with_message(400, "invalid_destination_hash", msg);
         return;
       }
+
+      // Optional `attachments`: array of { tag, data_b64, filename, mime }.
+      // tag is one of FIELD_FILE_ATTACHMENTS (5) / FIELD_IMAGE (6) /
+      // FIELD_AUDIO (7). data_b64 is the raw bytes base64-encoded.
+      // filename + mime are kept for the local outbox metadata; peers
+      // receive only the raw bytes under the FIELD_* tag.
+      std::vector<LXMF::LXMFMinimal::OutgoingAttachment> attachments;
+      size_t total_bytes = 0;
+      if (body["attachments"].is<JsonArrayConst>()) {
+        for (JsonObjectConst a : body["attachments"].as<JsonArrayConst>()) {
+          int tag = a["tag"] | 0;
+          if (tag != LXMF::FIELD_FILE_ATTACHMENTS
+              && tag != LXMF::FIELD_IMAGE
+              && tag != LXMF::FIELD_AUDIO) {
+            send_error_with_message(400, "invalid_attachment_tag",
+              "Attachment tag must be 5 (file), 6 (image), or 7 (audio).");
+            return;
+          }
+          const char* b64 = a["data_b64"] | "";
+          if (!*b64) {
+            send_error_with_message(400, "empty_attachment",
+              "Attachment data_b64 was missing or empty.");
+            return;
+          }
+          // Probe decode size first so we can reject before allocating.
+          size_t decoded_len = 0;
+          const size_t b64_len = strlen(b64);
+          mbedtls_base64_decode(nullptr, 0, &decoded_len,
+                                (const unsigned char*)b64, b64_len);
+          if (decoded_len == 0 || decoded_len > OUTBOUND_ATTACHMENT_MAX_EACH) {
+            char msg[128];
+            snprintf(msg, sizeof(msg),
+                     "Attachment too large (%u B) — cap is %u B per attachment.",
+                     (unsigned)decoded_len, (unsigned)OUTBOUND_ATTACHMENT_MAX_EACH);
+            send_error_with_message(413, "attachment_too_large", msg);
+            return;
+          }
+          total_bytes += decoded_len;
+          if (total_bytes > OUTBOUND_ATTACHMENT_MAX_TOTAL) {
+            send_error_with_message(413, "attachments_too_large",
+              "Combined attachments exceed the 48 KB per-message cap.");
+            return;
+          }
+          LXMF::LXMFMinimal::OutgoingAttachment oa;
+          oa.tag = (uint8_t)tag;
+          oa.data.resize(decoded_len);
+          size_t out_len = 0;
+          int rc = mbedtls_base64_decode(oa.data.data(), decoded_len, &out_len,
+                                         (const unsigned char*)b64, b64_len);
+          if (rc != 0 || out_len != decoded_len) {
+            send_error_with_message(400, "invalid_attachment_base64",
+              "Attachment data_b64 could not be decoded.");
+            return;
+          }
+          oa.filename = a["filename"] | "";
+          oa.mime     = a["mime"]     | "";
+          attachments.push_back(std::move(oa));
+        }
+      }
+
+      if (content.empty() && attachments.empty()) {
+        send_error_with_message(400, "missing_content",
+            "Message body is empty. Type something or attach a file before sending.");
+        return;
+      }
       LXMF::MessageRecord rec;
       const char* err = nullptr;
-      if (!LXMF::LXMFGateway::send(requested, to, title, content, rec, &err)) {
+      if (!LXMF::LXMFGateway::send(requested, to, title, content,
+                                   attachments.empty() ? nullptr : &attachments,
+                                   rec, &err)) {
         send_error_with_message(503, "send_failed",
                                 err ? err : "Send failed for an unknown reason.");
         return;
@@ -1712,6 +1784,66 @@ namespace Web {
       if (!known) {
         RNS::Transport::request_path(to);
         doc["requested"] = true;
+      }
+      send_json(200, doc);
+    }
+
+    // GET /api/paths/estimate?to=<32 hex>&bytes=<N>
+    // Returns transmit-time estimate components for the destination,
+    // letting the SPA render an ETA before the user hits send.
+    //   kind: "local"   — destination is one of our own identities;
+    //                     traffic loops in-device, ETA ≈ 0
+    //         "path"    — we have a path table entry; eta_ms is
+    //                     ((bytes*8 / bitrate)*(hops+1) + first_hop)*1000
+    //         "unknown" — no path yet; SPA should request_path or
+    //                     show "ETA unknown"
+    //
+    // Bytes is the total LXMF wire size, which the SPA computes from
+    // the message body + sum-of-attachments + a ~120-byte overhead
+    // (hash + signature + msgpack framing).
+    static void handle_path_estimate() {
+      LXMF::IdentityId caller = require_auth();
+      if (caller.empty()) return;
+      const std::string to_hex = std::string(server.arg("to").c_str());
+      const uint32_t bytes = (uint32_t)std::strtoul(server.arg("bytes").c_str(),
+                                                    nullptr, 10);
+      RNS::Bytes to = hex_to_bytes(to_hex, LXMF::HASH_LEN);
+      if (to.size() != LXMF::HASH_LEN) {
+        send_error_with_message(400, "invalid_destination_hash",
+          "Destination must be 32 hex characters.");
+        return;
+      }
+      JsonDocument doc;
+      doc["bytes"] = bytes;
+
+      if (LXMF::LXMFGateway::is_own_destination(to)) {
+        doc["kind"]   = "local";
+        doc["eta_ms"] = 0;
+        send_json(200, doc);
+        return;
+      }
+      if (!RNS::Transport::has_path(to)) {
+        doc["kind"]    = "unknown";
+        doc["eta_ms"]  = nullptr;
+        send_json(200, doc);
+        return;
+      }
+      const uint32_t bitrate = RNS::Transport::next_hop_interface_bitrate(to);
+      const uint8_t  hops    = RNS::Transport::hops_to(to);
+      const double   fh_to   = RNS::Transport::first_hop_timeout(to);
+      doc["kind"]     = "path";
+      doc["bitrate"]  = bitrate;
+      doc["hops"]     = (int)hops;
+      doc["first_hop_timeout_ms"] = (uint32_t)(fh_to * 1000);
+      if (bitrate > 0 && hops != RNS::Type::Transport::PATHFINDER_M) {
+        // bytes*8 / bitrate = seconds to clock a single packet over
+        // one hop; multiply by (hops + 1) for the cumulative on-air
+        // time then add the first-hop turnaround.
+        const double sec = ((double)bytes * 8.0 / (double)bitrate) * (hops + 1)
+                           + fh_to;
+        doc["eta_ms"] = (uint32_t)(sec * 1000);
+      } else {
+        doc["eta_ms"] = nullptr;
       }
       send_json(200, doc);
     }

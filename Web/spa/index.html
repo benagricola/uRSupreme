@@ -304,12 +304,27 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 }
 #compose textarea {
   resize: none;
-  flex: 1;
+  width: 100%;
   font-size: 16px;  /* prevent iOS auto-zoom */
   min-height: 40px; max-height: 120px;
   background: var(--bg);
   padding: 9px 12px;
 }
+#compose-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+/* Staged-attachment tray: one or more chips above the textarea showing
+   filename, size, and (for known paths) an ETA. Click × to drop. */
+#attach-tray { display: flex; flex-direction: column; gap: 4px; }
+.attach-chip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-elev-2);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.attach-chip .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-chip .eta   { color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 11px; }
+.attach-chip .drop  { cursor: pointer; color: var(--text-dim); padding: 0 4px; }
+.attach-chip .drop:hover { color: var(--danger-2); }
 
 /* ============================== SETTINGS MODAL (tabbed) ============================== */
 /* Tall modal that hosts every configuration screen behind a tab bar.
@@ -766,7 +781,15 @@ summary:hover { color: var(--text); }
         <!-- smile -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
       </button>
-      <textarea id="compose-text" placeholder="Message…" rows="1"></textarea>
+      <button class="icon" id="btn-attach" title="Attach a file or image">
+        <!-- paperclip -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      </button>
+      <input id="attach-file" type="file" hidden>
+      <div id="compose-mid">
+        <div id="attach-tray" hidden></div>
+        <textarea id="compose-text" placeholder="Message…" rows="1"></textarea>
+      </div>
       <button class="icon" id="btn-send" title="Send" style="background:var(--accent-2);border-color:var(--accent-3);color:var(--text)">
         <!-- arrow up -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
@@ -834,6 +857,22 @@ summary:hover { color: var(--text); }
     <div class="row">
       <button class="secondary" id="btn-nc-cancel">Cancel</button>
       <button id="btn-nc-go">Open</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== IMAGE RESIZE PICKER ===================== -->
+<!-- Opened after the user picks an image. Lets them pick small /
+     medium / original; each option shows its file size + ETA against
+     the current destination so the cost is visible before send. -->
+<div id="modal-image-resize" class="modal-bg" hidden style="z-index:260">
+  <div class="modal" style="max-width:480px">
+    <h3>Attach image</h3>
+    <p class="muted" id="ir-source" style="margin-bottom:10px"></p>
+    <div id="ir-options" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px"></div>
+    <div class="row">
+      <button class="secondary" id="ir-cancel">Cancel</button>
+      <button id="ir-attach">Attach</button>
     </div>
   </div>
 </div>
@@ -1118,6 +1157,8 @@ const state = {
   announcedThisBoot: false,         // local flag — yellow announce dot when
                                     // auto-announce is off but user has fired
                                     // at least one manual announce since SPA load
+  pendingAttachments: [],           // [{ tag, bytes:Uint8Array, filename, mime, eta_ms }]
+                                    // staged before send; cleared after send.
   reconnectStart: 0,
   skipBootstrap: false,             // set true by "skip" button on view-bootstrap so subsequent
                                     // routing doesn't bounce back into bootstrap mode
@@ -1361,7 +1402,7 @@ class Transport {
   async deleteIdentity(identityId)                { throw new Error('unimplemented'); }
   async getIdentity(identityId)                   { throw new Error('unimplemented'); }
   async getState(identityId, markers)             { throw new Error('unimplemented'); }
-  async send(identityId, destHex, title, content) { throw new Error('unimplemented'); }
+  async send(identityId, destHex, title, content, attachments) { throw new Error('unimplemented'); }
   async announceNow(identityId)                   { throw new Error('unimplemented'); }
   async lookupPath(destHex)                       { throw new Error('unimplemented'); }
   subscribe(identityId, markers, onEvent)         { throw new Error('unimplemented'); }
@@ -1433,9 +1474,11 @@ class UReticulumHTTPTransport extends Transport {
   async getState(identityId) {
     return this._req('/api/identities/' + encodeURIComponent(identityId) + '/state');
   }
-  async send(identityId, destHex, title, content) {
+  async send(identityId, destHex, title, content, attachments) {
+    const body = { to: destHex, title: title || '', content };
+    if (attachments && attachments.length) body.attachments = attachments;
     return this._req('/api/identities/' + encodeURIComponent(identityId) + '/send',
-      { method: 'POST', body: { to: destHex, title: title || '', content } });
+      { method: 'POST', body });
   }
   async announceNow(identityId) {
     return this._req('/api/identities/' + encodeURIComponent(identityId) + '/announce', { method: 'POST' });
@@ -1525,6 +1568,10 @@ class UReticulumHTTPTransport extends Transport {
   async wifiForget(ssid, identityCode) {
     return this._req('/api/wifi/forget', { method: 'POST',
       body: { ssid: ssid || '', identity_code: identityCode || '' } });
+  }
+  async pathEstimate(toHex, bytes) {
+    const q = '?to=' + encodeURIComponent(toHex) + '&bytes=' + (bytes | 0);
+    return this._req('/api/paths/estimate' + q);
   }
 }
 
@@ -1810,13 +1857,27 @@ function renderThread() {
                        : a.tag === 7 ? '🎙 audio'
                        : '📎 attachment')
                        + ' (' + formatBytes(a.size || 0) + ')';
-          const chip = el('button', {
-            class: 'attachment-chip',
-            style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block',
-            text: label + ' — click to download',
-          });
-          chip.addEventListener('click', () => downloadAttachment(state.identityId, a, chip, bubble));
-          bubble.appendChild(chip);
+          // Outbound attachments aren't persisted on the device (the
+          // bytes are only in the recipient's inbox); show as a plain
+          // chip without a download action. Inbound chips fetch on
+          // click. Inbound files are stored under
+          // <id>/attachments/<msg_hex>_<tag>_<idx>.bin so the SPA
+          // expects that exact filename shape.
+          const inbound = !!m.in && /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename);
+          if (inbound) {
+            const chip = el('button', {
+              class: 'attachment-chip',
+              style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block',
+              text: label + ' — click to download',
+            });
+            chip.addEventListener('click', () => downloadAttachment(state.identityId, a, chip, bubble));
+            bubble.appendChild(chip);
+          } else {
+            bubble.appendChild(el('div', {
+              style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);font-size:11px',
+              text: label,
+            }));
+          }
         }
       }
       const metaParts = [];
@@ -1993,6 +2054,13 @@ function renderContacts() {
 
 // ============================== INTERACTIONS ==============================
 async function selectConversation(peer) {
+  if (state.openPeer !== peer && state.pendingAttachments.length > 0) {
+    // Dropping staged attachments quietly — they belonged to the
+    // previous chat. Surface a toast so the user notices.
+    toast(state.pendingAttachments.length + ' attachment(s) dropped from previous chat.', 'info');
+    state.pendingAttachments = [];
+    renderAttachTray();
+  }
   state.openPeer = peer;
   // Update conv row "active" state.
   for (const [p, row] of _convRowEls) {
@@ -2007,14 +2075,20 @@ async function selectConversation(peer) {
 
 async function sendMessage() {
   const text = $('compose-text').value.trim();
-  if (!text || !state.openPeer) return;
+  if (!state.openPeer) return;
+  if (!text && state.pendingAttachments.length === 0) return;
   $('btn-send').disabled = true;
   try {
-    // Server returns { queued_seq, status } where status is the *actual*
-    // outbox status after the send call (e.g. "sent" if the packet was
-    // handed to Reticulum successfully). Mirror that in the optimistic
-    // local copy so the user doesn't see "queued forever".
-    const r = await state.transport.send(state.identityId, state.openPeer, '', text);
+    // Encode any staged attachments to base64 for the JSON body.
+    const attachments = state.pendingAttachments.map(a => ({
+      tag:      a.tag,
+      filename: a.filename,
+      mime:     a.mime,
+      data_b64: bytesToBase64(a.bytes),
+    }));
+    // Server returns { queued_seq, status }. Mirror status in the
+    // optimistic local copy so the bubble doesn't say "queued forever".
+    const r = await state.transport.send(state.identityId, state.openPeer, '', text, attachments);
     // Estimate boot_epoch + received_ms from the cached clock anchor so
     // this optimistic local copy sorts to the top alongside the device's
     // own outbox entry. /state on next refresh will replace these with
@@ -2032,8 +2106,13 @@ async function sendMessage() {
       in: false,
       sig_ok: true,
       status: r.status || 'sent',
+      attachments: state.pendingAttachments.map(a => ({
+        tag: a.tag, size: a.bytes.length, filename: a.filename, mime: a.mime,
+      })),
     });
     $('compose-text').value = '';
+    state.pendingAttachments = [];
+    renderAttachTray();
     renderThread();
     renderConversations();
   } catch (e) {
@@ -2041,6 +2120,217 @@ async function sendMessage() {
   } finally {
     $('btn-send').disabled = false;
   }
+}
+
+// ============================== ATTACHMENTS ==============================
+// LXMF fields-dict tag numbers (canonical, see LXMF::FIELD_* in
+// LXMFTypes.h). Bytes per attachment are subject to the device's
+// OUTBOUND_ATTACHMENT_MAX_EACH cap (~48 KB today).
+const FIELD_FILE_ATTACHMENTS = 0x05;
+const FIELD_IMAGE            = 0x06;
+const FIELD_AUDIO            = 0x07;
+const ATTACH_MAX_BYTES       = 48 * 1024;
+
+// Resize an image File to a target max dimension, returning a JPEG
+// Blob. Quality 0.78 keeps small/medium variants well under the cap
+// while still looking acceptable for chat-app use.
+async function resizeImage(file, maxDim) {
+  const bmp = await createImageBitmap(file);
+  let w = bmp.width, h = bmp.height;
+  if (maxDim && Math.max(w, h) > maxDim) {
+    const k = maxDim / Math.max(w, h);
+    w = Math.round(w * k); h = Math.round(h * k);
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
+  bmp.close();
+  return await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.78));
+}
+
+async function blobToBytes(blob) {
+  const buf = await blob.arrayBuffer();
+  return new Uint8Array(buf);
+}
+
+// Base64-encode a Uint8Array. btoa() can't take a binary string > ~64K
+// efficiently, but our 48 KB cap fits comfortably; chunk via String.fromCharCode.
+function bytesToBase64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(s);
+}
+
+function formatEta(ms) {
+  if (ms == null) return 'ETA ?';
+  if (ms < 1000) return '~' + ms + ' ms';
+  const s = ms / 1000;
+  if (s < 60) return '≈' + s.toFixed(1) + ' s';
+  return '≈' + Math.round(s / 60) + ' min';
+}
+
+// Open the file picker. Image files take a detour through the resize
+// modal; everything else stages immediately.
+async function pickAttachment() {
+  const input = $('attach-file');
+  input.value = '';
+  input.click();
+}
+
+$('btn-attach').addEventListener('click', pickAttachment);
+$('attach-file').addEventListener('change', async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  if (file.type.startsWith('image/')) {
+    await openImageResizePicker(file);
+  } else {
+    await stageNonImageAttachment(file);
+  }
+});
+
+async function stageNonImageAttachment(file) {
+  if (file.size > ATTACH_MAX_BYTES) {
+    toast('File is ' + formatBytes(file.size) + ' — cap is '
+          + formatBytes(ATTACH_MAX_BYTES) + ' per attachment.', 'error', 6000);
+    return;
+  }
+  const bytes = await blobToBytes(file);
+  const tag = file.type.startsWith('audio/') ? FIELD_AUDIO : FIELD_FILE_ATTACHMENTS;
+  await stagePendingAttachment({
+    tag, bytes, filename: file.name, mime: file.type || 'application/octet-stream',
+  });
+}
+
+async function openImageResizePicker(file) {
+  const modal = $('modal-image-resize');
+  $('ir-source').textContent = file.name + ' · ' + formatBytes(file.size);
+  const wrap = $('ir-options');
+  wrap.innerHTML = '';
+  // Compute candidate sizes up-front so the radio labels show the
+  // resulting filesize + ETA. "Original" is JPEG-recompressed only if
+  // it's already over the cap (otherwise we send the original bytes
+  // as-is to preserve quality).
+  const candidates = [
+    { key: 'small',    label: 'Small',    maxDim: 320 },
+    { key: 'medium',   label: 'Medium',   maxDim: 800 },
+    { key: 'original', label: 'Original', maxDim: 0   },
+  ];
+  // Prepare blob + size for each option so the user can compare.
+  const prepared = [];
+  for (const c of candidates) {
+    let blob;
+    if (c.key === 'original') {
+      blob = file;
+    } else {
+      blob = await resizeImage(file, c.maxDim);
+    }
+    prepared.push({ ...c, blob, size: blob.size });
+  }
+  // Default selection: first candidate that fits the cap.
+  let chosen = prepared.find(p => p.size <= ATTACH_MAX_BYTES) || prepared[0];
+  const renderOptions = async () => {
+    wrap.innerHTML = '';
+    for (const p of prepared) {
+      const tooBig = p.size > ATTACH_MAX_BYTES;
+      const row = el('label', {
+        class: 'cn-radio',
+        style: 'display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--bg-elev-2);border-radius:6px;cursor:' + (tooBig ? 'not-allowed' : 'pointer') + ';opacity:' + (tooBig ? 0.5 : 1),
+      });
+      const r = el('input', { type: 'radio', name: 'ir-choice', value: p.key });
+      if (tooBig) r.disabled = true;
+      if (p.key === chosen.key) r.checked = true;
+      r.addEventListener('change', async () => {
+        chosen = p;
+        await refreshEtas();
+      });
+      const lab = el('div', { style: 'flex:1' });
+      lab.appendChild(el('div', { style: 'font-weight:600', text: p.label + (p.maxDim ? ' (≤ ' + p.maxDim + ' px)' : ' (as-is)') }));
+      lab.appendChild(el('div', { class: 'muted', style: 'font-size:11px',
+        text: formatBytes(p.size) + (tooBig ? ' — too large for the ' + formatBytes(ATTACH_MAX_BYTES) + ' cap' : '') }));
+      const eta = el('div', { class: 'muted mono', 'data-eta-for': p.key, style: 'font-size:11px;color:var(--text-dim)', text: '' });
+      row.appendChild(r); row.appendChild(lab); row.appendChild(eta);
+      wrap.appendChild(row);
+    }
+  };
+  const refreshEtas = async () => {
+    // One estimate per candidate that fits, against the current peer.
+    const peer = state.openPeer;
+    if (!peer) return;
+    for (const p of prepared) {
+      if (p.size > ATTACH_MAX_BYTES) continue;
+      try {
+        const r = await state.transport.pathEstimate(peer, p.size + 120);
+        const node = wrap.querySelector('[data-eta-for="' + p.key + '"]');
+        if (!node) continue;
+        if (r.kind === 'local')      node.textContent = 'instant';
+        else if (r.kind === 'unknown') node.textContent = 'ETA unknown';
+        else                          node.textContent = formatEta(r.eta_ms);
+      } catch (_) { /* leave blank */ }
+    }
+  };
+  await renderOptions();
+  await refreshEtas();
+  modal.hidden = false;
+  const cleanup = () => {
+    modal.hidden = true;
+    $('ir-cancel').removeEventListener('click', onCancel);
+    $('ir-attach').removeEventListener('click', onAttach);
+  };
+  const onCancel = () => cleanup();
+  const onAttach = async () => {
+    if (!chosen) return;
+    cleanup();
+    const bytes = await blobToBytes(chosen.blob);
+    const filename = (file.name || 'image').replace(/\.[^.]+$/, '')
+                    + (chosen.key === 'original' ? '' : '_' + chosen.key)
+                    + '.jpg';
+    await stagePendingAttachment({
+      tag: FIELD_IMAGE, bytes, filename,
+      mime: chosen.key === 'original' ? (file.type || 'image/jpeg') : 'image/jpeg',
+    });
+  };
+  $('ir-cancel').addEventListener('click', onCancel);
+  $('ir-attach').addEventListener('click', onAttach);
+}
+
+async function stagePendingAttachment(att) {
+  // Estimate ETA against the current peer so the tray chip shows it
+  // before send. Failures are silent — tray still renders.
+  let eta_ms = null, kind = null;
+  if (state.openPeer) {
+    try {
+      const r = await state.transport.pathEstimate(state.openPeer, att.bytes.length + 120);
+      eta_ms = r.eta_ms;
+      kind   = r.kind;
+    } catch (_) {}
+  }
+  state.pendingAttachments.push({ ...att, eta_ms, kind });
+  renderAttachTray();
+}
+
+function renderAttachTray() {
+  const tray = $('attach-tray');
+  tray.innerHTML = '';
+  if (state.pendingAttachments.length === 0) { tray.hidden = true; return; }
+  tray.hidden = false;
+  state.pendingAttachments.forEach((a, idx) => {
+    const icon = a.tag === FIELD_IMAGE ? '🖼' : a.tag === FIELD_AUDIO ? '🎙' : '📎';
+    const chip = el('div', { class: 'attach-chip' });
+    chip.appendChild(el('span', { text: icon }));
+    chip.appendChild(el('span', { class: 'label',
+                                  text: a.filename + ' · ' + formatBytes(a.bytes.length) }));
+    const etaText = a.kind === 'local' ? 'instant'
+                  : a.kind === 'unknown' ? 'ETA unknown'
+                  : a.eta_ms != null ? formatEta(a.eta_ms)
+                  : '';
+    if (etaText) chip.appendChild(el('span', { class: 'eta', text: etaText }));
+    const x = el('span', { class: 'drop', text: '×', title: 'Drop attachment' });
+    x.addEventListener('click', () => { state.pendingAttachments.splice(idx, 1); renderAttachTray(); });
+    chip.appendChild(x);
+    tray.appendChild(chip);
+  });
 }
 
 async function forceAnnounce() {

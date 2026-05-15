@@ -168,6 +168,36 @@ namespace LXMF {
       return 9;
     }
 
+    // Write a positive integer key suitable for a fixmap entry. FIELD_*
+    // tags are all < 128 so the fixint form is enough for our use.
+    inline size_t pack_uint8(uint8_t* buf, size_t buflen, uint8_t v) {
+      if (buflen < 1) return 0;
+      if (v <= 0x7F) { buf[0] = v; return 1; }
+      if (buflen < 2) return 0;
+      buf[0] = 0xCC; buf[1] = v; return 2;
+    }
+
+    // Write a map header. Picks the narrowest msgpack encoding that
+    // fits the entry count. Caller follows with `n` key/value pairs.
+    inline size_t pack_map_header(uint8_t* buf, size_t buflen, size_t n) {
+      if (n <= 15) {
+        if (buflen < 1) return 0;
+        buf[0] = 0x80 | (uint8_t)n;
+        return 1;
+      }
+      if (n <= 0xFFFF) {
+        if (buflen < 3) return 0;
+        buf[0] = 0xDE;
+        buf[1] = (n >> 8) & 0xFF; buf[2] = n & 0xFF;
+        return 3;
+      }
+      if (buflen < 5) return 0;
+      buf[0] = 0xDF;
+      buf[1] = (n >> 24) & 0xFF; buf[2] = (n >> 16) & 0xFF;
+      buf[3] = (n >> 8)  & 0xFF; buf[4] =  n        & 0xFF;
+      return 5;
+    }
+
   } // namespace RawMsgPack
 
 
@@ -341,9 +371,30 @@ namespace LXMF {
     // the recipient identity isn't yet known (no announce seen) or pack/sign
     // failed. Status reporting on delivery is left to the caller via the
     // returned MessageRecord — Phase 1 just sets status=Sent after send().
+    // Caller-owned attachment blob. `tag` is one of the FIELD_* values
+    // (0x05 file / 0x06 image / 0x07 audio); `data` is the raw payload
+    // that will be msgpack-encoded as bin8/bin16 in the LXMF fields
+    // map; `filename` / `mime` are kept for the local outbox record
+    // (peers see only the raw bytes at the FIELD_* tag).
+    struct OutgoingAttachment {
+      uint8_t              tag;
+      std::vector<uint8_t> data;
+      std::string          filename;
+      std::string          mime;
+    };
+
     bool send_message(const RNS::Bytes& dest_hash,
                       const std::string& title,
                       const std::string& content,
+                      MessageRecord& out_rec,
+                      const char** out_err = nullptr) {
+      return send_message(dest_hash, title, content, nullptr, out_rec, out_err);
+    }
+
+    bool send_message(const RNS::Bytes& dest_hash,
+                      const std::string& title,
+                      const std::string& content,
+                      const std::vector<OutgoingAttachment>* attachments,
                       MessageRecord& out_rec,
                       const char** out_err = nullptr) {
       auto fail = [&](const char* msg) { if (out_err) *out_err = msg; return false; };
@@ -367,13 +418,16 @@ namespace LXMF {
         "lxmf", "delivery"
       );
 
-      // Build msgpack payload: [timestamp:f64, title:bin, content:bin, fields:nil]
-      // The buffer must hold the whole encoded payload. Heap-allocate
-      // sized to content + title + small fixed overhead (~30 B) so we
-      // can handle messages well above the old 512-byte stack limit.
-      // The actual on-wire size cap is enforced by LXMF_OPPORTUNISTIC_MAX
-      // / LXMF_LINK_PACKET_MAX / FIRMWARE_MAX_INCOMING below.
-      const size_t mp_cap = 64 + title.size() + content.size();
+      // Build msgpack payload: [timestamp:f64, title:bin, content:bin, fields]
+      // Heap-allocate sized to content + title + sum(attachments) + a
+      // fixed overhead for the msgpack framing.
+      size_t att_bytes = 0;
+      if (attachments) {
+        for (const auto& a : *attachments) {
+          att_bytes += a.data.size() + 8;  // bin header + uint8 key
+        }
+      }
+      const size_t mp_cap = 64 + title.size() + content.size() + att_bytes;
       std::vector<uint8_t> mp_buf(mp_cap);
       uint8_t* mp = mp_buf.data();
       size_t mp_pos = 0;
@@ -392,7 +446,23 @@ namespace LXMF {
       if (n == 0) { ERROR("LXMF: send: content pack failed"); return fail("Internal error: content pack returned 0 unexpectedly."); }
       mp_pos += n;
 
-      mp[mp_pos++] = 0xC0;  // fields: nil
+      if (!attachments || attachments->empty()) {
+        mp[mp_pos++] = 0xC0;  // fields: nil
+      } else {
+        n = RawMsgPack::pack_map_header(&mp[mp_pos], mp_cap - mp_pos,
+                                        attachments->size());
+        if (n == 0) { ERROR("LXMF: send: map header pack failed"); return fail("Too many attachments."); }
+        mp_pos += n;
+        for (const auto& a : *attachments) {
+          n = RawMsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, a.tag);
+          if (n == 0) { ERROR("LXMF: send: field key pack failed"); return fail("Internal error packing attachment key."); }
+          mp_pos += n;
+          n = RawMsgPack::pack_bin(&mp[mp_pos], mp_cap - mp_pos,
+                                   a.data.data(), a.data.size());
+          if (n == 0) { ERROR("LXMF: send: field value pack failed"); return fail("Attachment too large to encode."); }
+          mp_pos += n;
+        }
+      }
 
       // Build signed_part = dest_hash || src_hash || payload || sha256(...)
       const RNS::Bytes& src_hash = _destination.hash();
@@ -437,6 +507,21 @@ namespace LXMF {
       out_rec.content      = content;
       out_rec.incoming     = false;
       out_rec.signature_ok = true;
+      // Metadata-only outbox attachments — bytes aren't kept locally on
+      // the device (we only persist incoming attachments to disk). The
+      // SPA renders these as "📎 file (12 KB)" placeholders so the
+      // sender can see what they attached.
+      if (attachments) {
+        for (size_t i = 0; i < attachments->size(); ++i) {
+          const auto& a = (*attachments)[i];
+          AttachmentMeta m;
+          m.tag      = a.tag;
+          m.size     = (uint32_t)a.data.size();
+          m.filename = a.filename;
+          m.mime     = a.mime;
+          out_rec.attachments.push_back(m);
+        }
+      }
 
       // OPPORTUNISTIC: single packet to the SINGLE destination. Fast path
       // for short messages; status -> Sent immediately. This is what works

@@ -221,12 +221,22 @@ namespace LXMF {
                      const std::string& content,
                      MessageRecord& out_rec,
                      const char** out_err = nullptr) {
+      return send(iden_id, dest_hash, title, content, nullptr, out_rec, out_err);
+    }
+
+    static bool send(const IdentityId& iden_id,
+                     const RNS::Bytes& dest_hash,
+                     const std::string& title,
+                     const std::string& content,
+                     const std::vector<LXMFMinimal::OutgoingAttachment>* attachments,
+                     MessageRecord& out_rec,
+                     const char** out_err = nullptr) {
       LXMFIdentity* a = identity_by_id_mut(iden_id);
       if (!a) {
         if (out_err) *out_err = "No such identity is logged in on this device.";
         return false;
       }
-      if (!a->lxmf.send_message(dest_hash, title, content, out_rec, out_err)) {
+      if (!a->lxmf.send_message(dest_hash, title, content, attachments, out_rec, out_err)) {
         return false;
       }
       if (a->outbox) a->outbox->append(out_rec);

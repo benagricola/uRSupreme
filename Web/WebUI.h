@@ -426,6 +426,24 @@ namespace Web {
       // page load.
       JsonObject radio = doc["radio"].to<JsonObject>();
       radio["online"]           = radio_online;
+      // Compile-time radio-chip identity. The MODEM macro is set per
+      // PIO env (SX1262 for ttgo-t-beam-supreme, LR11XX for the LR1121
+      // variant, etc.) — surfacing it here lets the SPA show "this is
+      // the LR1121 device" so the user can tell two co-located T-Beams
+      // apart at a glance without checking IPs.
+      #if MODEM == SX1262
+        radio["model"] = "SX1262";
+      #elif MODEM == SX1276
+        radio["model"] = "SX1276";
+      #elif MODEM == SX1278
+        radio["model"] = "SX1278";
+      #elif MODEM == SX1280
+        radio["model"] = "SX1280";
+      #elif MODEM == LR11XX
+        radio["model"] = "LR11xx (LR1121/LR1120)";
+      #else
+        radio["model"] = "(unknown)";
+      #endif
       radio["have_conf"]        = eeprom_have_conf();
       radio["frequency"]        = (uint32_t)lora_freq;
       radio["bandwidth"]        = (uint32_t)lora_bw;

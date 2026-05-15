@@ -745,6 +745,9 @@ summary:hover { color: var(--text); }
     </div>
     <div class="muted mono" id="status-radio-cfg-1" style="font-size:11px;margin-top:6px"></div>
     <div class="muted mono" id="status-radio-cfg-2" style="font-size:11px"></div>
+    <div class="muted mono" id="status-radio-model"  style="font-size:11px"></div>
+    <div class="muted mono" id="status-radio-stats" style="font-size:11px;margin-top:4px"></div>
+    <div class="muted mono" id="status-radio-rate"  style="font-size:11px"></div>
   </div>
   <div class="popover-section">
     <div class="popover-row">
@@ -1783,6 +1786,39 @@ function renderStatusPopover() {
     $('status-radio-cfg-1').textContent = 'No radio config saved yet.';
     $('status-radio-cfg-2').textContent = '';
   }
+  // Chip model (e.g. "SX1262" / "LR11xx") + cumulative + instant rates.
+  $('status-radio-model').textContent = r.model ? 'Chip: ' + r.model : '';
+  const s = r.stats || {};
+  if (s.rx_packets !== undefined || s.tx_packets !== undefined) {
+    $('status-radio-stats').textContent =
+      'RX ' + (s.rx_packets || 0) + ' pkt · TX ' + (s.tx_packets || 0) + ' pkt' +
+      ' · airtime ' + (s.airtime_pct || 0) + '% (st), ' + (s.longterm_airtime_pct || 0) + '% (lt)';
+  } else {
+    $('status-radio-stats').textContent = '';
+  }
+  // Rate-since-last-poll. lastInfoStats caches the previous snapshot so
+  // we can show "+3 RX / +1 TX in the last 60 s" delta on each popover
+  // open. refreshStatus runs every 60 s on the topbar timer.
+  const prev = state.lastInfoStats;
+  if (prev && info.uptime_ms && prev.ts) {
+    const dt_s = (info.uptime_ms - prev.uptime_ms) / 1000;
+    if (dt_s > 0.5 && dt_s < 600) {
+      const drx = (s.rx_packets || 0) - (prev.rx || 0);
+      const dtx = (s.tx_packets || 0) - (prev.tx || 0);
+      $('status-radio-rate').textContent =
+        'Δ ' + dt_s.toFixed(0) + 's: +' + drx + ' RX · +' + dtx + ' TX';
+    } else {
+      $('status-radio-rate').textContent = '';
+    }
+  } else {
+    $('status-radio-rate').textContent = '';
+  }
+  state.lastInfoStats = {
+    ts:        Date.now(),
+    uptime_ms: info.uptime_ms || 0,
+    rx:        s.rx_packets || 0,
+    tx:        s.tx_packets || 0,
+  };
   const tLine = $('status-transport-line');
   tLine.innerHTML = '';
   tLine.appendChild(el('span', { class: 'pill ' + (t.enabled ? 'ok' : '') },

@@ -749,7 +749,7 @@ summary:hover { color: var(--text); }
       <button class="icon btn-back" id="btn-back" title="Back">←</button>
       <span class="idc" id="thread-idc"></span>
       <div class="peer-info">
-        <div class="name" id="thread-name"></div>
+        <div class="name" id="thread-name" title="Click to rename" style="cursor:pointer"></div>
         <div class="addr" id="thread-addr"></div>
       </div>
       <button class="icon" id="btn-clear-conv" title="Clear conversation">
@@ -843,7 +843,7 @@ summary:hover { color: var(--text); }
      showConfirm(opts) so call sites don't have to declare their own
      modal HTML for every action. Optional identity-code input for
      physical-presence-gated calls. -->
-<div id="modal-confirm" class="modal-bg" hidden>
+<div id="modal-confirm" class="modal-bg" hidden style="z-index:270">
   <div class="modal">
     <h3 id="mc-title">Confirm</h3>
     <p class="muted" id="mc-body" style="white-space:pre-wrap"></p>
@@ -851,6 +851,10 @@ summary:hover { color: var(--text); }
       <label>Identity code</label>
       <p class="muted id-code-hint" style="margin-bottom:6px"></p>
       <input id="mc-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace">
+    </div>
+    <div id="mc-input-wrap" style="margin-bottom:12px" hidden>
+      <label id="mc-input-label"></label>
+      <input id="mc-input" type="text">
     </div>
     <div class="row">
       <button class="secondary" id="mc-cancel">Cancel</button>
@@ -863,7 +867,7 @@ summary:hover { color: var(--text); }
 <!-- Opened from the Connectivity tab's "Add a network" button. Same
      scan + pick + PSK + identity-code flow that the bootstrap softAP
      uses, just framed as a modal so it doesn't bloat the settings tab. -->
-<div id="modal-wifi-add" class="modal-bg" hidden>
+<div id="modal-wifi-add" class="modal-bg" hidden style="z-index:260">
   <div class="modal" style="max-width:460px">
     <h3>Add a WiFi network</h3>
     <p class="muted" style="margin-bottom:10px">Pick a network for this device to join. Saving reboots the device. The softAP fallback engages automatically if the saved network isn't reachable on next boot.</p>
@@ -940,7 +944,7 @@ summary:hover { color: var(--text); }
       <div class="tab-panel" data-panel="connectivity">
         <div class="warn" style="margin:0 0 12px">⚠ Connectivity settings are <strong>device-wide</strong> — they apply to every identity stored on this device. Changing radio params reboots the device and may interrupt active conversations.</div>
 
-        <details class="cn-section" data-cn="radio">
+        <details class="cn-section" data-cn="radio" open>
           <summary>LoRa Radio</summary>
           <div class="cn-section-body">
             <p class="muted" id="rd-intro">Pick the region preset that matches your local LoRa community. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.</p>
@@ -988,7 +992,7 @@ summary:hover { color: var(--text); }
           </div>
         </details>
 
-        <details class="cn-section" data-cn="wifi" open>
+        <details class="cn-section" data-cn="wifi">
           <summary>WiFi</summary>
           <div class="cn-section-body">
             <p class="muted" style="margin-bottom:10px">Networks this device has credentials for. Forgetting one wipes the SSID + password from the device and reboots into softAP for reconfiguration.</p>
@@ -1192,9 +1196,11 @@ function toast(message, kind = 'info', durationMs) {
 // ============================== CONFIRM MODAL ==============================
 // In-app replacement for window.confirm / window.prompt — see the
 // no-alerts-use-modals memory. Returns a Promise that resolves to:
-//   - false      when user cancels / closes the modal
-//   - true       when user confirms (no identity-code requested)
-//   - { code }   when user confirms with an identity code prompt
+//   - false                 when user cancels / closes the modal
+//   - true                  when user confirms (no extra fields)
+//   - { code }              when needsCode and user confirms
+//   - { value }             when needsInput and user confirms
+//   - { code, value }       both
 //
 // opts: {
 //   title:        string,
@@ -1202,6 +1208,7 @@ function toast(message, kind = 'info', durationMs) {
 //   okLabel:      string,        // default "OK"
 //   destructive:  bool,          // styles the OK button as danger-red
 //   needsCode:    bool,          // shows an identity-code input
+//   needsInput:   { label, value, placeholder } | true   // free-text input
 // }
 function showConfirm(opts) {
   return new Promise((resolve) => {
@@ -1217,10 +1224,21 @@ function showConfirm(opts) {
       // Refresh the hint line ("Press the device button…").
       fillIdCodeHints();
     }
+    const inputWrap = $('mc-input-wrap');
+    const wantInput = !!opts.needsInput;
+    inputWrap.hidden = !wantInput;
+    if (wantInput) {
+      const ic = (typeof opts.needsInput === 'object') ? opts.needsInput : {};
+      $('mc-input-label').textContent = ic.label || '';
+      $('mc-input').value             = ic.value || '';
+      $('mc-input').placeholder       = ic.placeholder || '';
+    }
     modal.hidden = false;
     setTimeout(() => {
-      if (opts.needsCode) $('mc-code').focus();
-      else                $('mc-ok').focus();
+      if (wantInput)            $('mc-input').focus();
+      else if (opts.needsCode)  $('mc-code').focus();
+      else                       $('mc-ok').focus();
+      if (wantInput) $('mc-input').select();
     }, 0);
 
     const cleanup = () => {
@@ -1228,25 +1246,27 @@ function showConfirm(opts) {
       $('mc-ok').removeEventListener('click', onOk);
       $('mc-cancel').removeEventListener('click', onCancel);
       $('mc-code').removeEventListener('keydown', onKey);
+      $('mc-input').removeEventListener('keydown', onKey);
       modal.removeEventListener('click', onBackdrop);
     };
     const onOk = () => {
+      const out = {};
       if (opts.needsCode) {
         const code = $('mc-code').value.trim();
         if (!code) { $('mc-code').focus(); return; }
-        cleanup();
-        resolve({ code });
-      } else {
-        cleanup();
-        resolve(true);
+        out.code = code;
       }
+      if (wantInput) out.value = $('mc-input').value;
+      cleanup();
+      if (opts.needsCode || wantInput) resolve(out); else resolve(true);
     };
     const onCancel = () => { cleanup(); resolve(false); };
-    const onKey = (e) => { if (e.key === 'Enter') onOk(); };
+    const onKey = (e) => { if (e.key === 'Enter') { e.preventDefault(); onOk(); } };
     const onBackdrop = (e) => { if (e.target === modal) onCancel(); };
     $('mc-ok').addEventListener('click', onOk);
     $('mc-cancel').addEventListener('click', onCancel);
     $('mc-code').addEventListener('keydown', onKey);
+    $('mc-input').addEventListener('keydown', onKey);
     modal.addEventListener('click', onBackdrop);
   });
 }
@@ -1634,9 +1654,14 @@ function _renderConversationsBody(wrap) {
       el('div', { class: 'last', text: sub }),
     );
     if (seenStr) middle.appendChild(el('div', { class: 'seen' + (isOnline ? ' online' : ''), text: seenStr }));
+    // No per-row onclick handler: the conv-list container has a
+    // single delegated click handler (see boot wiring below). If an
+    // SSE event happens to rerender the list between mousedown and
+    // mouseup, this approach still routes the click correctly
+    // because the handler is on the container, not the row.
     const row = el('div', {
       class: 'conv-row' + (active ? ' active' : ''),
-      onclick: () => selectConversation(peer),
+      'data-peer': peer,
     },
       idc,
       middle,
@@ -1646,18 +1671,19 @@ function _renderConversationsBody(wrap) {
     return row;
   };
 
-  // Format "last seen via announce" string. Returns '' if we've never
-  // heard one. Resolution coarsens with age: seconds-minutes-hours-days.
+  // "last seen N ago" / "online now" — single age helper used by every
+  // peer-presence label so the UI stays consistent. Resolution coarsens
+  // with age: seconds-minutes-hours-days.
   function announceSeenString(rec) {
     if (!rec || !rec.seenAt) return '';
     const ageMs = Math.max(0, Date.now() - rec.seenAt);
     if (ageMs < 60_000) return 'online now';
     const m = Math.floor(ageMs / 60_000);
-    if (m < 60) return 'seen ' + m + 'm ago';
+    if (m < 60) return 'last seen ' + m + 'm ago';
     const h = Math.floor(m / 60);
-    if (h < 24) return 'seen ' + h + 'h ago';
+    if (h < 24) return 'last seen ' + h + 'h ago';
     const d = Math.floor(h / 24);
-    return 'seen ' + d + 'd ago';
+    return 'last seen ' + d + 'd ago';
   }
 
   // Pick the active (non-finished) transfer involving this peer, if any.
@@ -1701,11 +1727,25 @@ function _renderConversationsBody(wrap) {
     det.appendChild(el('summary', { class: 'list-section' },
       'Discovered (' + discovered.length + ')'));
     for (const a of discovered) {
-      const ageS = Math.floor((Date.now() - a.received_ms) / 1000);
+      // a.received_ms is device-uptime millis() — meaningless against
+      // Date.now(). a.seenAt is the wall-clock estimate derived from
+      // the device's age_ms reading at fetch / SSE time.
+      const ageMs = a.seenAt ? Math.max(0, Date.now() - a.seenAt) : null;
+      let ageLabel = '';
+      if (ageMs !== null) {
+        if (ageMs < 60_000) {
+          ageLabel = 'online now';
+        } else {
+          const ageS = Math.floor(ageMs / 1000);
+          ageLabel = 'last seen ' + (ageS < 3600 ? Math.floor(ageS/60) + 'm'
+                                    : ageS < 86400 ? Math.floor(ageS/3600) + 'h'
+                                    : Math.floor(ageS/86400) + 'd') + ' ago';
+        }
+      }
       det.appendChild(makeRow(
         a.dest,
         a.display_name || nameFor(a.dest),
-        'heard ' + (ageS < 60 ? ageS + 's' : Math.floor(ageS/60) + 'm') + ' ago',
+        ageLabel,
         a.aspect && a.aspect !== 'lxmf.delivery' ? a.aspect : '',
         a.dest === state.openPeer));
     }
@@ -2691,7 +2731,43 @@ $('btn-nc-go').addEventListener('click', () => {
   $('modal-new-conv').hidden = true;
 });
 
+// Delegated conv-row click handler. Bound once to the container so an
+// SSE rerender mid-click can't strip the listener off the row that was
+// pressed. Looks for the nearest ancestor carrying a data-peer attr.
+$('conv-list').addEventListener('click', (ev) => {
+  const row = ev.target.closest('[data-peer]');
+  if (!row) return;
+  selectConversation(row.getAttribute('data-peer'));
+});
+
 $('btn-back').addEventListener('click', () => { state.openPeer = null; renderThread(); });
+
+// Click the chat header name to rename the contact (or assign one for
+// the first time). Stores locally to state.contacts, same backing
+// store as the Identity → Contacts list in Settings.
+$('thread-name').addEventListener('click', async () => {
+  const peer = state.openPeer;
+  if (!peer) return;
+  const current = state.contacts[peer] || '';
+  const r = await showConfirm({
+    title: 'Rename chat',
+    body: 'Set the display name shown for this peer. Saved locally on this browser only.',
+    okLabel: 'Save',
+    needsInput: {
+      label: 'Display name',
+      value: current,
+      placeholder: 'Their name',
+    },
+  });
+  if (!r) return;
+  const name = (r.value || '').trim();
+  if (name) state.contacts[peer] = name;
+  else      delete state.contacts[peer];   // empty input = clear name
+  persistContacts();
+  renderContacts();
+  renderConversations();
+  renderThread();
+});
 $('btn-clear-conv').addEventListener('click', async () => {
   const peer = state.openPeer;
   if (!peer) return;

@@ -14,6 +14,7 @@
 #include <ArduinoJson.h>
 #include <Log.h>
 #include <Transport.h>
+#include <deque>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
@@ -1053,6 +1054,26 @@ namespace Web {
         _id_code_event_pending = false;
         server.sendContent("data: {\"type\":\"identity_code_available\"}\n\n");
       }
+      // 5. Resource transfer progress for messages owned by this identity.
+      // Filter the ring by identity_id + caller's progress_since marker
+      // so each identity's stream only sees its own transfers.
+      uint32_t progress_since = (uint32_t)server.arg("progress_since").toInt();
+      for (const auto& ev : progress_ring()) {
+        if (ev.seq <= progress_since) continue;
+        if (ev.identity_id != caller) continue;
+        JsonDocument item;
+        item["type"]        = ev.finished ? "message_complete" : "message_progress";
+        item["seq"]         = ev.seq;
+        item["peer"]        = ev.peer_hash.toHex();
+        item["link_hash"]   = ev.link_hash.toHex();
+        item["incoming"]    = ev.incoming;
+        item["bytes_done"]  = ev.bytes_done;
+        item["bytes_total"] = ev.bytes_total;
+        item["finished"]    = ev.finished;
+        String line;
+        serializeJson(item, line);
+        server.sendContent(String("data: ") + line + "\n\n");
+      }
       // Connection closes when the handler returns; browser reconnects
       // after `retry:` ms with the advanced since markers.
     }
@@ -1325,10 +1346,58 @@ namespace Web {
       send_json(200, doc);
     }
 
+  public:
+    // ---- Resource transfer progress ring -----------------------------
+    // A tiny ring of recent `message_progress` events. Each LXMF Resource
+    // send/receive fires a progress callback per part; we publish those
+    // to the per-identity SSE stream so the SPA can show a "5 KB / 12 KB"
+    // bar on a message bubble that's still mid-flight.
+    //
+    // Bounded ring (~16 entries) — the SPA polls every 500 ms via SSE
+    // reconnect, and we issue ~2-3 progress events per part, so even a
+    // 1 MiB resource at SDU≈300 B = ~3000 parts spread over many seconds
+    // can't overrun the ring.
+    struct ProgressEvent {
+      uint32_t           seq;
+      LXMF::IdentityId   identity_id;
+      RNS::Bytes         peer_hash;
+      RNS::Bytes         link_hash;
+      bool               incoming;
+      uint32_t           bytes_done;
+      uint32_t           bytes_total;
+      bool               finished;   // true on completion → SPA swaps for final bubble
+    };
+    static std::deque<ProgressEvent>& progress_ring() {
+      static std::deque<ProgressEvent> r;
+      return r;
+    }
+    static uint32_t next_progress_seq() {
+      static uint32_t s = 0;
+      return ++s;
+    }
+
   private:
     static inline bool     _started = false;
     static inline uint32_t _last_sweep = 0;
     static inline bool     _id_code_event_pending = false;
   };
+
+  // Free function the LXMF gateway calls to publish a Resource-transfer
+  // progress event. Implemented here as inline so it's visible everywhere
+  // WebUI.h is included; declared as a free function (not a static member)
+  // so LXMFGateway.h — which is *included by* WebUI.h — can forward-
+  // declare and call it without re-including WebUI.h (which would loop).
+  inline void publish_lxmf_progress(const LXMF::IdentityId& identity_id,
+                                    const RNS::Bytes& peer_hash,
+                                    const RNS::Bytes& link_hash,
+                                    bool incoming,
+                                    uint32_t bytes_done,
+                                    uint32_t bytes_total,
+                                    bool finished) {
+    auto& r = WebUI::progress_ring();
+    r.push_back({WebUI::next_progress_seq(), identity_id, peer_hash, link_hash,
+                 incoming, bytes_done, bytes_total, finished});
+    while (r.size() > 16) r.pop_front();
+  }
 
 }

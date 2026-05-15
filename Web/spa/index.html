@@ -962,7 +962,8 @@ const state = {
   openPeer: null,
   announces: new Map(),             // dest_hex → record
   paths: new Map(),
-  markers: { inbox_since: 0, announces_since: 0, paths_since: 0 },
+  markers: { inbox_since: 0, announces_since: 0, paths_since: 0, progress_since: 0 },
+  transfers: new Map(),   // link_hash → { peer, incoming, bytes_done, bytes_total }
   contacts: JSON.parse(localStorage.getItem(LS.CONTACTS) || '{}'),
   prefs: loadPrefs(),
   pendingIdCode: false,
@@ -1243,7 +1244,8 @@ class UReticulumHTTPTransport extends Transport {
         + '?token=' + encodeURIComponent(this.tokenGetter() || '')
         + '&inbox_since=' + (markers.inbox_since || 0)
         + '&announces_since=' + (markers.announces_since || 0)
-        + '&paths_since=' + (markers.paths_since || 0);
+        + '&paths_since=' + (markers.paths_since || 0)
+        + '&progress_since=' + (markers.progress_since || 0);
       es = new EventSource(url);
       es.onopen = onOpen;
       es.onmessage = (ev) => {
@@ -1428,13 +1430,38 @@ function _renderConversationsBody(wrap) {
     return 'seen ' + d + 'd ago';
   }
 
+  // Pick the active (non-finished) transfer involving this peer, if any.
+  // Outgoing transfers take priority — they're the visible-action ones.
+  function activeTransferFor(peer) {
+    if (!state.transfers || state.transfers.size === 0) return null;
+    let outgoing = null, incoming = null;
+    for (const t of state.transfers.values()) {
+      if (t.peer !== peer) continue;
+      if (t.incoming) incoming = t; else outgoing = t;
+    }
+    return outgoing || incoming;
+  }
+  function formatBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(2) + ' MB';
+  }
+  function transferSubText(t) {
+    const arrow = t.incoming ? '↓ ' : '↑ ';
+    const pct = t.bytes_total ? Math.floor(100 * t.bytes_done / t.bytes_total) : 0;
+    return arrow + formatBytes(t.bytes_done) + ' / ' + formatBytes(t.bytes_total) + ' (' + pct + '%)';
+  }
+
   if (convs.length > 0) {
     wrap.appendChild(el('div', { class: 'list-section' }, 'Chats'));
     for (const c of convs) {
+      const xfer = activeTransferFor(c.peer);
+      const sub  = xfer ? transferSubText(xfer)
+                        : ((c.last_in === false ? '↑ ' : '') + (c.last_body || ''));
       wrap.appendChild(makeRow(
         c.peer,
         nameFor(c.peer),
-        (c.last_in === false ? '↑ ' : '') + (c.last_body || ''),
+        sub,
         relTime(c.last_ts),
         c.peer === state.openPeer));
     }
@@ -1512,6 +1539,30 @@ function renderThread() {
       if (metaParts.length) {
         bubble.appendChild(el('div', { class: 'bmeta', text: metaParts.join(' · ') }));
       }
+      msgsEl.appendChild(bubble);
+    }
+    // In-flight transfer placeholder. Resource sends take several seconds
+    // at SF7/BW250k; without this, the UI sits silent and the user has
+    // no idea anything is happening.
+    let activeXfer = null;
+    if (state.transfers && state.transfers.size > 0) {
+      for (const t of state.transfers.values()) {
+        if (t.peer === peer) { activeXfer = t; break; }
+      }
+    }
+    if (activeXfer) {
+      const pct = activeXfer.bytes_total
+                    ? Math.floor(100 * activeXfer.bytes_done / activeXfer.bytes_total)
+                    : 0;
+      const bubble = el('div', { class: 'bubble ' + (activeXfer.incoming ? 'in' : 'out') });
+      bubble.appendChild(el('div', { style: 'opacity:0.7', text:
+        (activeXfer.incoming ? '↓ Receiving' : '↑ Sending') + ' ' + pct + '%' }));
+      // Inline progress bar — pure CSS, no extra deps.
+      bubble.appendChild(el('div', {
+        style: 'margin-top:4px; height:4px; background:rgba(255,255,255,0.2); border-radius:2px; overflow:hidden',
+      }, el('div', {
+        style: 'height:100%; width:' + pct + '%; background:var(--accent-3,#7ad)',
+      })));
       msgsEl.appendChild(bubble);
     }
   });
@@ -1847,6 +1898,27 @@ function dispatchEvent(ev) {
       // Already waiting to consume — open the modal.
       openIdCodeModal();
     }
+  } else if (ev.type === 'message_progress' || ev.type === 'message_complete') {
+    state.markers.progress_since = Math.max(state.markers.progress_since || 0, ev.seq);
+    const peer = ev.peer || ev.link_hash;  // peer is empty on final "complete" events
+    if (!peer) return;
+    // Track current in-flight transfer per (peer, direction). Indexed
+    // by link_hash so we can have one in-flight transfer per Link
+    // without colliding with previous transfers to the same peer.
+    if (!state.transfers) state.transfers = new Map();
+    const key = ev.link_hash || peer;
+    if (ev.finished) {
+      state.transfers.delete(key);
+    } else {
+      state.transfers.set(key, {
+        peer: ev.peer,
+        incoming: !!ev.incoming,
+        bytes_done: ev.bytes_done || 0,
+        bytes_total: ev.bytes_total || 0,
+      });
+    }
+    renderConversations();
+    if (state.openPeer === ev.peer) renderThread();
   }
 }
 

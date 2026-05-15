@@ -17,6 +17,21 @@
 
 extern microStore::FileSystem filesystem;
 
+// Forward declaration of the WebUI's progress-publish hook. Defined inline
+// in Web/WebUI.h (which #includes us, creating a header cycle the other
+// direction — so we can't pull it in here). Linker resolves the inline
+// definition once any TU that included WebUI.h has been seen.
+namespace RNS { class Bytes; }
+namespace Web {
+  void publish_lxmf_progress(const LXMF::IdentityId& identity_id,
+                             const RNS::Bytes& peer_hash,
+                             const RNS::Bytes& link_hash,
+                             bool incoming,
+                             uint32_t bytes_done,
+                             uint32_t bytes_total,
+                             bool finished);
+}
+
 namespace LXMF {
 
   #ifndef LXMF_GATEWAY_MAX_IDENTITIES
@@ -322,6 +337,26 @@ namespace LXMF {
           [p](const RNS::Bytes& link_hash, OutboxStatus status) {
             if (!p->active || !p->outbox) return;
             p->outbox->update_status(link_hash, status);
+            // Terminal transitions (Sent / Delivered / Failed) should
+            // also flush a final progress event so the SPA can flip the
+            // in-flight bubble into its static form.
+            if (status == OutboxStatus::Delivered ||
+                status == OutboxStatus::Sent      ||
+                status == OutboxStatus::Failed) {
+              Web::publish_lxmf_progress(
+                  p->id, /*peer=*/RNS::Bytes{}, link_hash, /*incoming=*/false,
+                  /*bytes_done=*/0, /*bytes_total=*/0, /*finished=*/true);
+            }
+          });
+      // Resource progress: fire SSE events so the SPA can render an
+      // in-flight progress bar on the mid-transfer message bubble.
+      a.lxmf.set_progress_callback(
+          [p](const RNS::Bytes& peer_hash, const RNS::Bytes& link_hash,
+              bool incoming, uint32_t bytes_done, uint32_t bytes_total) {
+            if (!p->active) return;
+            Web::publish_lxmf_progress(p->id, peer_hash, link_hash,
+                                       incoming, bytes_done, bytes_total,
+                                       /*finished=*/false);
           });
       a.last_announce_ms = 0;  // announce on first loop tick
     }

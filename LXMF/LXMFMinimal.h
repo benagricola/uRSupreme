@@ -198,6 +198,17 @@ namespace LXMF {
     using OutboxStatusCallback =
         std::function<void(const RNS::Bytes& /*link_hash*/, OutboxStatus)>;
 
+    // Per-Resource progress: fires repeatedly as parts are sent (outbound)
+    // or received (inbound) during a DIRECT-mode transfer. Lets the SPA
+    // show a progress bar on a message that's mid-flight. Resolution is
+    // per-part — sub-second granularity at SF7/BW250k, slower at high SF.
+    using ProgressCallback = std::function<void(
+        const RNS::Bytes& /*peer_hash*/,
+        const RNS::Bytes& /*link_hash*/,
+        bool              /*incoming*/,
+        uint32_t          /*bytes_done*/,
+        uint32_t          /*bytes_total*/)>;
+
     // Async state for an outbound DIRECT-mode send. We open a Link to the
     // peer in send_message and queue the wire bytes here keyed by the
     // link's hash; when the Link establishes, the static callback pops
@@ -218,6 +229,7 @@ namespace LXMF {
       uint64_t     started_ms = 0;
       RNS::Bytes   dest_hash;
       RNS::Bytes   resource_hash;     // set after Resource is built (if >319 B)
+      uint32_t     total_bytes = 0;   // wire payload size, anchor for progress %
       LXMFMinimal* owner = nullptr;
       // Status drives the outbox transition (queued -> sent / delivered /
       // failed) reported via _on_outbox_status. We deliberately do NOT
@@ -276,6 +288,7 @@ namespace LXMF {
 
     void set_delivery_callback(DeliveryCallback cb) { _on_delivery = std::move(cb); }
     void set_outbox_status_callback(OutboxStatusCallback cb) { _on_outbox_status = std::move(cb); }
+    void set_progress_callback(ProgressCallback cb) { _on_progress = std::move(cb); }
 
     // LXMF address of this identity (16-byte destination hash, hex-encoded).
     std::string address_hex() const {
@@ -551,11 +564,36 @@ namespace LXMF {
         RNS::Resource res(ps.wire, link,
                           /*advertise=*/true, /*auto_compress=*/false,
                           _static_outbound_resource_concluded,
-                          /*progress=*/nullptr,
+                          _static_outbound_resource_progress,
                           /*timeout=*/0.0);
         ps.resource_hash = res.hash();
+        ps.total_bytes   = (uint32_t)ps.wire.size();
         DEBUGF("LXMF: outbound resource advertised %s",
                ps.resource_hash.toHex().c_str());
+      }
+    }
+
+    // Progress trampoline for outbound Resources — fires as parts are
+    // sent. Looks up the matching pending entry by resource hash, then
+    // dispatches to the owning LXMFMinimal's _on_progress callback if
+    // any. Cheap; called once per outbound part.
+    static void _static_outbound_resource_progress(const RNS::Resource& res) {
+      auto& m = pending_link_sends();
+      for (const auto& kv : m) {
+        const PendingLinkSend& ps = kv.second;
+        if (ps.resource_hash != res.hash()) continue;
+        if (!ps.owner || !ps.owner->_on_progress) return;
+        // Sender progress: parts_done = _sent_parts on the Resource.
+        // The Resource object's _object is private, so we use the public
+        // get_progress() helper which returns 0.0..1.0, scaled to bytes.
+        const float frac = res.get_progress();
+        const uint32_t total = ps.total_bytes;
+        const uint32_t done  = (uint32_t)(frac * (float)total);
+        try {
+          ps.owner->_on_progress(ps.dest_hash, kv.first, /*incoming=*/false,
+                                  done, total);
+        } catch (...) {}
+        return;
       }
     }
 
@@ -598,10 +636,20 @@ namespace LXMF {
           if (ps.owner && ps.owner->_on_outbox_status) {
             try { ps.owner->_on_outbox_status(res.link().hash(), ps.status); } catch (...) {}
           }
-          // No manual link.teardown() — calling it from inside on_proof's
-          // callback chain leaves dangling internal references that trip
-          // the heap-poisoning canary when the pending entry is erased.
-          // The link will close on its own after the keepalive timeout.
+          // Final progress event — drives the SPA to swap from "X / Y
+          // in flight" to the static "delivered" bubble. Use total/total
+          // for delivered, last-known-done for failed so the UI shows
+          // where the failure happened.
+          if (ps.owner && ps.owner->_on_progress) {
+            const uint32_t total = ps.total_bytes;
+            const uint32_t done  = (ps.status == OutboxStatus::Delivered)
+                                     ? total
+                                     : (uint32_t)(res.get_progress() * (float)total);
+            try {
+              ps.owner->_on_progress(ps.dest_hash, res.link().hash(),
+                                     /*incoming=*/false, done, total);
+            } catch (...) {}
+          }
           it = m.erase(it);
         }
         else {
@@ -847,6 +895,7 @@ namespace LXMF {
     std::string       _display_name;
     DeliveryCallback  _on_delivery;
     OutboxStatusCallback _on_outbox_status;
+    ProgressCallback  _on_progress;
   };
 
 } // namespace LXMF

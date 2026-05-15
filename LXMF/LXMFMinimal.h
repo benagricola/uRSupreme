@@ -199,7 +199,13 @@ namespace LXMF {
     // can advance.
     struct PendingLinkSend {
       RNS::Bytes   wire;
-      RNS::Link    link;
+      // NONE-construct the Link member so default-insertion into the
+      // pending_link_sends map (via map[key] = value, which first
+      // default-constructs then move-assigns) doesn't crash. The default
+      // RNS::Link() constructor tries to derive Ed25519 keys from a NONE
+      // destination and trips on a null _sig_prv. Type::NONE is the
+      // explicit empty-object path that doesn't touch the crypto.
+      RNS::Link    link{RNS::Type::NONE};
       uint64_t     started_ms = 0;
       RNS::Bytes   dest_hash;
       RNS::Bytes   resource_hash;     // set after Resource is built (if >319 B)

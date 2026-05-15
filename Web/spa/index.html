@@ -1900,25 +1900,27 @@ function dispatchEvent(ev) {
     }
   } else if (ev.type === 'message_progress' || ev.type === 'message_complete') {
     state.markers.progress_since = Math.max(state.markers.progress_since || 0, ev.seq);
-    const peer = ev.peer || ev.link_hash;  // peer is empty on final "complete" events
-    if (!peer) return;
-    // Track current in-flight transfer per (peer, direction). Indexed
-    // by link_hash so we can have one in-flight transfer per Link
-    // without colliding with previous transfers to the same peer.
     if (!state.transfers) state.transfers = new Map();
-    const key = ev.link_hash || peer;
+    const key = ev.link_hash;
+    if (!key) return;
+    // The terminal message_complete event carries peer="" — the device
+    // doesn't have the peer hash at outbox-status callback time, only the
+    // link hash. So look up the peer we already cached from the earlier
+    // progress events keyed by link_hash, BEFORE deleting the entry.
+    const existing = state.transfers.get(key);
+    const peer = ev.peer || (existing && existing.peer) || null;
     if (ev.finished) {
       state.transfers.delete(key);
-    } else {
+    } else if (peer) {
       state.transfers.set(key, {
-        peer: ev.peer,
+        peer,
         incoming: !!ev.incoming,
         bytes_done: ev.bytes_done || 0,
         bytes_total: ev.bytes_total || 0,
       });
     }
     renderConversations();
-    if (state.openPeer === ev.peer) renderThread();
+    if (peer && state.openPeer === peer) renderThread();
   }
 }
 

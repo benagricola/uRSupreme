@@ -299,17 +299,39 @@ namespace LXMF {
     const RNS::Bytes& address() const { return _destination.hash(); }
 
     // Manually emit the LXMF announce packet for this destination.
+    //
+    // Wire format is the v0.5.0+ announce app_data layout:
+    //   [ display_name : bin/nil,
+    //     stamp_cost   : int/nil,
+    //     supported_functionality : list<u8> ]
+    //
+    // The third element drives peers' compression decision. Per the
+    // canonical implementation (LXMF/LXMF.py compression_support_from_app_data):
+    //  - missing element 2 → peer defaults to "compression supported"
+    //  - element 2 is a list → peer enables compression iff SF_COMPRESSION
+    //    (0x00) is in the list
+    //
+    // microReticulum's Resource port doesn't support bz2 decompression
+    // (`c=1` advertisements are refused) so we send an empty list at
+    // index 2 to explicitly tell peers NOT to compress outgoing
+    // messages to us. Without this, stock LXMF peers would auto-bz2
+    // long messages and we'd reject them with RESOURCE_RCL.
     void announce() {
       if (!_initialized) return;
       uint8_t buf[128];
       size_t pos = 0;
-      buf[pos++] = 0x92;  // fixarray(2)
+      buf[pos++] = 0x93;  // fixarray(3)
+      // [0] display_name
       size_t n = RawMsgPack::pack_bin(&buf[pos], sizeof(buf) - pos,
                                       (const uint8_t*)_display_name.c_str(),
                                       _display_name.length());
       if (n == 0) { ERROR("LXMF: announce pack failed"); return; }
       pos += n;
-      buf[pos++] = 0xC0;  // stamp_cost: nil
+      // [1] stamp_cost: nil (we don't run anti-spam stamps)
+      buf[pos++] = 0xC0;
+      // [2] supported_functionality: empty fixarray. No SF_COMPRESSION
+      // (0x00) included → peers know not to bz2 messages to us.
+      buf[pos++] = 0x90;
       RNS::Bytes app_data(buf, pos);
       _destination.announce(app_data);
       NOTICEF("LXMF: announced %s", _destination.hash().toHex().c_str());

@@ -373,17 +373,31 @@ int _write(int file, char *ptr, int len) {
 // can poll it cheaply.
 static void display_refresh_task(void* /*arg*/) {
   NOTICE("Display: refresh task started on core 0");
+  uint32_t last_heartbeat = 0;
+  uint32_t tick_count     = 0;
   while (true) {
     if (disp_ready && !display_updating) {
-      // Most of update_display() touches only display-local globals,
-      // but update_stat_area() / update_disp_area() reach into RNS-side
-      // state (RSSI, packet counts) that the main loop is mutating.
-      // Take the same rns_lock the WebServer task uses so we never read
-      // a half-updated path table or counter.
-      if (Web::WebUI::acquire_rns_lock(20)) {
-        update_display();
-        Web::WebUI::release_rns_lock();
-      }
+      // Deliberately NOT acquiring the rns_lock here. The whole point
+      // of the display being on its own task is that the user can see
+      // what's going on EVEN when the radio core / WebUI handlers are
+      // stuck holding the lock. Single-word reads of RSSI, packet
+      // counts, queue depth etc are atomic on ESP32-S3; the worst case
+      // is the very occasional torn read of a multi-word field, which
+      // is a cosmetic glitch, not a crash. update_stat_area /
+      // update_disp_area read shared state best-effort; if it ever
+      // matters that those reads are coherent, push a published
+      // snapshot from the main loop instead.
+      update_display();
+    }
+    tick_count++;
+    // Heartbeat once a second so we can tell from serial output whether
+    // the task is alive even when the screen visibly froze (which would
+    // then mean it's the screen driver, not the task).
+    const uint32_t now = millis();
+    if (now - last_heartbeat > 1000) {
+      last_heartbeat = now;
+      DEBUGF("Display: heartbeat ticks=%u disp_ready=%d updating=%d",
+             (unsigned)tick_count, (int)disp_ready, (int)display_updating);
     }
     // 33 ms ≈ 30 Hz cap. update_display() self-paces beyond this via
     // disp_update_interval; the delay is just to keep the task from

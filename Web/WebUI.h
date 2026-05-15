@@ -388,6 +388,7 @@ namespace Web {
       server.on("/api/radio",         HTTP_GET,  handle_radio_get);
       server.on("/api/radio",         HTTP_POST, handle_radio_set);
       server.on("/api/radio/reset",   HTTP_POST, handle_radio_reset);
+      server.on("/api/radio/airtime", HTTP_POST, handle_radio_airtime);
     }
 
     static void handle_spa() {
@@ -1156,6 +1157,64 @@ namespace Web {
       send_json(200, doc);
       delay(500);
       ESP.restart();
+    }
+
+    // POST /api/radio/airtime — set short / long airtime duty-cycle caps
+    // at runtime. Body: { "airtime_limit_pct": <int>,
+    //                     "longterm_airtime_limit_pct": <int>,
+    //                     "identity_code": "abc123" (only if no bearer) }
+    // Either or both limit fields can be omitted to leave that one alone.
+    // Setting a field to 0 disables that limit (which is illegal in
+    // regulated bands — caller's responsibility). Values are NOT persisted
+    // across reboots yet; the firmware default in Config.h applies on next
+    // boot. (See task #57 for EEPROM persistence.)
+    static void handle_radio_airtime() {
+      JsonDocument body;
+      if (!read_body_json(body)) return;
+      if (!require_physical_auth(body)) return;
+
+      const bool has_st = body["airtime_limit_pct"].is<int>();
+      const bool has_lt = body["longterm_airtime_limit_pct"].is<int>();
+      if (!has_st && !has_lt) {
+        send_error_with_message(400, "no_fields",
+          "Body must include airtime_limit_pct and/or longterm_airtime_limit_pct (integer 0-99).");
+        return;
+      }
+      if (has_st) {
+        const int v = body["airtime_limit_pct"];
+        if (v < 0 || v > 99) {
+          char msg[120];
+          snprintf(msg, sizeof(msg),
+                   "airtime_limit_pct must be 0-99 (got %d). 0 disables the cap.", v);
+          send_error_with_message(400, "invalid_limit", msg); return;
+        }
+        st_airtime_limit = (v == 0) ? 0.0f : ((float)v / 100.0f);
+      }
+      if (has_lt) {
+        const int v = body["longterm_airtime_limit_pct"];
+        if (v < 0 || v > 99) {
+          char msg[120];
+          snprintf(msg, sizeof(msg),
+                   "longterm_airtime_limit_pct must be 0-99 (got %d). 0 disables the cap.", v);
+          send_error_with_message(400, "invalid_limit", msg); return;
+        }
+        lt_airtime_limit = (v == 0) ? 0.0f : ((float)v / 100.0f);
+      }
+      // Recompute the lock state right away so the response reflects the
+      // new configuration. Without this the API would lie about what's
+      // active until the next 1-second airtime update tick.
+      airtime_lock = false;
+      if (st_airtime_limit != 0.0f && airtime          >= st_airtime_limit) airtime_lock = true;
+      if (lt_airtime_limit != 0.0f && longterm_airtime >= lt_airtime_limit) airtime_lock = true;
+
+      JsonDocument doc;
+      doc["airtime_limit_pct"]          = (int)(st_airtime_limit * 100);
+      doc["longterm_airtime_limit_pct"] = (int)(lt_airtime_limit * 100);
+      doc["airtime_locked"]             = airtime_lock;
+      doc["persisted"]                  = false;   // RAM-only for now
+      send_json(200, doc);
+      NOTICEF("Airtime caps set via API: st=%d%% lt=%d%% lock=%d",
+              (int)(st_airtime_limit*100), (int)(lt_airtime_limit*100), (int)airtime_lock);
     }
 
     static void handle_paths_list() {

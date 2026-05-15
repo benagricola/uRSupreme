@@ -636,20 +636,12 @@ namespace LXMF {
           if (ps.owner && ps.owner->_on_outbox_status) {
             try { ps.owner->_on_outbox_status(res.link().hash(), ps.status); } catch (...) {}
           }
-          // Final progress event — drives the SPA to swap from "X / Y
-          // in flight" to the static "delivered" bubble. Use total/total
-          // for delivered, last-known-done for failed so the UI shows
-          // where the failure happened.
-          if (ps.owner && ps.owner->_on_progress) {
-            const uint32_t total = ps.total_bytes;
-            const uint32_t done  = (ps.status == OutboxStatus::Delivered)
-                                     ? total
-                                     : (uint32_t)(res.get_progress() * (float)total);
-            try {
-              ps.owner->_on_progress(ps.dest_hash, res.link().hash(),
-                                     /*incoming=*/false, done, total);
-            } catch (...) {}
-          }
+          // Deliberately *not* firing a final _on_progress here — the
+          // gateway's outbox-status callback already publishes
+          // message_complete (finished=true) which the SPA treats as
+          // the canonical end-of-transfer signal. An extra progress
+          // event after that would re-create the in-flight entry the
+          // SPA just deleted, leaving the bubble stuck at 100%.
           it = m.erase(it);
         }
         else {

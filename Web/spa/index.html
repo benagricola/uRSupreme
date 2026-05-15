@@ -858,8 +858,16 @@ summary:hover { color: var(--text); }
               <label>TX power (dBm)</label>
               <input id="rd-tx" type="number" min="0" max="22">
             </div>
+            <div>
+              <label title="Instantaneous duty-cycle ceiling; 0 = no limit">Airtime cap (% short-term)</label>
+              <input id="rd-airtime" type="number" min="0" max="99">
+            </div>
+            <div>
+              <label title="Long-term (averaged) duty-cycle ceiling — what regulators care about">Airtime cap (% long-term)</label>
+              <input id="rd-airtime-lt" type="number" min="0" max="99">
+            </div>
           </div>
-          <p class="muted" style="margin-bottom:14px">SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom — useful for long links.</p>
+          <p class="muted" style="margin-bottom:14px">SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom — useful for long links.<br><strong>Airtime caps are regulatory limits</strong> — picking a region preset sets a sane default; 0 disables (only use where allowed).</p>
         </div>
         <button id="btn-radio-save" style="width:100%">Save &amp; reboot</button>
       </div>
@@ -1258,6 +1266,7 @@ class UReticulumHTTPTransport extends Transport {
   }
   async getRadio() { return this._req('/api/radio'); }
   async setRadio(cfg) { return this._req('/api/radio', { method: 'POST', body: cfg }); }
+  async setAirtime(cfg) { return this._req('/api/radio/airtime', { method: 'POST', body: cfg }); }
   async setTransportEnabled(enabled) {
     return this._req('/api/system/transport', { method: 'POST', body: { enabled: !!enabled } });
   }
@@ -2278,6 +2287,23 @@ $('btn-clear-conv').addEventListener('click', async () => {
 $('btn-announce-top').addEventListener('click', forceAnnounce);
 $('btn-radio-save').addEventListener('click', async () => {
   try {
+    // Set airtime caps FIRST. /api/radio/airtime doesn't reboot, so we
+    // get both values in before /api/radio triggers the reset. Airtime
+    // is RAM-only on the firmware side (not EEPROM-persisted yet) so it
+    // will revert on every boot — see #57 follow-up.
+    const atShort = Number($('rd-airtime').value);
+    const atLong  = Number($('rd-airtime-lt').value);
+    if (!Number.isNaN(atShort) || !Number.isNaN(atLong)) {
+      try {
+        await state.transport.setAirtime({
+          airtime_limit_pct:          atShort,
+          longterm_airtime_limit_pct: atLong,
+        });
+      } catch (e) {
+        // Non-fatal — radio params still save.
+        console.warn('airtime set failed:', e);
+      }
+    }
     await state.transport.setRadio({
       frequency: Number($('rd-freq').value),
       bandwidth: Number($('rd-bw').value),
@@ -2332,29 +2358,43 @@ $('search').addEventListener('input', (e) => {
 // TX power is the recommended ceiling; users can lower it freely. The
 // hardware may not actually achieve the listed TX power (depends on
 // SX1262 vs LR1121, antenna matching, etc.).
+// airtime / lt_airtime are the regulatory short-term / long-term duty-cycle
+// caps (0-99 %). 0 disables. ETSI g3 (869.4-869.65 MHz) allows 10 %, most
+// other EU sub-bands are 1 % or 0.1 %, US/AU 915 are unlimited.
 const RADIO_PRESETS = [
   { id: 'eu868',  label: 'EU 869.525 MHz',    freq: 869525000, bw: 125000, sf: 7,  cr: 5, tx: 17,
-    note: 'EU 863–870 MHz ISM (SRD860 sub-band). Common Reticulum freq for EU/UK.' },
+    airtime: 10, lt_airtime: 10,
+    note: 'EU 869.4-869.65 MHz (g3 sub-band). 10 % duty cycle allowed.' },
   { id: 'eu868-long', label: 'EU 869.525 MHz · long-range', freq: 869525000, bw: 125000, sf: 11, cr: 5, tx: 14,
-    note: 'Higher SF for range; lower TX power to stay within 0.1% duty-cycle on SRD860.' },
+    airtime: 10, lt_airtime: 10,
+    note: 'Same g3 sub-band, higher SF for range. 10 % duty cycle.' },
   { id: 'us915',  label: 'US 915 MHz',        freq: 915000000, bw: 125000, sf: 7,  cr: 5, tx: 20,
-    note: 'US 902–928 MHz ISM band. No duty-cycle limits.' },
+    airtime: 0, lt_airtime: 0,
+    note: 'US 902-928 MHz ISM. No duty-cycle limits.' },
   { id: 'au915',  label: 'AU 915 MHz',        freq: 915000000, bw: 125000, sf: 7,  cr: 5, tx: 20,
-    note: 'AU 915–928 MHz ISM.' },
+    airtime: 0, lt_airtime: 0,
+    note: 'AU 915-928 MHz ISM. No duty-cycle limits.' },
   { id: 'nz864',  label: 'NZ 864 MHz',        freq: 864000000, bw: 125000, sf: 7,  cr: 5, tx: 14,
-    note: 'NZ 864–868 MHz ISM.' },
+    airtime: 0, lt_airtime: 0,
+    note: 'NZ 864-868 MHz ISM. No general duty-cycle limit.' },
   { id: 'in866',  label: 'IN 866 MHz',        freq: 866000000, bw: 125000, sf: 7,  cr: 5, tx: 14,
-    note: 'IN 865–867 MHz ISM.' },
+    airtime: 1, lt_airtime: 1,
+    note: 'IN 865-867 MHz. 1 % duty cycle (conservative).' },
   { id: 'as923',  label: 'AS 923 MHz',        freq: 923200000, bw: 125000, sf: 7,  cr: 5, tx: 14,
-    note: 'AS923 region (varies by country — check local rules).' },
+    airtime: 1, lt_airtime: 1,
+    note: 'AS923 (varies by country — check local rules).' },
   { id: 'jp920',  label: 'JP 920 MHz',        freq: 920900000, bw: 125000, sf: 7,  cr: 5, tx: 13,
-    note: 'JP 920.6–928 MHz (ARIB STD-T108).' },
+    airtime: 10, lt_airtime: 10,
+    note: 'JP 920.6-928 MHz (ARIB STD-T108). 10 % duty cycle.' },
   { id: 'kr920',  label: 'KR 920 MHz',        freq: 920900000, bw: 125000, sf: 7,  cr: 5, tx: 14,
-    note: 'KR 920–925 MHz.' },
+    airtime: 1, lt_airtime: 1,
+    note: 'KR 920-925 MHz. 1 % duty cycle (conservative).' },
   { id: 'ru868',  label: 'RU 868.9 MHz',      freq: 868900000, bw: 125000, sf: 7,  cr: 5, tx: 14,
-    note: 'RU 868.7–869.2 MHz.' },
+    airtime: 1, lt_airtime: 1,
+    note: 'RU 868.7-869.2 MHz. 1 % duty cycle.' },
   { id: 'cn470',  label: 'CN 470 MHz',        freq: 470000000, bw: 125000, sf: 7,  cr: 5, tx: 14,
-    note: 'CN 470–510 MHz. Hardware must support 470 band.' },
+    airtime: 1, lt_airtime: 1,
+    note: 'CN 470-510 MHz. 1 % duty cycle. Hardware must support 470 band.' },
 ];
 function populateRadioPresets() {
   const sel = $('rd-preset');
@@ -2376,8 +2416,11 @@ function findMatchingPreset() {
   const sf   = Number($('rd-sf').value);
   const cr   = Number($('rd-cr').value);
   const tx   = Number($('rd-tx').value);
+  const at   = Number($('rd-airtime').value);
+  const ltAt = Number($('rd-airtime-lt').value);
   return RADIO_PRESETS.find(p =>
     p.freq === freq && p.bw === bw && p.sf === sf && p.cr === cr && p.tx === tx
+    && p.airtime === at && p.lt_airtime === ltAt
   );
 }
 function syncPresetSelect() {
@@ -2391,6 +2434,8 @@ function applyPreset(p) {
   $('rd-sf').value   = p.sf;
   $('rd-cr').value   = p.cr;
   $('rd-tx').value   = p.tx;
+  $('rd-airtime').value    = p.airtime;
+  $('rd-airtime-lt').value = p.lt_airtime;
   $('rd-preset-note').textContent = p.note;
 }
 function setRawFieldsVisible(visible) {
@@ -2410,7 +2455,7 @@ $('rd-preset').addEventListener('change', (e) => {
   const p = RADIO_PRESETS.find(x => x.id === id);
   if (p) applyPreset(p);
 });
-for (const fld of ['rd-freq', 'rd-bw', 'rd-sf', 'rd-cr', 'rd-tx']) {
+for (const fld of ['rd-freq', 'rd-bw', 'rd-sf', 'rd-cr', 'rd-tx', 'rd-airtime', 'rd-airtime-lt']) {
   $(fld).addEventListener('input', syncPresetSelect);
 }
 
@@ -2423,6 +2468,7 @@ async function populateRadioTab() {
   // Reset and fill from device.
   $('rd-freq').value = ''; $('rd-bw').value = '';
   $('rd-sf').value = '';   $('rd-cr').value = '';   $('rd-tx').value = '';
+  $('rd-airtime').value = ''; $('rd-airtime-lt').value = '';
   $('rd-preset').value = '__empty';
   $('rd-preset-note').textContent = '';
   setRawFieldsVisible(false);
@@ -2434,6 +2480,8 @@ async function populateRadioTab() {
       $('rd-sf').value   = r.spreading_factor || '';
       $('rd-cr').value   = r.coding_rate || '';
       $('rd-tx').value   = r.tx_power || '';
+      $('rd-airtime').value    = (r.airtime_limit_pct ?? 0);
+      $('rd-airtime-lt').value = (r.longterm_airtime_limit_pct ?? 0);
       syncPresetSelect();
       setRawFieldsVisible(true);
     }

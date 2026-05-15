@@ -1164,6 +1164,12 @@ namespace Web {
       doc["spreading_factor"] = lora_sf;
       doc["coding_rate"]      = lora_cr;
       doc["tx_power"]         = lora_txp;
+      // Current airtime caps. Settable via POST /api/radio/airtime; not
+      // EEPROM-persisted yet, so they default to the firmware values
+      // in Config.h after every boot. Surfaced here so the SPA can show
+      // them in the same form the user uses to pick a region preset.
+      doc["airtime_limit_pct"]          = (int)(st_airtime_limit * 100);
+      doc["longterm_airtime_limit_pct"] = (int)(lt_airtime_limit * 100);
       doc["have_conf"]    = eeprom_have_conf();
       doc["radio_online"] = radio_online;
       doc["op_mode"]      = (op_mode == MODE_TNC) ? "tnc" : "host";

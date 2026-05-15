@@ -4,6 +4,7 @@
 #include <Log.h>
 #include <microStore/FileSystem.h>
 
+#include <algorithm>
 #include <deque>
 #include <string>
 #include <stdint.h>
@@ -14,8 +15,8 @@ extern microStore::FileSystem filesystem;
 
 namespace LXMF {
 
-  // Bounded per-account ring with JSONL spool persistence.
-  // One instance per LXMFAccount. Used for both inbox (incoming=true) and
+  // Bounded per-identity ring with JSONL spool persistence.
+  // One instance per LXMFIdentity. Used for both inbox (incoming=true) and
   // outbox (incoming=false) — the on-disk schema is identical, only the
   // file name differs.
   //
@@ -32,10 +33,10 @@ namespace LXMF {
     static constexpr size_t DEFAULT_RAM_CAPACITY = 32;
     static constexpr size_t MAX_LINE_BYTES       = 768;
 
-    LXMFInbox(const std::string& account_dir,
+    LXMFInbox(const std::string& identity_dir,
               const char* filename,
               size_t ram_capacity = DEFAULT_RAM_CAPACITY)
-      : _path(account_dir + "/" + filename),
+      : _path(identity_dir + "/" + filename),
         _ram_capacity(ram_capacity),
         _next_seq(0) {}
 
@@ -62,20 +63,26 @@ namespace LXMF {
     }
 
     // Append a new record. Allocates a seq if rec.seq == 0. Writes one
-    // JSONL line; trims the RAM ring to ram_capacity.
+    // JSONL line; trims the RAM ring to ram_capacity. If rec.received_ms
+    // is 0 the caller has not stamped it — leave it 0 here too rather than
+    // stamping a millis() that's unrelated to receipt time (this code path
+    // also runs during JSONL load() via parse_line, which uses its own
+    // route — see below).
     bool append(MessageRecord& rec) {
       if (rec.seq == 0) rec.seq = ++_next_seq;
       else if (rec.seq > _next_seq) _next_seq = rec.seq;
 
       JsonDocument doc;
-      doc["seq"]    = rec.seq;
-      doc["ts"]     = rec.ts;
-      doc["peer"]   = rec.peer_hash.toHex();
-      doc["title"]  = rec.title;
-      doc["body"]   = rec.content;
-      doc["in"]     = rec.incoming;
-      doc["sig"]    = rec.signature_ok;
-      doc["status"] = outbox_status_name(rec.status);
+      doc["seq"]     = rec.seq;
+      doc["ts"]      = rec.ts;
+      doc["boot"]    = rec.boot_epoch;
+      doc["recv_ms"] = rec.received_ms;
+      doc["peer"]    = rec.peer_hash.toHex();
+      doc["title"]   = rec.title;
+      doc["body"]    = rec.content;
+      doc["in"]      = rec.incoming;
+      doc["sig"]     = rec.signature_ok;
+      doc["status"]  = outbox_status_name(rec.status);
       if (rec.packet_hash.size() > 0) doc["pkt"] = rec.packet_hash.toHex();
 
       char line[MAX_LINE_BYTES];
@@ -103,19 +110,36 @@ namespace LXMF {
       return true;
     }
 
-    // Mark a previously-appended record as Delivered (outbox use). Looks
-    // up by packet_hash; updates RAM and rewrites the JSONL spool from the
-    // RAM ring (small N — acceptable cost).
-    bool mark_delivered(const RNS::Bytes& packet_hash) {
+    // Update a previously-appended record's status by packet_hash lookup
+    // (outbox use). Rewrites the JSONL spool from the RAM ring if any
+    // entries changed. Records older than the RAM window are not updated.
+    bool update_status(const RNS::Bytes& packet_hash, OutboxStatus status) {
       bool found = false;
       for (auto& rec : _ring) {
         if (rec.packet_hash == packet_hash) {
-          rec.status = OutboxStatus::Delivered;
+          rec.status = status;
           found = true;
         }
       }
       if (found) rewrite_spool();
       return found;
+    }
+
+    bool mark_delivered(const RNS::Bytes& packet_hash) {
+      return update_status(packet_hash, OutboxStatus::Delivered);
+    }
+
+    // Remove every record whose peer_hash matches. Rewrites the spool to
+    // shrink the JSONL file. Used by the per-conversation clear endpoint.
+    size_t purge_peer(const RNS::Bytes& peer_hash) {
+      size_t before = _ring.size();
+      _ring.erase(
+        std::remove_if(_ring.begin(), _ring.end(),
+                       [&](const MessageRecord& r) { return r.peer_hash == peer_hash; }),
+        _ring.end());
+      size_t removed = before - _ring.size();
+      if (removed > 0) rewrite_spool();
+      return removed;
     }
 
     // Most recent up-to-N records (oldest first within the slice).
@@ -146,8 +170,10 @@ namespace LXMF {
       JsonDocument doc;
       if (deserializeJson(doc, p, n) != DeserializationError::Ok) return;
       MessageRecord rec;
-      rec.seq      = (uint32_t)(doc["seq"] | 0);
-      rec.ts       = (double)(doc["ts"]    | 0.0);
+      rec.seq         = (uint32_t)(doc["seq"]    | 0);
+      rec.ts          = (double)(doc["ts"]       | 0.0);
+      rec.boot_epoch  = (uint32_t)(doc["boot"]    | 0);
+      rec.received_ms = (uint32_t)(doc["recv_ms"] | 0);
       std::string peer_hex = doc["peer"]    | "";
       rec.peer_hash.assignHex(peer_hex.c_str());
       rec.title    = (const char*)(doc["title"] | "");
@@ -176,14 +202,16 @@ namespace LXMF {
         copy.seq = rec.seq;  // keep existing seq
         // Inline a single-shot append without re-bumping _next_seq.
         JsonDocument doc;
-        doc["seq"]    = copy.seq;
-        doc["ts"]     = copy.ts;
-        doc["peer"]   = copy.peer_hash.toHex();
-        doc["title"]  = copy.title;
-        doc["body"]   = copy.content;
-        doc["in"]     = copy.incoming;
-        doc["sig"]    = copy.signature_ok;
-        doc["status"] = outbox_status_name(copy.status);
+        doc["seq"]     = copy.seq;
+        doc["ts"]      = copy.ts;
+        doc["boot"]    = copy.boot_epoch;
+        doc["recv_ms"] = copy.received_ms;
+        doc["peer"]    = copy.peer_hash.toHex();
+        doc["title"]   = copy.title;
+        doc["body"]    = copy.content;
+        doc["in"]      = copy.incoming;
+        doc["sig"]     = copy.signature_ok;
+        doc["status"]  = outbox_status_name(copy.status);
         if (copy.packet_hash.size() > 0) doc["pkt"] = copy.packet_hash.toHex();
         char line[MAX_LINE_BYTES];
         size_t n = serializeJson(doc, line, sizeof(line) - 1);

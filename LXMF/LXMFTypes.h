@@ -11,8 +11,8 @@ namespace LXMF {
   static constexpr size_t SIG_LEN    = 64;   // Ed25519 signature
   static constexpr size_t HEADER_LEN = HASH_LEN + SIG_LEN;  // 80 bytes
 
-  // Account identifier — the first 16 hex chars of an Identity's hexhash.
-  using AccountId = std::string;
+  // Identity identifier — the first 16 hex chars of an Identity's hexhash.
+  using IdentityId = std::string;
 
   // Outbound message status, tracked per send.
   enum class OutboxStatus : uint8_t {
@@ -33,9 +33,19 @@ namespace LXMF {
   }
 
   // A received or sent message, in normalized form for inbox/outbox storage.
+  //
+  // Ordering: the authoritative in-device ordering key is the tuple
+  // (boot_epoch, received_ms), NOT received_ms alone. millis() resets
+  // to 0 on each reboot, so received_ms is only monotonic within a
+  // single boot session — boot_epoch (incremented at each boot and
+  // persisted via Web::BootCounter) makes the tuple globally monotonic
+  // across reboots. `ts` is the LXMF wire timestamp; it depends on
+  // peer clocks and is not reliable for sorting.
   struct MessageRecord {
-    uint32_t      seq;            // Monotonic per-account sequence number.
-    double        ts;             // LXMF timestamp (peer's clock for incoming, local for outgoing).
+    uint32_t      seq;            // Monotonic per-identity-per-mailbox sequence number (inbox and outbox have independent counters).
+    double        ts;             // LXMF timestamp (peer's clock for incoming, local for outgoing). Display-only; not reliable for ordering when peer clocks aren't synced.
+    uint32_t      boot_epoch;     // Web::BootCounter value at append time. Combined with received_ms forms (boot_epoch, received_ms) — a tuple monotonic across reboots.
+    uint32_t      received_ms;    // millis() at the moment this record was appended to its inbox/outbox. Monotonic only within boot_epoch.
     RNS::Bytes    peer_hash;      // Remote LXMF address (16 bytes). For incoming: source. For outgoing: destination.
     std::string   title;          // LXMF title field (often empty).
     std::string   content;        // Plaintext message content.

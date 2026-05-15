@@ -326,6 +326,38 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .attach-chip .drop  { cursor: pointer; color: var(--text-dim); padding: 0 4px; }
 .attach-chip .drop:hover { color: var(--danger-2); }
 
+/* Microphone button while recording: red dot pulses to make it
+   unmissable, and the SVG goes red. Click again to stop. */
+#btn-mic.recording svg { color: var(--danger-2); }
+#btn-mic.recording { position: relative; }
+#btn-mic.recording::after {
+  content: '';
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--danger-2);
+  animation: mic-pulse 1s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+/* Recording-status chip that appears in the attach tray during
+   capture: elapsed time + stop / cancel buttons. */
+.record-chip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: rgba(248,81,73,0.15);
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.record-chip .elapsed {
+  flex: 1; min-width: 0;
+  font-family: ui-monospace, monospace; color: var(--danger-2);
+}
+
 /* ============================== SETTINGS MODAL (tabbed) ============================== */
 /* Tall modal that hosts every configuration screen behind a tab bar.
    Replaces the slide-out drawer + separate page-style radio view so
@@ -785,6 +817,10 @@ summary:hover { color: var(--text); }
         <!-- paperclip -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
+      <button class="icon" id="btn-mic" title="Record audio">
+        <!-- microphone -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
+      </button>
       <input id="attach-file" type="file" hidden>
       <div id="compose-mid">
         <div id="attach-tray" hidden></div>
@@ -1163,6 +1199,10 @@ const state = {
                                     // chips auto-fetch on first render and
                                     // cache the result here so SSE-driven
                                     // rerenders don't refetch.
+  recorder: null,                   // MediaRecorder while recording, else null
+  recorderChunks: [],               // Blob chunks accumulated during record
+  recorderStartMs: 0,
+  recorderStopReason: '',           // 'save' | 'cancel'
   reconnectStart: 0,
   skipBootstrap: false,             // set true by "skip" button on view-bootstrap so subsequent
                                     // routing doesn't bounce back into bootstrap mode
@@ -2291,6 +2331,107 @@ async function pickAttachment() {
 }
 
 $('btn-attach').addEventListener('click', pickAttachment);
+
+// ----- audio capture -----
+// getUserMedia is blocked on plain HTTP except localhost — browsers
+// require a "secure context". When the user accesses the device at
+// http://192.168.x.x/ the call will fail; we surface a clear toast
+// rather than a cryptic permission error.
+function pickMediaRecorderMime() {
+  // Most browsers support at least one of these; Opus-in-Ogg is
+  // smallest for voice but Chrome only emits Opus-in-WebM. Either
+  // sniffer handles on the receive side (#94).
+  const candidates = [
+    'audio/ogg;codecs=opus',
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+  ];
+  for (const m of candidates) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return '';
+}
+
+async function startRecording() {
+  if (!state.openPeer) {
+    toast('Open a chat first.', 'warn');
+    return;
+  }
+  if (state.recorder) return;  // already recording
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast('Microphone is not available — try a different browser, or HTTPS.', 'error', 6000);
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    // The classic case here is the secure-context block on
+    // http://192.168.x.x — pin that error explicitly so the user
+    // knows what to do.
+    if (!window.isSecureContext) {
+      toast('Mic blocked: browsers only allow recording over HTTPS or on localhost. Try installing the SPA as a PWA, or connect to the device via localhost.', 'error', 9000);
+    } else {
+      toast('Mic permission denied: ' + (e.message || e), 'error', 6000);
+    }
+    return;
+  }
+  const mime = pickMediaRecorderMime();
+  let rec;
+  try {
+    rec = new MediaRecorder(stream, mime
+        ? { mimeType: mime, audioBitsPerSecond: 24000 }   // ~3 KB/s, room for ~16 s under the 48 KB cap
+        : { audioBitsPerSecond: 24000 });
+  } catch (e) {
+    stream.getTracks().forEach(t => t.stop());
+    toast('Could not start recorder: ' + (e.message || e), 'error');
+    return;
+  }
+  state.recorder = rec;
+  state.recorderChunks = [];
+  state.recorderStartMs = Date.now();
+  state.recorderStopReason = '';
+  rec.ondataavailable = (ev) => { if (ev.data && ev.data.size > 0) state.recorderChunks.push(ev.data); };
+  rec.onstop = async () => {
+    // Free the mic immediately.
+    stream.getTracks().forEach(t => t.stop());
+    const blob = new Blob(state.recorderChunks, { type: mime || 'audio/webm' });
+    state.recorder = null;
+    state.recorderChunks = [];
+    $('btn-mic').classList.remove('recording');
+    renderAttachTray();
+    if (state.recorderStopReason === 'cancel' || blob.size === 0) return;
+    if (blob.size > ATTACH_MAX_BYTES) {
+      toast('Recording too large (' + formatBytes(blob.size)
+            + ') — cap is ' + formatBytes(ATTACH_MAX_BYTES) + '.', 'error', 6000);
+      return;
+    }
+    const bytes = await blobToBytes(blob);
+    const ext = (mime.includes('ogg') ? 'ogg'
+               : mime.includes('mp4') ? 'm4a' : 'webm');
+    await stagePendingAttachment({
+      tag:      FIELD_AUDIO,
+      bytes,
+      filename: 'voice-' + new Date().toISOString().replace(/[:.]/g, '-') + '.' + ext,
+      mime:     mime || 'audio/webm',
+    });
+  };
+  rec.start();
+  $('btn-mic').classList.add('recording');
+  renderAttachTray();   // surfaces the live "Recording 0:03 [Stop] [Cancel]" chip
+}
+
+function stopRecording(save) {
+  if (!state.recorder) return;
+  state.recorderStopReason = save ? 'save' : 'cancel';
+  state.recorder.stop();
+}
+
+$('btn-mic').addEventListener('click', () => {
+  if (state.recorder) stopRecording(true);
+  else                startRecording();
+});
 $('attach-file').addEventListener('change', async (ev) => {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;
@@ -2424,8 +2565,41 @@ async function stagePendingAttachment(att) {
 function renderAttachTray() {
   const tray = $('attach-tray');
   tray.innerHTML = '';
-  if (state.pendingAttachments.length === 0) { tray.hidden = true; return; }
+  const isRecording = !!state.recorder;
+  if (state.pendingAttachments.length === 0 && !isRecording) {
+    tray.hidden = true;
+    if (state._recTimer) { clearInterval(state._recTimer); state._recTimer = null; }
+    return;
+  }
   tray.hidden = false;
+  if (isRecording) {
+    const chip = el('div', { class: 'record-chip' });
+    chip.appendChild(el('span', { text: '🔴' }));
+    const elapsed = el('span', { class: 'elapsed', text: '0:00 — recording' });
+    chip.appendChild(elapsed);
+    const stop = el('button', { class: 'secondary', text: 'Stop' });
+    stop.addEventListener('click', () => stopRecording(true));
+    chip.appendChild(stop);
+    const cancel = el('button', { class: 'ghost', text: 'Cancel' });
+    cancel.addEventListener('click', () => stopRecording(false));
+    chip.appendChild(cancel);
+    tray.appendChild(chip);
+    // Live elapsed-time tick. Stops itself when state.recorder clears.
+    if (!state._recTimer) {
+      state._recTimer = setInterval(() => {
+        if (!state.recorder) {
+          clearInterval(state._recTimer);
+          state._recTimer = null;
+          return;
+        }
+        const ms = Date.now() - state.recorderStartMs;
+        const s  = Math.floor(ms / 1000);
+        const mm = Math.floor(s / 60);
+        const ss = (s % 60).toString().padStart(2, '0');
+        elapsed.textContent = mm + ':' + ss + ' — recording';
+      }, 250);
+    }
+  }
   state.pendingAttachments.forEach((a, idx) => {
     const icon = a.tag === FIELD_IMAGE ? '🖼' : a.tag === FIELD_AUDIO ? '🎙' : '📎';
     const chip = el('div', { class: 'attach-chip' });

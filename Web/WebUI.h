@@ -13,6 +13,7 @@
 #include <uri/UriBraces.h>
 #include <ArduinoJson.h>
 #include <Log.h>
+#include <Reticulum.h>
 #include <Transport.h>
 #include <deque>
 #include <freertos/FreeRTOS.h>
@@ -31,6 +32,10 @@
 // Used by the bootstrap-mode WiFi configure endpoint.
 #include "../Config.h"   // WR_WIFI_OFF/STA/AP, config_addr()
 #include "../ROM.h"      // ADDR_CONF_SSID, ADDR_CONF_PSK
+
+// The single Reticulum instance lives in RNode_Firmware.ino — pulled
+// in here so persist_and_restart() can flush state before ESP.restart().
+extern RNS::Reticulum reticulum;
 extern void eeprom_update(int mapped_addr, uint8_t byte);
 extern void wr_conf_save(uint8_t mode);
 extern bool eeprom_have_conf();
@@ -151,6 +156,19 @@ namespace Web {
       ~RnsLockGuard() { if (ok) release_rns_lock(); }
       explicit operator bool() const { return ok; }
     };
+
+    // Flush in-memory RNS state to flash, then restart. Used by every
+    // controlled-reboot path (WiFi save, radio save, radio reset,
+    // factory reset). Without this, _known_destinations and the path
+    // store only get flushed once per hour by Reticulum::jobs(), so
+    // any announces learned since the last flush are lost on reboot
+    // (issue #59). The web_task already holds the rns_lock around
+    // handler execution, so persist_data() runs under the lock too.
+    static void persist_and_restart(uint32_t flush_ms = 500) {
+      reticulum.persist_data();
+      delay(flush_ms);
+      ESP.restart();
+    }
 
     // FreeRTOS task body. Calls server.handleClient() in a tight loop
     // with a brief vTaskDelay between iterations so the FreeRTOS
@@ -677,8 +695,7 @@ namespace Web {
       doc["status"]  = "wiped";
       doc["restart"] = true;
       send_json(200, doc);
-      delay(500);
-      ESP.restart();
+      persist_and_restart();
     }
 
     // DELETE /api/identities/{id}/conversations/{peer_hex}
@@ -1206,8 +1223,7 @@ namespace Web {
       send_json(200, doc);
 
       // Reboot so STA mode applies cleanly.
-      delay(500);
-      ESP.restart();
+      persist_and_restart();
     }
 
     static void handle_radio_get() {
@@ -1318,8 +1334,7 @@ namespace Web {
       doc["status"]  = "saved";
       doc["restart"] = true;
       send_json(200, doc);
-      delay(500);
-      ESP.restart();
+      persist_and_restart();
     }
 
     static void handle_radio_reset() {
@@ -1331,8 +1346,7 @@ namespace Web {
       doc["status"]  = "cleared";
       doc["restart"] = true;
       send_json(200, doc);
-      delay(500);
-      ESP.restart();
+      persist_and_restart();
     }
 
     // POST /api/radio/airtime — set short / long airtime duty-cycle caps

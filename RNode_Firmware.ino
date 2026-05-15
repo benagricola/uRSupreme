@@ -1182,6 +1182,36 @@ bool startRadio() {
         // Indicate this failure over both the
         // serial port and with the onboard LEDs
         radio_error = true;
+        // Surface a CRITICAL log line + machine-readable hint over /api/info
+        // (radio.error_reason). The most common cause is a wrong-variant
+        // flash (e.g. SX1262 firmware on an LR1121 board, or vice versa) —
+        // the SPI commands the compiled driver sends don't get the expected
+        // responses from the actual chip, begin() returns false, and the
+        // firmware otherwise comes up looking healthy while the radio
+        // never radiates. The compile-time MODEM define identifies which
+        // chip THIS build expects.
+        #if MODEM == SX1262
+          radio_error_expected_chip = "SX1262";
+        #elif MODEM == LR11XX
+          radio_error_expected_chip = "LR1121 / LR1120 (LR11xx family)";
+        #elif MODEM == SX1276
+          radio_error_expected_chip = "SX1276";
+        #elif MODEM == SX1278
+          radio_error_expected_chip = "SX1278";
+        #elif MODEM == SX1280
+          radio_error_expected_chip = "SX1280";
+        #else
+          radio_error_expected_chip = "(unknown — MODEM define not recognised)";
+        #endif
+        radio_error_reason =
+            "Radio chip not responding to driver. This firmware was built for "
+            "the chip listed in radio.expected_chip; if the actual chip on the "
+            "board is different (a wrong-variant flash), re-flash with the env "
+            "that matches the board's radio chip. WiFi / web UI stay up so "
+            "recovery is possible without a power cycle.";
+        CRITICALF("Radio init failed — expected %s, chip not responding. "
+                  "Likely wrong-variant flash. See radio.error_reason in /api/info.",
+                  radio_error_expected_chip);
         kiss_indicate_error(ERROR_INITRADIO);
         led_indicate_error(0);
         return false;

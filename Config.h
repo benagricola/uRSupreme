@@ -140,6 +140,14 @@
 	bool community_fw  = true;
 	bool hw_ready      = false;
 	bool radio_error   = false;
+	// Filled in by startRadio() when LoRa->begin() reports the chip
+	// isn't responding. Most common cause is a wrong-variant flash —
+	// SPI commands the compiled driver sends don't match the chip
+	// actually on the board. Exposed via /api/info.radio so the SPA
+	// can surface a clear failure mode instead of leaving the user
+	// wondering why everything looks fine except the radio.
+	const char* radio_error_reason        = nullptr;
+	const char* radio_error_expected_chip = nullptr;
 	bool disp_ready    = false;
 	bool pmu_ready     = false;
 	bool promisc       = false;

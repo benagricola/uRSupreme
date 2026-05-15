@@ -432,6 +432,16 @@ namespace Web {
       radio["spreading_factor"] = lora_sf;
       radio["coding_rate"]      = lora_cr;
       radio["tx_power"]         = lora_txp;
+      // Surface radio-init failure cause when it happened. Most common
+      // cause is a wrong-variant flash — see startRadio() in
+      // RNode_Firmware.ino. The SPA can show a banner / settings panel
+      // warning when error_reason is present.
+      if (radio_error_reason) {
+        radio["error_reason"]   = radio_error_reason;
+      }
+      if (radio_error_expected_chip) {
+        radio["expected_chip"]  = radio_error_expected_chip;
+      }
       // Activity counters so callers can verify the radio is actually
       // doing work (not just "online"). stat_rx / stat_tx are packet
       // counts since boot — poll twice with a delta to see if the

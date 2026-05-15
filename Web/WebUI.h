@@ -486,7 +486,7 @@ namespace Web {
       #elif MODEM == SX1280
         radio["model"] = "SX1280";
       #elif MODEM == LR11XX
-        radio["model"] = "LR11xx (LR1121/LR1120)";
+        radio["model"] = "LR1121";
       #else
         radio["model"] = "(unknown)";
       #endif

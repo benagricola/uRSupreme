@@ -318,21 +318,28 @@ namespace LXMF {
       );
 
       // Build msgpack payload: [timestamp:f64, title:bin, content:bin, fields:nil]
-      uint8_t mp[512];
+      // The buffer must hold the whole encoded payload. Heap-allocate
+      // sized to content + title + small fixed overhead (~30 B) so we
+      // can handle messages well above the old 512-byte stack limit.
+      // The actual on-wire size cap is enforced by LXMF_OPPORTUNISTIC_MAX
+      // / LXMF_LINK_PACKET_MAX / FIRMWARE_MAX_INCOMING below.
+      const size_t mp_cap = 64 + title.size() + content.size();
+      std::vector<uint8_t> mp_buf(mp_cap);
+      uint8_t* mp = mp_buf.data();
       size_t mp_pos = 0;
       mp[mp_pos++] = 0x94;  // fixarray(4)
 
       double ts = get_timestamp();
-      size_t n = RawMsgPack::pack_float64(&mp[mp_pos], sizeof(mp) - mp_pos, ts);
+      size_t n = RawMsgPack::pack_float64(&mp[mp_pos], mp_cap - mp_pos, ts);
       if (n == 0) { ERROR("LXMF: send: timestamp pack failed"); return fail("Internal error packing timestamp."); }
       mp_pos += n;
 
-      n = RawMsgPack::pack_bin_str(&mp[mp_pos], sizeof(mp) - mp_pos, title);
-      if (n == 0) { ERROR("LXMF: send: title pack failed"); return fail("Title is too long for the LXMF packet."); }
+      n = RawMsgPack::pack_bin_str(&mp[mp_pos], mp_cap - mp_pos, title);
+      if (n == 0) { ERROR("LXMF: send: title pack failed"); return fail("Title is too long to encode."); }
       mp_pos += n;
 
-      n = RawMsgPack::pack_bin_str(&mp[mp_pos], sizeof(mp) - mp_pos, content);
-      if (n == 0) { ERROR("LXMF: send: content pack failed"); return fail("Message body is too long to fit in a single LXMF packet (opportunistic mode caps around 200 chars)."); }
+      n = RawMsgPack::pack_bin_str(&mp[mp_pos], mp_cap - mp_pos, content);
+      if (n == 0) { ERROR("LXMF: send: content pack failed"); return fail("Internal error: content pack returned 0 unexpectedly."); }
       mp_pos += n;
 
       mp[mp_pos++] = 0xC0;  // fields: nil

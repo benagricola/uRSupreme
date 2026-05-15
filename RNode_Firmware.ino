@@ -27,12 +27,10 @@
 #if defined(TCP_TRANSPORT)
 #include "TCPTransport.h"
 #endif
-#if defined(LXMF_PROBE_MULTI_IDENTITY) && LXMF_PROBE_MULTI_IDENTITY
-#include "LXMF/Probe.h"
-#endif
 #if defined(HAS_LXMF_GATEWAY)
 #include "LXMF/LXMFGateway.h"
 #include "LXMF/AnnounceLog.h"
+#include "LXMF/RatchetBridge.h"
 #include "Web/WebUI.h"
 #endif
 
@@ -63,6 +61,14 @@ FIFOBuffer16 packet_lengths;
 uint16_t packet_lengths_buf[CONFIG_QUEUE_MAX_LENGTH+1];
 
 uint8_t packet_queue[CONFIG_QUEUE_SIZE];
+
+#if defined(HAS_LXMF_GATEWAY)
+// Diagnostic: per-burst BLE-in byte counter, drained either when 64 bytes
+// have accumulated (see buffer_serial) or when a 50ms idle gap is detected
+// (see main loop).  Updated from buffer_serial; flushed from loop().
+uint32_t ble_in_burst_bytes = 0;
+uint32_t ble_in_last_byte_ms = 0;
+#endif
 
 volatile uint8_t queue_height = 0;
 volatile uint16_t queued_bytes = 0;
@@ -172,7 +178,17 @@ protected:
 
 // CBA logger callback
 void on_log(const char* msg, RNS::LogLevel level) {
-  // Using individual Serial.print statements to avoid memory allocation for String
+  // KISS-mode hosts (reticulum-meshchat, rnsd, anything talking to us as
+  // a serial RNode) cannot tolerate plain-text bytes interleaved with
+  // CMD_DATA frames. Once we've flipped into MODE_TNC (host has sent
+  // CMD_DETECT and the radio is up) wrap log lines in CMD_LOG KISS
+  // frames so a KISS decoder either displays them on its own pane or
+  // silently discards them — but the radio byte stream stays clean.
+  if (op_mode == MODE_TNC) {
+    kiss_indicate_log((uint8_t)level, msg);
+    return;
+  }
+  // MODE_HOST (development / LXMF gateway): plain text for pio monitor.
 	Serial.print(RNS::getTimeString());
 	Serial.print(" [");
 	Serial.print(RNS::getLevelName(level));
@@ -216,18 +232,43 @@ void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
 #endif  // HAS_SDCARD
 
 #if defined(HAS_LXMF_GATEWAY)
-  // Diagnostic: log every inbound ANNOUNCE packet's destination_hash so we
-  // can see whether announces are reaching the device even if signature
-  // validation rejects them. NDEBUG strips out microReticulum's own
-  // DEBUGF("Received invalid announce ...") lines, so without this we'd be
-  // blind to dropped announces. The cost is one NOTICE log per announce
-  // received, gated to ANNOUNCE packets only to avoid flooding on data.
+  // Diagnostic: log every inbound packet at the raw-bytes level before
+  // attempting an unpack, so we see packets that may be in a format we
+  // can't parse. Then attempt unpack and classify by packet_type.
+  NOTICEF("RX RAW %u bytes (head: %02x %02x %02x %02x)",
+          (unsigned)raw.size(),
+          raw.size() > 0 ? raw.data()[0] : 0,
+          raw.size() > 1 ? raw.data()[1] : 0,
+          raw.size() > 2 ? raw.data()[2] : 0,
+          raw.size() > 3 ? raw.data()[3] : 0);
   RNS::Packet pkt(raw);
-  if (pkt.unpack() && pkt.packet_type() == RNS::Type::Packet::ANNOUNCE) {
-    NOTICEF("RX ANNOUNCE dest=%s hops=%u data=%u bytes",
-            pkt.destination_hash().toHex().c_str(),
-            (unsigned)pkt.hops(),
-            (unsigned)pkt.data().size());
+  if (pkt.unpack()) {
+    if (pkt.packet_type() == RNS::Type::Packet::ANNOUNCE) {
+      NOTICEF("RX ANNOUNCE dest=%s hops=%u data=%u bytes",
+              pkt.destination_hash().toHex().c_str(),
+              (unsigned)pkt.hops(),
+              (unsigned)pkt.data().size());
+    } else if (pkt.packet_type() == RNS::Type::Packet::DATA) {
+      // Log all DATA packets for our destinations AND any not-clearly-routing
+      // packet so we can see if anything Columba sends is reaching us at all.
+      const bool ours = LXMF::LXMFGateway::is_own_destination(pkt.destination_hash());
+      NOTICEF("RX DATA dest=%s hops=%u data=%u bytes ctx=%u%s",
+              pkt.destination_hash().toHex().c_str(),
+              (unsigned)pkt.hops(),
+              (unsigned)pkt.data().size(),
+              (unsigned)pkt.context(),
+              ours ? " (OURS)" : "");
+    } else if (pkt.packet_type() == RNS::Type::Packet::LINKREQUEST) {
+      NOTICEF("RX LINKREQUEST dest=%s hops=%u data=%u bytes",
+              pkt.destination_hash().toHex().c_str(),
+              (unsigned)pkt.hops(),
+              (unsigned)pkt.data().size());
+    } else if (pkt.packet_type() == RNS::Type::Packet::PROOF) {
+      NOTICEF("RX PROOF dest=%s hops=%u data=%u bytes",
+              pkt.destination_hash().toHex().c_str(),
+              (unsigned)pkt.hops(),
+              (unsigned)pkt.data().size());
+    }
   }
 #endif
 }
@@ -252,6 +293,38 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
     }
 	}
 #endif  // HAS_SDCARD
+
+#if defined(HAS_LXMF_GATEWAY)
+  NOTICEF("TX RAW %u bytes (head: %02x %02x %02x %02x)",
+          (unsigned)raw.size(),
+          raw.size() > 0 ? raw.data()[0] : 0,
+          raw.size() > 1 ? raw.data()[1] : 0,
+          raw.size() > 2 ? raw.data()[2] : 0,
+          raw.size() > 3 ? raw.data()[3] : 0);
+  RNS::Packet pkt(raw);
+  if (pkt.unpack()) {
+    const uint8_t flag = (raw.size() > 0) ? ((raw.data()[0] >> 5) & 0x01) : 0;
+    if (pkt.packet_type() == RNS::Type::Packet::ANNOUNCE) {
+      NOTICEF("TX ANNOUNCE dest=%s ctx_flag=%u data=%u bytes",
+              pkt.destination_hash().toHex().c_str(),
+              (unsigned)flag,
+              (unsigned)pkt.data().size());
+    } else if (pkt.packet_type() == RNS::Type::Packet::DATA) {
+      NOTICEF("TX DATA dest=%s ctx=%u data=%u bytes",
+              pkt.destination_hash().toHex().c_str(),
+              (unsigned)pkt.context(),
+              (unsigned)pkt.data().size());
+    } else if (pkt.packet_type() == RNS::Type::Packet::LINKREQUEST) {
+      NOTICEF("TX LINKREQUEST dest=%s data=%u bytes",
+              pkt.destination_hash().toHex().c_str(),
+              (unsigned)pkt.data().size());
+    } else if (pkt.packet_type() == RNS::Type::Packet::PROOF) {
+      NOTICEF("TX PROOF dest=%s data=%u bytes",
+              pkt.destination_hash().toHex().c_str(),
+              (unsigned)pkt.data().size());
+    }
+  }
+#endif
 }
 
 // CBA RNS
@@ -744,6 +817,23 @@ void setup() {
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
       reticulum = RNS::Reticulum();
       reticulum.transport_enabled(op_mode == MODE_TNC);
+#if defined(HAS_LXMF_GATEWAY)
+      // User-controllable override from the WebUI. /lxmf/transport.json
+      // is a tiny JSON file with {"enabled": bool} written by the
+      // POST /api/system/transport handler. Overrides the op_mode-
+      // derived default above when present.
+      if (filesystem.exists("/lxmf/transport.json")) {
+        std::vector<uint8_t> data;
+        if (filesystem.readFile("/lxmf/transport.json", data) > 0) {
+          JsonDocument tdoc;
+          if (deserializeJson(tdoc, data.data(), data.size()) == DeserializationError::Ok) {
+            bool want = tdoc["enabled"] | false;
+            reticulum.transport_enabled(want);
+            NOTICEF("WebUI: persisted transport_enabled=%s applied", want ? "true" : "false");
+          }
+        }
+      }
+#endif
       reticulum.probe_destination_enabled(true);
       reticulum.start();
 
@@ -770,14 +860,14 @@ void setup() {
 #endif
       RNS::Destination destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
 
-#if defined(LXMF_PROBE_MULTI_IDENTITY) && LXMF_PROBE_MULTI_IDENTITY
-      LXMFProbe::run();
-#endif
-
 #if defined(HAS_LXMF_GATEWAY)
       HEAD("Initializing LXMF gateway...", RNS::LOG_TRACE);
       LXMF::LXMFGateway::setup();
       LXMF::AnnounceLog::setup();
+      // Wire the microReticulum ratchet patches to our gateway-backed
+      // providers. Must run AFTER setup() so identities (and their ratchet
+      // rings) are loaded before the first announce / decrypt fires.
+      LXMF::register_ratchet_providers();
 #endif
 
       HEAD("RNS is READY!", RNS::LOG_TRACE);
@@ -1244,7 +1334,19 @@ void update_airtime() {
 }
 
 void transmit(uint16_t size) {
+  if (!radio_online) {
+#if defined(HAS_LXMF_GATEWAY)
+    NOTICEF("LoRa TX REJECTED: radio_online=false size=%u", (unsigned)size);
+#endif
+  }
   if (radio_online) {
+#if defined(HAS_LXMF_GATEWAY)
+    NOTICEF("LoRa TX from queue: size=%u (head: %02x %02x %02x %02x) promisc=%d",
+            (unsigned)size,
+            size > 0 ? tbuf[0] : 0, size > 1 ? tbuf[1] : 0,
+            size > 2 ? tbuf[2] : 0, size > 3 ? tbuf[3] : 0,
+            (int)promisc);
+#endif
     if (!promisc) {
       uint16_t  written = 0;
       uint8_t header  = random(256) & 0xF0;
@@ -1309,8 +1411,31 @@ void serial_callback(uint8_t sbyte) {
             fifo16_push(&packet_starts, s);
             fifo16_push(&packet_lengths, l);
             current_packet_start = queue_cursor;
+#if defined(HAS_LXMF_GATEWAY)
+            {
+              uint8_t b0 = packet_queue[s % CONFIG_QUEUE_SIZE];
+              uint8_t b1 = packet_queue[(s+1) % CONFIG_QUEUE_SIZE];
+              uint8_t b2 = packet_queue[(s+2) % CONFIG_QUEUE_SIZE];
+              uint8_t b3 = packet_queue[(s+3) % CONFIG_QUEUE_SIZE];
+              NOTICEF("HOST FRAME queued for LoRa TX: len=%u (head: %02x %02x %02x %02x) via=%s",
+                      (unsigned)l, b0, b1, b2, b3,
+                      bt_state == BT_STATE_CONNECTED ? "BLE" : "serial");
+            }
+#endif
         }
+#if defined(HAS_LXMF_GATEWAY)
+        else {
+          NOTICEF("HOST FRAME REJECTED: len=%u < MIN_L=%u", (unsigned)l, (unsigned)MIN_L);
+        }
+#endif
     }
+#if defined(HAS_LXMF_GATEWAY)
+    else {
+      NOTICEF("HOST FRAME DROPPED: packet_starts_full=%d queued_bytes=%lu (cap=%lu)",
+              (int)fifo16_isfull(&packet_starts),
+              (unsigned long)queued_bytes, (unsigned long)CONFIG_QUEUE_SIZE);
+    }
+#endif
 
   } else if (sbyte == FEND) {
     IN_FRAME = true;
@@ -1320,6 +1445,13 @@ void serial_callback(uint8_t sbyte) {
     // Have a look at the command byte first
     if (frame_len == 0 && command == CMD_UNKNOWN) {
         command = sbyte;
+#if defined(HAS_LXMF_GATEWAY)
+        if (command != CMD_DATA) {
+          NOTICEF("HOST KISS command byte=0x%02x (not CMD_DATA=0x%02x) via=%s",
+                  (unsigned)command, (unsigned)CMD_DATA,
+                  bt_state == BT_STATE_CONNECTED ? "BLE" : "serial");
+        }
+#endif
     } else if (command == CMD_DATA) {
         if (bt_state != BT_STATE_CONNECTED) {
           cable_state = CABLE_STATE_CONNECTED;
@@ -2185,9 +2317,32 @@ void work_while_waiting() { loop(); }
 
 void loop() {
 
+#if defined(HAS_LXMF_GATEWAY)
+  // Flush any pending BLE-in burst counter after a 50ms idle gap so short
+  // bursts (a single 227-byte LXMF message) surface as their own log line.
+  if (ble_in_burst_bytes > 0 && (millis() - ble_in_last_byte_ms) > 50) {
+    NOTICEF("BLE IN burst end: %lu bytes", (unsigned long)ble_in_burst_bytes);
+    ble_in_burst_bytes = 0;
+  }
+  // Connection-state edge logging so BLE link drops show up explicitly.
+  {
+    static uint8_t prev_bt_state = 0xFF;
+    if (bt_state != prev_bt_state) {
+      NOTICEF("BLE state -> %u (was %u)", (unsigned)bt_state, (unsigned)prev_bt_state);
+      prev_bt_state = bt_state;
+    }
+  }
+#endif
+
 #ifdef HAS_RNS
   // CBA
   if (reticulum) {
+    // Take the rns_lock so the WebServer task (which also accesses
+    // RNS state from its core-0 task) doesn't race against state
+    // mutations inside reticulum.loop(). The lock is released as
+    // soon as the loop returns so the WebServer task can run during
+    // the radio/serial/display work that follows.
+    Web::WebUI::RnsLockGuard guard;
     try {
       reticulum.loop();
     }
@@ -2289,10 +2444,16 @@ void loop() {
       TCPTransport::service();
     #endif
     #if defined(HAS_LXMF_GATEWAY)
-      LXMF::LXMFGateway::loop();
+      {
+        // LXMFGateway::loop() reads / mutates the gateway state that the
+        // WebServer task also touches via its handlers; lock around it.
+        Web::WebUI::RnsLockGuard guard;
+        LXMF::LXMFGateway::loop();
+      }
       if (wifi_initialized) {
-        Web::WebUI::start();   // idempotent — runs once after WiFi STA is up
-        Web::WebUI::loop();
+        Web::WebUI::start();        // idempotent — runs once after WiFi STA is up
+        Web::WebUI::start_task();   // idempotent — spawns the WebServer FreeRTOS task once
+        Web::WebUI::loop();         // periodic sweep; handleClient() runs in the task
       }
     #endif
   #endif
@@ -2478,7 +2639,23 @@ void buffer_serial() {
       #if MCU_VARIANT != MCU_ESP32 && MCU_VARIANT != MCU_NRF52
         if (!fifo_isfull_locked(&serialFIFO)) { fifo_push_locked(&serialFIFO, Serial.read()); }
       #elif HAS_BLUETOOTH || HAS_BLE == true || HAS_WIFI
-        if      (bt_state == BT_STATE_CONNECTED) { if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, SerialBT.read()); } }
+        if      (bt_state == BT_STATE_CONNECTED) { if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, SerialBT.read()); }
+#if defined(HAS_LXMF_GATEWAY)
+          {
+            // Per-burst counter: log when 64 bytes accumulate, OR (in main loop)
+            // when a burst ends (>50ms idle).  No time throttle on the count
+            // itself, so big bursts are guaranteed to surface.
+            extern uint32_t ble_in_burst_bytes;
+            extern uint32_t ble_in_last_byte_ms;
+            ble_in_burst_bytes++;
+            ble_in_last_byte_ms = millis();
+            if (ble_in_burst_bytes >= 64) {
+              NOTICEF("BLE IN burst >=64 (total so far: %lu)", (unsigned long)ble_in_burst_bytes);
+              ble_in_burst_bytes = 0;
+            }
+          }
+#endif
+        }
         #if HAS_WIFI
         else if (wifi_host_is_connected())       { if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, wifi_remote_read()); } }
         #endif

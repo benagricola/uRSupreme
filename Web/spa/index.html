@@ -1159,6 +1159,10 @@ const state = {
                                     // at least one manual announce since SPA load
   pendingAttachments: [],           // [{ tag, bytes:Uint8Array, filename, mime, eta_ms }]
                                     // staged before send; cleared after send.
+  attachmentBlobs: new Map(),       // filename → object URL. Inbound image
+                                    // chips auto-fetch on first render and
+                                    // cache the result here so SSE-driven
+                                    // rerenders don't refetch.
   reconnectStart: 0,
   skipBootstrap: false,             // set true by "skip" button on view-bootstrap so subsequent
                                     // routing doesn't bounce back into bootstrap mode
@@ -1859,12 +1863,13 @@ function renderThread() {
                        + ' (' + formatBytes(a.size || 0) + ')';
           // Outbound attachments aren't persisted on the device (the
           // bytes are only in the recipient's inbox); show as a plain
-          // chip without a download action. Inbound chips fetch on
-          // click. Inbound files are stored under
-          // <id>/attachments/<msg_hex>_<tag>_<idx>.bin so the SPA
-          // expects that exact filename shape.
+          // chip without a download action. Inbound chips: images
+          // auto-load inline (cached per filename across rerenders);
+          // everything else is click-to-download.
           const inbound = !!m.in && /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename);
-          if (inbound) {
+          if (inbound && a.tag === 6) {
+            bubble.appendChild(renderInboundImage(a, label));
+          } else if (inbound) {
             const chip = el('button', {
               class: 'attachment-chip',
               style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block',
@@ -1922,6 +1927,49 @@ function formatBytes(n) {
   if (n < 1024) return n + ' B';
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
   return (n / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+// Inbound image attachment: auto-load and render inline. Returns a
+// wrapper element that's appended to the bubble immediately; the
+// actual <img> is swapped in once the fetch resolves. Subsequent
+// renderThread passes reuse the cached object URL so SSE rerenders
+// don't refetch.
+function renderInboundImage(meta, fallbackLabel) {
+  const wrap = el('div', { style: 'margin-top:6px' });
+  const cached = state.attachmentBlobs.get(meta.filename);
+  const makeImg = (url) => {
+    const img = el('img', {
+      src: url,
+      style: 'max-width:240px;max-height:240px;border-radius:6px;display:block;cursor:zoom-in',
+    });
+    img.addEventListener('click', () => window.open(url, '_blank'));
+    return img;
+  };
+  if (cached && cached !== 'loading' && cached !== 'failed') {
+    wrap.appendChild(makeImg(cached));
+    return wrap;
+  }
+  // Placeholder while fetching — small, low-key so it doesn't jump.
+  const placeholder = el('div', {
+    style: 'padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.08);font-size:11px;color:var(--text-dim)',
+    text: fallbackLabel + ' — loading…',
+  });
+  wrap.appendChild(placeholder);
+  // Don't double-kick a fetch for the same filename across rerenders.
+  if (cached === 'loading') return wrap;
+  state.attachmentBlobs.set(meta.filename, 'loading');
+  state.transport.fetchAttachment(state.identityId, meta.filename).then(({ blob }) => {
+    const url = URL.createObjectURL(blob);
+    state.attachmentBlobs.set(meta.filename, url);
+    // Swap the placeholder for the image in-place.
+    if (wrap.contains(placeholder)) {
+      wrap.replaceChild(makeImg(url), placeholder);
+    }
+  }).catch((e) => {
+    state.attachmentBlobs.set(meta.filename, 'failed');
+    placeholder.textContent = fallbackLabel + ' — load failed: ' + (e.message || e);
+  });
+  return wrap;
 }
 
 // Fetch the attachment blob from the device. Images (tag 6) get an

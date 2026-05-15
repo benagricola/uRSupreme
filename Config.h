@@ -193,8 +193,14 @@
 		float longterm_airtime = 0.0;
 		#define current_airtime_bin(void) (millis()%AIRTIME_LONGTERM_MS)/AIRTIME_BINLEN_MS
 	#endif
+	// Airtime duty-cycle limits — default to 1% long-term so we stay
+	// within ETSI EN 300 220-1 limits for the 868 MHz general sub-band
+	// (UK/EU). User can override via the API once exposed, or via the
+	// legacy KISS CMD_ST_ALOCK / CMD_LT_ALOCK commands. 0.0 disables
+	// enforcement, which is illegal in regulated bands and was the
+	// previous default.
 	float st_airtime_limit = 0.0;
-	float lt_airtime_limit = 0.0;
+	float lt_airtime_limit = 0.01;   // 1% over the long-term window
 	bool airtime_lock = false;
 
 	bool stat_signal_detected   = false;

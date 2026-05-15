@@ -48,6 +48,9 @@ extern uint8_t  last_snr_raw;     // SNR of the last received packet (raw scale)
 extern int      noise_floor;      // measured noise floor (dBm)
 extern float    airtime;          // short-term channel utilisation as 0..1
 extern float    longterm_airtime; // long-term (1h) channel utilisation as 0..1
+extern float    st_airtime_limit; // short-term duty-cycle cap (0..1, 0=disabled)
+extern float    lt_airtime_limit; // long-term duty-cycle cap (0..1, 0=disabled)
+extern bool     airtime_lock;     // true when current airtime exceeds the cap; TX blocked
 
 #include <algorithm>
 #include <vector>
@@ -440,8 +443,15 @@ namespace Web {
       stats["last_rssi_dbm"]      = last_rssi;
       stats["last_snr_raw"]       = last_snr_raw;
       stats["noise_floor_dbm"]    = noise_floor;
-      stats["airtime_pct"]        = (int)(airtime * 100);
+      stats["airtime_pct"]          = (int)(airtime * 100);
       stats["longterm_airtime_pct"] = (int)(longterm_airtime * 100);
+      // Duty-cycle caps. 0 means "no limit" (illegal in regulated bands).
+      // The default at boot is 0.01 (1%) to stay within ETSI 868 MHz limits.
+      stats["airtime_limit_pct"]    = (int)(st_airtime_limit * 100);
+      stats["longterm_airtime_limit_pct"] = (int)(lt_airtime_limit * 100);
+      // True iff TX is currently being blocked by the airtime lock —
+      // useful for "why isn't my message going out" diagnostics.
+      stats["airtime_locked"]       = (bool)airtime_lock;
       JsonObject transport = doc["transport"].to<JsonObject>();
       transport["enabled"]      = RNS::Reticulum::transport_enabled();
       // TODO microReticulum doesn't yet expose live path/packet counters

@@ -761,6 +761,14 @@ summary:hover { color: var(--text); }
   </div>
   <div class="popover-section">
     <div class="popover-row">
+      <div class="popover-label">Storage</div>
+      <div id="status-storage-line"></div>
+    </div>
+    <div class="muted mono" id="status-storage-flash" style="font-size:11px;margin-top:6px"></div>
+    <div class="muted mono" id="status-storage-sd"    style="font-size:11px"></div>
+  </div>
+  <div class="popover-section">
+    <div class="popover-row">
       <div class="popover-label">Transport</div>
       <div id="status-transport-line"></div>
     </div>
@@ -901,6 +909,15 @@ summary:hover { color: var(--text); }
         <label>Identity code</label>
         <input id="cn-wifi-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:12px">
         <button id="cn-wifi-save" style="width:100%">Save WiFi &amp; reboot</button>
+
+        <!-- Saved networks. EEPROM holds a single entry today, but
+             the UI is list-shaped so multi-network support drops in
+             cleanly later. Forgetting clears the slot and reboots. -->
+        <div class="card" style="margin-top:20px"><strong>Saved networks</strong></div>
+        <p class="muted" style="margin-bottom:8px">Networks this device has credentials for. Forgetting one wipes the SSID + password from the device and reboots into softAP for reconfiguration.</p>
+        <div id="cn-wifi-saved-list" style="margin-bottom:8px">
+          <p class="muted">Loading…</p>
+        </div>
 
         <!-- Bluetooth placeholder. Hardware supports it but the
              firmware-side wire-up is a separate task — leaving a stub
@@ -1337,6 +1354,11 @@ class UReticulumHTTPTransport extends Transport {
       const err = new Error(msg); err.status = r.status; throw err;
     }
     return { blob: await r.blob(), filename };
+  }
+  async wifiSavedList() { return this._req('/api/wifi/saved'); }
+  async wifiForget(ssid, identityCode) {
+    return this._req('/api/wifi/forget', { method: 'POST',
+      body: { ssid: ssid || '', identity_code: identityCode || '' } });
   }
 }
 
@@ -1884,12 +1906,17 @@ function renderStatusPopover() {
   const t = info.transport || {};
   const radioLine = $('status-radio-line');
   radioLine.innerHTML = '';
+  // Embed the chip model in the pill so users can tell two co-
+  // located devices apart at a glance (e.g. "SX1262 Online" vs
+  // "LR11xx Online"). Falls back to the bare state when the model
+  // isn't reported.
+  const modelPrefix = r.model ? r.model + ' ' : '';
   if (!r.have_conf) {
-    radioLine.appendChild(el('span', { class: 'pill warn' }, 'Not configured'));
+    radioLine.appendChild(el('span', { class: 'pill warn' }, modelPrefix + 'Not configured'));
   } else if (r.online) {
-    radioLine.appendChild(el('span', { class: 'pill ok' }, 'Online'));
+    radioLine.appendChild(el('span', { class: 'pill ok' }, modelPrefix + 'Online'));
   } else {
-    radioLine.appendChild(el('span', { class: 'pill bad' }, 'Offline'));
+    radioLine.appendChild(el('span', { class: 'pill bad' }, modelPrefix + 'Offline'));
   }
   if (r.have_conf) {
     $('status-radio-cfg-1').textContent =
@@ -1900,8 +1927,9 @@ function renderStatusPopover() {
     $('status-radio-cfg-1').textContent = 'No radio config saved yet.';
     $('status-radio-cfg-2').textContent = '';
   }
-  // Chip model (e.g. "SX1262" / "LR11xx") + cumulative + instant rates.
-  $('status-radio-model').textContent = r.model ? 'Chip: ' + r.model : '';
+  // Chip model now lives in the pill above — leave the placeholder
+  // empty so the layout doesn't shift when the popover opens.
+  $('status-radio-model').textContent = '';
   const s = r.stats || {};
   if (s.rx_packets !== undefined || s.tx_packets !== undefined) {
     $('status-radio-stats').textContent =
@@ -1956,6 +1984,33 @@ function renderStatusPopover() {
   const showSoftapBtn = w.mode === 'sta';
   $('btn-force-softap').hidden = !showSoftapBtn;
   $('status-wifi-hint').hidden  = !showSoftapBtn;
+
+  // Storage. Flash is always reported; SD shows present/used when the
+  // build has HAS_SDCARD wired up (currently off on T-Beam Supreme).
+  const st = info.storage || {};
+  const flash = st.flash || {};
+  const sd    = st.sd    || {};
+  const sLine = $('status-storage-line');
+  sLine.innerHTML = '';
+  const flashFreePct = (flash.total_bytes > 0)
+    ? Math.round(100 * (flash.free_bytes || 0) / flash.total_bytes) : 0;
+  if (flash.total_bytes) {
+    const pillClass = flashFreePct < 10 ? 'pill bad'
+                    : flashFreePct < 25 ? 'pill warn'
+                    : 'pill ok';
+    sLine.appendChild(el('span', { class: pillClass }, flashFreePct + '% free'));
+  } else {
+    sLine.appendChild(el('span', { class: 'pill' }, '—'));
+  }
+  $('status-storage-flash').textContent = flash.total_bytes
+    ? 'Flash: ' + formatBytes(flash.used_bytes || 0) + ' / ' + formatBytes(flash.total_bytes)
+    : '';
+  if (sd.present && sd.total_bytes) {
+    $('status-storage-sd').textContent =
+      'SD: ' + formatBytes(sd.used_bytes || 0) + ' / ' + formatBytes(sd.total_bytes);
+  } else {
+    $('status-storage-sd').textContent = 'SD: not present';
+  }
 
   const tLine = $('status-transport-line');
   tLine.innerHTML = '';
@@ -2739,6 +2794,51 @@ async function populateWifiTab() {
     }
   } catch (e) {
     sel.innerHTML = '<option value="">(scan failed)</option>';
+  }
+  populateSavedWifiList();
+}
+
+async function populateSavedWifiList() {
+  const wrap = $('cn-wifi-saved-list');
+  wrap.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const r = await state.transport.wifiSavedList();
+    const list = r.networks || [];
+    wrap.innerHTML = '';
+    if (list.length === 0) {
+      wrap.appendChild(el('p', { class: 'muted' }, 'No saved networks. The device will come up in softAP for first-time setup.'));
+      return;
+    }
+    for (const n of list) {
+      const row = el('div', {
+        style: 'display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--bg-elev-2);border-radius:6px;margin-bottom:6px',
+      });
+      const left = el('div', { style: 'flex:1' });
+      left.appendChild(el('div', { style: 'font-weight:600', text: n.ssid }));
+      left.appendChild(el('div', { class: 'muted', style: 'font-size:11px',
+                                   text: n.has_psk ? 'Saved with password' : 'Saved (open network)' }));
+      row.appendChild(left);
+      const btn = el('button', { class: 'secondary', text: 'Forget' });
+      btn.addEventListener('click', () => forgetSavedNetwork(n.ssid));
+      row.appendChild(btn);
+      wrap.appendChild(row);
+    }
+  } catch (e) {
+    wrap.innerHTML = '';
+    wrap.appendChild(el('p', { class: 'muted bad', text: 'Could not load saved networks: ' + (e.message || e) }));
+  }
+}
+
+async function forgetSavedNetwork(ssid) {
+  if (!confirm('Forget "' + ssid + '"? The device will reboot into softAP for setup.')) return;
+  const code = $('cn-wifi-code').value.trim() ||
+               prompt('Identity code required (short→long press the device button, then read the 6 hex chars from the OLED).');
+  if (!code) return;
+  try {
+    await state.transport.wifiForget(ssid, code.trim());
+    waitForDeviceAndReload('Forgetting "' + ssid + '" — rebooting into softAP…');
+  } catch (e) {
+    toast('Forget failed: ' + (e.message || e), 'error');
   }
 }
 

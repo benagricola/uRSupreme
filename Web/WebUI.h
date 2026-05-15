@@ -9,6 +9,7 @@
 // `_started` guard so server.begin() is only called once.
 
 #include <Arduino.h>
+#include <EEPROM.h>
 #include <WebServer.h>
 #include <uri/UriBraces.h>
 #include <ArduinoJson.h>
@@ -418,6 +419,8 @@ namespace Web {
       server.on("/api/wifi/scan",     HTTP_GET,  handle_wifi_scan);
       server.on("/api/wifi/configure",HTTP_POST, handle_wifi_configure);
       server.on("/api/wifi/softap",   HTTP_POST, handle_wifi_force_softap);
+      server.on("/api/wifi/saved",    HTTP_GET,  handle_wifi_saved_list);
+      server.on("/api/wifi/forget",   HTTP_POST, handle_wifi_forget);
       // Radio config — read requires bearer auth; write/reset require
       // bearer OR identity_code. Both write paths reboot on success.
       server.on("/api/radio",         HTTP_GET,  handle_radio_get);
@@ -544,6 +547,29 @@ namespace Web {
         wifi["ssid"]        = (const char*)bt_devname;
         wifi["ap_ip"]       = WiFi.softAPIP().toString().c_str();
       }
+      // Storage usage. LittleFS partition is the only persistent
+      // store today; the SD card slot is wired up on the T-Beam
+      // hardware but HAS_SDCARD is off in the current build so
+      // those bytes are 0. Surfaced as raw bytes; SPA formats.
+      JsonObject storage = doc["storage"].to<JsonObject>();
+      {
+        size_t total = filesystem.storageSize();
+        size_t avail = filesystem.storageAvailable();
+        JsonObject flash = storage["flash"].to<JsonObject>();
+        flash["total_bytes"] = (uint32_t)total;
+        flash["free_bytes"]  = (uint32_t)avail;
+        flash["used_bytes"]  = (uint32_t)((total > avail) ? (total - avail) : 0);
+      }
+      #ifdef HAS_SDCARD
+        JsonObject sd = storage["sd"].to<JsonObject>();
+        sd["present"]     = true;
+        sd["total_bytes"] = (uint64_t)SD.totalBytes();
+        sd["used_bytes"]  = (uint64_t)SD.usedBytes();
+      #else
+        JsonObject sd = storage["sd"].to<JsonObject>();
+        sd["present"] = false;
+      #endif
+
       JsonObject transport = doc["transport"].to<JsonObject>();
       transport["enabled"]      = RNS::Reticulum::transport_enabled();
       // TODO microReticulum doesn't yet expose live path/packet counters
@@ -1327,6 +1353,83 @@ namespace Web {
       send_json(200, doc);
 
       // Reboot so STA mode applies cleanly.
+      persist_and_restart();
+    }
+
+    // GET /api/wifi/saved — list the WiFi networks the device has
+    // credentials for. Today the EEPROM layout holds only one entry
+    // (ADDR_CONF_SSID/PSK), so this returns a 0- or 1-element array.
+    // The endpoint exists so the SPA can render a stable "Saved
+    // networks" UI; extending to multi-network storage later only
+    // changes the body, not the URL.
+    static void handle_wifi_saved_list() {
+      if (require_auth().empty()) return;
+      JsonDocument doc;
+      JsonArray arr = doc["networks"].to<JsonArray>();
+      char ssid[33] = {0};
+      bool any = false;
+      bool has_psk = false;
+      for (uint8_t i = 0; i < 32; i++) {
+        uint8_t c = EEPROM.read(config_addr(ADDR_CONF_SSID + i));
+        if (c == 0xFF) c = 0x00;
+        ssid[i] = (char)c;
+        if (c != 0x00) any = true;
+      }
+      for (uint8_t i = 0; i < 32; i++) {
+        uint8_t c = EEPROM.read(config_addr(ADDR_CONF_PSK + i));
+        if (c == 0xFF) c = 0x00;
+        if (c != 0x00) { has_psk = true; break; }
+      }
+      if (any) {
+        JsonObject n = arr.add<JsonObject>();
+        n["ssid"]    = ssid;
+        n["has_psk"] = has_psk;
+      }
+      send_json(200, doc);
+    }
+
+    // POST /api/wifi/forget — zero the saved SSID + PSK in EEPROM and
+    // reboot. The device comes up with wifi unconfigured, which the
+    // existing bootstrap path turns into the softAP captive-portal
+    // for first-time setup. Identity-code auth required because this
+    // disconnects every client.
+    static void handle_wifi_forget() {
+      JsonDocument body;
+      if (!read_body_json(body)) return;
+      if (!require_physical_auth(body)) return;
+      // Optional ssid arg lets a future multi-network UI target a
+      // specific entry; for the single-entry EEPROM layout we just
+      // wipe whatever's stored.
+      const char* ssid_arg = body["ssid"] | "";
+      char current[33] = {0};
+      for (uint8_t i = 0; i < 32; i++) {
+        uint8_t c = EEPROM.read(config_addr(ADDR_CONF_SSID + i));
+        current[i] = (c == 0xFF) ? 0x00 : (char)c;
+      }
+      if (current[0] == 0x00) {
+        send_error_with_message(404, "no_saved_network",
+          "No saved WiFi network to forget.");
+        return;
+      }
+      if (*ssid_arg && strncmp(ssid_arg, current, 32) != 0) {
+        send_error_with_message(404, "ssid_not_saved",
+          "Requested SSID is not in the saved-networks list.");
+        return;
+      }
+      for (uint8_t i = 0; i < 33; i++) {
+        eeprom_update(config_addr(ADDR_CONF_SSID + i), 0x00);
+        eeprom_update(config_addr(ADDR_CONF_PSK  + i), 0x00);
+      }
+      // Drop to "no WiFi configured" so the next boot enters the
+      // bootstrap softAP rather than retrying a network we just told
+      // the user we forgot.
+      wr_conf_save(WR_WIFI_OFF);
+      NOTICEF("WiFi: forgot saved network '%s'", current);
+
+      JsonDocument doc;
+      doc["status"]  = "forgotten";
+      doc["restart"] = true;
+      send_json(200, doc);
       persist_and_restart();
     }
 

@@ -22,6 +22,7 @@
 #include "../LXMF/LXMFTypes.h"
 #include "../LXMF/AnnounceLog.h"
 #include "AuthTokens.h"
+#include "BootCounter.h"
 #include "PasswordHash.h"
 #include "SPAEmbedded.h"
 
@@ -87,6 +88,7 @@ namespace Web {
       if (_started) return;
       _started = true;
       AuthTokens::load();
+      BootCounter::init();  // emit the log line; current() is otherwise lazy
       register_routes();
       static const char* collect[] = {"Authorization"};
       server.collectHeaders(collect, sizeof(collect)/sizeof(collect[0]));
@@ -376,6 +378,8 @@ namespace Web {
       server.on(UriBraces("/api/identities/{}/send"),     HTTP_POST, handle_send);
       server.on(UriBraces("/api/identities/{}/events"),   HTTP_GET,  handle_events);
       server.on(UriBraces("/api/identities/{}/state"),    HTTP_GET,  handle_state);
+      server.on(UriBraces("/api/identities/{}/conversations/{}"),
+                HTTP_DELETE, handle_clear_conversation);
       // Paths
       server.on("/api/paths",         HTTP_GET,  handle_paths_list);
       server.on("/api/paths/lookup",  HTTP_POST, handle_path_lookup);
@@ -648,6 +652,38 @@ namespace Web {
       ESP.restart();
     }
 
+    // DELETE /api/identities/{id}/conversations/{peer_hex}
+    // Bearer-auth gated. Removes every inbox + outbox record for this
+    // identity whose peer_hash matches peer_hex. Rewrites the JSONL
+    // spool. Identity itself, keys, and other peers are untouched.
+    static void handle_clear_conversation() {
+      LXMF::IdentityId caller = require_auth();
+      if (caller.empty()) return;
+      std::string requested = std::string(server.pathArg(0).c_str());
+      if (caller != requested) { send_error(403, "forbidden"); return; }
+      std::string peer_hex = std::string(server.pathArg(1).c_str());
+      RNS::Bytes peer = hex_to_bytes(peer_hex, LXMF::HASH_LEN);
+      if (peer.size() != LXMF::HASH_LEN) {
+        char msg[120];
+        snprintf(msg, sizeof(msg),
+                 "Peer address must be 32 hex characters (got %u).",
+                 (unsigned)peer_hex.size());
+        send_error_with_message(400, "invalid_peer_hash", msg);
+        return;
+      }
+      const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
+      if (!a) { send_error(404, "unknown_identity"); return; }
+      size_t inbox_removed  = a->inbox  ? a->inbox->purge_peer(peer)  : 0;
+      size_t outbox_removed = a->outbox ? a->outbox->purge_peer(peer) : 0;
+      NOTICEF("WebUI: cleared conversation %s <-> %s (inbox=%u outbox=%u)",
+              requested.c_str(), peer_hex.c_str(),
+              (unsigned)inbox_removed, (unsigned)outbox_removed);
+      JsonDocument doc;
+      doc["inbox_removed"]  = (uint32_t)inbox_removed;
+      doc["outbox_removed"] = (uint32_t)outbox_removed;
+      send_json(200, doc);
+    }
+
     static void handle_announces() {
       if (require_auth().empty()) return;
       const auto& ring = LXMF::AnnounceLog::announces();
@@ -708,13 +744,15 @@ namespace Web {
                                     const std::vector<LXMF::MessageRecord>& msgs) {
       for (const auto& m : msgs) {
         JsonObject obj = arr.add<JsonObject>();
-        obj["seq"]     = m.seq;
-        obj["ts"]      = m.ts;
-        obj["peer"]    = m.peer_hash.toHex();
-        obj["title"]   = m.title;
-        obj["body"]    = m.content;
-        obj["sig_ok"]  = m.signature_ok;
-        obj["status"]  = LXMF::outbox_status_name(m.status);
+        obj["seq"]         = m.seq;
+        obj["ts"]          = m.ts;
+        obj["boot_epoch"]  = m.boot_epoch;
+        obj["received_ms"] = m.received_ms;
+        obj["peer"]        = m.peer_hash.toHex();
+        obj["title"]       = m.title;
+        obj["body"]        = m.content;
+        obj["sig_ok"]      = m.signature_ok;
+        obj["status"]      = LXMF::outbox_status_name(m.status);
       }
     }
 
@@ -842,37 +880,45 @@ namespace Web {
       };
       if (a->inbox)  for (const auto& m : a->inbox->recent(64))  upsert(m);
       if (a->outbox) for (const auto& m : a->outbox->recent(64)) upsert(m);
-      // Sort each conversation's messages by ts ascending and the
-      // conversations themselves by their newest-message ts descending.
+      // Order by (boot_epoch, received_ms) — see LXMFTypes.h. boot_epoch
+      // makes the tuple monotonic across reboots; received_ms breaks
+      // ties within a boot. ts is for display only.
+      auto less_key = [](const LXMF::MessageRecord& x, const LXMF::MessageRecord& y){
+        if (x.boot_epoch != y.boot_epoch) return x.boot_epoch < y.boot_epoch;
+        return x.received_ms < y.received_ms;
+      };
       for (auto& c : convs_list) {
-        std::sort(c.msgs.begin(), c.msgs.end(),
-                  [](const LXMF::MessageRecord& x, const LXMF::MessageRecord& y){ return x.ts < y.ts; });
+        std::sort(c.msgs.begin(), c.msgs.end(), less_key);
       }
       std::sort(convs_list.begin(), convs_list.end(),
-                [](const ConvAccum& x, const ConvAccum& y){
-                  double xt = x.msgs.empty() ? 0.0 : x.msgs.back().ts;
-                  double yt = y.msgs.empty() ? 0.0 : y.msgs.back().ts;
-                  return xt > yt;
+                [&](const ConvAccum& x, const ConvAccum& y){
+                  if (x.msgs.empty()) return false;
+                  if (y.msgs.empty()) return true;
+                  return less_key(y.msgs.back(), x.msgs.back());
                 });
       for (const auto& c : convs_list) {
         JsonObject co = convs.add<JsonObject>();
         co["peer"] = c.peer_hex;
         if (!c.msgs.empty()) {
           const auto& last = c.msgs.back();
-          co["last_ts"]   = last.ts;
-          co["last_body"] = last.content;
-          co["last_in"]   = last.incoming;
+          co["last_ts"]          = last.ts;
+          co["last_boot_epoch"]  = last.boot_epoch;
+          co["last_received_ms"] = last.received_ms;
+          co["last_body"]        = last.content;
+          co["last_in"]          = last.incoming;
         }
         JsonArray msgs = co["messages"].to<JsonArray>();
         for (const auto& m : c.msgs) {
           JsonObject mo = msgs.add<JsonObject>();
-          mo["seq"]     = m.seq;
-          mo["ts"]      = m.ts;
-          mo["title"]   = m.title;
-          mo["body"]    = m.content;
-          mo["in"]      = m.incoming;
-          mo["sig_ok"]  = m.signature_ok;
-          mo["status"]  = LXMF::outbox_status_name(m.status);
+          mo["seq"]         = m.seq;
+          mo["ts"]          = m.ts;
+          mo["boot_epoch"]  = m.boot_epoch;
+          mo["received_ms"] = m.received_ms;
+          mo["title"]       = m.title;
+          mo["body"]        = m.content;
+          mo["in"]          = m.incoming;
+          mo["sig_ok"]      = m.signature_ok;
+          mo["status"]      = LXMF::outbox_status_name(m.status);
         }
       }
 
@@ -907,6 +953,16 @@ namespace Web {
       markers["inbox_since"]     = a->inbox  ? a->inbox->next_seq()  - 1 : 0;
       markers["announces_since"] = announces_high_water;
       markers["paths_since"]     = paths_high_water;
+
+      // Display-time anchor: SPA snapshots (Date.now_browser, now_ms)
+      // at fetch time and computes wall-clock for any record via
+      //   wall = anchor_browser - (now_ms - received_ms)
+      // Only meaningful for records with boot_epoch == current_boot
+      // (millis() resets across boots) — for older boots the SPA
+      // should fall back to "previously" / no relative time.
+      JsonObject clock = doc["clock"].to<JsonObject>();
+      clock["now_ms"]            = millis();
+      clock["current_boot_epoch"] = Web::BootCounter::current();
 
       send_json(200, doc);
     }
@@ -952,12 +1008,14 @@ namespace Web {
         JsonDocument item;
         item["type"] = "incoming";
         JsonObject msg = item["msg"].to<JsonObject>();
-        msg["seq"]    = m.seq;
-        msg["ts"]     = m.ts;
-        msg["peer"]   = m.peer_hash.toHex();
-        msg["title"]  = m.title;
-        msg["body"]   = m.content;
-        msg["sig_ok"] = m.signature_ok;
+        msg["seq"]         = m.seq;
+        msg["ts"]          = m.ts;
+        msg["boot_epoch"]  = m.boot_epoch;
+        msg["received_ms"] = m.received_ms;
+        msg["peer"]        = m.peer_hash.toHex();
+        msg["title"]       = m.title;
+        msg["body"]        = m.content;
+        msg["sig_ok"]      = m.signature_ok;
         String line;
         serializeJson(item, line);
         server.sendContent(String("data: ") + line + "\n\n");

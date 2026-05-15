@@ -1178,6 +1178,10 @@ class Transport {
   async factoryReset(code)                        { throw new Error('unimplemented'); }
   async wifiScan()                                { throw new Error('unimplemented'); }
   async wifiConfigure(ssid, psk, identityCode)    { throw new Error('unimplemented'); }
+  // Returns { blob, filename } for the named attachment, or throws on
+  // 404 / auth errors. The browser-canonical inbox phase will replace
+  // this with a download-once-and-cache flow.
+  async fetchAttachment(identityId, filename)     { throw new Error('unimplemented'); }
   get capabilities() {
     return { wifiBootstrap: false, factoryReset: false, radioConfig: false, deviceManaged: false };
   }
@@ -1311,6 +1315,18 @@ class UReticulumHTTPTransport extends Transport {
     const body = { ssid, psk };
     if (identityCode) body.identity_code = identityCode;
     return this._req('/api/wifi/configure', { method: 'POST', body, unauthed: !!identityCode });
+  }
+  async fetchAttachment(identityId, filename) {
+    const tok = this.tokenGetter();
+    const url = '/api/identities/' + encodeURIComponent(identityId)
+              + '/attachments/' + encodeURIComponent(filename);
+    const r = await fetch(url, { headers: tok ? { 'Authorization': 'Bearer ' + tok } : {} });
+    if (!r.ok) {
+      let body = {}; try { body = await r.json(); } catch { /* opaque */ }
+      const msg = body.message || body.error || ('http ' + r.status);
+      const err = new Error(msg); err.status = r.status; throw err;
+    }
+    return { blob: await r.blob(), filename };
   }
 }
 
@@ -1563,21 +1579,26 @@ function renderThread() {
         bubble.appendChild(el('div', { style: 'font-weight:600;margin-bottom:2px', text: m.title }));
       }
       bubble.appendChild(document.createTextNode(m.body || ''));
-      // Attachment placeholders. The bytes live on the device under
-      // /lxmf/identities/<id>/attachments/<filename>; this just shows
-      // a tag chip. Phase 2 will add a download / thumbnail path via
-      // a dedicated /api/identities/{id}/attachments/{filename} GET.
+      // Attachment chips. Each one fetches its blob lazily from the
+      // device on click. We don't auto-download or pre-fetch (some
+      // peers send junk; bandwidth is precious; the chat history can
+      // be long). Images are previewed inline once fetched; everything
+      // else triggers a Save-As.
       if (Array.isArray(m.attachments) && m.attachments.length > 0) {
         for (const a of m.attachments) {
+          if (!a.filename) continue;
           const label = (a.tag === 5 ? '📎 file'
                        : a.tag === 6 ? '🖼 image'
                        : a.tag === 7 ? '🎙 audio'
                        : '📎 attachment')
                        + ' (' + formatBytes(a.size || 0) + ')';
-          bubble.appendChild(el('div', {
-            style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.1);font-size:11px',
-            text: label,
-          }));
+          const chip = el('button', {
+            class: 'attachment-chip',
+            style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block',
+            text: label + ' — click to download',
+          });
+          chip.addEventListener('click', () => downloadAttachment(state.identityId, a, chip, bubble));
+          bubble.appendChild(chip);
         }
       }
       const metaParts = [];
@@ -1622,6 +1643,46 @@ function formatBytes(n) {
   if (n < 1024) return n + ' B';
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
   return (n / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+// Fetch the attachment blob from the device. Images (tag 6) get an
+// inline preview appended to the bubble; everything else triggers a
+// browser Save-As. The chip stays clickable for re-download until a
+// successful fetch swaps it for the inline preview (image case).
+async function downloadAttachment(identityId, meta, chipEl, bubbleEl) {
+  if (chipEl.dataset.busy) return;
+  chipEl.dataset.busy = '1';
+  const originalText = chipEl.textContent;
+  chipEl.textContent = originalText.replace(/ —.*$/, '') + ' — fetching…';
+  try {
+    const { blob } = await state.transport.fetchAttachment(identityId, meta.filename);
+    const url = URL.createObjectURL(blob);
+    if (meta.tag === 6) {
+      // Image: replace the chip with an inline <img>.
+      const img = el('img', {
+        src: url,
+        style: 'margin-top:6px;max-width:240px;max-height:240px;border-radius:6px;display:block;cursor:zoom-in',
+      });
+      img.addEventListener('click', () => window.open(url, '_blank'));
+      bubbleEl.replaceChild(img, chipEl);
+    } else {
+      // File / audio / unknown: trigger Save-As. For audio (tag 7) the
+      // user can drag the saved file into a player; an inline <audio>
+      // element would need the MIME type which we don't track yet.
+      const a = el('a', { href: url, download: meta.filename });
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // Revoke after a tick so the browser has time to start the download.
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      chipEl.textContent = originalText.replace(/ —.*$/, '') + ' — saved';
+      chipEl.dataset.busy = '';
+    }
+  } catch (e) {
+    toast('Attachment fetch failed: ' + (e.message || e), 'error');
+    chipEl.textContent = originalText;
+    chipEl.dataset.busy = '';
+  }
 }
 
 // Ordering key for messages: (boot_epoch, received_ms). millis() resets

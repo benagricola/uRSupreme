@@ -399,6 +399,8 @@ namespace Web {
       server.on(UriBraces("/api/identities/{}/state"),    HTTP_GET,  handle_state);
       server.on(UriBraces("/api/identities/{}/conversations/{}"),
                 HTTP_DELETE, handle_clear_conversation);
+      server.on(UriBraces("/api/identities/{}/attachments/{}"),
+                HTTP_GET, handle_attachment_get);
       // Paths
       server.on("/api/paths",         HTTP_GET,  handle_paths_list);
       server.on("/api/paths/lookup",  HTTP_POST, handle_path_lookup);
@@ -728,6 +730,70 @@ namespace Web {
       doc["inbox_removed"]  = (uint32_t)inbox_removed;
       doc["outbox_removed"] = (uint32_t)outbox_removed;
       send_json(200, doc);
+    }
+
+    // GET /api/identities/{id}/attachments/{filename}
+    // Bearer-auth gated. Streams the requested attachment blob from
+    // <identity_dir>/attachments/<filename>. Filenames are exactly the
+    // ones the inbox JSONL stores (see LXMFGateway attachment-persist
+    // callback: "<msg_hash_hex>_<tag>_<idx>.bin"). The filename is
+    // strictly validated against [0-9a-f_].bin to forbid traversal.
+    static void handle_attachment_get() {
+      LXMF::IdentityId caller = require_auth();
+      if (caller.empty()) return;
+      std::string requested = std::string(server.pathArg(0).c_str());
+      if (caller != requested) { send_error(403, "forbidden"); return; }
+      std::string fname = std::string(server.pathArg(1).c_str());
+      // Allow [0-9a-fA-F_.] only and require the .bin suffix; rejects
+      // any "..", "/", "\", or unexpected character outright. The
+      // generated names use only lowercase hex + underscore + ".bin"
+      // (see LXMFGateway attachment-persist callback).
+      bool ok = !fname.empty() && fname.size() < 96
+                && fname.size() > 4
+                && fname.compare(fname.size() - 4, 4, ".bin") == 0;
+      for (size_t i = 0; ok && i < fname.size(); ++i) {
+        char c = fname[i];
+        bool valid = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+                     || c == '_' || c == '.';
+        if (!valid) ok = false;
+      }
+      if (!ok) {
+        send_error_with_message(400, "invalid_attachment_name",
+          "Attachment filename must match <msg_hex>_<tag>_<idx>.bin.");
+        return;
+      }
+      const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
+      if (!a) { send_error(404, "unknown_identity"); return; }
+      const std::string full = a->dir() + "/attachments/" + fname;
+      if (!filesystem.exists(full.c_str())) {
+        send_error(404, "attachment_not_found");
+        return;
+      }
+      microStore::File f = filesystem.open(full.c_str(),
+                                           microStore::File::ModeRead);
+      if (!f) {
+        send_error(500, "attachment_open_failed");
+        return;
+      }
+      const size_t total = f.size();
+      // Set headers, then stream in chunks so we don't need the whole
+      // blob in RAM at once (attachments can run up to ~1 MiB).
+      server.setContentLength(total);
+      server.sendHeader("Content-Disposition",
+                        String("attachment; filename=\"") + fname.c_str() + "\"");
+      // We don't track MIME here — the SPA infers from the tag and the
+      // .bin payload is opaque. Browsers will Save-As regardless.
+      server.send(200, "application/octet-stream", "");
+      uint8_t buf[512];
+      size_t remaining = total;
+      while (remaining > 0) {
+        size_t want = remaining < sizeof(buf) ? remaining : sizeof(buf);
+        size_t got = f.read(buf, want);
+        if (got == 0) break;
+        server.client().write(buf, got);
+        remaining -= got;
+      }
+      f.close();
     }
 
     static void handle_announces() {

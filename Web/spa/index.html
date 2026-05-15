@@ -1869,6 +1869,8 @@ function renderThread() {
           const inbound = !!m.in && /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename);
           if (inbound && a.tag === 6) {
             bubble.appendChild(renderInboundImage(a, label));
+          } else if (inbound && a.tag === 7) {
+            bubble.appendChild(renderInboundAudio(a, label));
           } else if (inbound) {
             const chip = el('button', {
               class: 'attachment-chip',
@@ -1927,6 +1929,67 @@ function formatBytes(n) {
   if (n < 1024) return n + ' B';
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
   return (n / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+// Sniff an audio file's MIME from its first few bytes so the browser
+// picks the right decoder. Returns `audio/*` strings the major
+// browsers know how to play. Defaults to audio/ogg (Opus is the
+// most common LXMF voice-note format).
+function sniffAudioMime(bytes) {
+  if (bytes.length < 4) return 'audio/ogg';
+  // "OggS" — Ogg container (Vorbis or Opus)
+  if (bytes[0] === 0x4F && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) return 'audio/ogg';
+  // "RIFF" + "WAVE" — WAV
+  if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+      && bytes.length >= 12
+      && bytes[8] === 0x57 && bytes[9] === 0x41 && bytes[10] === 0x56 && bytes[11] === 0x45) return 'audio/wav';
+  // "ID3" tag or MPEG audio sync 0xFFFB / 0xFFFA / 0xFFE3 etc.
+  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return 'audio/mpeg';
+  if (bytes[0] === 0xFF && (bytes[1] & 0xE0) === 0xE0) return 'audio/mpeg';
+  // "fLaC" — FLAC
+  if (bytes[0] === 0x66 && bytes[1] === 0x4C && bytes[2] === 0x61 && bytes[3] === 0x43) return 'audio/flac';
+  // ftyp box + "M4A " — AAC in MP4
+  if (bytes.length >= 12
+      && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) return 'audio/mp4';
+  return 'audio/ogg';
+}
+
+// Inbound audio attachment: auto-load and render an inline player.
+// Same caching pattern as renderInboundImage so SSE rerenders reuse
+// the blob URL.
+function renderInboundAudio(meta, fallbackLabel) {
+  const wrap = el('div', { style: 'margin-top:6px' });
+  const cached = state.attachmentBlobs.get(meta.filename);
+  const makePlayer = (url) => el('audio', {
+    src: url, controls: 'controls', preload: 'metadata',
+    style: 'max-width:240px;display:block',
+  });
+  if (cached && cached !== 'loading' && cached !== 'failed') {
+    wrap.appendChild(makePlayer(cached));
+    return wrap;
+  }
+  const placeholder = el('div', {
+    style: 'padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.08);font-size:11px;color:var(--text-dim)',
+    text: fallbackLabel + ' — loading…',
+  });
+  wrap.appendChild(placeholder);
+  if (cached === 'loading') return wrap;
+  state.attachmentBlobs.set(meta.filename, 'loading');
+  state.transport.fetchAttachment(state.identityId, meta.filename).then(async ({ blob }) => {
+    // Re-wrap with the sniffed MIME so the browser can decode it.
+    const buf = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+    const mime = sniffAudioMime(buf);
+    const typed = new Blob([await blob.arrayBuffer()], { type: mime });
+    const url = URL.createObjectURL(typed);
+    state.attachmentBlobs.set(meta.filename, url);
+    if (wrap.contains(placeholder)) {
+      wrap.replaceChild(makePlayer(url), placeholder);
+    }
+  }).catch((e) => {
+    state.attachmentBlobs.set(meta.filename, 'failed');
+    placeholder.textContent = fallbackLabel + ' — load failed: ' + (e.message || e);
+  });
+  return wrap;
 }
 
 // Inbound image attachment: auto-load and render inline. Returns a

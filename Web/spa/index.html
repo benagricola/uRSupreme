@@ -807,9 +807,9 @@ summary:hover { color: var(--text); }
     </header>
     <div class="tab-bar" id="settings-tabs">
       <button class="tab" data-tab="identity">Identity</button>
-      <button class="tab" data-tab="radio">Radio</button>
+      <button class="tab" data-tab="connectivity">Connectivity</button>
       <button class="tab" data-tab="ui">App</button>
-      <button class="tab" data-tab="network">Network</button>
+      <button class="tab" data-tab="network">Activity</button>
       <button class="tab" data-tab="danger">Reset</button>
     </div>
     <div class="modal-body">
@@ -830,9 +830,10 @@ summary:hover { color: var(--text); }
         </div>
       </div>
 
-      <!-- ============== Radio tab ============== -->
-      <div class="tab-panel" data-panel="radio">
-        <div class="warn" style="margin:0 0 12px">⚠ Radio settings are <strong>device-wide</strong> — they apply to every identity stored on this device, not just the one you're logged into. Changing them reboots the radio and may interrupt active conversations.</div>
+      <!-- ============== Connectivity tab (Radio + WiFi + Bluetooth) ============== -->
+      <div class="tab-panel" data-panel="connectivity">
+        <div class="warn" style="margin:0 0 12px">⚠ Connectivity settings are <strong>device-wide</strong> — they apply to every identity stored on this device. Changing radio params reboots the device and may interrupt active conversations.</div>
+        <div class="card" style="margin-bottom:14px"><strong>LoRa Radio</strong></div>
         <p class="muted" id="rd-intro">Pick the region preset that matches your local LoRa community. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.</p>
         <label>Region preset</label>
         <select id="rd-preset" style="margin-bottom:6px"></select>
@@ -873,6 +874,29 @@ summary:hover { color: var(--text); }
           <p class="muted" style="margin-bottom:14px">SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom — useful for long links.<br><strong>Airtime caps are regulatory limits</strong> — picking a region preset sets a sane default; 0 disables (only use where allowed).</p>
         </div>
         <button id="btn-radio-save" style="width:100%">Save &amp; reboot</button>
+
+        <!-- WiFi sub-section. The same /api/wifi/configure path the
+             bootstrap softAP flow uses; lets the user change networks
+             without going back through the captive portal. -->
+        <div class="card" style="margin-top:20px"><strong>WiFi</strong></div>
+        <p class="muted" style="margin-bottom:8px">Pick a network for this device to join. Saving reboots the device. The softAP fallback engages automatically if the saved network isn't reachable on next boot.</p>
+        <label>Network</label>
+        <select id="cn-wifi-ssid" style="margin-bottom:8px">
+          <option value="">— scan to populate —</option>
+        </select>
+        <button class="secondary" id="cn-wifi-scan" style="margin-bottom:12px">Rescan networks</button>
+        <label>Password</label>
+        <input id="cn-wifi-psk" type="password" placeholder="(leave blank for open networks)" style="margin-bottom:8px">
+        <p class="muted id-code-hint" style="margin-bottom:8px"></p>
+        <label>Identity code</label>
+        <input id="cn-wifi-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:12px">
+        <button id="cn-wifi-save" style="width:100%">Save WiFi &amp; reboot</button>
+
+        <!-- Bluetooth placeholder. Hardware supports it but the
+             firmware-side wire-up is a separate task — leaving a stub
+             so users notice the feature is coming. -->
+        <div class="card" style="margin-top:20px"><strong>Bluetooth</strong></div>
+        <p class="muted">Not configurable from the SPA yet. The hardware supports it; this section will gain pairing / on-off controls in a future release.</p>
       </div>
 
       <!-- ============== App / UI tab ============== -->
@@ -2359,6 +2383,22 @@ $('btn-radio-save').addEventListener('click', async () => {
     waitForDeviceAndReload('Saving radio config & rebooting…');
   } catch (e) { toast('Save failed: ' + (e.message || e), 'error'); }
 });
+// WiFi card handlers inside the Connectivity tab.
+$('cn-wifi-scan').addEventListener('click', populateWifiTab);
+$('cn-wifi-save').addEventListener('click', async () => {
+  const ssid = $('cn-wifi-ssid').value;
+  if (!ssid) { toast('Pick a network first.', 'error'); return; }
+  const psk  = $('cn-wifi-psk').value;
+  const code = $('cn-wifi-code').value.trim();
+  if (!code) { toast('Identity code required to change WiFi.', 'error'); return; }
+  try {
+    await state.transport.wifiConfigure(ssid, psk, code);
+    waitForDeviceAndReload('Saving WiFi & rebooting…');
+  } catch (e) {
+    toast('WiFi save failed: ' + (e.message || e), 'error');
+  }
+});
+
 $('btn-send').addEventListener('click', sendMessage);
 $('compose-text').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
@@ -2566,22 +2606,40 @@ function selectSettingsTab(tabId) {
   tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabId));
   panels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabId));
   // Lazy-populate per-tab data so the modal opens snappily.
-  if (tabId === 'radio')    populateRadioTab();
-  if (tabId === 'identity') populateIdentityTab();
-  if (tabId === 'network')  { renderAnnounces(); renderPaths(); }
-  if (tabId === 'ui')       { $('pref-enter-sends').checked = !!state.prefs.enterSends; renderContacts(); }
+  if (tabId === 'connectivity') { populateRadioTab(); populateWifiTab(); }
+  if (tabId === 'identity')     populateIdentityTab();
+  if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
+  if (tabId === 'ui')           { $('pref-enter-sends').checked = !!state.prefs.enterSends; renderContacts(); }
 }
 
-// firstRun=true: must-configure-radio gate. Hide every non-radio tab,
-// hide the close button, suppress dismissal handlers.
+async function populateWifiTab() {
+  fillIdCodeHints();
+  const sel = $('cn-wifi-ssid');
+  sel.innerHTML = '<option value="">— scanning… —</option>';
+  try {
+    const r = await state.transport.wifiScan();
+    sel.innerHTML = '<option value="">— pick a network —</option>';
+    for (const n of (r.networks || [])) {
+      sel.appendChild(el('option', { value: n.ssid }, n.ssid + (n.secure ? ' 🔒' : '')));
+    }
+  } catch (e) {
+    sel.innerHTML = '<option value="">(scan failed)</option>';
+  }
+}
+
+// firstRun=true: must-configure-radio gate. Hide every non-connectivity
+// tab, hide the close button, suppress dismissal handlers.
 async function openSettingsModal(initialTab, firstRun) {
   $('modal-settings').hidden = false;
   $('modal-settings').dataset.firstRun = firstRun ? '1' : '';
   // Title + tab visibility
   $('settings-title').textContent = firstRun ? 'Set up your radio' : 'Settings';
   $('btn-close-settings').style.display = firstRun ? 'none' : '';
+  // Treat the legacy 'radio' tab name as a synonym for 'connectivity'
+  // — callers that open the radio gate still work.
+  if (initialTab === 'radio') initialTab = 'connectivity';
   for (const t of document.querySelectorAll('#settings-tabs .tab')) {
-    t.hidden = firstRun && t.dataset.tab !== 'radio';
+    t.hidden = firstRun && t.dataset.tab !== 'connectivity';
   }
   // First-run radio intro is more urgent.
   $('rd-intro').innerHTML = firstRun

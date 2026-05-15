@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include <Log.h>
 #include <Identity.h>
+#include <Utilities/OS.h>
 #include <microStore/FileSystem.h>
 
 #include <memory>
@@ -389,8 +390,14 @@ namespace LXMF {
               snprintf(fname, sizeof(fname), "%s_%02x_%u.bin",
                        msg_hash.toHex().c_str(), (unsigned)f.tag, (unsigned)i);
               const std::string full = att_dir + "/" + fname;
+              // LittleFS write on a 10+ KB blob with a fragmented FS
+              // can easily take hundreds of ms; reset the WDT on
+              // either side so a multi-attachment message doesn't
+              // accumulate enough flash time to trip the watchdog. (#60)
+              RNS::Utilities::OS::reset_watchdog();
               const size_t wrote = filesystem.writeFile(full.c_str(),
                                                         f.raw, f.raw_len);
+              RNS::Utilities::OS::reset_watchdog();
               if (wrote != f.raw_len) {
                 WARNINGF("LXMF: attachment write short (wrote %u/%u) for %s",
                          (unsigned)wrote, (unsigned)f.raw_len, fname);

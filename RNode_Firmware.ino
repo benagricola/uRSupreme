@@ -2445,6 +2445,12 @@ void loop() {
       ERRORF("RNS loop failed: %s", e.what());
     }
   }
+  // After a long reticulum.loop() (e.g. mid-Resource assembly that
+  // ran SHA + decrypt + flash writes), reset the task watchdog so we
+  // don't reboot just because one tick processed a lot. The lock is
+  // released here so the web_task gets a window before we re-enter
+  // RNS work below. (#60)
+  esp_task_wdt_reset();
 #endif
 
   if (radio_online) {

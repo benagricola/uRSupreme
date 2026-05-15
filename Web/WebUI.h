@@ -10,6 +10,7 @@
 
 #include <Arduino.h>
 #include <EEPROM.h>
+#include <esp_wifi.h>
 #include <WebServer.h>
 #include <uri/UriBraces.h>
 #include <ArduinoJson.h>
@@ -543,9 +544,34 @@ namespace Web {
       wifi["ip"]            = WiFi.localIP().toString().c_str();
       if (wifi_mode == WR_WIFI_STA && WiFi.SSID().length() > 0) {
         wifi["ssid"]        = WiFi.SSID().c_str();
+        // Authentication mode of the currently-connected AP. ESP-IDF
+        // populates this on each STA connect; map to short tokens the
+        // SPA can render directly without translating an enum int.
+        wifi_ap_record_t info;
+        if (esp_wifi_sta_get_ap_info(&info) == ESP_OK) {
+          const char* auth = "unknown";
+          switch (info.authmode) {
+            case WIFI_AUTH_OPEN:             auth = "open"; break;
+            case WIFI_AUTH_WEP:              auth = "WEP"; break;
+            case WIFI_AUTH_WPA_PSK:          auth = "WPA"; break;
+            case WIFI_AUTH_WPA2_PSK:         auth = "WPA2"; break;
+            case WIFI_AUTH_WPA_WPA2_PSK:     auth = "WPA/WPA2"; break;
+            case WIFI_AUTH_WPA2_ENTERPRISE:  auth = "WPA2-EAP"; break;
+            case WIFI_AUTH_WPA3_PSK:         auth = "WPA3"; break;
+            case WIFI_AUTH_WPA2_WPA3_PSK:    auth = "WPA2/WPA3"; break;
+            case WIFI_AUTH_WAPI_PSK:         auth = "WAPI"; break;
+            default: break;
+          }
+          wifi["auth"] = auth;
+          wifi["rssi_dbm"] = (int)info.rssi;
+        }
       } else if (wifi_mode == WR_WIFI_AP) {
         wifi["ssid"]        = (const char*)bt_devname;
         wifi["ap_ip"]       = WiFi.softAPIP().toString().c_str();
+        // The bootstrap softAP is brought up open (no PSK) in
+        // wifi_remote_start_ap — surface that so the SPA can warn
+        // anyone seeing the bootstrap network on their phone.
+        wifi["auth"]        = "open";
       }
       // Storage usage. LittleFS partition is the only persistent
       // store today; the SD card slot is wired up on the T-Beam

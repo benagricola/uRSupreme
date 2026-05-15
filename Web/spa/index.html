@@ -741,12 +741,11 @@ summary:hover { color: var(--text); }
 <div id="popover-status" class="popover" hidden>
   <div class="popover-section">
     <div class="popover-row">
-      <div class="popover-label">Radio</div>
+      <div class="popover-label" id="status-radio-label">RADIO</div>
       <div id="status-radio-line"></div>
     </div>
     <div class="muted mono" id="status-radio-cfg-1" style="font-size:11px;margin-top:6px"></div>
     <div class="muted mono" id="status-radio-cfg-2" style="font-size:11px"></div>
-    <div class="muted mono" id="status-radio-model"  style="font-size:11px"></div>
     <div class="muted mono" id="status-radio-stats" style="font-size:11px;margin-top:4px"></div>
     <div class="muted mono" id="status-radio-rate"  style="font-size:11px"></div>
   </div>
@@ -755,7 +754,9 @@ summary:hover { color: var(--text); }
       <div class="popover-label">WiFi</div>
       <div id="status-wifi-line"></div>
     </div>
-    <div class="muted mono" id="status-wifi-detail" style="font-size:11px;margin-top:6px"></div>
+    <div class="muted mono" id="status-wifi-ssid" style="font-size:11px;margin-top:6px"></div>
+    <div class="muted mono" id="status-wifi-ip"   style="font-size:11px"></div>
+    <div class="muted mono" id="status-wifi-auth" style="font-size:11px"></div>
     <button class="secondary" id="btn-force-softap" hidden style="width:100%;margin-top:8px">Switch to softAP</button>
     <div class="muted" id="status-wifi-hint" hidden style="font-size:11px;margin-top:6px">Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. EEPROM is untouched — a reboot will try this network again.</div>
   </div>
@@ -1906,17 +1907,17 @@ function renderStatusPopover() {
   const t = info.transport || {};
   const radioLine = $('status-radio-line');
   radioLine.innerHTML = '';
-  // Embed the chip model in the pill so users can tell two co-
-  // located devices apart at a glance (e.g. "SX1262 Online" vs
-  // "LR11xx Online"). Falls back to the bare state when the model
-  // isn't reported.
-  const modelPrefix = r.model ? r.model + ' ' : '';
+  // Chip model is prefixed onto the "RADIO" label so two co-located
+  // devices are distinguishable at a glance ("SX1262 RADIO" /
+  // "LR11xx RADIO"). The pill keeps the bare state — clean to scan
+  // for status without parsing model + state together.
+  $('status-radio-label').textContent = (r.model ? r.model + ' ' : '') + 'RADIO';
   if (!r.have_conf) {
-    radioLine.appendChild(el('span', { class: 'pill warn' }, modelPrefix + 'Not configured'));
+    radioLine.appendChild(el('span', { class: 'pill warn' }, 'Not configured'));
   } else if (r.online) {
-    radioLine.appendChild(el('span', { class: 'pill ok' }, modelPrefix + 'Online'));
+    radioLine.appendChild(el('span', { class: 'pill ok' }, 'Online'));
   } else {
-    radioLine.appendChild(el('span', { class: 'pill bad' }, modelPrefix + 'Offline'));
+    radioLine.appendChild(el('span', { class: 'pill bad' }, 'Offline'));
   }
   if (r.have_conf) {
     $('status-radio-cfg-1').textContent =
@@ -1927,9 +1928,6 @@ function renderStatusPopover() {
     $('status-radio-cfg-1').textContent = 'No radio config saved yet.';
     $('status-radio-cfg-2').textContent = '';
   }
-  // Chip model now lives in the pill above — leave the placeholder
-  // empty so the layout doesn't shift when the popover opens.
-  $('status-radio-model').textContent = '';
   const s = r.stats || {};
   if (s.rx_packets !== undefined || s.tx_packets !== undefined) {
     $('status-radio-stats').textContent =
@@ -1961,7 +1959,8 @@ function renderStatusPopover() {
     rx:        s.rx_packets || 0,
     tx:        s.tx_packets || 0,
   };
-  // WiFi mode + SSID + softAP toggle.
+  // WiFi mode + SSID + IP + auth, each on its own line so longer
+  // SSIDs / IPv6-ish strings don't wrap the popover awkwardly.
   const w = info.wifi || {};
   const wLine = $('status-wifi-line');
   wLine.innerHTML = '';
@@ -1974,11 +1973,17 @@ function renderStatusPopover() {
   } else {
     wLine.appendChild(el('span', { class: 'pill' }, w.mode || 'off'));
   }
-  const detailParts = [];
-  if (w.ssid) detailParts.push(w.ssid);
-  if (w.mode === 'ap' && w.ap_ip) detailParts.push('http://' + w.ap_ip + '/');
-  else if (w.ip && w.ip !== '0.0.0.0') detailParts.push(w.ip);
-  $('status-wifi-detail').textContent = detailParts.join(' · ');
+  $('status-wifi-ssid').textContent = w.ssid ? 'SSID: ' + w.ssid : '';
+  let ipText = '';
+  if (w.mode === 'ap' && w.ap_ip) ipText = 'http://' + w.ap_ip + '/';
+  else if (w.ip && w.ip !== '0.0.0.0') ipText = w.ip;
+  $('status-wifi-ip').textContent = ipText ? 'IP: ' + ipText : '';
+  let authText = '';
+  if (w.auth) {
+    authText = 'Security: ' + w.auth;
+    if (typeof w.rssi_dbm === 'number') authText += ' · ' + w.rssi_dbm + ' dBm';
+  }
+  $('status-wifi-auth').textContent = authText;
   // Only show the softAP-toggle button when we're actually in STA
   // mode — there's nothing to switch to from AP.
   const showSoftapBtn = w.mode === 'sta';

@@ -358,6 +358,44 @@ namespace LXMF {
                                        incoming, bytes_done, bytes_total,
                                        /*finished=*/false);
           });
+      // Attachment persistence — when an incoming LXMF message carries
+      // FIELD_FILE_ATTACHMENTS / FIELD_IMAGE / FIELD_AUDIO blobs, write
+      // each one to <identity_dir>/attachments/ and hand back metadata
+      // for the inbox record. Filenames are
+      // "<msg_hash_hex>_<tag>_<idx>.bin" so identical-hash collisions
+      // (unlikely) still scope per-field-per-occurrence.
+      a.lxmf.set_attachment_persist_callback(
+          [p](const RNS::Bytes& msg_hash,
+              const std::vector<LXMFMinimal::FieldBlob>& fields) -> std::vector<AttachmentMeta> {
+            std::vector<AttachmentMeta> out;
+            if (!p->active) return out;
+            const std::string att_dir = p->dir() + "/attachments";
+            if (!filesystem.isDirectory(att_dir.c_str())) {
+              filesystem.mkdir(att_dir.c_str());
+            }
+            for (size_t i = 0; i < fields.size(); ++i) {
+              const auto& f = fields[i];
+              char fname[96];
+              snprintf(fname, sizeof(fname), "%s_%02x_%u.bin",
+                       msg_hash.toHex().c_str(), (unsigned)f.tag, (unsigned)i);
+              const std::string full = att_dir + "/" + fname;
+              const size_t wrote = filesystem.writeFile(full.c_str(),
+                                                        f.raw, f.raw_len);
+              if (wrote != f.raw_len) {
+                WARNINGF("LXMF: attachment write short (wrote %u/%u) for %s",
+                         (unsigned)wrote, (unsigned)f.raw_len, fname);
+                continue;
+              }
+              AttachmentMeta meta;
+              meta.tag      = f.tag;
+              meta.size     = (uint32_t)f.raw_len;
+              meta.filename = fname;
+              out.push_back(meta);
+              NOTICEF("LXMF: persisted attachment %s (%u B)",
+                      fname, (unsigned)f.raw_len);
+            }
+            return out;
+          });
       a.last_announce_ms = 0;  // announce on first loop tick
     }
 

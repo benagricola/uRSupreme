@@ -1453,11 +1453,6 @@ function _renderConversationsBody(wrap) {
     }
     return outgoing || incoming;
   }
-  function formatBytes(n) {
-    if (n < 1024) return n + ' B';
-    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-    return (n / (1024 * 1024)).toFixed(2) + ' MB';
-  }
   function transferSubText(t) {
     const arrow = t.incoming ? '↓ ' : '↑ ';
     const pct = t.bytes_total ? Math.floor(100 * t.bytes_done / t.bytes_total) : 0;
@@ -1544,6 +1539,23 @@ function renderThread() {
         bubble.appendChild(el('div', { style: 'font-weight:600;margin-bottom:2px', text: m.title }));
       }
       bubble.appendChild(document.createTextNode(m.body || ''));
+      // Attachment placeholders. The bytes live on the device under
+      // /lxmf/identities/<id>/attachments/<filename>; this just shows
+      // a tag chip. Phase 2 will add a download / thumbnail path via
+      // a dedicated /api/identities/{id}/attachments/{filename} GET.
+      if (Array.isArray(m.attachments) && m.attachments.length > 0) {
+        for (const a of m.attachments) {
+          const label = (a.tag === 5 ? '📎 file'
+                       : a.tag === 6 ? '🖼 image'
+                       : a.tag === 7 ? '🎙 audio'
+                       : '📎 attachment')
+                       + ' (' + formatBytes(a.size || 0) + ')';
+          bubble.appendChild(el('div', {
+            style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.1);font-size:11px',
+            text: label,
+          }));
+        }
+      }
       const metaParts = [];
       if (m.ts) metaParts.push(new Date(m.ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
       if (!m.in && m.status) metaParts.push(m.status);
@@ -1579,6 +1591,13 @@ function renderThread() {
     }
   });
   if (atBottom) msgsEl.scrollTop = msgsEl.scrollHeight;
+}
+
+// Bytes formatter shared by progress UI and attachment chips.
+function formatBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
 // Ordering key for messages: (boot_epoch, received_ms). millis() resets
@@ -1934,6 +1953,7 @@ function dispatchEvent(ev) {
       received_ms: m.received_ms || 0,
       title: m.title || '', body: m.body || '',
       in: true, sig_ok: !!m.sig_ok, status: 'delivered',
+      attachments: m.attachments || [],
     });
     renderConversations();
     if (state.openPeer === m.peer) renderThread();

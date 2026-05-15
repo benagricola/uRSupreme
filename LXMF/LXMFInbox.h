@@ -114,6 +114,20 @@ namespace LXMF {
       doc["sig"]     = rec.signature_ok;
       doc["status"]  = outbox_status_name(rec.status);
       if (rec.packet_hash.size() > 0) doc["pkt"] = rec.packet_hash.toHex();
+      // Attachment metadata (file references — the bytes live on
+      // disk under <identity_dir>/attachments/). Omitted entirely
+      // when the record has none, to keep typical chat-message
+      // lines well under MAX_LINE_BYTES.
+      if (!rec.attachments.empty()) {
+        JsonArray arr = doc["att"].to<JsonArray>();
+        for (const auto& a : rec.attachments) {
+          JsonObject o = arr.add<JsonObject>();
+          o["t"] = a.tag;
+          o["s"] = a.size;
+          o["f"] = a.filename;
+          if (!a.mime.empty()) o["m"] = a.mime;
+        }
+      }
 
       char line[MAX_LINE_BYTES];
       size_t n = serializeJson(doc, line, sizeof(line) - 1);
@@ -219,6 +233,16 @@ namespace LXMF {
         std::string pkt_hex = doc["pkt"] | "";
         rec.packet_hash.assignHex(pkt_hex.c_str());
       }
+      if (doc["att"].is<JsonArrayConst>()) {
+        for (JsonObjectConst o : doc["att"].as<JsonArrayConst>()) {
+          AttachmentMeta m;
+          m.tag      = (uint8_t)(o["t"] | 0);
+          m.size     = (uint32_t)(o["s"] | 0);
+          m.filename = (const char*)(o["f"] | "");
+          m.mime     = (const char*)(o["m"] | "");
+          rec.attachments.push_back(m);
+        }
+      }
 
       if (rec.seq > _next_seq) _next_seq = rec.seq;
       _ring.push_back(rec);
@@ -243,6 +267,16 @@ namespace LXMF {
         doc["sig"]     = copy.signature_ok;
         doc["status"]  = outbox_status_name(copy.status);
         if (copy.packet_hash.size() > 0) doc["pkt"] = copy.packet_hash.toHex();
+        if (!copy.attachments.empty()) {
+          JsonArray arr = doc["att"].to<JsonArray>();
+          for (const auto& a : copy.attachments) {
+            JsonObject o = arr.add<JsonObject>();
+            o["t"] = a.tag;
+            o["s"] = a.size;
+            o["f"] = a.filename;
+            if (!a.mime.empty()) o["m"] = a.mime;
+          }
+        }
         char line[MAX_LINE_BYTES];
         size_t n = serializeJson(doc, line, sizeof(line) - 1);
         if (n == 0 || n >= sizeof(line) - 1) continue;

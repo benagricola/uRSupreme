@@ -2,6 +2,7 @@
 
 #include <Bytes.h>
 #include <string>
+#include <vector>
 #include <stdint.h>
 
 namespace LXMF {
@@ -10,6 +11,15 @@ namespace LXMF {
   static constexpr size_t HASH_LEN   = 16;   // RNS truncated hash (128 bits)
   static constexpr size_t SIG_LEN    = 64;   // Ed25519 signature
   static constexpr size_t HEADER_LEN = HASH_LEN + SIG_LEN;  // 80 bytes
+
+  // LXMF fields-dict tags we recognise (LXMF-upstream/LXMF/LXMF.py).
+  // Only the file-shaped tags are persisted on-device for now —
+  // FIELD_TELEMETRY / FIELD_RENDERER / FIELD_TICKET / etc. flow through
+  // as unparsed bytes that the SPA can read out of /api/info if it
+  // ever needs them.
+  static constexpr uint8_t FIELD_FILE_ATTACHMENTS = 0x05;
+  static constexpr uint8_t FIELD_IMAGE            = 0x06;
+  static constexpr uint8_t FIELD_AUDIO            = 0x07;
 
   // Identity identifier — the first 16 hex chars of an Identity's hexhash.
   using IdentityId = std::string;
@@ -32,6 +42,23 @@ namespace LXMF {
     return "unknown";
   }
 
+  // Attachment metadata persisted alongside a MessageRecord. The actual
+  // bytes live at <a->dir()>/attachments/<filename> — we just store a
+  // pointer so the inbox JSONL line stays small (the body itself is
+  // capped at MAX_LINE_BYTES per LXMFInbox.h).
+  //
+  // tag matches the LXMF FIELD_* constant. filename is relative to the
+  // identity's attachments/ dir, generated as "<msg_hash_hex>_<tag>_<n>.bin"
+  // at receive time so identical messages don't collide. mime is the
+  // sender-declared content type if any (Sideband includes it for some
+  // attachment shapes); empty when the wire format didn't carry it.
+  struct AttachmentMeta {
+    uint8_t     tag;
+    uint32_t    size;
+    std::string filename;
+    std::string mime;
+  };
+
   // A received or sent message, in normalized form for inbox/outbox storage.
   //
   // Ordering: the authoritative in-device ordering key is the tuple
@@ -53,6 +80,7 @@ namespace LXMF {
     bool          signature_ok;   // For incoming: did the Ed25519 signature verify against a known identity? For outgoing: always true.
     OutboxStatus  status;         // Only meaningful for outgoing messages; Delivered for incoming.
     RNS::Bytes    packet_hash;    // RNS packet hash, used to correlate delivery receipts.
+    std::vector<AttachmentMeta> attachments;  // Empty for messages without LXMF fields.
   };
 
 }

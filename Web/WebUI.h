@@ -782,6 +782,22 @@ namespace Web {
         obj["body"]        = m.content;
         obj["sig_ok"]      = m.signature_ok;
         obj["status"]      = LXMF::outbox_status_name(m.status);
+        // Attachments (LXMF fields-dict file/image/audio blobs). The
+        // bytes themselves live on disk under
+        // /lxmf/identities/<id>/attachments/<filename>; this just
+        // surfaces the metadata so the SPA can show "📎 (filename, size)"
+        // chips on the message bubble. A future GET endpoint will let
+        // the SPA download the bytes for thumbnail / play.
+        if (!m.attachments.empty()) {
+          JsonArray atts = obj["attachments"].to<JsonArray>();
+          for (const auto& a : m.attachments) {
+            JsonObject o = atts.add<JsonObject>();
+            o["tag"]      = a.tag;
+            o["size"]     = a.size;
+            o["filename"] = a.filename;
+            if (!a.mime.empty()) o["mime"] = a.mime;
+          }
+        }
       }
     }
 
@@ -948,6 +964,16 @@ namespace Web {
           mo["in"]          = m.incoming;
           mo["sig_ok"]      = m.signature_ok;
           mo["status"]      = LXMF::outbox_status_name(m.status);
+          if (!m.attachments.empty()) {
+            JsonArray atts = mo["attachments"].to<JsonArray>();
+            for (const auto& a : m.attachments) {
+              JsonObject o = atts.add<JsonObject>();
+              o["tag"]      = a.tag;
+              o["size"]     = a.size;
+              o["filename"] = a.filename;
+              if (!a.mime.empty()) o["mime"] = a.mime;
+            }
+          }
         }
       }
 
@@ -1045,6 +1071,16 @@ namespace Web {
         msg["title"]       = m.title;
         msg["body"]        = m.content;
         msg["sig_ok"]      = m.signature_ok;
+        if (!m.attachments.empty()) {
+          JsonArray atts = msg["attachments"].to<JsonArray>();
+          for (const auto& a : m.attachments) {
+            JsonObject o = atts.add<JsonObject>();
+            o["tag"]      = a.tag;
+            o["size"]     = a.size;
+            o["filename"] = a.filename;
+            if (!a.mime.empty()) o["mime"] = a.mime;
+          }
+        }
         String line;
         serializeJson(item, line);
         server.sendContent(String("data: ") + line + "\n\n");

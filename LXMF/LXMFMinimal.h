@@ -744,7 +744,8 @@ namespace LXMF {
       double msg_ts = 0;
       std::string title;
       std::string content;
-      if (!_parse_lxmf_payload(payload, payload_len, &msg_ts, &title, &content)) {
+      std::vector<FieldBlob> fields;
+      if (!_parse_lxmf_payload(payload, payload_len, &msg_ts, &title, &content, &fields)) {
         WARNING("LXMF: malformed payload");
         return;
       }
@@ -780,6 +781,10 @@ namespace LXMF {
         rec.signature_ok = sig_ok;
         rec.status       = OutboxStatus::Delivered;
         rec.packet_hash  = packet_or_resource_hash;
+        // Persist attachments (FIELD_FILE_ATTACHMENTS / FIELD_IMAGE /
+        // FIELD_AUDIO) under the calling identity's attachments dir
+        // and annotate the record with metadata.
+        _persist_attachments(packet_or_resource_hash, fields, rec.attachments);
         try { _on_delivery(rec); }
         catch (const std::bad_alloc&) {
           ERROR("LXMF: delivery callback bad_alloc");
@@ -809,7 +814,8 @@ namespace LXMF {
       double msg_ts = 0;
       std::string title;
       std::string content;
-      if (!_parse_lxmf_payload(payload, payload_len, &msg_ts, &title, &content)) {
+      std::vector<FieldBlob> fields;
+      if (!_parse_lxmf_payload(payload, payload_len, &msg_ts, &title, &content, &fields)) {
         WARNING("LXMF: malformed payload");
         return;
       }
@@ -849,6 +855,7 @@ namespace LXMF {
         rec.signature_ok = sig_ok;
         rec.status       = OutboxStatus::Delivered;
         rec.packet_hash  = packet.get_hash();
+        _persist_attachments(packet.get_hash(), fields, rec.attachments);
         try {
           _on_delivery(rec);
         } catch (const std::bad_alloc&) {
@@ -859,8 +866,51 @@ namespace LXMF {
       }
     }
 
+  public:
+    // Single raw-bytes view of one msgpack field-value. tag is the LXMF
+    // FIELD_* key (the dict key, e.g. 0x05 for FIELD_FILE_ATTACHMENTS),
+    // raw points into the original payload buffer and is only valid for
+    // the duration of the parse call. The caller copies what it wants
+    // to keep before that buffer goes out of scope.
+    struct FieldBlob {
+      uint8_t        tag;
+      const uint8_t* raw;
+      size_t         raw_len;
+    };
+
+    // Hook the gateway sets so we can write attachment blobs to the
+    // owning identity's storage dir without LXMFMinimal needing to
+    // know the disk layout. The lambda receives (msg_hash, fields)
+    // and returns the persisted [{tag, size, filename}] metadata.
+    using AttachmentPersistFn = std::function<std::vector<AttachmentMeta>(
+        const RNS::Bytes& /*msg_hash*/,
+        const std::vector<FieldBlob>& /*fields*/)>;
+    void set_attachment_persist_callback(AttachmentPersistFn cb) {
+      _persist_attachments_fn = std::move(cb);
+    }
+    void _persist_attachments(const RNS::Bytes& msg_hash,
+                              const std::vector<FieldBlob>& fields,
+                              std::vector<AttachmentMeta>& out) {
+      if (fields.empty()) return;
+      if (!_persist_attachments_fn) {
+        // No persist hook wired — surface metadata without on-disk
+        // storage so the SPA at least knows attachments arrived. The
+        // bytes are dropped on the floor; this only happens before
+        // LXMFGateway::activate runs (i.e. never in normal operation).
+        for (const auto& f : fields) {
+          AttachmentMeta m;
+          m.tag = f.tag;
+          m.size = (uint32_t)f.raw_len;
+          out.push_back(m);
+        }
+        return;
+      }
+      out = _persist_attachments_fn(msg_hash, fields);
+    }
+
     bool _parse_lxmf_payload(const uint8_t* data, size_t len,
-                             double* out_ts, std::string* out_title, std::string* out_content) {
+                             double* out_ts, std::string* out_title, std::string* out_content,
+                             std::vector<FieldBlob>* out_fields = nullptr) {
       if (len < 2) return false;
       size_t off = 0;
       uint8_t tag = data[off++];
@@ -891,6 +941,63 @@ namespace LXMF {
       std::string content = RawMsgPack::read_bin_or_str(data, len, off);
       if (content.empty()) return false;
       if (out_content) *out_content = content;
+
+      // Element 3: fields dict (optional — may be nil, may be omitted).
+      // LXMF wire format: [ts, title, content, fields, stamp?]
+      // We only persist tags 0x05/0x06/0x07 (file / image / audio
+      // attachments); other tags pass through unparsed. The caller
+      // gets pointers into the input buffer for each interesting
+      // field's raw msgpack-value, so the persistence step can write
+      // them straight to flash without an extra copy.
+      if (arr_len >= 4 && off < len && out_fields) {
+        const uint8_t ftag = data[off];
+        if (ftag == 0xC0) {
+          // nil — no fields. Done.
+        } else if ((ftag & 0xF0) == 0x80 || ftag == 0xDE || ftag == 0xDF) {
+          size_t map_len = 0;
+          if ((ftag & 0xF0) == 0x80) {
+            map_len = ftag & 0x0F;
+            off++;
+          } else if (ftag == 0xDE) {
+            if (off + 2 >= len) return true;
+            map_len = (data[off + 1] << 8) | data[off + 2];
+            off += 3;
+          } else { // 0xDF
+            if (off + 4 >= len) return true;
+            map_len = ((uint32_t)data[off + 1] << 24) | ((uint32_t)data[off + 2] << 16)
+                    | ((uint32_t)data[off + 3] << 8)  |  (uint32_t)data[off + 4];
+            off += 5;
+          }
+          for (size_t i = 0; i < map_len && off < len; ++i) {
+            // Key: positive fixint 0x00-0x7F (FIELD_* tags are u8).
+            const uint8_t kt = data[off++];
+            uint8_t key_tag = 0;
+            if (kt <= 0x7F) {
+              key_tag = kt;
+            } else if (kt == 0xCC && off < len) {  // uint8
+              key_tag = data[off++];
+            } else {
+              // Unsupported key shape — abort field parsing so we
+              // don't desync on the rest of the payload.
+              return true;
+            }
+            // Value: capture as raw msgpack bytes (one element). Note
+            // the start of the value, then skip_element advances off
+            // past it, giving us the length.
+            const size_t value_start = off;
+            if (!RawMsgPack::skip_element(data, len, off)) return true;
+            const size_t value_len = off - value_start;
+            // Only persist the file-shaped attachments. Everything
+            // else flows through silently (could be teleemtry, ticket,
+            // renderer, …).
+            if (key_tag == FIELD_FILE_ATTACHMENTS ||
+                key_tag == FIELD_IMAGE ||
+                key_tag == FIELD_AUDIO) {
+              out_fields->push_back({key_tag, data + value_start, value_len});
+            }
+          }
+        }
+      }
       return true;
     }
 
@@ -910,6 +1017,7 @@ namespace LXMF {
     DeliveryCallback  _on_delivery;
     OutboxStatusCallback _on_outbox_status;
     ProgressCallback  _on_progress;
+    AttachmentPersistFn _persist_attachments_fn;
   };
 
 } // namespace LXMF

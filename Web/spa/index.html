@@ -1681,10 +1681,18 @@ async function sendMessage() {
     // handed to Reticulum successfully). Mirror that in the optimistic
     // local copy so the user doesn't see "queued forever".
     const r = await state.transport.send(state.identityId, state.openPeer, '', text);
+    // Estimate boot_epoch + received_ms from the cached clock anchor so
+    // this optimistic local copy sorts to the top alongside the device's
+    // own outbox entry. /state on next refresh will replace these with
+    // the device's authoritative values.
+    const anchor = state.clockAnchor || {};
+    const nowDeviceMs = (anchor.deviceNowMs || 0) + (Date.now() - (anchor.localWallMs || Date.now()));
     upsertMessage({
       peer: state.openPeer,
       seq: r.queued_seq || -Date.now(),
       ts: Date.now() / 1000,
+      boot_epoch: anchor.currentBootEpoch || 0,
+      received_ms: nowDeviceMs,
       title: '',
       body: text,
       in: false,
@@ -1874,6 +1882,11 @@ function dispatchEvent(ev) {
     state.markers.inbox_since = Math.max(state.markers.inbox_since, m.seq);
     upsertMessage({
       peer: m.peer, seq: m.seq, ts: m.ts,
+      // boot_epoch + received_ms are required for correct sort order —
+      // without them new messages land at the bottom of the conversation
+      // because msgCmp treats missing values as 0.
+      boot_epoch: m.boot_epoch || 0,
+      received_ms: m.received_ms || 0,
       title: m.title || '', body: m.body || '',
       in: true, sig_ok: !!m.sig_ok, status: 'delivered',
     });
@@ -2157,6 +2170,10 @@ $('btn-create-go').addEventListener('click', async () => {
 
 // ============================== LOGIN WIRING ==============================
 $('btn-login-back').addEventListener('click', enterIdentityPicker);
+// Enter in the password field should submit, just like a real form.
+$('login-pw').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); $('btn-login-go').click(); }
+});
 $('btn-login-go').addEventListener('click', async () => {
   try {
     const r = await state.transport.login(state.identityId, $('login-pw').value);

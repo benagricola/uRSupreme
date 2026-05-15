@@ -752,6 +752,15 @@ summary:hover { color: var(--text); }
   </div>
   <div class="popover-section">
     <div class="popover-row">
+      <div class="popover-label">WiFi</div>
+      <div id="status-wifi-line"></div>
+    </div>
+    <div class="muted mono" id="status-wifi-detail" style="font-size:11px;margin-top:6px"></div>
+    <button class="secondary" id="btn-force-softap" hidden style="width:100%;margin-top:8px">Switch to softAP</button>
+    <div class="muted" id="status-wifi-hint" hidden style="font-size:11px;margin-top:6px">Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. EEPROM is untouched — a reboot will try this network again.</div>
+  </div>
+  <div class="popover-section">
+    <div class="popover-row">
       <div class="popover-label">Transport</div>
       <div id="status-transport-line"></div>
     </div>
@@ -1924,6 +1933,30 @@ function renderStatusPopover() {
     rx:        s.rx_packets || 0,
     tx:        s.tx_packets || 0,
   };
+  // WiFi mode + SSID + softAP toggle.
+  const w = info.wifi || {};
+  const wLine = $('status-wifi-line');
+  wLine.innerHTML = '';
+  if (w.mode === 'ap') {
+    wLine.appendChild(el('span', { class: 'pill warn' }, 'softAP'));
+  } else if (w.mode === 'sta' && w.connected) {
+    wLine.appendChild(el('span', { class: 'pill ok' }, 'Connected'));
+  } else if (w.mode === 'sta') {
+    wLine.appendChild(el('span', { class: 'pill bad' }, 'Disconnected'));
+  } else {
+    wLine.appendChild(el('span', { class: 'pill' }, w.mode || 'off'));
+  }
+  const detailParts = [];
+  if (w.ssid) detailParts.push(w.ssid);
+  if (w.mode === 'ap' && w.ap_ip) detailParts.push('http://' + w.ap_ip + '/');
+  else if (w.ip && w.ip !== '0.0.0.0') detailParts.push(w.ip);
+  $('status-wifi-detail').textContent = detailParts.join(' · ');
+  // Only show the softAP-toggle button when we're actually in STA
+  // mode — there's nothing to switch to from AP.
+  const showSoftapBtn = w.mode === 'sta';
+  $('btn-force-softap').hidden = !showSoftapBtn;
+  $('status-wifi-hint').hidden  = !showSoftapBtn;
+
   const tLine = $('status-transport-line');
   tLine.innerHTML = '';
   tLine.appendChild(el('span', { class: 'pill ' + (t.enabled ? 'ok' : '') },
@@ -1960,6 +1993,26 @@ $('btn-toggle-transport').addEventListener('click', async () => {
     toast('Toggle failed: ' + (e.message || e), 'error');
   } finally {
     $('btn-toggle-transport').disabled = false;
+  }
+});
+$('btn-force-softap').addEventListener('click', async () => {
+  if (!confirm('Switch this device to softAP mode now? You will be disconnected; reconnect to the device\'s bootstrap WiFi to continue.')) return;
+  // Identity code is required by the backend (require_physical_auth)
+  // when the call is bearer-only, so we surface the same prompt used
+  // for radio/factory-reset actions.
+  const code = prompt('Identity code required to drop this WiFi link. Short-press → long-press the device button, then read the 6 hex chars from the OLED.');
+  if (!code) return;
+  $('btn-force-softap').disabled = true;
+  try {
+    await state.transport._req('/api/wifi/softap', { method: 'POST', body: { identity_code: code.trim() } });
+    toast('Device switching to softAP — reconnect to the bootstrap network.', 'info');
+    // No reload — the browser is about to lose its TCP connection
+    // anyway when the AP comes up on the new SSID. Hide the popover.
+    $('popover-status').hidden = true;
+  } catch (e) {
+    toast('softAP switch failed: ' + (e.message || e), 'error');
+  } finally {
+    $('btn-force-softap').disabled = false;
   }
 });
 // Slow background refresh — once a minute is enough for an indicator

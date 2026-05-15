@@ -2535,6 +2535,16 @@ void loop() {
 
   #if HAS_WIFI
     if (wifi_initialized) update_wifi();
+    #if defined(HAS_LXMF_GATEWAY)
+      // Sync the bootstrap-mode flag with the WiFi layer. Auto-fallback
+      // and the user-driven /api/wifi/softap switch both flip
+      // wr_runtime_softap in Remote.h; surface it to WebUI so the SPA
+      // shows the bootstrap UI for the duration. (#54)
+      if (wr_runtime_softap && !Web::WebUI::bootstrap_mode) {
+        Web::WebUI::bootstrap_mode = true;
+        NOTICE("WebUI: entered runtime softAP — bootstrap UI live");
+      }
+    #endif
     #if defined(TCP_TRANSPORT)
       TCPTransport::service();
     #endif

@@ -65,6 +65,14 @@ extern bool     airtime_lock;     // true when current airtime exceeds the cap; 
 
 extern WebServer server;          // declared in Console.h
 extern bool      wifi_initialized;
+// WiFi state from Remote.h. Exposed so /api/info can surface the
+// current connection mode + SSID and so the /api/wifi/softap handler
+// can flip the runtime-switch flag without including Remote.h.
+extern uint8_t   wifi_mode;
+extern wl_status_t wr_wifi_status;
+extern bool      wr_runtime_softap;
+extern volatile bool wr_force_softap_pending;
+extern char      bt_devname[];
 extern microStore::FileSystem filesystem;
 
 namespace Web {
@@ -409,6 +417,7 @@ namespace Web {
       // Reboots on save.
       server.on("/api/wifi/scan",     HTTP_GET,  handle_wifi_scan);
       server.on("/api/wifi/configure",HTTP_POST, handle_wifi_configure);
+      server.on("/api/wifi/softap",   HTTP_POST, handle_wifi_force_softap);
       // Radio config — read requires bearer auth; write/reset require
       // bearer OR identity_code. Both write paths reboot on success.
       server.on("/api/radio",         HTTP_GET,  handle_radio_get);
@@ -519,6 +528,22 @@ namespace Web {
       // True iff TX is currently being blocked by the airtime lock —
       // useful for "why isn't my message going out" diagnostics.
       stats["airtime_locked"]       = (bool)airtime_lock;
+      // WiFi state. Lets the SPA show the current mode (STA / softAP)
+      // in the connection popover, and decide whether to expose the
+      // "switch to softAP" button — that button has no point when
+      // already in AP mode. (#54)
+      JsonObject wifi = doc["wifi"].to<JsonObject>();
+      wifi["mode"]          = (wifi_mode == WR_WIFI_AP) ? "ap"
+                            : (wifi_mode == WR_WIFI_STA) ? "sta" : "off";
+      wifi["connected"]     = (wr_wifi_status == WL_CONNECTED);
+      wifi["runtime_softap"] = wr_runtime_softap;
+      wifi["ip"]            = WiFi.localIP().toString().c_str();
+      if (wifi_mode == WR_WIFI_STA && WiFi.SSID().length() > 0) {
+        wifi["ssid"]        = WiFi.SSID().c_str();
+      } else if (wifi_mode == WR_WIFI_AP) {
+        wifi["ssid"]        = (const char*)bt_devname;
+        wifi["ap_ip"]       = WiFi.softAPIP().toString().c_str();
+      }
       JsonObject transport = doc["transport"].to<JsonObject>();
       transport["enabled"]      = RNS::Reticulum::transport_enabled();
       // TODO microReticulum doesn't yet expose live path/packet counters
@@ -1303,6 +1328,32 @@ namespace Web {
 
       // Reboot so STA mode applies cleanly.
       persist_and_restart();
+    }
+
+    // POST /api/wifi/softap — switch the live WiFi stack from STA to
+    // softAP without rebooting. EEPROM is untouched, so a reboot goes
+    // back to whatever SSID is configured. Useful when the user has
+    // lost the device on the LAN (router moved, address changed) and
+    // wants to reconfigure without physically resetting. Gated by
+    // bearer auth + identity_code (the existing physical-presence
+    // pattern) since switching the AP drops every other client.
+    static void handle_wifi_force_softap() {
+      JsonDocument body;
+      if (!read_body_json(body)) return;
+      if (!require_physical_auth(body)) return;
+      if (wifi_mode == WR_WIFI_AP) {
+        send_error_with_message(409, "already_softap",
+          "Device is already in softAP mode.");
+        return;
+      }
+      // Defer the actual switch to the main loop — calling
+      // wifi_remote_init() from the WebServer task races against
+      // in-flight requests and any other WiFi-touching code.
+      wr_force_softap_pending = true;
+      JsonDocument doc;
+      doc["status"] = "queued";
+      doc["note"]   = "Switching to softAP — reconnect to the device's bootstrap SSID.";
+      send_json(200, doc);
     }
 
     static void handle_radio_get() {

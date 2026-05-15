@@ -59,6 +59,25 @@ RNS::Interface udp_interface(RNS::Type::NONE);
 uint8_t wifi_mode = WIFI_OFF;
 bool wifi_init_ran = false;
 bool wifi_initialized = false;
+// Tracks the millis() value of the first STA-mode init attempt this
+// boot. Used by the 30-second auto-softAP fallback so a device whose
+// STA network has gone away (changed SSID, router off, moved) doesn't
+// stay unreachable forever — once the timer expires we drop into
+// softAP so the user can recover via the bootstrap UI. (#54)
+uint32_t wr_sta_first_attempt_ms = 0;
+bool wr_sta_fallback_armed = false;
+// Set by the web handler when the user wants to switch out of STA
+// mode without rebooting. The main-loop wifi pump notices this on its
+// next tick and calls wifi_remote_init() in AP mode. RAM-only: a
+// reboot will go back to whatever EEPROM says, which is exactly what
+// you want for a "temporary softAP" toggle. (#54)
+volatile bool wr_force_softap_pending = false;
+// True while we're in the runtime-fallback softAP (either because the
+// 30 s timer fired or because the web handler asked for it). Cleared
+// by wifi_remote_init() so a deliberate STA reconnect from the
+// bootstrap UI gets a clean slate. The SPA reads this via /api/info
+// to decide whether to surface the "switch to softAP" button.
+bool wr_runtime_softap = false;
 
 char wr_ssid[33];
 char wr_psk[33];
@@ -168,6 +187,27 @@ void wifi_remote_init() {
   wr_channel = EEPROM.read(eeprom_addr(ADDR_CONF_WCHN)); if (wr_channel < 1 || wr_channel > 14) { wr_channel = WR_CHANNEL_DEFAULT; }
   wifi_remote_start();
   wifi_init_ran = true;
+  // Reset the runtime-softAP marker — a fresh init means whatever
+  // mode we're trying now is the authoritative one. Auto-fallback
+  // and force-softap rearm themselves on the next tick if needed.
+  wr_runtime_softap = (wifi_mode == WR_WIFI_AP);
+  if (wifi_mode == WR_WIFI_STA && wr_sta_first_attempt_ms == 0) {
+    wr_sta_first_attempt_ms = millis();
+    wr_sta_fallback_armed = true;
+  }
+}
+
+// Runtime STA→AP switch. Reinits the WiFi stack as a softAP using the
+// device's BT name, sets bootstrap_mode so the SPA shows the wifi
+// configure form, and clears the auto-fallback timer so we don't
+// loop. EEPROM is untouched — a reboot tries STA again.
+void wifi_runtime_force_softap(const char* reason) {
+  NOTICEF("WiFi: switching to softAP (%s)", reason ? reason : "manual");
+  wifi_mode = WR_WIFI_AP;
+  wr_sta_first_attempt_ms = 0;
+  wr_sta_fallback_armed = false;
+  wifi_remote_init();
+  wr_runtime_softap = true;
 }
 
 void wifi_remote_close_all() {
@@ -224,11 +264,40 @@ uint8_t wifi_remote_read() {
 
 void wifi_remote_write(uint8_t byte) { if (connection) { connection.write(byte); } }
 
+// If the device can't reach its configured STA network within this
+// window after the first attempt, automatically fall back to softAP
+// so the user can recover. 30 s is long enough for a slow router
+// to come up but short enough not to leave a deployed device
+// silently unreachable. (#54)
+#define WR_STA_FALLBACK_MS 30000UL
+
 void wifi_update_status() {
+  // Web handler asked for a switch to softAP — apply it on the main
+  // loop, not the WebServer task, so WiFi reinit doesn't race
+  // with in-flight requests.
+  if (wr_force_softap_pending) {
+    wr_force_softap_pending = false;
+    wifi_runtime_force_softap("user-requested via /api/wifi/softap");
+    return;
+  }
+
   wr_wifi_status = WiFi.status();
-  if (wr_wifi_status == WL_CONNECTED) { wr_device_ip = WiFi.localIP(); }
+  if (wr_wifi_status == WL_CONNECTED) {
+    wr_device_ip = WiFi.localIP();
+    // Once we've successfully attached at least once, disarm the
+    // fallback timer — a transient drop later shouldn't kick us
+    // out of STA (the existing 10 s reconnect logic handles that).
+    wr_sta_fallback_armed = false;
+  }
   if (wifi_mode == WR_WIFI_AP && wifi_initialized) { wr_device_ip = WiFi.softAPIP(); wr_wifi_status = WL_CONNECTED; }
   if (wifi_init_ran && wifi_mode == WR_WIFI_STA && wr_wifi_status != WL_CONNECTED) {
+    // Auto-fallback: we've been trying STA for too long without ever
+    // connecting. Go softAP so the bootstrap UI is reachable.
+    if (wr_sta_fallback_armed && wr_sta_first_attempt_ms != 0
+        && (millis() - wr_sta_first_attempt_ms) >= WR_STA_FALLBACK_MS) {
+      wifi_runtime_force_softap("STA timeout after 30s");
+      return;
+    }
     if (millis()-wr_last_connect_try >= WR_RECONNECT_INTERVAL_MS) { wifi_remote_init(); }
   }
 }

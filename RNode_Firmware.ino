@@ -364,6 +364,49 @@ int _write(int file, char *ptr, int len) {
     return wrote;
 }
 
+#if HAS_DISPLAY && MCU_VARIANT == MCU_ESP32
+// FreeRTOS task that pulls the periodic OLED refresh off the main loop
+// (CPU 1, where reticulum.loop() and the LoRa modem ISR live) and onto
+// CPU 0. Without this, any radio burst that holds the main loop for
+// 100+ ms also freezes the display (and looks like a crash to the user).
+// update_display() is internally idempotent and self-throttled, so we
+// can poll it cheaply.
+static void display_refresh_task(void* /*arg*/) {
+  NOTICE("Display: refresh task started on core 0");
+  while (true) {
+    if (disp_ready && !display_updating) {
+      // Most of update_display() touches only display-local globals,
+      // but update_stat_area() / update_disp_area() reach into RNS-side
+      // state (RSSI, packet counts) that the main loop is mutating.
+      // Take the same rns_lock the WebServer task uses so we never read
+      // a half-updated path table or counter.
+      if (Web::WebUI::acquire_rns_lock(20)) {
+        update_display();
+        Web::WebUI::release_rns_lock();
+      }
+    }
+    // 33 ms ≈ 30 Hz cap. update_display() self-paces beyond this via
+    // disp_update_interval; the delay is just to keep the task from
+    // hot-spinning when the radio is idle.
+    vTaskDelay(pdMS_TO_TICKS(33));
+  }
+}
+
+static void start_display_refresh_task() {
+  static TaskHandle_t handle = nullptr;
+  if (handle) return;
+  xTaskCreatePinnedToCore(
+    display_refresh_task,
+    "display",
+    4096,
+    nullptr,
+    1,
+    &handle,
+    0  // core 0 (PRO_CPU)
+  );
+}
+#endif
+
 void setup() {
 
   // Initialise serial communication
@@ -602,6 +645,11 @@ void setup() {
     display_unblank();
     disp_ready = display_init();
     update_display();
+    #if MCU_VARIANT == MCU_ESP32
+      // Take periodic display refresh off the main loop so radio-busy
+      // periods can't stall the OLED.
+      if (disp_ready) start_display_refresh_task();
+    #endif
   #endif
 
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
@@ -2426,7 +2474,10 @@ void loop() {
     if (!fifo_isempty_locked(&serialFIFO)) serial_poll();
   #endif
 
-  #if HAS_DISPLAY
+  #if HAS_DISPLAY && MCU_VARIANT != MCU_ESP32
+    // ESP32 builds run the OLED refresh in display_refresh_task on
+    // core 0 (see start_display_refresh_task above). Other MCUs keep
+    // the inline main-loop refresh.
     if (disp_ready && !display_updating) update_display();
   #endif
 

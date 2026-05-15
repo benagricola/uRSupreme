@@ -30,7 +30,11 @@ namespace LXMF {
   // Rotation can be added later if needed.
   class LXMFInbox {
   public:
-    static constexpr size_t DEFAULT_RAM_CAPACITY = 32;
+    // Per-identity per-mailbox cap. At ~300 B per JSONL line for a
+    // typical chat-sized message, 200 entries = ~60 KB / identity /
+    // mailbox — comfortable on the LittleFS partition. Stopgap until a
+    // persistent wall-clock-anchored TTL replaces it.
+    static constexpr size_t DEFAULT_RAM_CAPACITY = 200;
     static constexpr size_t MAX_LINE_BYTES       = 768;
 
     LXMFInbox(const std::string& identity_dir,
@@ -41,6 +45,19 @@ namespace LXMF {
         _next_seq(0) {}
 
     // Replay the on-disk JSONL into RAM. Idempotent.
+    //
+    // Also compacts the spool if it overflowed _ram_capacity entries:
+    // parse_line trims the in-memory ring to _ram_capacity, so disk
+    // entries older than that have effectively been dropped from RAM
+    // anyway. Rewriting the spool here turns "newest 32 in RAM, all
+    // history on flash" into "newest 32 in both", which bounds flash
+    // usage at ~32 * MAX_LINE_BYTES ≈ 24 KiB per identity per mailbox.
+    //
+    // Stopgap until proper wall-clock-anchored TTL eviction (which
+    // needs a persistent RTC or a synced device clock — neither exists
+    // yet). For now, "the last 32 messages" is what a sane device
+    // keeps. Increase ram_capacity via the ctor if more history is
+    // needed.
     void load() {
       _ring.clear();
       _next_seq = 0;
@@ -54,11 +71,24 @@ namespace LXMF {
       if (filesystem.readFile(_path.c_str(), buf) == 0) return;
       buf.push_back('\n');
 
+      size_t line_count = 0;
       size_t start = 0;
       for (size_t i = 0; i < buf.size(); ++i) {
         if (buf[i] != '\n') continue;
-        if (i > start) parse_line(reinterpret_cast<const char*>(&buf[start]), i - start);
+        if (i > start) {
+          parse_line(reinterpret_cast<const char*>(&buf[start]), i - start);
+          line_count++;
+        }
         start = i + 1;
+      }
+
+      // If the file had more lines than the RAM ring kept, those older
+      // entries are now lost — rewrite the spool to match so flash
+      // stops growing.
+      if (line_count > _ring.size()) {
+        NOTICEF("LXMFInbox: compacting %s (disk=%u, ram=%u)",
+                _path.c_str(), (unsigned)line_count, (unsigned)_ring.size());
+        rewrite_spool();
       }
     }
 

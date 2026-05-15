@@ -12,14 +12,15 @@
 
 #include "LXMFTypes.h"
 #include "LXMFMinimal.h"
+#include "RatchetStore.h"
 #include "LXMFInbox.h"
 
 extern microStore::FileSystem filesystem;
 
 namespace LXMF {
 
-  #ifndef LXMF_GATEWAY_MAX_ACCOUNTS
-  #define LXMF_GATEWAY_MAX_ACCOUNTS 4
+  #ifndef LXMF_GATEWAY_MAX_IDENTITIES
+  #define LXMF_GATEWAY_MAX_IDENTITIES 4
   #endif
 
   #ifndef LXMF_GATEWAY_ROOT
@@ -30,11 +31,11 @@ namespace LXMF {
   #define LXMF_DEFAULT_ANNOUNCE_INTERVAL_MS 300000  // 5 minutes
   #endif
 
-  // One per-account record. Held in a static array so the per-instance
+  // One per-identity record. Held in a static array so the per-instance
   // pointers in LXMFMinimal's dispatch registry stay stable for the
   // lifetime of the gateway.
-  struct LXMFAccount {
-    AccountId            id;                    // first 16 hex of identity.hash
+  struct LXMFIdentity {
+    IdentityId            id;                    // first 16 hex of identity.hash
     std::string          display_name;
     RNS::Identity        identity{RNS::Type::NONE};
     LXMFMinimal          lxmf;
@@ -43,37 +44,45 @@ namespace LXMF {
     uint32_t             last_announce_ms = 0;
     uint32_t             announce_interval_ms = LXMF_DEFAULT_ANNOUNCE_INTERVAL_MS;
     bool                 active = false;
-    // Password hash (PBKDF2-HMAC-SHA256) + per-account salt. Set at
-    // account creation; required for login. Empty if account is from an
+    // Password hash (PBKDF2-HMAC-SHA256) + per-identity salt. Set at
+    // identity creation; required for login. Empty if identity is from an
     // older firmware build that didn't set passwords (in which case
-    // login is blocked until the account is recreated — there is no
+    // login is blocked until the identity is recreated — there is no
     // password-recovery path, by design).
     RNS::Bytes           password_hash;
     RNS::Bytes           password_salt;
+    // Per-identity X25519 ratchet ring. Public half of the newest entry
+    // is advertised on every announce; private halves are kept for the
+    // ring window so messages encrypted to a recent ratchet pubkey can
+    // still be decrypted after rotation.  See LXMF/RatchetStore.h.
+    RatchetStore         ratchets;
 
-    std::string dir() const { return std::string(LXMF_GATEWAY_ROOT "/accounts/") + id; }
+    std::string dir() const { return std::string(LXMF_GATEWAY_ROOT "/identities/") + id; }
     std::string identity_path() const { return dir() + "/identity.dat"; }
     std::string meta_path()     const { return dir() + "/meta.json"; }
+    std::string ratchet_path()  const { return dir() + "/ratchet.dat"; }
     std::string address_hex()   const { return lxmf.address_hex(); }
   };
 
   class LXMFGateway {
   public:
-    // Load existing accounts from disk and register them with the
+    // Load existing identities from disk and register them with the
     // Reticulum transport. Idempotent if already called.
     static void setup() {
       if (_setup_done) return;
       ensure_root();
-      load_existing_accounts();
+      load_existing_identities();
       _setup_done = true;
     }
 
     // Called from main loop. Drives periodic announces.
+    // announce_interval_ms == 0 disables auto-announce for that identity.
     static void loop() {
       if (!_setup_done) return;
       uint32_t now = millis();
-      for (auto& a : accounts_storage()) {
+      for (auto& a : identities_storage()) {
         if (!a.active) continue;
+        if (a.announce_interval_ms == 0) continue;  // auto-announce disabled
         if (now - a.last_announce_ms >= a.announce_interval_ms) {
           a.lxmf.announce();
           a.last_announce_ms = now;
@@ -81,40 +90,52 @@ namespace LXMF {
       }
     }
 
+    // Update the auto-announce interval for a single identity and
+    // persist to meta.json. interval_ms == 0 disables auto-announce
+    // (manual announce via the API/UI still works).
+    static bool set_announce_interval(const IdentityId& iden_id, uint32_t interval_ms) {
+      LXMFIdentity* a = identity_by_id_mut(iden_id);
+      if (!a) return false;
+      a->announce_interval_ms = interval_ms;
+      a->last_announce_ms = millis();  // reset so a tiny new interval doesn't fire immediately
+      write_meta(*a);
+      return true;
+    }
+
     // Generate a fresh identity + password hash, persist, instantiate.
-    // Returns the new account_id, or empty string on failure / cap /
+    // Returns the new identity_id, or empty string on failure / cap /
     // password too short.
-    static AccountId create_account(const std::string& display_name,
+    static IdentityId create_identity(const std::string& display_name,
                                     const std::string& password,
                                     RNS::Bytes (*hash_fn)(const std::string&, const RNS::Bytes&),
                                     RNS::Bytes (*new_salt_fn)()) {
       if (!_setup_done) {
-        WARNING("LXMFGateway::create_account: setup() not called yet");
+        WARNING("LXMFGateway::create_identity: setup() not called yet");
         return {};
       }
-      LXMFAccount* slot = first_free_slot();
+      LXMFIdentity* slot = first_free_slot();
       if (!slot) {
-        WARNING("LXMFGateway::create_account: account cap reached");
+        WARNING("LXMFGateway::create_identity: identity cap reached");
         return {};
       }
       // Caller checks password length; we don't trust hash_fn to do so.
       RNS::Identity id;  // fresh keypair
       const std::string id_hex = id.hexhash();
       if (id_hex.empty()) {
-        ERROR("LXMFGateway::create_account: identity hash empty");
+        ERROR("LXMFGateway::create_identity: identity hash empty");
         return {};
       }
-      AccountId acc_id = id_hex.substr(0, 16);
+      IdentityId iden_id = id_hex.substr(0, 16);
 
-      slot->id           = acc_id;
+      slot->id           = iden_id;
       slot->display_name = display_name;
       slot->identity     = id;
       slot->password_salt = new_salt_fn();
       slot->password_hash = hash_fn(password, slot->password_salt);
 
-      ensure_account_dir(*slot);
+      ensure_identity_dir(*slot);
       if (!id.to_file(slot->identity_path().c_str())) {
-        ERRORF("LXMFGateway::create_account: failed to persist identity at %s",
+        ERRORF("LXMFGateway::create_identity: failed to persist identity at %s",
                slot->identity_path().c_str());
         slot->active = false;
         return {};
@@ -122,30 +143,30 @@ namespace LXMF {
       write_meta(*slot);
 
       activate(*slot);
-      NOTICEF("LXMFGateway: created account %s (%s) → %s",
-              acc_id.c_str(), display_name.c_str(), slot->address_hex().c_str());
-      return acc_id;
+      NOTICEF("LXMFGateway: created identity %s (%s) → %s",
+              iden_id.c_str(), display_name.c_str(), slot->address_hex().c_str());
+      return iden_id;
     }
 
-    // Test a candidate password against the stored hash for this account.
+    // Test a candidate password against the stored hash for this identity.
     // verify_fn computes the PBKDF2 hash of the candidate with the
-    // account's salt and constant-time compares against the stored hash.
-    static bool check_password(const AccountId& acc_id,
+    // identity's salt and constant-time compares against the stored hash.
+    static bool check_password(const IdentityId& iden_id,
                                const std::string& candidate,
                                bool (*verify_fn)(const std::string&, const RNS::Bytes&, const RNS::Bytes&)) {
-      LXMFAccount* a = account_by_id_mut(acc_id);
+      LXMFIdentity* a = identity_by_id_mut(iden_id);
       if (!a) return false;
       if (a->password_hash.size() == 0 || a->password_salt.size() == 0) {
-        // Pre-password account from an older firmware — refuse login;
+        // Pre-password identity from an older firmware — refuse login;
         // user must factory-reset to recover.
         return false;
       }
       return verify_fn(candidate, a->password_salt, a->password_hash);
     }
 
-    // Tear down and remove an account from disk.
-    static bool delete_account(const AccountId& acc_id) {
-      LXMFAccount* a = account_by_id_mut(acc_id);
+    // Tear down and remove an identity from disk.
+    static bool delete_identity(const IdentityId& iden_id) {
+      LXMFIdentity* a = identity_by_id_mut(iden_id);
       if (!a) return false;
       a->lxmf.shutdown();
       // Best-effort file removal.
@@ -159,73 +180,79 @@ namespace LXMF {
       a->id.clear();
       a->display_name.clear();
       a->active = false;
-      NOTICEF("LXMFGateway: deleted account %s", acc_id.c_str());
+      NOTICEF("LXMFGateway: deleted identity %s", iden_id.c_str());
       return true;
     }
 
-    static const LXMFAccount* account_by_id(const AccountId& acc_id) {
-      return account_by_id_mut(acc_id);
+    static const LXMFIdentity* identity_by_id(const IdentityId& iden_id) {
+      return identity_by_id_mut(iden_id);
     }
 
     // Force an immediate announce.
-    static bool announce(const AccountId& acc_id) {
-      LXMFAccount* a = account_by_id_mut(acc_id);
+    static bool announce(const IdentityId& iden_id) {
+      LXMFIdentity* a = identity_by_id_mut(iden_id);
       if (!a) return false;
       a->lxmf.announce();
       a->last_announce_ms = millis();
       return true;
     }
 
-    // Send an LXMF message from this account. Appends to outbox on success.
-    static bool send(const AccountId& acc_id,
+    // Send an LXMF message from this identity. Appends to outbox on success.
+    // On failure, *out_err (if non-null) is set to a string literal pointing
+    // to a human-readable explanation suitable for surfacing in the UI.
+    static bool send(const IdentityId& iden_id,
                      const RNS::Bytes& dest_hash,
                      const std::string& title,
                      const std::string& content,
-                     MessageRecord& out_rec) {
-      LXMFAccount* a = account_by_id_mut(acc_id);
-      if (!a) return false;
-      if (!a->lxmf.send_message(dest_hash, title, content, out_rec)) {
+                     MessageRecord& out_rec,
+                     const char** out_err = nullptr) {
+      LXMFIdentity* a = identity_by_id_mut(iden_id);
+      if (!a) {
+        if (out_err) *out_err = "No such identity is logged in on this device.";
+        return false;
+      }
+      if (!a->lxmf.send_message(dest_hash, title, content, out_rec, out_err)) {
         return false;
       }
       if (a->outbox) a->outbox->append(out_rec);
       return true;
     }
 
-    // Read-only access to accounts list.
-    static const std::vector<LXMFAccount*>& active_accounts() {
+    // Read-only access to identities list.
+    static const std::vector<LXMFIdentity*>& active_identities() {
       _active_view.clear();
-      for (auto& a : accounts_storage()) if (a.active) _active_view.push_back(&a);
+      for (auto& a : identities_storage()) if (a.active) _active_view.push_back(&a);
       return _active_view;
     }
 
-    static size_t account_count() {
+    static size_t identity_count() {
       size_t n = 0;
-      for (auto& a : accounts_storage()) if (a.active) ++n;
+      for (auto& a : identities_storage()) if (a.active) ++n;
       return n;
     }
 
-    // Used by AnnounceLog to drop echoes of our own accounts.
+    // Used by AnnounceLog to drop echoes of our own identities.
     static bool is_own_destination(const RNS::Bytes& dest) {
-      for (auto& a : accounts_storage()) {
+      for (auto& a : identities_storage()) {
         if (a.active && a.lxmf.address() == dest) return true;
       }
       return false;
     }
 
   private:
-    static std::array<LXMFAccount, LXMF_GATEWAY_MAX_ACCOUNTS>& accounts_storage() {
-      static std::array<LXMFAccount, LXMF_GATEWAY_MAX_ACCOUNTS> s;
+    static std::array<LXMFIdentity, LXMF_GATEWAY_MAX_IDENTITIES>& identities_storage() {
+      static std::array<LXMFIdentity, LXMF_GATEWAY_MAX_IDENTITIES> s;
       return s;
     }
 
-    static LXMFAccount* first_free_slot() {
-      for (auto& a : accounts_storage()) if (!a.active) return &a;
+    static LXMFIdentity* first_free_slot() {
+      for (auto& a : identities_storage()) if (!a.active) return &a;
       return nullptr;
     }
 
-    static LXMFAccount* account_by_id_mut(const AccountId& acc_id) {
-      if (acc_id.empty()) return nullptr;
-      for (auto& a : accounts_storage()) if (a.active && a.id == acc_id) return &a;
+    static LXMFIdentity* identity_by_id_mut(const IdentityId& iden_id) {
+      if (iden_id.empty()) return nullptr;
+      for (auto& a : identities_storage()) if (a.active && a.id == iden_id) return &a;
       return nullptr;
     }
 
@@ -235,16 +262,16 @@ namespace LXMF {
       // mkdir() is internally idempotent so a redundant call is harmless,
       // but the explicit guard keeps log noise down.
       if (!filesystem.isDirectory(LXMF_GATEWAY_ROOT)) filesystem.mkdir(LXMF_GATEWAY_ROOT);
-      const char* accts = LXMF_GATEWAY_ROOT "/accounts";
+      const char* accts = LXMF_GATEWAY_ROOT "/identities";
       if (!filesystem.isDirectory(accts)) filesystem.mkdir(accts);
     }
 
-    static void ensure_account_dir(const LXMFAccount& a) {
+    static void ensure_identity_dir(const LXMFIdentity& a) {
       const std::string d = a.dir();
       if (!filesystem.isDirectory(d.c_str())) filesystem.mkdir(d.c_str());
     }
 
-    static void write_meta(const LXMFAccount& a) {
+    static void write_meta(const LXMFIdentity& a) {
       JsonDocument doc;
       doc["display_name"]         = a.display_name;
       doc["created_ms"]           = (uint32_t)millis();
@@ -258,13 +285,13 @@ namespace LXMF {
                            body.length());
     }
 
-    static void read_meta(LXMFAccount& a) {
+    static void read_meta(LXMFIdentity& a) {
       if (!filesystem.exists(a.meta_path().c_str())) return;
       std::vector<uint8_t> data;
       if (filesystem.readFile(a.meta_path().c_str(), data) == 0) return;
       JsonDocument doc;
       if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
-      a.display_name         = (const char*)(doc["display_name"] | "LXMF Account");
+      a.display_name         = (const char*)(doc["display_name"] | "LXMF Identity");
       a.announce_interval_ms = (uint32_t)(doc["announce_interval_ms"] | LXMF_DEFAULT_ANNOUNCE_INTERVAL_MS);
       std::string ph = (const char*)(doc["password_hash"] | "");
       std::string ps = (const char*)(doc["password_salt"] | "");
@@ -272,7 +299,7 @@ namespace LXMF {
       if (!ps.empty()) a.password_salt.assignHex(ps.c_str());
     }
 
-    static void activate(LXMFAccount& a) {
+    static void activate(LXMFIdentity& a) {
       a.active = true;
       a.inbox  = std::unique_ptr<LXMFInbox>(new LXMFInbox(a.dir(), "inbox.jsonl"));
       a.outbox = std::unique_ptr<LXMFInbox>(new LXMFInbox(a.dir(), "outbox.jsonl"));
@@ -280,67 +307,122 @@ namespace LXMF {
       a.outbox->load();
 
       a.lxmf.init(a.identity, a.display_name.c_str());
-      LXMFAccount* p = &a;
+      LXMFIdentity* p = &a;
       a.lxmf.set_delivery_callback([p](const MessageRecord& rec) {
         if (!p->active || !p->inbox) return;
         MessageRecord local = rec;  // copy so we can mutate seq
         local.seq = 0;
         p->inbox->append(local);
       });
+      // Outbound lifecycle: link-mode sends start as Queued in the outbox
+      // (see LXMFMinimal::send_message), and transition to Sent / Delivered
+      // / Failed as the Link or Resource completes. The lookup key is the
+      // link hash that was stamped onto the outbox record's packet_hash.
+      a.lxmf.set_outbox_status_callback(
+          [p](const RNS::Bytes& link_hash, OutboxStatus status) {
+            if (!p->active || !p->outbox) return;
+            p->outbox->update_status(link_hash, status);
+          });
       a.last_announce_ms = 0;  // announce on first loop tick
     }
 
-    static void load_existing_accounts() {
-      const char* accts = LXMF_GATEWAY_ROOT "/accounts";
+    static void load_existing_identities() {
+      const char* accts = LXMF_GATEWAY_ROOT "/identities";
       // PosixFileSystem::exists() returns false for directories (it does
       // open(O_RDONLY) which fails on dirs). Use isDirectory() here so we
-      // don't silently skip account loading. Same applies in ensure_root()
-      // and ensure_account_dir().
+      // don't silently skip identity loading. Same applies in ensure_root()
+      // and ensure_identity_dir().
       if (!filesystem.isDirectory(accts)) {
-        NOTICEF("LXMFGateway: %s is not a directory — no accounts to load", accts);
+        NOTICEF("LXMFGateway: %s is not a directory — no identities to load", accts);
         return;
       }
       auto entries = filesystem.listDirectory(accts);
       size_t loaded = 0;
       for (const auto& entry : entries) {
-        if (loaded >= LXMF_GATEWAY_MAX_ACCOUNTS) {
-          WARNINGF("LXMFGateway: skipping %s (max accounts reached)", entry.c_str());
+        if (loaded >= LXMF_GATEWAY_MAX_IDENTITIES) {
+          WARNINGF("LXMFGateway: skipping %s (max identities reached)", entry.c_str());
           continue;
         }
         std::string full_path = std::string(accts) + "/" + entry;
         if (!filesystem.isDirectory(full_path.c_str())) continue;
 
-        LXMFAccount* slot = first_free_slot();
+        LXMFIdentity* slot = first_free_slot();
         if (!slot) break;
 
         std::string identity_path = full_path + "/identity.dat";
         if (!filesystem.exists(identity_path.c_str())) {
-          WARNINGF("LXMFGateway: account %s missing identity.dat, skipping", entry.c_str());
+          WARNINGF("LXMFGateway: identity %s missing identity.dat, skipping", entry.c_str());
           continue;
         }
         RNS::Identity id = RNS::Identity::from_file(identity_path.c_str());
         if (!id) {
-          WARNINGF("LXMFGateway: failed to load identity for account %s", entry.c_str());
+          WARNINGF("LXMFGateway: failed to load identity for identity %s", entry.c_str());
           continue;
         }
         slot->id           = entry;
         slot->identity     = id;
-        slot->display_name = "LXMF Account";  // overridden by meta if present
+        slot->display_name = "LXMF Identity";  // overridden by meta if present
         read_meta(*slot);
+        // Load persisted ratchet ring (if any). Identities created on
+        // pre-ratchet builds won't have a file — that's fine, the ring
+        // stays empty and will populate on first announce.
+        slot->ratchets.load(slot->ratchet_path(), filesystem);
         activate(*slot);
         loaded++;
-        NOTICEF("LXMFGateway: loaded account %s (%s) → %s",
-                slot->id.c_str(), slot->display_name.c_str(), slot->address_hex().c_str());
+        NOTICEF("LXMFGateway: loaded identity %s (%s) → %s (ratchets=%u)",
+                slot->id.c_str(), slot->display_name.c_str(),
+                slot->address_hex().c_str(), (unsigned)slot->ratchets.size());
       }
+    }
+
+  public:
+    // Called from the Destination::announce patch via the C bridge.
+    // Generates a fresh ratchet keypair for the identity whose delivery
+    // destination hash matches `dest_hash`, persists the ring, and writes
+    // the new pubkey into `out_pubkey` (must be 32 bytes wide).
+    // Returns true on success. False means "no LXMF identity matches this
+    // destination" — the announce should not include a ratchet.
+    static bool rotate_outbound_ratchet(const uint8_t* dest_hash, uint8_t* out_pubkey) {
+      if (!dest_hash || !out_pubkey) return false;
+      RNS::Bytes dh(dest_hash, 16);
+      for (auto& a : identities_storage()) {
+        if (!a.active) continue;
+        if (a.lxmf.address() != dh) continue;
+        const auto& entry = a.ratchets.rotate((uint64_t)millis());
+        a.ratchets.save(a.ratchet_path(), filesystem);
+        if (entry.pubkey.size() != RatchetStore::RATCHET_BYTES) return false;
+        memcpy(out_pubkey, entry.pubkey.data(), RatchetStore::RATCHET_BYTES);
+        return true;
+      }
+      return false;
+    }
+
+    // Called from the Identity::decrypt patch via the C bridge.
+    // Returns the `index`-th ratchet privkey (newest-first) for the
+    // identity whose identity hash matches `identity_hash`.
+    // Returns false when index >= ring size or no matching identity.
+    static bool inbound_ratchet_privkey(const uint8_t* identity_hash, size_t index, uint8_t* out_privkey) {
+      if (!identity_hash || !out_privkey) return false;
+      RNS::Bytes ih(identity_hash, 16);
+      for (auto& a : identities_storage()) {
+        if (!a.active) continue;
+        if (a.identity.hash() != ih) continue;
+        const auto* e = a.ratchets.at_newest_first(index);
+        if (!e) return false;
+        if (e->privkey.size() != RatchetStore::RATCHET_BYTES) return false;
+        memcpy(out_privkey, e->privkey.data(), RatchetStore::RATCHET_BYTES);
+        return true;
+      }
+      return false;
     }
 
   private:
     static inline bool _setup_done = false;
-    static inline std::vector<LXMFAccount*> _active_view;
+    static inline std::vector<LXMFIdentity*> _active_view;
   };
 
   // Implementation of the AnnounceLog shim declared in AnnounceLog.h.
-  inline bool announce_log_is_own_account(const RNS::Bytes& destination_hash) {
+  inline bool announce_log_is_own_identity(const RNS::Bytes& destination_hash) {
     return LXMFGateway::is_own_destination(destination_hash);
   }
 

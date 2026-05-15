@@ -39,6 +39,7 @@
 #include <Log.h>
 
 #include "LXMFTypes.h"
+#include "../Web/BootCounter.h"
 
 namespace LXMF {
 
@@ -189,6 +190,14 @@ namespace LXMF {
   public:
     using DeliveryCallback = std::function<void(const MessageRecord&)>;
 
+    // Outbound status updates: called when an outbound message's lifecycle
+    // changes (Queued -> Sent / Delivered / Failed). Looked up by the link
+    // hash that was stored as the outbox record's packet_hash placeholder
+    // at send_message time. Distinct from DeliveryCallback (which is for
+    // inbound deliveries that append to the inbox).
+    using OutboxStatusCallback =
+        std::function<void(const RNS::Bytes& /*link_hash*/, OutboxStatus)>;
+
     // Async state for an outbound DIRECT-mode send. We open a Link to the
     // peer in send_message and queue the wire bytes here keyed by the
     // link's hash; when the Link establishes, the static callback pops
@@ -210,7 +219,12 @@ namespace LXMF {
       RNS::Bytes   dest_hash;
       RNS::Bytes   resource_hash;     // set after Resource is built (if >319 B)
       LXMFMinimal* owner = nullptr;
-      MessageRecord rec;
+      // Status drives the outbox transition (queued -> sent / delivered /
+      // failed) reported via _on_outbox_status. We deliberately do NOT
+      // keep the full MessageRecord here — its title/content strings are
+      // duplicated in the outbox already, and storing them again caused
+      // a heap-corruption canary trip during map-erase teardown.
+      OutboxStatus status = OutboxStatus::Queued;
     };
 
     LXMFMinimal()
@@ -261,6 +275,7 @@ namespace LXMF {
     ~LXMFMinimal() { shutdown(); }
 
     void set_delivery_callback(DeliveryCallback cb) { _on_delivery = std::move(cb); }
+    void set_outbox_status_callback(OutboxStatusCallback cb) { _on_outbox_status = std::move(cb); }
 
     // LXMF address of this identity (16-byte destination hash, hex-encoded).
     std::string address_hex() const {
@@ -378,6 +393,10 @@ namespace LXMF {
       wire.append(mp, mp_pos);
 
       out_rec.ts           = ts;
+      // (boot_epoch, received_ms) is the monotonic-across-reboots
+      // sort key for inbox/outbox records — see LXMFTypes.h.
+      out_rec.boot_epoch   = Web::BootCounter::current();
+      out_rec.received_ms  = millis();
       out_rec.peer_hash    = dest_hash;
       out_rec.title        = title;
       out_rec.content      = content;
@@ -412,7 +431,7 @@ namespace LXMF {
       ps.started_ms  = (uint64_t)millis();
       ps.dest_hash   = dest_hash;
       ps.owner       = this;
-      ps.rec         = out_rec;
+      ps.status      = OutboxStatus::Queued;
       pending_link_sends()[link_hash] = std::move(ps);
       out_rec.status      = OutboxStatus::Queued;
       out_rec.packet_hash = link_hash;  // placeholder; real packet hash once sent
@@ -511,17 +530,20 @@ namespace LXMF {
         try {
           RNS::Packet pkt(link, ps.wire);
           pkt.send();
-          ps.rec.status = OutboxStatus::Sent;
-          ps.rec.packet_hash = pkt.get_hash();
+          ps.status = OutboxStatus::Sent;
+          /* packet_hash update no longer tracked in PendingLinkSend */
         }
         catch (const std::exception& e) {
           ERRORF("LXMF: in-link packet send failed: %s", e.what());
-          ps.rec.status = OutboxStatus::Failed;
+          ps.status = OutboxStatus::Failed;
         }
-        if (ps.owner && ps.owner->_on_delivery) {
-          try { ps.owner->_on_delivery(ps.rec); } catch (...) {}
+        if (ps.owner && ps.owner->_on_outbox_status) {
+          try { ps.owner->_on_outbox_status(link.hash(), ps.status); } catch (...) {}
         }
-        link.teardown();
+        // No manual link.teardown() — calling it from inside the
+        // inbound-callback chain leaves dangling references that trip
+        // the heap-poisoning canary when the pending entry is erased.
+        // The link's own state machine will close after timeout.
         m.erase(it);
       }
       else {
@@ -544,13 +566,13 @@ namespace LXMF {
       PendingLinkSend& ps = it->second;
       // If the send already concluded successfully it'll have been
       // erased; getting here means an abnormal close.
-      if (ps.rec.status != OutboxStatus::Sent &&
-          ps.rec.status != OutboxStatus::Delivered) {
-        ps.rec.status = OutboxStatus::Failed;
+      if (ps.status != OutboxStatus::Sent &&
+          ps.status != OutboxStatus::Delivered) {
+        ps.status = OutboxStatus::Failed;
         WARNINGF("LXMF: link closed before send completed (peer %s)",
                  ps.dest_hash.toHex().c_str());
-        if (ps.owner && ps.owner->_on_delivery) {
-          try { ps.owner->_on_delivery(ps.rec); } catch (...) {}
+        if (ps.owner && ps.owner->_on_outbox_status) {
+          try { ps.owner->_on_outbox_status(link.hash(), ps.status); } catch (...) {}
         }
       }
       m.erase(it);
@@ -564,20 +586,22 @@ namespace LXMF {
           PendingLinkSend& ps = it->second;
           const auto st = res.status();
           if (st == RNS::Type::Resource::COMPLETE) {
-            ps.rec.status = OutboxStatus::Delivered;
+            ps.status = OutboxStatus::Delivered;
             NOTICEF("LXMF: outbound resource COMPLETE for %s",
                     ps.dest_hash.toHex().c_str());
           }
           else {
-            ps.rec.status = OutboxStatus::Failed;
+            ps.status = OutboxStatus::Failed;
             WARNINGF("LXMF: outbound resource FAILED for %s (status=%d)",
                      ps.dest_hash.toHex().c_str(), (int)st);
           }
-          if (ps.owner && ps.owner->_on_delivery) {
-            try { ps.owner->_on_delivery(ps.rec); } catch (...) {}
+          if (ps.owner && ps.owner->_on_outbox_status) {
+            try { ps.owner->_on_outbox_status(res.link().hash(), ps.status); } catch (...) {}
           }
-          // Teardown the link; erase the entry.
-          const_cast<RNS::Link&>(res.link()).teardown();
+          // No manual link.teardown() — calling it from inside on_proof's
+          // callback chain leaves dangling internal references that trip
+          // the heap-poisoning canary when the pending entry is erased.
+          // The link will close on its own after the keepalive timeout.
           it = m.erase(it);
         }
         else {
@@ -685,6 +709,8 @@ namespace LXMF {
       if (_on_delivery) {
         MessageRecord rec;
         rec.ts           = msg_ts;
+        rec.boot_epoch   = Web::BootCounter::current();
+        rec.received_ms  = millis();
         rec.peer_hash    = source_hash;
         rec.title        = title;
         rec.content      = content;
@@ -752,6 +778,8 @@ namespace LXMF {
       if (_on_delivery) {
         MessageRecord rec;
         rec.ts           = msg_ts;
+        rec.boot_epoch   = Web::BootCounter::current();
+        rec.received_ms  = millis();
         rec.peer_hash    = source_hash;
         rec.title        = title;
         rec.content      = content;
@@ -818,6 +846,7 @@ namespace LXMF {
     bool              _time_calibrated;
     std::string       _display_name;
     DeliveryCallback  _on_delivery;
+    OutboxStatusCallback _on_outbox_status;
   };
 
 } // namespace LXMF

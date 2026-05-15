@@ -135,16 +135,25 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 #topbar #self-info .addr { font-size: 10px; color: var(--text-dim); font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 #topbar .spacer { flex: 1; min-width: 16px; }
 
-/* Announce icon: pulse when auto-announce is enabled (state.announceAutoOn
-   toggles the class). Countdown badge sits next to the icon. */
-#btn-announce-top.pulsing svg {
-  animation: announce-pulse 2s ease-in-out infinite;
-  color: var(--accent-3);
+/* Announce icon: small coloured dot in the bottom-right, same pattern
+   as #btn-status. Three states:
+     - "auto"  (green): auto-announce is enabled
+     - "sent"  (yellow): auto-announce is off, but at least one announce
+                         has been sent since boot
+     - "none"  (grey): nothing sent this boot                            */
+#btn-announce-top { position: relative; }
+#btn-announce-top::after {
+  content: '';
+  position: absolute;
+  bottom: 6px; right: 6px;
+  width: 10px; height: 10px;
+  border: 2px solid var(--bg-elev);
+  border-radius: 50%;
+  background: var(--text-dim);
 }
-@keyframes announce-pulse {
-  0%, 100% { opacity: 0.45; transform: scale(1);   }
-  50%      { opacity: 1;    transform: scale(1.12); }
-}
+#btn-announce-top[data-state="auto"]::after { background: var(--accent-3); }
+#btn-announce-top[data-state="sent"]::after { background: var(--warn); }
+#btn-announce-top[data-state="none"]::after { background: var(--text-dim); }
 #announce-countdown {
   font-size: 10px;
   color: var(--text-dim);
@@ -1102,6 +1111,9 @@ const state = {
   prefs: loadPrefs(),
   pendingIdCode: false,
   pendingIdCodeAction: null,        // function called with the 6-char code
+  announcedThisBoot: false,         // local flag — yellow announce dot when
+                                    // auto-announce is off but user has fired
+                                    // at least one manual announce since SPA load
   reconnectStart: 0,
   skipBootstrap: false,             // set true by "skip" button on view-bootstrap so subsequent
                                     // routing doesn't bounce back into bootstrap mode
@@ -1997,6 +2009,9 @@ async function forceAnnounce() {
   try {
     await state.transport.announceNow(state.identityId);
     toast('Announce sent', 'success');
+    // Flip the dot to yellow ("sent this boot") for the case where
+    // auto-announce is off; refreshAnnounceCountdown picks this up.
+    state.announcedThisBoot = true;
     // Optimistically reset the countdown to a full interval — server
     // does the same on its end after a successful send_announce.
     const ms = Number(state.self && state.self.announce_interval_ms) || 0;
@@ -2243,12 +2258,17 @@ function refreshAnnounceCountdown() {
   if (!btn || !lbl) return;
   const interval = Number(state.self && state.self.announce_interval_ms) || 0;
   if (interval <= 0) {
-    btn.classList.remove('pulsing');
+    // No auto-announce. Dot is yellow if the user manually fired one
+    // this boot, grey otherwise.
+    btn.setAttribute('data-state', state.announcedThisBoot ? 'sent' : 'none');
     lbl.hidden = true;
-    btn.title = 'Announce me — auto-announce is OFF for this identity';
+    btn.title = state.announcedThisBoot
+      ? 'Announce me — auto-announce is OFF (manual announce sent this boot)'
+      : 'Announce me — auto-announce is OFF for this identity';
     return;
   }
-  btn.classList.add('pulsing');
+  // Auto-announce on.
+  btn.setAttribute('data-state', 'auto');
   const remainMs = Math.max(0, (state.nextAnnounceAtMs || 0) - Date.now());
   lbl.hidden = false;
   lbl.textContent = formatCountdown(remainMs);

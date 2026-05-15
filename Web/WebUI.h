@@ -38,6 +38,16 @@ extern int      lora_sf;
 extern int      lora_cr;
 extern int      lora_txp;
 extern bool     radio_online;
+// Radio activity counters (defined in Config.h / RNode_Firmware.ino).
+// Used to expose live transmit/receive stats so callers can confirm the
+// radio is actually doing work rather than just reporting `online: true`.
+extern uint32_t stat_rx;          // total packets received since boot
+extern uint32_t stat_tx;          // total packets transmitted since boot
+extern int      last_rssi;        // RSSI of the last received packet (dBm)
+extern uint8_t  last_snr_raw;     // SNR of the last received packet (raw scale)
+extern int      noise_floor;      // measured noise floor (dBm)
+extern float    airtime;          // short-term channel utilisation as 0..1
+extern float    longterm_airtime; // long-term (1h) channel utilisation as 0..1
 
 #include <algorithm>
 #include <vector>
@@ -413,6 +423,25 @@ namespace Web {
       radio["spreading_factor"] = lora_sf;
       radio["coding_rate"]      = lora_cr;
       radio["tx_power"]         = lora_txp;
+      // Activity counters so callers can verify the radio is actually
+      // doing work (not just "online"). stat_rx / stat_tx are packet
+      // counts since boot — poll twice with a delta to see if the
+      // radio is actively transmitting/receiving. airtime is the
+      // short-term channel utilisation fraction (0..1).
+      JsonObject stats = radio["stats"].to<JsonObject>();
+      // Reticulum stack counts — these get incremented on every packet
+      // through Transport::outbound / Transport::inbound and are the most
+      // accurate "is the radio doing work" signal. The legacy stat_rx /
+      // stat_tx variables from the upstream RNode firmware are unused
+      // (never incremented in this codebase).
+      stats["rx_packets"]         = (uint32_t)RNS::Transport::packets_received();
+      stats["tx_packets"]         = (uint32_t)RNS::Transport::packets_sent();
+      stats["destinations_seen"]  = (uint32_t)RNS::Transport::destinations_added();
+      stats["last_rssi_dbm"]      = last_rssi;
+      stats["last_snr_raw"]       = last_snr_raw;
+      stats["noise_floor_dbm"]    = noise_floor;
+      stats["airtime_pct"]        = (int)(airtime * 100);
+      stats["longterm_airtime_pct"] = (int)(longterm_airtime * 100);
       JsonObject transport = doc["transport"].to<JsonObject>();
       transport["enabled"]      = RNS::Reticulum::transport_enabled();
       // TODO microReticulum doesn't yet expose live path/packet counters

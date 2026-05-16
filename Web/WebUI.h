@@ -873,17 +873,16 @@ namespace Web {
       std::string requested = std::string(server.pathArg(0).c_str());
       if (caller != requested) { send_error(403, "forbidden"); return; }
       std::string fname = std::string(server.pathArg(1).c_str());
-      // [ATTDBG] Log the raw filename and a length-tagged hex dump of
-      // the first few bytes so we can spot URL-decode quirks or stray
-      // whitespace that the validator regex would reject.
+      // [ATTDBG] Log the raw filename (full hex dump) so we can pin-point
+      // any URL-decode quirks or stray whitespace.
       {
         std::string hex;
         char buf[8];
-        for (size_t i = 0; i < fname.size() && i < 16; ++i) {
+        for (size_t i = 0; i < fname.size(); ++i) {
           snprintf(buf, sizeof(buf), "%02x ", (unsigned char)fname[i]);
           hex += buf;
         }
-        NOTICEF("[ATTDBG] handle_attachment_get: fname.size()=%u first16=[%s] full=\"%s\"",
+        NOTICEF("[ATTDBG] handle_attachment_get: fname.size()=%u hex=[%s] full=\"%s\"",
                 (unsigned)fname.size(), hex.c_str(), fname.c_str());
       }
       // Allow [0-9a-fA-F_.] only and require the .bin suffix; rejects
@@ -893,11 +892,25 @@ namespace Web {
       bool ok = !fname.empty() && fname.size() < 96
                 && fname.size() > 4
                 && fname.compare(fname.size() - 4, 4, ".bin") == 0;
-      for (size_t i = 0; ok && i < fname.size(); ++i) {
+      if (!ok) {
+        NOTICEF("[ATTDBG] reject reason: empty=%d size_lt_96=%d size_gt_4=%d ends_bin=%d",
+                (int)fname.empty(), (int)(fname.size() < 96),
+                (int)(fname.size() > 4),
+                (int)(fname.size() >= 4 &&
+                      fname.compare(fname.size() - 4, 4, ".bin") == 0));
+      }
+      // Validate the stem (everything before the literal ".bin"
+      // suffix). The suffix itself is fixed; only the stem needs to
+      // be locked down to hex/underscore/dot (e.g. "msg_06_0").
+      const size_t stem_len = ok ? fname.size() - 4 : 0;
+      for (size_t i = 0; ok && i < stem_len; ++i) {
         char c = fname[i];
         bool valid = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
                      || c == '_' || c == '.';
-        if (!valid) ok = false;
+        if (!valid) {
+          NOTICEF("[ATTDBG] invalid char at %u: 0x%02x", (unsigned)i, (unsigned char)c);
+          ok = false;
+        }
       }
       if (!ok) {
         send_error_with_message(400, "invalid_attachment_name",

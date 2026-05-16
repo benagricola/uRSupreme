@@ -184,11 +184,17 @@ void on_log(const char* msg, RNS::LogLevel level) {
   // CMD_DETECT and the radio is up) wrap log lines in CMD_LOG KISS
   // frames so a KISS decoder either displays them on its own pane or
   // silently discards them — but the radio byte stream stays clean.
-  if (op_mode == MODE_TNC) {
+  //
+  // Exception: the kiss_serial_output toggle (#97) is the user's
+  // override for "I want a clean text monitor on USB, KISS host be
+  // damned". When OFF, force the plain-text path regardless of
+  // op_mode so `pio device monitor` actually shows diagnostics.
+  if (op_mode == MODE_TNC && kiss_serial_output) {
     kiss_indicate_log((uint8_t)level, msg);
     return;
   }
-  // MODE_HOST (development / LXMF gateway): plain text for pio monitor.
+  // MODE_HOST (development / LXMF gateway), or KISS suppressed: plain
+  // text for pio monitor.
 	Serial.print(RNS::getTimeString());
 	Serial.print(" [");
 	Serial.print(RNS::getLevelName(level));

@@ -1066,19 +1066,56 @@ namespace LXMF {
               // don't desync on the rest of the payload.
               return true;
             }
-            // Value: capture as raw msgpack bytes (one element). Note
-            // the start of the value, then skip_element advances off
-            // past it, giving us the length.
+            // Value: parse the msgpack bin/str header so f.raw points
+            // at the raw payload bytes (not the type+length prefix).
+            // Persisting the wrapped element would leave a 3-byte bin16
+            // header on the front of every attachment file. (#60)
             const size_t value_start = off;
             if (!RawMsgPack::skip_element(data, len, off)) return true;
-            const size_t value_len = off - value_start;
+            const size_t value_end = off;
+            // Inner range within [value_start, value_end) that holds
+            // just the payload bytes. Defaults to the whole element so
+            // unsupported types still pass through as-is.
+            const uint8_t* inner_data = data + value_start;
+            size_t inner_len = value_end - value_start;
+            {
+              const uint8_t vt = data[value_start];
+              size_t hdr = 0, dlen = 0;
+              if ((vt & 0xE0) == 0xA0) {
+                hdr = 1; dlen = vt & 0x1F;
+              } else if (vt == 0xD9 && value_start + 1 < value_end) {
+                hdr = 2; dlen = data[value_start + 1];
+              } else if (vt == 0xDA && value_start + 2 < value_end) {
+                hdr = 3; dlen = (data[value_start+1] << 8) | data[value_start+2];
+              } else if (vt == 0xDB && value_start + 4 < value_end) {
+                hdr = 5;
+                dlen = ((uint32_t)data[value_start+1] << 24) |
+                       ((uint32_t)data[value_start+2] << 16) |
+                       ((uint32_t)data[value_start+3] << 8)  |
+                        (uint32_t)data[value_start+4];
+              } else if (vt == 0xC4 && value_start + 1 < value_end) {
+                hdr = 2; dlen = data[value_start + 1];
+              } else if (vt == 0xC5 && value_start + 2 < value_end) {
+                hdr = 3; dlen = (data[value_start+1] << 8) | data[value_start+2];
+              } else if (vt == 0xC6 && value_start + 4 < value_end) {
+                hdr = 5;
+                dlen = ((uint32_t)data[value_start+1] << 24) |
+                       ((uint32_t)data[value_start+2] << 16) |
+                       ((uint32_t)data[value_start+3] << 8)  |
+                        (uint32_t)data[value_start+4];
+              }
+              if (hdr != 0 && value_start + hdr + dlen <= value_end) {
+                inner_data = data + value_start + hdr;
+                inner_len  = dlen;
+              }
+            }
             // Only persist the file-shaped attachments. Everything
             // else flows through silently (could be teleemtry, ticket,
             // renderer, …).
             if (key_tag == FIELD_FILE_ATTACHMENTS ||
                 key_tag == FIELD_IMAGE ||
                 key_tag == FIELD_AUDIO) {
-              out_fields->push_back({key_tag, data + value_start, value_len});
+              out_fields->push_back({key_tag, inner_data, inner_len});
             }
           }
         }

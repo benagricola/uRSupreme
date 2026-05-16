@@ -3335,8 +3335,22 @@ $('login-pw').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); $('btn-login-go').click(); }
 });
 $('btn-login-go').addEventListener('click', async () => {
+  // Login involves a round trip to the device (auth + announce-on-login
+  // packet send) which can take 1-2 s. Lock the form and show a
+  // progress label so the user doesn't double-click or wonder if
+  // their press registered.
+  const btn = $('btn-login-go');
+  const pw  = $('login-pw');
+  const back = $('btn-login-back');
+  if (btn.dataset.busy) return;  // ignore re-entry while a login is in flight
+  btn.dataset.busy = '1';
+  const originalText = btn.textContent;
+  btn.textContent = 'Logging in…';
+  btn.disabled = true;
+  pw.disabled = true;
+  back.disabled = true;
   try {
-    const r = await state.transport.login(state.identityId, $('login-pw').value);
+    const r = await state.transport.login(state.identityId, pw.value);
     state.token = r.token;
     state.identityId = r.identityId;
     localStorage.setItem(LS.TOKEN, r.token);
@@ -3347,6 +3361,12 @@ $('btn-login-go').addEventListener('click', async () => {
   } catch (e) {
     if (e.status === 401) toast('Wrong password', 'error');
     else toast('Login failed: ' + (e.message || e), 'error');
+  } finally {
+    btn.disabled = false;
+    pw.disabled = false;
+    back.disabled = false;
+    btn.textContent = originalText;
+    delete btn.dataset.busy;
   }
 });
 

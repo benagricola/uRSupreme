@@ -2315,6 +2315,16 @@ async function blobToBytes(blob) {
   return new Uint8Array(buf);
 }
 
+// Read an image blob's natural pixel dimensions without rendering it.
+// Used by the resize picker to choose a thumbnail display size that
+// matches the smallest variant's actual pixel count.
+async function blobImageDimensions(blob) {
+  const bmp = await createImageBitmap(blob);
+  const w = bmp.width, h = bmp.height;
+  bmp.close();
+  return { w, h };
+}
+
 // Base64-encode a Uint8Array. btoa() can't take a binary string > ~64K
 // efficiently, but our 48 KB cap fits comfortably; chunk via String.fromCharCode.
 function bytesToBase64(bytes) {
@@ -2471,16 +2481,14 @@ async function openImageResizePicker(file) {
   $('ir-source').textContent = file.name + ' · ' + formatBytes(file.size);
   const wrap = $('ir-options');
   wrap.innerHTML = '';
-  // Compute candidate sizes up-front so the radio labels show the
-  // resulting filesize + ETA. "Original" is JPEG-recompressed only if
-  // it's already over the cap (otherwise we send the original bytes
-  // as-is to preserve quality).
+  // Compute candidate sizes up-front. "Resize" here means downscaling
+  // the image's pixel dimensions (which proportionally shrinks the
+  // encoded JPEG); "original" sends the user's file bytes as-is.
   const candidates = [
     { key: 'small',    label: 'Small',    maxDim: 320 },
     { key: 'medium',   label: 'Medium',   maxDim: 800 },
     { key: 'original', label: 'Original', maxDim: 0   },
   ];
-  // Prepare blob + size for each option so the user can compare.
   const prepared = [];
   for (const c of candidates) {
     let blob;
@@ -2489,36 +2497,68 @@ async function openImageResizePicker(file) {
     } else {
       blob = await resizeImage(file, c.maxDim);
     }
-    prepared.push({ ...c, blob, size: blob.size });
+    const dims = await blobImageDimensions(blob);
+    prepared.push({ ...c, blob, size: blob.size, dims,
+                    objectUrl: URL.createObjectURL(blob) });
   }
+  // Display every thumbnail at the small variant's natural dimensions
+  // so the three options can be compared at the same on-screen scale.
+  // Cap the side length at 200 px so the modal stays compact.
+  const smallVariant = prepared.find(p => p.key === 'small') || prepared[0];
+  const thumbBox = Math.min(200, Math.max(smallVariant.dims.w, smallVariant.dims.h));
+
   // Default selection: first candidate that fits the cap.
   let chosen = prepared.find(p => p.size <= ATTACH_MAX_BYTES) || prepared[0];
-  const renderOptions = async () => {
+
+  const renderOptions = () => {
     wrap.innerHTML = '';
     for (const p of prepared) {
       const tooBig = p.size > ATTACH_MAX_BYTES;
-      const row = el('label', {
-        class: 'cn-radio',
-        style: 'display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--bg-elev-2);border-radius:6px;cursor:' + (tooBig ? 'not-allowed' : 'pointer') + ';opacity:' + (tooBig ? 0.5 : 1),
+      const isChosen = p.key === chosen.key && !tooBig;
+      const card = el('div', {
+        style: 'display:flex;gap:12px;padding:8px;border-radius:6px;'
+             + 'border:2px solid ' + (isChosen ? 'var(--accent)' : 'var(--bg-elev-2)') + ';'
+             + 'background:' + (isChosen ? 'rgba(255,255,255,0.04)' : 'transparent') + ';'
+             + 'cursor:' + (tooBig ? 'not-allowed' : 'pointer') + ';'
+             + 'opacity:' + (tooBig ? 0.5 : 1) + ';'
+             + 'align-items:flex-start',
       });
-      const r = el('input', { type: 'radio', name: 'ir-choice', value: p.key });
-      if (tooBig) r.disabled = true;
-      if (p.key === chosen.key) r.checked = true;
-      r.addEventListener('change', async () => {
-        chosen = p;
-        await refreshEtas();
+      // Thumbnail: actual resized JPEG, displayed at a fixed box size
+      // with object-fit:contain so aspect ratio is preserved and
+      // medium/original visually shrink to the same on-screen footprint
+      // as small. This lets the user compare quality at equal scale.
+      const img = el('img', {
+        src: p.objectUrl,
+        style: 'width:' + thumbBox + 'px;height:' + thumbBox + 'px;'
+             + 'object-fit:contain;background:var(--bg);border-radius:4px;flex-shrink:0',
       });
-      const lab = el('div', { style: 'flex:1' });
-      lab.appendChild(el('div', { style: 'font-weight:600', text: p.label + (p.maxDim ? ' (≤ ' + p.maxDim + ' px)' : ' (as-is)') }));
-      lab.appendChild(el('div', { class: 'muted', style: 'font-size:11px',
-        text: formatBytes(p.size) + (tooBig ? ' — too large for the ' + formatBytes(ATTACH_MAX_BYTES) + ' cap' : '') }));
-      const eta = el('div', { class: 'muted mono', 'data-eta-for': p.key, style: 'font-size:11px;color:var(--text-dim)', text: '' });
-      row.appendChild(r); row.appendChild(lab); row.appendChild(eta);
-      wrap.appendChild(row);
+      card.appendChild(img);
+
+      const info = el('div', { style: 'flex:1;min-width:0' });
+      info.appendChild(el('div', { style: 'font-weight:600',
+        text: p.label + (p.maxDim ? '  (≤ ' + p.maxDim + ' px)' : '  (as-is)') }));
+      info.appendChild(el('div', { class: 'muted mono', style: 'font-size:11px;margin-top:2px',
+        text: p.dims.w + '×' + p.dims.h + ' · ' + formatBytes(p.size) }));
+      if (tooBig) {
+        info.appendChild(el('div', { style: 'color:var(--danger-2);font-size:11px;margin-top:4px',
+          text: 'Too large — cap is ' + formatBytes(ATTACH_MAX_BYTES) }));
+      }
+      info.appendChild(el('div', { class: 'muted mono',
+        'data-eta-for': p.key,
+        style: 'font-size:11px;color:var(--text-dim);margin-top:4px',
+        text: '' }));
+      card.appendChild(info);
+
+      if (!tooBig) {
+        card.addEventListener('click', () => {
+          chosen = p;
+          renderOptions();
+        });
+      }
+      wrap.appendChild(card);
     }
   };
   const refreshEtas = async () => {
-    // One estimate per candidate that fits, against the current peer.
     const peer = state.openPeer;
     if (!peer) return;
     for (const p of prepared) {
@@ -2527,31 +2567,33 @@ async function openImageResizePicker(file) {
         const r = await state.transport.pathEstimate(peer, p.size + 120);
         const node = wrap.querySelector('[data-eta-for="' + p.key + '"]');
         if (!node) continue;
-        if (r.kind === 'local')      node.textContent = 'instant';
-        else if (r.kind === 'unknown') node.textContent = 'ETA unknown';
-        else                          node.textContent = formatEta(r.eta_ms);
+        if (r.kind === 'local')      node.textContent = 'ETA: instant (same device)';
+        else if (r.kind === 'unknown') node.textContent = 'ETA: unknown route';
+        else                          node.textContent = 'ETA: ' + formatEta(r.eta_ms);
       } catch (_) { /* leave blank */ }
     }
   };
-  await renderOptions();
+  renderOptions();
   await refreshEtas();
   modal.hidden = false;
   const cleanup = () => {
     modal.hidden = true;
+    for (const p of prepared) URL.revokeObjectURL(p.objectUrl);
     $('ir-cancel').removeEventListener('click', onCancel);
     $('ir-attach').removeEventListener('click', onAttach);
   };
   const onCancel = () => cleanup();
   const onAttach = async () => {
     if (!chosen) return;
+    const c = chosen;  // capture before cleanup revokes URLs
     cleanup();
-    const bytes = await blobToBytes(chosen.blob);
+    const bytes = await blobToBytes(c.blob);
     const filename = (file.name || 'image').replace(/\.[^.]+$/, '')
-                    + (chosen.key === 'original' ? '' : '_' + chosen.key)
+                    + (c.key === 'original' ? '' : '_' + c.key)
                     + '.jpg';
     await stagePendingAttachment({
       tag: FIELD_IMAGE, bytes, filename,
-      mime: chosen.key === 'original' ? (file.type || 'image/jpeg') : 'image/jpeg',
+      mime: c.key === 'original' ? (file.type || 'image/jpeg') : 'image/jpeg',
     });
   };
   $('ir-cancel').addEventListener('click', onCancel);

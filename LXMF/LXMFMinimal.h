@@ -178,6 +178,54 @@ namespace LXMF {
       buf[0] = 0xCC; buf[1] = v; return 2;
     }
 
+    // Write a string (msgpack `str` type, distinct from `bin`). Sideband
+    // uses str for filenames and image extensions; using `bin` here
+    // would break interop.
+    inline size_t pack_str(uint8_t* buf, size_t buflen, const std::string& s) {
+      const size_t slen = s.length();
+      size_t pos = 0;
+      if (slen <= 31) {
+        if (pos + 1 + slen > buflen) return 0;
+        buf[pos++] = 0xA0 | (uint8_t)slen;
+      } else if (slen <= 255) {
+        if (pos + 2 + slen > buflen) return 0;
+        buf[pos++] = 0xD9;
+        buf[pos++] = (uint8_t)slen;
+      } else if (slen <= 0xFFFF) {
+        if (pos + 3 + slen > buflen) return 0;
+        buf[pos++] = 0xDA;
+        buf[pos++] = (slen >> 8) & 0xFF; buf[pos++] = slen & 0xFF;
+      } else {
+        if (pos + 5 + slen > buflen) return 0;
+        buf[pos++] = 0xDB;
+        buf[pos++] = (slen >> 24) & 0xFF; buf[pos++] = (slen >> 16) & 0xFF;
+        buf[pos++] = (slen >> 8)  & 0xFF; buf[pos++] =  slen        & 0xFF;
+      }
+      memcpy(&buf[pos], s.c_str(), slen);
+      pos += slen;
+      return pos;
+    }
+
+    // Write an array header. Caller follows with `n` packed elements.
+    inline size_t pack_array_header(uint8_t* buf, size_t buflen, size_t n) {
+      if (n <= 15) {
+        if (buflen < 1) return 0;
+        buf[0] = 0x90 | (uint8_t)n;
+        return 1;
+      }
+      if (n <= 0xFFFF) {
+        if (buflen < 3) return 0;
+        buf[0] = 0xDC;
+        buf[1] = (n >> 8) & 0xFF; buf[2] = n & 0xFF;
+        return 3;
+      }
+      if (buflen < 5) return 0;
+      buf[0] = 0xDD;
+      buf[1] = (n >> 24) & 0xFF; buf[2] = (n >> 16) & 0xFF;
+      buf[3] = (n >> 8)  & 0xFF; buf[4] =  n        & 0xFF;
+      return 5;
+    }
+
     // Write a map header. Picks the narrowest msgpack encoding that
     // fits the entry count. Caller follows with `n` key/value pairs.
     inline size_t pack_map_header(uint8_t* buf, size_t buflen, size_t n) {
@@ -396,15 +444,19 @@ namespace LXMF {
     // failed. Status reporting on delivery is left to the caller via the
     // returned MessageRecord — Phase 1 just sets status=Sent after send().
     // Caller-owned attachment blob. `tag` is one of the FIELD_* values
-    // (0x05 file / 0x06 image / 0x07 audio); `data` is the raw payload
-    // that will be msgpack-encoded as bin8/bin16 in the LXMF fields
-    // map; `filename` / `mime` are kept for the local outbox record
-    // (peers see only the raw bytes at the FIELD_* tag).
+    // (0x05 file / 0x06 image / 0x07 audio); `data` is the raw payload.
+    // Wire encoding follows the Sideband convention:
+    //   FIELD_FILE_ATTACHMENTS: [[filename, bytes], ...]    (uses `filename`)
+    //   FIELD_IMAGE:            [ext, bytes]                (uses `ext`)
+    //   FIELD_AUDIO:            [mode_int, bytes]           (uses `audio_mode`)
+    // `mime` is local metadata only, mirrored onto the outbox record.
     struct OutgoingAttachment {
       uint8_t              tag;
       std::vector<uint8_t> data;
-      std::string          filename;
-      std::string          mime;
+      std::string          filename;     // FIELD_FILE_ATTACHMENTS
+      std::string          ext;          // FIELD_IMAGE  e.g. "webp", "png"
+      uint8_t              audio_mode = 0xFF;  // FIELD_AUDIO  (AM_CUSTOM default)
+      std::string          mime;         // local-only, not on the wire
     };
 
     bool send_message(const RNS::Bytes& dest_hash,
@@ -446,12 +498,17 @@ namespace LXMF {
       // Heap-allocate sized to content + title + sum(attachments) + a
       // fixed overhead for the msgpack framing.
       size_t att_bytes = 0;
+      size_t att_names_bytes = 0;
       if (attachments) {
         for (const auto& a : *attachments) {
-          att_bytes += a.data.size() + 8;  // bin header + uint8 key
+          att_bytes += a.data.size();
+          att_names_bytes += a.filename.size() + a.ext.size();
         }
       }
-      const size_t mp_cap = 64 + title.size() + content.size() + att_bytes;
+      // 8 B per attachment for bin/array headers, +8 per element for
+      // inner [name, bytes] wrapping, +map header.
+      const size_t mp_cap = 96 + title.size() + content.size()
+                          + att_bytes + att_names_bytes + 16 * (attachments ? attachments->size() : 0);
       std::vector<uint8_t> mp_buf(mp_cap);
       uint8_t* mp = mp_buf.data();
       size_t mp_pos = 0;
@@ -470,21 +527,75 @@ namespace LXMF {
       if (n == 0) { ERROR("LXMF: send: content pack failed"); return fail("Internal error: content pack returned 0 unexpectedly."); }
       mp_pos += n;
 
+      // Field encoding follows the Sideband convention so peers (Sideband,
+      // Nomadnet, Columba) can decode our attachments natively:
+      //   FIELD_IMAGE:            [ext_str, bytes]
+      //   FIELD_AUDIO:            [mode_int, bytes]
+      //   FIELD_FILE_ATTACHMENTS: [[name_str, bytes], ...]
+      // Group by tag first so multi-file messages produce ONE map entry
+      // with an array value (not a malformed map with duplicate keys).
       if (!attachments || attachments->empty()) {
         mp[mp_pos++] = 0xC0;  // fields: nil
       } else {
-        n = RawMsgPack::pack_map_header(&mp[mp_pos], mp_cap - mp_pos,
-                                        attachments->size());
+        // Collect indices per tag in attachment order.
+        std::vector<size_t> file_idxs, image_idxs, audio_idxs;
+        for (size_t i = 0; i < attachments->size(); ++i) {
+          const uint8_t t = (*attachments)[i].tag;
+          if      (t == FIELD_FILE_ATTACHMENTS) file_idxs.push_back(i);
+          else if (t == FIELD_IMAGE)            image_idxs.push_back(i);
+          else if (t == FIELD_AUDIO)            audio_idxs.push_back(i);
+        }
+        size_t field_count = (file_idxs.empty() ? 0 : 1)
+                           + (image_idxs.empty() ? 0 : 1)
+                           + (audio_idxs.empty() ? 0 : 1);
+        n = RawMsgPack::pack_map_header(&mp[mp_pos], mp_cap - mp_pos, field_count);
         if (n == 0) { ERROR("LXMF: send: map header pack failed"); return fail("Too many attachments."); }
         mp_pos += n;
-        for (const auto& a : *attachments) {
-          n = RawMsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, a.tag);
-          if (n == 0) { ERROR("LXMF: send: field key pack failed"); return fail("Internal error packing attachment key."); }
-          mp_pos += n;
-          n = RawMsgPack::pack_bin(&mp[mp_pos], mp_cap - mp_pos,
-                                   a.data.data(), a.data.size());
-          if (n == 0) { ERROR("LXMF: send: field value pack failed"); return fail("Attachment too large to encode."); }
-          mp_pos += n;
+
+        auto pack_pair = [&](const std::string& name_or_ext, uint8_t audio_mode,
+                             bool use_audio_mode,
+                             const std::vector<uint8_t>& bytes,
+                             const char* err_label) -> bool {
+          size_t m = RawMsgPack::pack_array_header(&mp[mp_pos], mp_cap - mp_pos, 2);
+          if (m == 0) { ERROR("LXMF: send: pair header pack failed"); return false; }
+          mp_pos += m;
+          if (use_audio_mode) {
+            m = RawMsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, audio_mode);
+          } else {
+            m = RawMsgPack::pack_str(&mp[mp_pos], mp_cap - mp_pos, name_or_ext);
+          }
+          if (m == 0) { ERRORF("LXMF: send: %s name pack failed", err_label); return false; }
+          mp_pos += m;
+          m = RawMsgPack::pack_bin(&mp[mp_pos], mp_cap - mp_pos, bytes.data(), bytes.size());
+          if (m == 0) { ERRORF("LXMF: send: %s bytes pack failed", err_label); return false; }
+          mp_pos += m;
+          return true;
+        };
+
+        if (!image_idxs.empty()) {
+          const auto& a = (*attachments)[image_idxs.front()];
+          n = RawMsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, FIELD_IMAGE);
+          if (n == 0) return fail("Internal error packing image key."); mp_pos += n;
+          if (!pack_pair(a.ext, 0, false, a.data, "image"))
+            return fail("Internal error packing image attachment.");
+        }
+        if (!audio_idxs.empty()) {
+          const auto& a = (*attachments)[audio_idxs.front()];
+          n = RawMsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, FIELD_AUDIO);
+          if (n == 0) return fail("Internal error packing audio key."); mp_pos += n;
+          if (!pack_pair("", a.audio_mode, true, a.data, "audio"))
+            return fail("Internal error packing audio attachment.");
+        }
+        if (!file_idxs.empty()) {
+          n = RawMsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, FIELD_FILE_ATTACHMENTS);
+          if (n == 0) return fail("Internal error packing file-attachments key."); mp_pos += n;
+          n = RawMsgPack::pack_array_header(&mp[mp_pos], mp_cap - mp_pos, file_idxs.size());
+          if (n == 0) return fail("Too many file attachments to encode."); mp_pos += n;
+          for (size_t idx : file_idxs) {
+            const auto& a = (*attachments)[idx];
+            if (!pack_pair(a.filename, 0, false, a.data, "file"))
+              return fail("Internal error packing file attachment.");
+          }
         }
       }
 
@@ -539,10 +650,17 @@ namespace LXMF {
         for (size_t i = 0; i < attachments->size(); ++i) {
           const auto& a = (*attachments)[i];
           AttachmentMeta m;
-          m.tag      = a.tag;
-          m.size     = (uint32_t)a.data.size();
-          m.filename = a.filename;
-          m.mime     = a.mime;
+          m.tag  = a.tag;
+          m.size = (uint32_t)a.data.size();
+          // For outbox display: filename field is empty (no on-disk blob
+          // for sent attachments); display_name carries what the user
+          // attached so their own bubble still shows the right label.
+          if (a.tag == FIELD_IMAGE) {
+            m.display_name = a.ext.empty() ? a.filename : ("image." + a.ext);
+          } else {
+            m.display_name = a.filename;
+          }
+          m.mime = a.mime;
           out_rec.attachments.push_back(m);
         }
       }
@@ -1133,6 +1251,14 @@ namespace LXMF {
       uint8_t        tag;
       const uint8_t* raw;
       size_t         raw_len;
+      // Sender-supplied filename (Sideband convention) — empty for legacy
+      // peers or fields that don't carry one. For FIELD_IMAGE this holds
+      // the bare extension ("webp", "png"); for FIELD_FILE_ATTACHMENTS
+      // it's the original filename. FIELD_AUDIO doesn't use this.
+      std::string    filename;
+      // For FIELD_AUDIO under Sideband: codec mode (AM_*). 0xFF (AM_CUSTOM)
+      // is the safe default for legacy / unknown.
+      uint8_t        audio_mode = 0xFF;
     };
 
     // Hook the gateway sets so we can write attachment blobs to the
@@ -1238,56 +1364,126 @@ namespace LXMF {
               // don't desync on the rest of the payload.
               return true;
             }
-            // Value: parse the msgpack bin/str header so f.raw points
-            // at the raw payload bytes (not the type+length prefix).
-            // Persisting the wrapped element would leave a 3-byte bin16
-            // header on the front of every attachment file. (#60)
+            // Two shapes appear in the wild for FIELD_FILE/IMAGE/AUDIO:
+            //   1. Sideband convention (interop):
+            //        FIELD_IMAGE             = [ext_str, bytes]
+            //        FIELD_AUDIO             = [mode_int, bytes]
+            //        FIELD_FILE_ATTACHMENTS  = [[name_str, bytes], ...]
+            //   2. Bare-bytes legacy (what this firmware sent before #115).
+            // Detect by peeking the value tag — array means Sideband.
             const size_t value_start = off;
             if (!RawMsgPack::skip_element(data, len, off)) return true;
             const size_t value_end = off;
-            // Inner range within [value_start, value_end) that holds
-            // just the payload bytes. Defaults to the whole element so
-            // unsupported types still pass through as-is.
-            const uint8_t* inner_data = data + value_start;
-            size_t inner_len = value_end - value_start;
-            {
-              const uint8_t vt = data[value_start];
+            const bool is_target_tag = (key_tag == FIELD_FILE_ATTACHMENTS
+                                      || key_tag == FIELD_IMAGE
+                                      || key_tag == FIELD_AUDIO);
+            if (!is_target_tag) continue;
+
+            const uint8_t vt = data[value_start];
+            const bool is_array = ((vt & 0xF0) == 0x90) || vt == 0xDC || vt == 0xDD;
+
+            // Helper: read a [name|mode, bin] pair at offset `p` (which
+            // points just past the pair's own array header). Populates
+            // the emitted FieldBlob. Returns the next offset on success
+            // or 0 on parse failure (caller bails out).
+            auto emit_pair = [&](uint8_t tag, size_t p) -> size_t {
+              if (p >= value_end) return 0;
+              FieldBlob blob;
+              blob.tag = tag;
+              // Element 0 — name (str), ext (str), or mode (uint8).
+              const uint8_t et = data[p];
+              if (tag == FIELD_AUDIO) {
+                if (et <= 0x7F)            { blob.audio_mode = et; p += 1; }
+                else if (et == 0xCC && p + 1 < value_end) {
+                  blob.audio_mode = data[p + 1]; p += 2;
+                } else { return 0; }
+              } else {
+                size_t name_off = p;
+                blob.filename = RawMsgPack::read_bin_or_str(data, value_end, name_off);
+                if (name_off == p) return 0;   // read failed
+                p = name_off;
+              }
+              // Element 1 — bin payload.
+              if (p >= value_end) return 0;
+              const uint8_t bt = data[p];
               size_t hdr = 0, dlen = 0;
-              if ((vt & 0xE0) == 0xA0) {
-                hdr = 1; dlen = vt & 0x1F;
-              } else if (vt == 0xD9 && value_start + 1 < value_end) {
-                hdr = 2; dlen = data[value_start + 1];
-              } else if (vt == 0xDA && value_start + 2 < value_end) {
+              if (bt == 0xC4 && p + 1 < value_end) { hdr = 2; dlen = data[p + 1]; }
+              else if (bt == 0xC5 && p + 2 < value_end) {
+                hdr = 3; dlen = (data[p+1] << 8) | data[p+2];
+              } else if (bt == 0xC6 && p + 4 < value_end) {
+                hdr = 5;
+                dlen = ((uint32_t)data[p+1] << 24) | ((uint32_t)data[p+2] << 16)
+                     | ((uint32_t)data[p+3] << 8)  |  (uint32_t)data[p+4];
+              } else { return 0; }
+              if (p + hdr + dlen > value_end) return 0;
+              blob.raw     = data + p + hdr;
+              blob.raw_len = dlen;
+              out_fields->push_back(std::move(blob));
+              return p + hdr + dlen;
+            };
+
+            if (is_array) {
+              // Sideband: open the outer array.
+              size_t p = value_start;
+              size_t arr_n = 0;
+              if ((vt & 0xF0) == 0x90) { arr_n = vt & 0x0F; p += 1; }
+              else if (vt == 0xDC && p + 2 < value_end) {
+                arr_n = (data[p+1] << 8) | data[p+2]; p += 3;
+              } else if (vt == 0xDD && p + 4 < value_end) {
+                arr_n = ((uint32_t)data[p+1] << 24) | ((uint32_t)data[p+2] << 16)
+                      | ((uint32_t)data[p+3] << 8)  |  (uint32_t)data[p+4];
+                p += 5;
+              } else { continue; }
+
+              if (key_tag == FIELD_IMAGE || key_tag == FIELD_AUDIO) {
+                // The outer array IS the pair.
+                (void)emit_pair(key_tag, p);
+              } else {
+                // FIELD_FILE_ATTACHMENTS: outer is a list of pairs. Each
+                // element is itself a [name, bytes] array.
+                for (size_t i = 0; i < arr_n && p < value_end; ++i) {
+                  const uint8_t et = data[p];
+                  size_t pair_p = p;
+                  if ((et & 0xF0) == 0x90) { pair_p += 1; }
+                  else if (et == 0xDC && p + 2 < value_end) { pair_p += 3; }
+                  else if (et == 0xDD && p + 4 < value_end) { pair_p += 5; }
+                  else break;
+                  const size_t after = emit_pair(FIELD_FILE_ATTACHMENTS, pair_p);
+                  if (after == 0) break;
+                  p = after;
+                }
+              }
+            } else {
+              // Legacy bare-bytes shape: unwrap the bin/str header so
+              // raw points at payload bytes only (not the type prefix).
+              const uint8_t* inner_data = data + value_start;
+              size_t inner_len = value_end - value_start;
+              size_t hdr = 0, dlen = 0;
+              if ((vt & 0xE0) == 0xA0) { hdr = 1; dlen = vt & 0x1F; }
+              else if (vt == 0xD9 && value_start + 1 < value_end) { hdr = 2; dlen = data[value_start + 1]; }
+              else if (vt == 0xDA && value_start + 2 < value_end) {
                 hdr = 3; dlen = (data[value_start+1] << 8) | data[value_start+2];
               } else if (vt == 0xDB && value_start + 4 < value_end) {
                 hdr = 5;
-                dlen = ((uint32_t)data[value_start+1] << 24) |
-                       ((uint32_t)data[value_start+2] << 16) |
-                       ((uint32_t)data[value_start+3] << 8)  |
-                        (uint32_t)data[value_start+4];
-              } else if (vt == 0xC4 && value_start + 1 < value_end) {
-                hdr = 2; dlen = data[value_start + 1];
-              } else if (vt == 0xC5 && value_start + 2 < value_end) {
+                dlen = ((uint32_t)data[value_start+1] << 24) | ((uint32_t)data[value_start+2] << 16)
+                     | ((uint32_t)data[value_start+3] << 8)  |  (uint32_t)data[value_start+4];
+              } else if (vt == 0xC4 && value_start + 1 < value_end) { hdr = 2; dlen = data[value_start + 1]; }
+              else if (vt == 0xC5 && value_start + 2 < value_end) {
                 hdr = 3; dlen = (data[value_start+1] << 8) | data[value_start+2];
               } else if (vt == 0xC6 && value_start + 4 < value_end) {
                 hdr = 5;
-                dlen = ((uint32_t)data[value_start+1] << 24) |
-                       ((uint32_t)data[value_start+2] << 16) |
-                       ((uint32_t)data[value_start+3] << 8)  |
-                        (uint32_t)data[value_start+4];
+                dlen = ((uint32_t)data[value_start+1] << 24) | ((uint32_t)data[value_start+2] << 16)
+                     | ((uint32_t)data[value_start+3] << 8)  |  (uint32_t)data[value_start+4];
               }
               if (hdr != 0 && value_start + hdr + dlen <= value_end) {
                 inner_data = data + value_start + hdr;
                 inner_len  = dlen;
               }
-            }
-            // Only persist the file-shaped attachments. Everything
-            // else flows through silently (could be teleemtry, ticket,
-            // renderer, …).
-            if (key_tag == FIELD_FILE_ATTACHMENTS ||
-                key_tag == FIELD_IMAGE ||
-                key_tag == FIELD_AUDIO) {
-              out_fields->push_back({key_tag, inner_data, inner_len});
+              FieldBlob blob;
+              blob.tag = key_tag;
+              blob.raw = inner_data;
+              blob.raw_len = inner_len;
+              out_fields->push_back(std::move(blob));
             }
           }
         }

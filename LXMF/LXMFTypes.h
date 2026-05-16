@@ -47,15 +47,18 @@ namespace LXMF {
   // pointer so the inbox JSONL line stays small (the body itself is
   // capped at MAX_LINE_BYTES per LXMFInbox.h).
   //
-  // tag matches the LXMF FIELD_* constant. filename is relative to the
-  // identity's attachments/ dir, generated as "<msg_hash_hex>_<tag>_<n>.bin"
-  // at receive time so identical messages don't collide. mime is the
-  // sender-declared content type if any (Sideband includes it for some
-  // attachment shapes); empty when the wire format didn't carry it.
+  // tag matches the LXMF FIELD_* constant. filename is the on-disk stem
+  // ("<msg_hash_hex>_<tag>_<n>.bin") generated at receive time — used
+  // as the URL path on /api/.../attachments/<filename>. display_name
+  // is the sender-supplied original name (Sideband convention) and is
+  // ONLY for UI display + download-prompt; never trust it for disk
+  // access. mime is the sender-declared content type if any; empty if
+  // the wire format didn't carry it.
   struct AttachmentMeta {
     uint8_t     tag;
     uint32_t    size;
-    std::string filename;
+    std::string filename;       // on-disk stem (attacker-safe)
+    std::string display_name;   // sender-supplied label (display-only)
     std::string mime;
   };
 

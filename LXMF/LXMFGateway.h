@@ -376,10 +376,12 @@ namespace LXMF {
           });
       // Attachment persistence — when an incoming LXMF message carries
       // FIELD_FILE_ATTACHMENTS / FIELD_IMAGE / FIELD_AUDIO blobs, write
-      // each one to <identity_dir>/attachments/ and hand back metadata
-      // for the inbox record. Filenames are
-      // "<msg_hash_hex>_<tag>_<idx>.bin" so identical-hash collisions
-      // (unlikely) still scope per-field-per-occurrence.
+      // each one to <identity_dir>/attachments/. On-disk filenames are
+      // always "<msg_hash_hex>_<tag>_<idx>.bin" — a stable, attacker-
+      // safe naming scheme. The sender-supplied filename (FieldBlob's
+      // `filename`, populated by the Sideband decoder) is propagated
+      // onto the AttachmentMeta for the SPA to display and use as the
+      // download-prompt name.
       a.lxmf.set_attachment_persist_callback(
           [p](const RNS::Bytes& msg_hash,
               const std::vector<LXMFMinimal::FieldBlob>& fields) -> std::vector<AttachmentMeta> {
@@ -391,30 +393,41 @@ namespace LXMF {
             }
             for (size_t i = 0; i < fields.size(); ++i) {
               const auto& f = fields[i];
-              char fname[96];
-              snprintf(fname, sizeof(fname), "%s_%02x_%u.bin",
+              char on_disk[96];
+              snprintf(on_disk, sizeof(on_disk), "%s_%02x_%u.bin",
                        msg_hash.toHex().c_str(), (unsigned)f.tag, (unsigned)i);
-              const std::string full = att_dir + "/" + fname;
-              // LittleFS write on a 10+ KB blob with a fragmented FS
-              // can easily take hundreds of ms; reset the WDT on
-              // either side so a multi-attachment message doesn't
-              // accumulate enough flash time to trip the watchdog. (#60)
+              const std::string full = att_dir + "/" + on_disk;
               RNS::Utilities::OS::reset_watchdog();
               const size_t wrote = filesystem.writeFile(full.c_str(),
                                                         f.raw, f.raw_len);
               RNS::Utilities::OS::reset_watchdog();
               if (wrote != f.raw_len) {
                 WARNINGF("LXMF: attachment write short (wrote %u/%u) for %s",
-                         (unsigned)wrote, (unsigned)f.raw_len, fname);
+                         (unsigned)wrote, (unsigned)f.raw_len, on_disk);
                 continue;
               }
               AttachmentMeta meta;
               meta.tag      = f.tag;
               meta.size     = (uint32_t)f.raw_len;
-              meta.filename = fname;
+              // `filename` here is the on-disk stem (what /api/attachment
+              // serves). The sender-supplied display name goes into
+              // `display_name` so the SPA can offer it as the download
+              // target without trusting it for filesystem access.
+              meta.filename = on_disk;
+              // Sideband's FIELD_IMAGE only carries the extension (e.g.
+              // "png", "webp"). Construct a usable display name from it.
+              // For FILE_ATTACHMENTS, f.filename is already the full
+              // sender-supplied name. AUDIO has no name; leave empty.
+              if (f.tag == LXMF::FIELD_IMAGE && !f.filename.empty()) {
+                meta.display_name = "image." + f.filename;
+              } else if (f.tag == LXMF::FIELD_FILE_ATTACHMENTS) {
+                meta.display_name = f.filename;
+              }
+              NOTICEF("LXMF: persist DBG tag=0x%02x f.filename='%s' meta.display_name='%s'",
+                      (unsigned)f.tag, f.filename.c_str(), meta.display_name.c_str());
               out.push_back(meta);
               NOTICEF("LXMF: persisted attachment %s (%u B)",
-                      fname, (unsigned)f.raw_len);
+                      on_disk, (unsigned)f.raw_len);
             }
             return out;
           });

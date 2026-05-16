@@ -1933,12 +1933,23 @@ function renderThread() {
       // else triggers a Save-As.
       if (Array.isArray(m.attachments) && m.attachments.length > 0) {
         for (const a of m.attachments) {
-          if (!a.filename) continue;
-          const label = (a.tag === 5 ? '📎 file'
-                       : a.tag === 6 ? '🖼 image'
-                       : a.tag === 7 ? '🎙 audio'
-                       : '📎 attachment')
-                       + ' (' + formatBytes(a.size || 0) + ')';
+          // Outbound attachments have no on-disk filename (we don't keep
+          // our own bytes); render them on display_name+size alone.
+          if (!a.filename && !a.display_name && !(a.size > 0)) continue;
+          // Prefer the sender-supplied display_name (Sideband convention)
+          // for the bubble label; fall back to a generic type label for
+          // legacy peers that didn't include one.
+          const icon = a.tag === 5 ? '📎'
+                     : a.tag === 6 ? '🖼'
+                     : a.tag === 7 ? '🎙'
+                     : '📎';
+          const typeWord = a.tag === 5 ? 'file'
+                         : a.tag === 6 ? 'image'
+                         : a.tag === 7 ? 'audio'
+                         : 'attachment';
+          const name = (a.display_name || '').trim();
+          const label = icon + ' ' + (name || typeWord)
+                      + ' (' + formatBytes(a.size || 0) + ')';
           // Outbound attachments aren't persisted on the device (the
           // bytes are only in the recipient's inbox); show as a plain
           // chip without a download action. Inbound chips: images
@@ -2201,10 +2212,11 @@ async function downloadAttachment(identityId, meta, chipEl, bubbleEl) {
       img.addEventListener('click', () => window.open(url, '_blank'));
       bubbleEl.replaceChild(img, chipEl);
     } else {
-      // File / audio / unknown: trigger Save-As. For audio (tag 7) the
-      // user can drag the saved file into a player; an inline <audio>
-      // element would need the MIME type which we don't track yet.
-      const a = el('a', { href: url, download: meta.filename });
+      // File / audio / unknown: trigger Save-As. Use the sender-supplied
+      // display_name (Sideband convention) as the suggested filename so
+      // the user gets "report.pdf" rather than "<hash>_05_0.bin". Fall
+      // back to the on-disk stem if no display_name (legacy peer).
+      const a = el('a', { href: url, download: meta.display_name || meta.filename });
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

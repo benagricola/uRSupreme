@@ -24,6 +24,7 @@
 #include <freertos/semphr.h>
 #include "TimeManager.h"
 #include "Gps.h"
+#include "RtcPCF8563.h"
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
@@ -421,6 +422,8 @@ namespace Web {
       server.on("/api/time/sources",         HTTP_POST, handle_time_sources_set);
       // GPS fix — last RMC sentence parsed. (#109)
       server.on("/api/gps",                  HTTP_GET,  handle_gps_get);
+      // RTC diagnostics — raw chip state. (#112)
+      server.on("/api/rtc",                  HTTP_GET,  handle_rtc_get);
       server.on(UriBraces("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
       server.on(UriBraces("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
       server.on(UriBraces("/api/identities/{}/send"),     HTTP_POST, handle_send);
@@ -908,6 +911,22 @@ namespace Web {
       handle_time_get();
     }
 
+    // GET /api/rtc — diagnostic snapshot of the on-board PCF8563.
+    // Live I2C read; surfaces VL flag + raw regs so we can confirm
+    // the hardware is wired and persisting. (#112)
+    static void handle_rtc_get() {
+      if (require_auth().empty()) return;
+      JsonDocument doc;
+      const auto s = Web::RtcPCF8563::debug_snapshot();
+      doc["available"] = Web::RtcPCF8563::available();
+      doc["present"]   = s.present;
+      doc["vl_set"]    = s.vl_set;
+      JsonArray regs   = doc["regs"].to<JsonArray>();
+      for (int i = 0; i < 7; ++i) regs.add(s.regs[i]);
+      doc["unix_ms"]   = (uint64_t)(s.epoch * 1000.0);
+      send_json(200, doc);
+    }
+
     // GET /api/gps — last RMC fix. Returns valid flag, position,
     // speed/heading, UTC, and how recent the fix was. Auth-gated so
     // attackers on the LAN can't passively scrape location. (#109)
@@ -1169,6 +1188,7 @@ namespace Web {
             o["tag"]      = a.tag;
             o["size"]     = a.size;
             o["filename"] = a.filename;
+            if (!a.display_name.empty()) o["display_name"] = a.display_name;
             if (!a.mime.empty()) o["mime"] = a.mime;
           }
         }
@@ -1348,6 +1368,26 @@ namespace Web {
           }
           oa.filename = a["filename"] | "";
           oa.mime     = a["mime"]     | "";
+          // Per Sideband convention, FIELD_IMAGE carries an `ext` string
+          // (e.g. "webp"). Derive from mime "image/xyz" if the SPA didn't
+          // send an explicit ext, else fall back to the filename suffix
+          // or a safe default.
+          if (oa.tag == LXMF::FIELD_IMAGE) {
+            const char* explicit_ext = a["ext"] | "";
+            if (*explicit_ext) {
+              oa.ext = explicit_ext;
+            } else if (oa.mime.rfind("image/", 0) == 0) {
+              oa.ext = oa.mime.substr(6);
+            } else {
+              const size_t dot = oa.filename.find_last_of('.');
+              oa.ext = (dot != std::string::npos) ? oa.filename.substr(dot + 1) : std::string("bin");
+            }
+          }
+          if (oa.tag == LXMF::FIELD_AUDIO) {
+            // SPA may pass an explicit audio_mode (AM_* int). Default to
+            // AM_CUSTOM (0xFF) which lets the receiver sniff the payload.
+            oa.audio_mode = (uint8_t)((int)(a["audio_mode"] | 0xFF) & 0xFF);
+          }
           attachments.push_back(std::move(oa));
         }
       }
@@ -1467,6 +1507,7 @@ namespace Web {
               o["tag"]      = a.tag;
               o["size"]     = a.size;
               o["filename"] = a.filename;
+              if (!a.display_name.empty()) o["display_name"] = a.display_name;
               if (!a.mime.empty()) o["mime"] = a.mime;
             }
           }
@@ -1574,6 +1615,7 @@ namespace Web {
             o["tag"]      = a.tag;
             o["size"]     = a.size;
             o["filename"] = a.filename;
+            if (!a.display_name.empty()) o["display_name"] = a.display_name;
             if (!a.mime.empty()) o["mime"] = a.mime;
           }
         }

@@ -125,6 +125,7 @@ namespace LXMF {
           o["t"] = a.tag;
           o["s"] = a.size;
           o["f"] = a.filename;
+          if (!a.display_name.empty()) o["d"] = a.display_name;
           if (!a.mime.empty()) o["m"] = a.mime;
         }
       }
@@ -236,10 +237,11 @@ namespace LXMF {
       if (doc["att"].is<JsonArrayConst>()) {
         for (JsonObjectConst o : doc["att"].as<JsonArrayConst>()) {
           AttachmentMeta m;
-          m.tag      = (uint8_t)(o["t"] | 0);
-          m.size     = (uint32_t)(o["s"] | 0);
-          m.filename = (const char*)(o["f"] | "");
-          m.mime     = (const char*)(o["m"] | "");
+          m.tag          = (uint8_t)(o["t"] | 0);
+          m.size         = (uint32_t)(o["s"] | 0);
+          m.filename     = (const char*)(o["f"] | "");
+          m.display_name = (const char*)(o["d"] | "");
+          m.mime         = (const char*)(o["m"] | "");
           rec.attachments.push_back(m);
         }
       }

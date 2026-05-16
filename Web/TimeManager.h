@@ -42,18 +42,20 @@
 namespace Web {
 namespace TimeManager {
 
-// User-visible sources. Hardware RTC is intentionally NOT in this
-// list: it's an internal cold-boot seed + write-through cache, not a
-// configurable input.
+// User-configurable sources occupy indices 1..4 (GPS, NTP, Browser,
+// RNS). RTC is a display-only label for the cold-boot seed —
+// reported via source_name() but never exposed in the user's source
+// list and not accepted by source_from_name().
 enum class Source : uint8_t {
   None    = 0,
   GPS     = 1,
   NTP     = 2,
   Browser = 3,
   RNS     = 4,
+  RTC     = 5,
 };
 
-constexpr uint8_t SOURCE_COUNT = 5;  // includes None at index 0
+constexpr uint8_t SOURCE_COUNT = 5;  // user-visible: None..RNS
 
 inline const char* source_name(Source s) {
   switch (s) {
@@ -61,6 +63,7 @@ inline const char* source_name(Source s) {
     case Source::NTP:     return "ntp";
     case Source::Browser: return "browser";
     case Source::RNS:     return "rns";
+    case Source::RTC:     return "rtc";
     case Source::None:    return "none";
   }
   return "unknown";
@@ -72,6 +75,8 @@ inline Source source_from_name(const char* name) {
   if (strcmp(name, "ntp")     == 0) return Source::NTP;
   if (strcmp(name, "browser") == 0) return Source::Browser;
   if (strcmp(name, "rns")     == 0) return Source::RNS;
+  // Note: "rtc" deliberately not accepted — it's a display label only,
+  // not a user-selectable input source.
   return Source::None;
 }
 
@@ -105,7 +110,12 @@ namespace _detail {
       default_config(Source::Browser),
       default_config(Source::RNS),
     };
-    return c[(uint8_t)s];
+    const uint8_t idx = (uint8_t)s;
+    // Source::RTC (and any future non-user source) is out of array
+    // bounds — collapse to the "None" slot which carries the disabled
+    // default. RTC is never user-configured via cfg_ref anyway.
+    if (idx >= SOURCE_COUNT) return c[0];
+    return c[idx];
   }
   // Wall-clock offset: epoch_seconds at the moment millis() was 0.
   // now_epoch() = offset + millis()/1000.
@@ -153,7 +163,11 @@ inline void seed_from_rtc(double epoch_seconds) {
   if (epoch_seconds < 1577836800.0 || epoch_seconds > 4102444800.0) return;
   _detail::offset_seconds_ref() = (int64_t)epoch_seconds - (int64_t)(millis() / 1000UL);
   _detail::rtc_seed_applied_ref() = true;
-  // Leave current_source_ref at None so a live report still wins.
+  // Label the current source as RTC so /api/time shows where the
+  // clock came from. Priority stays at 255 (max) so any real source
+  // report still wins via the report_time priority check.
+  _detail::current_source_ref()   = Source::RTC;
+  _detail::current_priority_ref() = 255;
 }
 
 // A user-visible source reports a time. Adopted iff the source is

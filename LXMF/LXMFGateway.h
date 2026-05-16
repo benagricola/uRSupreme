@@ -104,6 +104,11 @@ namespace LXMF {
           a.last_announce_ms = now;
         }
       }
+      // (#107) Drive outbox-retry: pending_link_sends() is a shared
+      // static across all LXMFMinimal instances, so one call covers
+      // every identity. Entries whose next_retry_at_ms has elapsed get
+      // a fresh Link and another attempt.
+      LXMFMinimal::tick_retries();
     }
 
     // Update the auto-announce interval for a single identity and

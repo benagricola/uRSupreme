@@ -409,6 +409,10 @@ namespace Web {
       server.on(UriBraces("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
       server.on(UriBraces("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
       server.on(UriBraces("/api/identities/{}/send"),     HTTP_POST, handle_send);
+      // POST /api/identities/{id}/outbox/{seq}/retry — manually re-queue
+      // a Failed outbox entry. Resets the auto-retry budget. (#108)
+      server.on(UriBraces("/api/identities/{}/outbox/{}/retry"),
+                HTTP_POST, handle_outbox_retry);
       server.on(UriBraces("/api/identities/{}/events"),   HTTP_GET,  handle_events);
       server.on(UriBraces("/api/identities/{}/state"),    HTTP_GET,  handle_state);
       server.on(UriBraces("/api/identities/{}/conversations/{}"),
@@ -1073,6 +1077,58 @@ namespace Web {
       emit_messages_array(arr, msgs);
       doc["next_since"] = a->outbox->next_seq();
       send_json(200, doc);
+    }
+
+    // POST /api/identities/{id}/outbox/{seq}/retry — manually re-queue
+    // a Failed outbox entry whose auto-retry budget was exhausted. The
+    // outbox seq -> MessageRecord -> packet_hash (== PendingLinkSend
+    // record_hash) lookup gives us the entry; LXMFMinimal::manual_retry
+    // resets the budget and schedules an immediate retry. (#108)
+    static void handle_outbox_retry() {
+      LXMF::IdentityId caller = require_auth();
+      if (caller.empty()) return;
+      std::string requested = std::string(server.pathArg(0).c_str());
+      if (caller != requested) { send_error(403, "forbidden"); return; }
+      const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
+      if (!a || !a->outbox) { send_error(404, "unknown_identity"); return; }
+      const uint32_t seq = (uint32_t)atoi(server.pathArg(1).c_str());
+      // Find the outbox record. We pull a window large enough to cover
+      // anything the SPA might be looking at — outbox ring is bounded
+      // (see LXMFInbox::MAX_RAM_RING).
+      auto msgs = a->outbox->recent(64);
+      const LXMF::MessageRecord* rec = nullptr;
+      for (const auto& m : msgs) {
+        if (m.seq == seq) { rec = &m; break; }
+      }
+      if (!rec) {
+        send_error_with_message(404, "outbox_seq_not_found",
+          "No outbox entry with that sequence number was found in the recent window.");
+        return;
+      }
+      if (rec->status != LXMF::OutboxStatus::Failed) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "Outbox entry %lu is %s, not Failed — only Failed entries can be retried.",
+                 (unsigned long)seq, LXMF::outbox_status_name(rec->status));
+        send_error_with_message(409, "outbox_not_failed", msg);
+        return;
+      }
+      if (rec->packet_hash.size() != LXMF::HASH_LEN) {
+        send_error_with_message(409, "outbox_no_packet_hash",
+          "Outbox entry has no link-hash; cannot manual-retry.");
+        return;
+      }
+      if (!LXMF::LXMFMinimal::manual_retry(rec->packet_hash)) {
+        // Wire bytes were dropped (server reboot or stale_failed prune)
+        // — the user has to re-send the message manually.
+        send_error_with_message(410, "outbox_state_gone",
+          "The original send-state is no longer available (likely after a reboot). Send the message again.");
+        return;
+      }
+      JsonDocument doc;
+      doc["status"]      = "retry_scheduled";
+      doc["queued_seq"]  = seq;
+      send_json(202, doc);
     }
 
     // Per-message + per-attachment caps for outbound attachments.

@@ -1538,6 +1538,11 @@ class UReticulumHTTPTransport extends Transport {
   async announceNow(identityId) {
     return this._req('/api/identities/' + encodeURIComponent(identityId) + '/announce', { method: 'POST' });
   }
+  async retryOutbox(identityId, seq) {
+    return this._req('/api/identities/' + encodeURIComponent(identityId)
+                   + '/outbox/' + encodeURIComponent(String(seq)) + '/retry',
+                     { method: 'POST' });
+  }
   async lookupPath(destHex) {
     return this._req('/api/paths/lookup', { method: 'POST', body: { to: destHex } });
   }
@@ -1944,6 +1949,19 @@ function renderThread() {
       if (m.in && m.sig_ok === false) metaParts.push('⚠ bad sig');
       if (metaParts.length) {
         bubble.appendChild(el('div', { class: 'bmeta', text: metaParts.join(' · ') }));
+      }
+      // Manual-retry button for outbound Failed messages. (#108) The
+      // device's auto-retry will have run 3 times before status hits
+      // Failed; clicking this resets that budget and kicks off
+      // another round.
+      if (!m.in && m.status === 'failed') {
+        const retry = el('button', {
+          class: 'ghost',
+          style: 'margin-top:4px;padding:2px 8px;font-size:11px',
+          text: 'Retry',
+        });
+        retry.addEventListener('click', () => retryFailedMessage(m, retry));
+        bubble.appendChild(retry);
       }
       msgsEl.appendChild(bubble);
     }
@@ -2379,6 +2397,33 @@ async function sendMessage() {
     toast('Send failed: ' + (e.message || e), 'error');
   } finally {
     $('btn-send').disabled = false;
+  }
+}
+
+// Manual retry of a Failed outbox message — calls POST .../outbox/{seq}/retry
+// on the device, which resets the auto-retry budget and re-schedules
+// the send. Flip the message back to "queued" optimistically so the
+// bubble updates immediately; the device's outbox-status SSE event
+// will eventually confirm Delivered / Failed.
+async function retryFailedMessage(msg, button) {
+  if (!msg || msg.in) return;
+  const seq = msg.seq;
+  if (!Number.isFinite(seq)) return;
+  if (button) { button.disabled = true; button.textContent = 'Retrying…'; }
+  try {
+    await state.transport.retryOutbox(state.identityId, seq);
+    msg.status = 'queued';
+    renderThread();
+    renderConversations();
+    toast('Retry scheduled', 'info');
+  } catch (e) {
+    const msgText = (e && e.message) ? e.message : String(e);
+    toast('Retry failed: ' + msgText, 'error');
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Retry';
+    }
   }
 }
 

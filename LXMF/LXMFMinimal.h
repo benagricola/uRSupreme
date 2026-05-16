@@ -261,6 +261,19 @@ namespace LXMF {
       RNS::Bytes   resource_hash;     // set after Resource is built (if >319 B)
       uint32_t     total_bytes = 0;   // wire payload size, anchor for progress %
       LXMFMinimal* owner = nullptr;
+      // Outbox-record handle: the link_hash we stamped onto the
+      // MessageRecord at send_message time. Stays stable across
+      // retries — even when we open a *new* Link with a new hash, the
+      // outbox still keys updates off this original value, so the SPA
+      // bubble survives the retry without going dark. (#107)
+      RNS::Bytes   record_hash;
+      // Retry budget. retries_left counts down on each failure; when
+      // it reaches zero the entry is erased and status stays Failed
+      // for manual user re-send. next_retry_at_ms is the millis()
+      // deadline after which retry_pending entries are re-attempted.
+      uint8_t      retries_left = DEFAULT_OUTBOX_RETRIES;
+      bool         retry_pending = false;  // true once a failure schedules a retry
+      uint64_t     next_retry_at_ms = 0;
       // Status drives the outbox transition (queued -> sent / delivered /
       // failed) reported via _on_outbox_status. We deliberately do NOT
       // keep the full MessageRecord here — its title/content strings are
@@ -268,6 +281,16 @@ namespace LXMF {
       // a heap-corruption canary trip during map-erase teardown.
       OutboxStatus status = OutboxStatus::Queued;
     };
+
+    // Outbox-retry tuning. Both static for now — wire to per-identity
+    // settings later (task #113). Backoff is 30s × attempt index, so:
+    //   attempt 1: send fails -> wait 30s -> retry 1
+    //   attempt 2: retry 1 fails -> wait 60s -> retry 2
+    //   attempt 3: retry 2 fails -> wait 90s -> retry 3
+    // After DEFAULT_OUTBOX_RETRIES exhausts the entry is dropped and
+    // the user must manually retry from the SPA. (#107)
+    static constexpr uint8_t  DEFAULT_OUTBOX_RETRIES = 3;
+    static constexpr uint32_t RETRY_BACKOFF_MS_STEP   = 30 * 1000;
 
     LXMFMinimal()
       : _identity(RNS::Type::NONE),
@@ -552,6 +575,10 @@ namespace LXMF {
       ps.dest_hash   = dest_hash;
       ps.owner       = this;
       ps.status      = OutboxStatus::Queued;
+      // (#107) record_hash is the outbox key — stays stable across
+      // retries so the SPA bubble doesn't lose track when we open a
+      // new Link with a new link_hash on retry.
+      ps.record_hash = link_hash;
       pending_link_sends()[link_hash] = std::move(ps);
       out_rec.status      = OutboxStatus::Queued;
       out_rec.packet_hash = link_hash;  // placeholder; real packet hash once sent
@@ -647,24 +674,30 @@ namespace LXMF {
 
       if (ps.wire.size() <= LXMF_LINK_PACKET_MAX) {
         // Single in-link DATA packet path.
+        bool sent_ok = false;
         try {
           RNS::Packet pkt(link, ps.wire);
           pkt.send();
-          ps.status = OutboxStatus::Sent;
-          /* packet_hash update no longer tracked in PendingLinkSend */
+          sent_ok = true;
         }
         catch (const std::exception& e) {
           ERRORF("LXMF: in-link packet send failed: %s", e.what());
-          ps.status = OutboxStatus::Failed;
         }
-        if (ps.owner && ps.owner->_on_outbox_status) {
-          try { ps.owner->_on_outbox_status(link.hash(), ps.status); } catch (...) {}
+        if (sent_ok) {
+          ps.status = OutboxStatus::Sent;
+          if (ps.owner && ps.owner->_on_outbox_status) {
+            try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
+          }
+          m.erase(it);
+        }
+        else {
+          // Schedule retry (or give up if exhausted). (#107)
+          _schedule_retry_or_fail(it, m, "in-link packet send threw");
         }
         // No manual link.teardown() — calling it from inside the
         // inbound-callback chain leaves dangling references that trip
         // the heap-poisoning canary when the pending entry is erased.
         // The link's own state machine will close after timeout.
-        m.erase(it);
       }
       else {
         // Resource transfer.
@@ -709,18 +742,17 @@ namespace LXMF {
       auto it = m.find(link.hash());
       if (it == m.end()) return;
       PendingLinkSend& ps = it->second;
-      // If the send already concluded successfully it'll have been
-      // erased; getting here means an abnormal close.
+      // Successful sends already concluded and erased themselves.
+      // Getting here means an abnormal close — schedule a retry (or
+      // give up, depending on the budget). (#107)
       if (ps.status != OutboxStatus::Sent &&
           ps.status != OutboxStatus::Delivered) {
-        ps.status = OutboxStatus::Failed;
-        WARNINGF("LXMF: link closed before send completed (peer %s)",
-                 ps.dest_hash.toHex().c_str());
-        if (ps.owner && ps.owner->_on_outbox_status) {
-          try { ps.owner->_on_outbox_status(link.hash(), ps.status); } catch (...) {}
-        }
+        _schedule_retry_or_fail(it, m, "link closed before send completed");
       }
-      m.erase(it);
+      else {
+        // Normal post-Sent close on an in-link packet path. Erase.
+        m.erase(it);
+      }
     }
 
     static void _static_outbound_resource_concluded(const RNS::Resource& res) {
@@ -734,28 +766,163 @@ namespace LXMF {
             ps.status = OutboxStatus::Delivered;
             NOTICEF("LXMF: outbound resource COMPLETE for %s",
                     ps.dest_hash.toHex().c_str());
+            if (ps.owner && ps.owner->_on_outbox_status) {
+              try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
+            }
+            // Deliberately *not* firing a final _on_progress here — the
+            // gateway's outbox-status callback already publishes
+            // message_complete (finished=true) which the SPA treats as
+            // the canonical end-of-transfer signal.
+            it = m.erase(it);
           }
           else {
-            ps.status = OutboxStatus::Failed;
+            // Resource failed — schedule retry or give up. (#107)
             WARNINGF("LXMF: outbound resource FAILED for %s (status=%d)",
                      ps.dest_hash.toHex().c_str(), (int)st);
+            _schedule_retry_or_fail(it, m, "resource transfer failed");
+            // _schedule_retry_or_fail may erase or keep the entry; in
+            // either case its iterator becomes invalid, so break out
+            // and let the next call to this static function pick up
+            // any other matching entries (there shouldn't be any).
+            return;
           }
-          if (ps.owner && ps.owner->_on_outbox_status) {
-            try { ps.owner->_on_outbox_status(res.link().hash(), ps.status); } catch (...) {}
-          }
-          // Deliberately *not* firing a final _on_progress here — the
-          // gateway's outbox-status callback already publishes
-          // message_complete (finished=true) which the SPA treats as
-          // the canonical end-of-transfer signal. An extra progress
-          // event after that would re-create the in-flight entry the
-          // SPA just deleted, leaving the bubble stuck at 100%.
-          it = m.erase(it);
         }
         else {
           ++it;
         }
       }
     }
+
+    // Either schedule the entry for retry (decrement retries_left,
+    // set retry_pending + next_retry_at_ms, keep the entry alive) or
+    // give up (status=Failed, fire callback, erase). The caller passes
+    // an iterator that's valid on entry; after this returns the
+    // iterator is invalid in the give-up branch and points to the
+    // same entry in the schedule branch. (#107)
+    static void _schedule_retry_or_fail(typename std::map<RNS::Bytes, PendingLinkSend>::iterator it,
+                                         std::map<RNS::Bytes, PendingLinkSend>& m,
+                                         const char* reason) {
+      PendingLinkSend& ps = it->second;
+      if (ps.retries_left == 0) {
+        // Auto-retries exhausted. Mark Failed and fire the status
+        // callback so the SPA shows the bubble as failed. Do NOT erase
+        // — the entry stays so a manual /retry from the SPA can revive
+        // it (the wire bytes are still here). Bound the surviving
+        // entries via prune_stale_failed() so this isn't a leak. (#107)
+        ps.status        = OutboxStatus::Failed;
+        ps.retry_pending = false;
+        ps.resource_hash = RNS::Bytes{};
+        if (ps.owner && ps.owner->_on_outbox_status) {
+          try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
+        }
+        WARNINGF("LXMF: outbox send to %s failed permanently (%s) — auto-retry budget exhausted; manual retry available",
+                 ps.dest_hash.toHex().c_str(), reason);
+        return;
+      }
+      const uint8_t attempts_done = DEFAULT_OUTBOX_RETRIES - ps.retries_left + 1;
+      ps.retries_left--;
+      ps.retry_pending    = true;
+      ps.next_retry_at_ms = (uint64_t)millis() + (uint64_t)RETRY_BACKOFF_MS_STEP * attempts_done;
+      ps.status           = OutboxStatus::Queued;
+      ps.resource_hash    = RNS::Bytes{};  // stale; new Link will rebuild Resource
+      NOTICEF("LXMF: outbox send to %s failed (%s) — retry %u/%u scheduled in %us",
+              ps.dest_hash.toHex().c_str(), reason,
+              (unsigned)attempts_done, (unsigned)DEFAULT_OUTBOX_RETRIES,
+              (unsigned)(RETRY_BACKOFF_MS_STEP * attempts_done / 1000));
+    }
+
+  public:
+    // Manually re-queue a Failed outbox entry. Called by the WebUI
+    // /api/identities/{id}/outbox/{seq}/retry handler after it looks
+    // up the MessageRecord's packet_hash (== PendingLinkSend.record_hash).
+    // Resets retries_left to the full budget so the user gets a fresh
+    // set of automatic attempts, and schedules the first one
+    // immediately. (#108)
+    static bool manual_retry(const RNS::Bytes& record_hash) {
+      auto& m = pending_link_sends();
+      for (auto& kv : m) {
+        if (kv.second.record_hash != record_hash) continue;
+        PendingLinkSend& ps = kv.second;
+        if (ps.status != OutboxStatus::Failed) {
+          // Only Failed entries are eligible — a Queued/Sent record
+          // is either in flight or already done.
+          return false;
+        }
+        ps.retries_left     = DEFAULT_OUTBOX_RETRIES;
+        ps.retry_pending    = true;
+        ps.next_retry_at_ms = (uint64_t)millis();  // fire on next tick
+        ps.status           = OutboxStatus::Queued;
+        NOTICEF("LXMF: manual retry requested for outbox record %s (peer %s)",
+                ps.record_hash.toHex().c_str(),
+                ps.dest_hash.toHex().c_str());
+        return true;
+      }
+      return false;
+    }
+
+    // Periodic tick to advance scheduled retries. Call from a loop
+    // that holds the rns_lock (LXMFGateway::loop is the right spot).
+    // For each entry with retry_pending && millis() >= next_retry_at_ms,
+    // open a fresh Link with the same wire bytes + dest, re-key the
+    // map under the new link_hash. The original record_hash stays so
+    // the outbox bubble survives. (#107)
+    static void tick_retries() {
+      auto& m = pending_link_sends();
+      const uint64_t now = (uint64_t)millis();
+      // Snapshot keys whose entries are due — re-keying mid-iteration
+      // would invalidate the iterator.
+      std::vector<RNS::Bytes> due;
+      for (auto& kv : m) {
+        if (kv.second.retry_pending && now >= kv.second.next_retry_at_ms) {
+          due.push_back(kv.first);
+        }
+      }
+      for (const RNS::Bytes& old_key : due) {
+        auto it = m.find(old_key);
+        if (it == m.end()) continue;
+        PendingLinkSend ps = std::move(it->second);
+        m.erase(it);
+        ps.retry_pending = false;
+
+        RNS::Identity remote_identity = RNS::Identity::recall(ps.dest_hash);
+        if (!remote_identity) {
+          WARNINGF("LXMF: retry — cannot recall identity for %s, marking failed",
+                   ps.dest_hash.toHex().c_str());
+          ps.status = OutboxStatus::Failed;
+          if (ps.owner && ps.owner->_on_outbox_status) {
+            try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
+          }
+          continue;
+        }
+        try {
+          RNS::Destination remote_dest(
+            remote_identity,
+            RNS::Type::Destination::OUT,
+            RNS::Type::Destination::SINGLE,
+            "lxmf", "delivery"
+          );
+          RNS::Link new_link(remote_dest,
+                             _static_outbound_link_established,
+                             _static_outbound_link_closed);
+          RNS::Bytes new_link_hash = new_link.hash();
+          ps.link       = new_link;
+          ps.started_ms = now;
+          NOTICEF("LXMF: retry — new link %s for outbox record %s (peer %s)",
+                  new_link_hash.toHex().c_str(),
+                  ps.record_hash.toHex().c_str(),
+                  ps.dest_hash.toHex().c_str());
+          m[new_link_hash] = std::move(ps);
+        }
+        catch (const std::exception& e) {
+          ERRORF("LXMF: retry — open Link threw: %s; marking failed", e.what());
+          ps.status = OutboxStatus::Failed;
+          if (ps.owner && ps.owner->_on_outbox_status) {
+            try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
+          }
+        }
+      }
+    }
+  private:
 
     static void _static_inbound_link_established(RNS::Link& link) {
       // The destination this link landed on tells us which LXMFMinimal

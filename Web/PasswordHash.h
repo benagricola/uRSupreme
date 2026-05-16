@@ -1,6 +1,6 @@
 #pragma once
 
-// PBKDF2-HMAC-SHA256 password hashing for account login.
+// PBKDF2-HMAC-SHA256 password hashing for identity login.
 //
 // Reticulum's libcrypto already includes HMAC-SHA256, so PBKDF2 is just
 // a chained-HMAC loop on top. We use a single 32-byte block (DK length
@@ -11,7 +11,7 @@
 //   T   = U_1 XOR U_2 XOR ... XOR U_n
 //
 // where n = iterations. The result is the password hash; salt is per-
-// account, generated at creation, and stored alongside the hash.
+// identity, generated at creation, and stored alongside the hash.
 //
 // Iteration count is intentionally large enough to make brute-forcing
 // slow on a desktop attacker, but bounded so login on the ESP32-S3
@@ -39,7 +39,7 @@ namespace Web {
     }
 
     // Derive a 32-byte hash from password + salt. Iteration count fixed
-    // at ITERATIONS — change requires re-hashing every account, so it's
+    // at ITERATIONS — change requires re-hashing every identity, so it's
     // effectively a one-shot decision.
     static RNS::Bytes derive(const std::string& password, const RNS::Bytes& salt) {
       RNS::Bytes pw_bytes((const uint8_t*)password.c_str(), password.length());

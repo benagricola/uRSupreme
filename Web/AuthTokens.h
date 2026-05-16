@@ -17,7 +17,7 @@ extern microStore::FileSystem filesystem;
 
 namespace Web {
 
-  // Bearer-token store for browser sessions. One token = one bound account.
+  // Bearer-token store for browser sessions. One token = one bound identity.
   // Tokens are 16 random bytes hex-encoded (32 chars). Persisted to
   // /lxmf/auth_tokens.json so logins survive a reboot.
   //
@@ -35,7 +35,7 @@ namespace Web {
 
     struct Token {
       std::string       hex;
-      LXMF::AccountId   account_id;
+      LXMF::IdentityId   identity_id;
       uint32_t          created_ms;
       uint32_t          last_seen_ms;
     };
@@ -51,10 +51,10 @@ namespace Web {
       for (JsonObject obj : doc.as<JsonArray>()) {
         Token t;
         t.hex          = (const char*)(obj["hex"]        | "");
-        t.account_id   = (const char*)(obj["account_id"] | "");
+        t.identity_id   = (const char*)(obj["identity_id"] | "");
         t.created_ms   = (uint32_t)(obj["created_ms"]    | 0);
         t.last_seen_ms = (uint32_t)(obj["last_seen_ms"]  | 0);
-        if (t.hex.size() == TOKEN_HEX_LEN && !t.account_id.empty()) {
+        if (t.hex.size() == TOKEN_HEX_LEN && !t.identity_id.empty()) {
           _tokens().push_back(t);
         }
       }
@@ -67,7 +67,7 @@ namespace Web {
       for (const auto& t : _tokens()) {
         JsonObject obj = arr.add<JsonObject>();
         obj["hex"]          = t.hex;
-        obj["account_id"]   = t.account_id;
+        obj["identity_id"]   = t.identity_id;
         obj["created_ms"]   = t.created_ms;
         obj["last_seen_ms"] = t.last_seen_ms;
       }
@@ -83,17 +83,17 @@ namespace Web {
                            body.length());
     }
 
-    // Issue a fresh token for an account. Evicts the oldest token for that
-    // account if it already has MAX_PER_ACCOUNT. Returns the hex token.
-    static std::string issue(const LXMF::AccountId& account_id) {
-      if (account_id.empty()) return {};
+    // Issue a fresh token for an identity. Evicts the oldest token for that identity
+    // identity if it already has MAX_PER_ACCOUNT. Returns the hex token.
+    static std::string issue(const LXMF::IdentityId& identity_id) {
+      if (identity_id.empty()) return {};
       auto& store = _tokens();
 
-      // Evict oldest for this account if at cap.
+      // Evict oldest for this identity if at cap.
       size_t per_acct = 0;
       Token* oldest = nullptr;
       for (auto& t : store) {
-        if (t.account_id == account_id) {
+        if (t.identity_id == identity_id) {
           per_acct++;
           if (!oldest || t.last_seen_ms < oldest->last_seen_ms) oldest = &t;
         }
@@ -106,18 +106,18 @@ namespace Web {
 
       Token t;
       t.hex          = random_hex();
-      t.account_id   = account_id;
+      t.identity_id   = identity_id;
       t.created_ms   = millis();
       t.last_seen_ms = t.created_ms;
       store.push_back(t);
       save();
-      NOTICEF("AuthTokens: issued token for account %s", account_id.c_str());
+      NOTICEF("AuthTokens: issued token for identity %s", identity_id.c_str());
       return t.hex;
     }
 
-    // Look up the account bound to this token, refreshing last_seen.
+    // Look up the identity bound to this token, refreshing last_seen.
     // Returns empty string on unknown / expired token.
-    static LXMF::AccountId validate(const std::string& hex) {
+    static LXMF::IdentityId validate(const std::string& hex) {
       if (hex.size() != TOKEN_HEX_LEN) return {};
       uint32_t now = millis();
       for (auto& t : _tokens()) {
@@ -131,7 +131,7 @@ namespace Web {
             return {};
           }
           t.last_seen_ms = now;
-          return t.account_id;
+          return t.identity_id;
         }
       }
       return {};
@@ -149,11 +149,11 @@ namespace Web {
       return false;
     }
 
-    static void revoke_for_account(const LXMF::AccountId& account_id) {
+    static void revoke_for_identity(const LXMF::IdentityId& identity_id) {
       auto& store = _tokens();
       bool removed = false;
       for (auto it = store.begin(); it != store.end(); ) {
-        if (it->account_id == account_id) { it = store.erase(it); removed = true; }
+        if (it->identity_id == identity_id) { it = store.erase(it); removed = true; }
         else ++it;
       }
       if (removed) save();

@@ -423,11 +423,9 @@ namespace LXMF {
               } else if (f.tag == LXMF::FIELD_FILE_ATTACHMENTS) {
                 meta.display_name = f.filename;
               }
-              NOTICEF("LXMF: persist DBG tag=0x%02x f.filename='%s' meta.display_name='%s'",
-                      (unsigned)f.tag, f.filename.c_str(), meta.display_name.c_str());
               out.push_back(meta);
-              NOTICEF("LXMF: persisted attachment %s (%u B)",
-                      on_disk, (unsigned)f.raw_len);
+              NOTICEF("LXMF: persisted attachment %s (%u B, display='%s')",
+                      on_disk, (unsigned)f.raw_len, meta.display_name.c_str());
             }
             return out;
           });

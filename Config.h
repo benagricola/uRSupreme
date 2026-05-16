@@ -55,6 +55,13 @@
 	#define M_FRQ_R 27388061
 	bool console_active = false;
 	bool modem_installed = false;
+	// KISS-framed packet bytes interleave with the diagnostic text log on
+	// the USB UART, which makes `pio device monitor` impossible to read
+	// when traffic is flowing. This flag gates the byte-level
+	// serial_write() so a user can quiet the line for debugging without
+	// rebuilding. Persists in EEPROM at ADDR_CONF_KISS_OUT; default ON
+	// preserves legacy KISS-host behaviour.
+	bool kiss_serial_output = true;
 
 	#define MTU   	   508
 	#define SINGLE_MTU 255

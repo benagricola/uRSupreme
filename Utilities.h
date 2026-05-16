@@ -811,9 +811,9 @@ void serial_write(uint8_t byte) {
 		if (bt_state != BT_STATE_CONNECTED) {
 			#if HAS_WIFI
 				if (wifi_host_is_connected()) { wifi_remote_write(byte); }
-				else                          { Serial.write(byte); }
+				else                          { if (kiss_serial_output) Serial.write(byte); }
 			#else
-				Serial.write(byte);
+				if (kiss_serial_output) Serial.write(byte);
 			#endif
 		} else {
 			SerialBT.write(byte);
@@ -825,7 +825,7 @@ void serial_write(uint8_t byte) {
       #endif
 		}
 	#else
-		Serial.write(byte);
+		if (kiss_serial_output) Serial.write(byte);
 	#endif
 }
 
@@ -1879,6 +1879,17 @@ bool eeprom_have_conf() {
 }
 
 void eeprom_conf_load() {
+	// KISS-serial-output toggle is independent of the radio config:
+	// users on a fresh device may want to silence the line for
+	// debugging before they've saved radio params. 0xFF (unset) =
+	// keep default ON.
+	#if HAS_EEPROM
+		uint8_t k_raw = EEPROM.read(eeprom_addr(ADDR_CONF_KISS_OUT));
+		if (k_raw != 0xFF) kiss_serial_output = (k_raw != 0x00);
+	#elif MCU_VARIANT == MCU_NRF52
+		uint8_t k_raw = eeprom_read(eeprom_addr(ADDR_CONF_KISS_OUT));
+		if (k_raw != 0xFF) kiss_serial_output = (k_raw != 0x00);
+	#endif
 	if (eeprom_have_conf()) {
         #if HAS_EEPROM
             lora_sf = EEPROM.read(eeprom_addr(ADDR_CONF_SF));

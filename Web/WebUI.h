@@ -61,6 +61,7 @@ extern float    longterm_airtime; // long-term (1h) channel utilisation as 0..1
 extern float    st_airtime_limit; // short-term duty-cycle cap (0..1, 0=disabled)
 extern float    lt_airtime_limit; // long-term duty-cycle cap (0..1, 0=disabled)
 extern bool     airtime_lock;     // true when current airtime exceeds the cap; TX blocked
+extern bool     kiss_serial_output;  // toggle KISS-framed bytes on USB UART
 
 #include <algorithm>
 #include <vector>
@@ -404,6 +405,7 @@ namespace Web {
       // Only path to recovery if every identity password is forgotten.
       server.on("/api/system/factory_reset", HTTP_POST, handle_factory_reset);
       server.on("/api/system/transport",     HTTP_POST, handle_transport_toggle);
+      server.on("/api/system/kiss",          HTTP_POST, handle_kiss_toggle);
       server.on(UriBraces("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
       server.on(UriBraces("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
       server.on(UriBraces("/api/identities/{}/send"),     HTTP_POST, handle_send);
@@ -600,6 +602,10 @@ namespace Web {
 
       JsonObject transport = doc["transport"].to<JsonObject>();
       transport["enabled"]      = RNS::Reticulum::transport_enabled();
+      // Serial/diagnostic toggles surfaced so the SPA can render the
+      // current state on its Connectivity tab without an extra round
+      // trip.
+      doc["kiss_serial_output"] = kiss_serial_output;
       // TODO microReticulum doesn't yet expose live path/packet counters
       // through a stable static getter. Add an accessor on the local
       // clone branch when we want to surface them in the SPA.
@@ -757,6 +763,31 @@ namespace Web {
                            (const uint8_t*)s.c_str(), s.length());
       NOTICEF("WebUI: transport_enabled set to %s by %s",
               enabled ? "true" : "false", caller.c_str());
+      JsonDocument doc;
+      doc["enabled"] = enabled;
+      send_json(200, doc);
+    }
+
+    // POST /api/system/kiss { enabled: bool }
+    // Flips the KISS-framed-serial-output toggle in RAM and persists
+    // it to the radio-config EEPROM byte ADDR_CONF_KISS_OUT (0x00=off,
+    // 0x01=on). No reboot — takes effect on the next call to
+    // serial_write(). Auth: bearer token only; the user is in front
+    // of the serial monitor when they want to flip this.
+    static void handle_kiss_toggle() {
+      if (require_auth().empty()) return;
+      JsonDocument body;
+      if (!read_body_json(body)) return;
+      if (!body["enabled"].is<bool>()) {
+        send_error_with_message(400, "missing_enabled",
+            "Request must include {enabled: true|false}.");
+        return;
+      }
+      bool enabled = body["enabled"].as<bool>();
+      kiss_serial_output = enabled;
+      eeprom_update(eeprom_addr(ADDR_CONF_KISS_OUT), enabled ? 0x01 : 0x00);
+      NOTICEF("WebUI: kiss_serial_output set to %s",
+              enabled ? "true" : "false");
       JsonDocument doc;
       doc["enabled"] = enabled;
       send_json(200, doc);

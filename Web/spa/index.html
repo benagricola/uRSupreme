@@ -1084,6 +1084,17 @@ summary:hover { color: var(--text); }
             <p class="muted">Not configurable from the SPA yet. The hardware supports it; this section will gain pairing / on-off controls in a future release.</p>
           </div>
         </details>
+
+        <details class="cn-section" data-cn="diag">
+          <summary>Serial / diagnostics</summary>
+          <div class="cn-section-body">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0">
+              <input type="checkbox" id="cn-kiss-out" style="width:auto;min-height:auto">
+              <span>KISS-frame radio traffic on USB serial</span>
+            </label>
+            <div class="muted" style="font-size:11px;margin-top:6px">Turn OFF if you're reading the USB serial with <code>pio device monitor</code> or similar — KISS-framed binary bytes are otherwise interleaved with the diagnostic text log. Leave ON if you're using the device as a KISS host for tools like rnsd or MeshChat. Persists across reboots.</div>
+          </div>
+        </details>
       </div>
 
       <!-- ============== App / UI tab ============== -->
@@ -3650,7 +3661,7 @@ function selectSettingsTab(tabId) {
   tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabId));
   panels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabId));
   // Lazy-populate per-tab data so the modal opens snappily.
-  if (tabId === 'connectivity') { populateRadioTab(); populateWifiTab(); }
+  if (tabId === 'connectivity') { populateRadioTab(); populateWifiTab(); populateDiagTab(); }
   if (tabId === 'identity')     populateIdentityTab();
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
   if (tabId === 'ui')           { $('pref-enter-sends').checked = !!state.prefs.enterSends; renderContacts(); }
@@ -3660,6 +3671,26 @@ async function populateWifiTab() {
   fillIdCodeHints();
   populateSavedWifiList();
 }
+
+function populateDiagTab() {
+  const cb = $('cn-kiss-out');
+  if (!cb) return;
+  cb.checked = !!(state.lastInfo && state.lastInfo.kiss_serial_output);
+}
+
+$('cn-kiss-out').addEventListener('change', async (ev) => {
+  const enabled = ev.target.checked;
+  try {
+    await state.transport._req('/api/system/kiss',
+        { method: 'POST', body: { enabled } });
+    if (state.lastInfo) state.lastInfo.kiss_serial_output = enabled;
+    toast(enabled ? 'KISS serial output ON' : 'KISS serial output OFF',
+          'success');
+  } catch (e) {
+    ev.target.checked = !enabled;   // revert UI on failure
+    toast('Toggle failed: ' + (e.message || e), 'error');
+  }
+});
 
 async function populateSavedWifiList() {
   const wrap = $('cn-wifi-saved-list');

@@ -38,6 +38,11 @@
   // after CONF_OK to keep it adjacent to the radio params it governs.
   #define ADDR_CONF_AIRTIME    0xA8
   #define ADDR_CONF_LT_AIRTIME 0xA9
+  // KISS serial output toggle. 0x00 = OFF (clean text monitor),
+  // 0x01 = ON (default; legacy KISS-host behaviour). 0xFF (unset) =
+  // ON. Lets `pio device monitor` read diagnostic logs without the
+  // binary FEND-framed packet bytes interleaving on the same UART.
+  #define ADDR_CONF_KISS_OUT   0xAA
 
   #define ADDR_CONF_BT   0xB0
   #define ADDR_CONF_DSET 0xB1

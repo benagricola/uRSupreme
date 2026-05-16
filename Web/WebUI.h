@@ -873,6 +873,19 @@ namespace Web {
       std::string requested = std::string(server.pathArg(0).c_str());
       if (caller != requested) { send_error(403, "forbidden"); return; }
       std::string fname = std::string(server.pathArg(1).c_str());
+      // [ATTDBG] Log the raw filename and a length-tagged hex dump of
+      // the first few bytes so we can spot URL-decode quirks or stray
+      // whitespace that the validator regex would reject.
+      {
+        std::string hex;
+        char buf[8];
+        for (size_t i = 0; i < fname.size() && i < 16; ++i) {
+          snprintf(buf, sizeof(buf), "%02x ", (unsigned char)fname[i]);
+          hex += buf;
+        }
+        NOTICEF("[ATTDBG] handle_attachment_get: fname.size()=%u first16=[%s] full=\"%s\"",
+                (unsigned)fname.size(), hex.c_str(), fname.c_str());
+      }
       // Allow [0-9a-fA-F_.] only and require the .bin suffix; rejects
       // any "..", "/", "\", or unexpected character outright. The
       // generated names use only lowercase hex + underscore + ".bin"

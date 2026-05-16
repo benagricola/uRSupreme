@@ -2015,8 +2015,28 @@ function renderInboundAudio(meta, fallbackLabel) {
     src: url, controls: 'controls', preload: 'metadata',
     style: 'max-width:240px;display:block',
   });
-  if (cached && cached !== 'loading' && cached !== 'failed') {
+  if (cached && cached !== 'loading' && typeof cached !== 'object') {
     wrap.appendChild(makePlayer(cached));
+    return wrap;
+  }
+  // Failed state: render once with a retry button (don't auto-refire).
+  if (cached && typeof cached === 'object' && cached.failed) {
+    const errBox = el('div', {
+      style: 'padding:8px 10px;border-radius:6px;background:rgba(248,81,73,0.12);'
+           + 'border:1px solid var(--danger);font-size:11px;color:var(--text)',
+    });
+    errBox.appendChild(el('div', { text: fallbackLabel + ' — load failed' }));
+    errBox.appendChild(el('div', { class: 'muted', style: 'font-size:10px;margin-top:2px',
+                                    text: cached.error || 'unknown' }));
+    const retry = el('button', { class: 'ghost', style: 'margin-top:6px;font-size:11px',
+                                  text: 'Retry' });
+    retry.addEventListener('click', () => {
+      state.attachmentBlobs.delete(meta.filename);
+      const replacement = renderInboundAudio(meta, fallbackLabel);
+      wrap.parentNode.replaceChild(replacement, wrap);
+    });
+    errBox.appendChild(retry);
+    wrap.appendChild(errBox);
     return wrap;
   }
   const placeholder = el('div', {
@@ -2027,7 +2047,6 @@ function renderInboundAudio(meta, fallbackLabel) {
   if (cached === 'loading') return wrap;
   state.attachmentBlobs.set(meta.filename, 'loading');
   state.transport.fetchAttachment(state.identityId, meta.filename).then(async ({ blob }) => {
-    // Re-wrap with the sniffed MIME so the browser can decode it.
     const buf = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
     const mime = sniffAudioMime(buf);
     const typed = new Blob([await blob.arrayBuffer()], { type: mime });
@@ -2037,8 +2056,11 @@ function renderInboundAudio(meta, fallbackLabel) {
       wrap.replaceChild(makePlayer(url), placeholder);
     }
   }).catch((e) => {
-    state.attachmentBlobs.set(meta.filename, 'failed');
-    placeholder.textContent = fallbackLabel + ' — load failed: ' + (e.message || e);
+    state.attachmentBlobs.set(meta.filename, { failed: true, error: e.message || String(e) });
+    if (wrap.parentNode) {
+      const replacement = renderInboundAudio(meta, fallbackLabel);
+      wrap.parentNode.replaceChild(replacement, wrap);
+    }
   });
   return wrap;
 }
@@ -2059,8 +2081,32 @@ function renderInboundImage(meta, fallbackLabel) {
     img.addEventListener('click', () => window.open(url, '_blank'));
     return img;
   };
-  if (cached && cached !== 'loading' && cached !== 'failed') {
+  // Already-loaded image: reuse cached object URL.
+  if (cached && cached !== 'loading' && typeof cached !== 'object') {
     wrap.appendChild(makeImg(cached));
+    return wrap;
+  }
+  // Previously-failed load: render a non-retrying error with a manual
+  // retry button. Without this gate, every SSE-driven rerender would
+  // refire the failed fetch — turning one broken attachment into a
+  // perpetual load-fail loop (the user saw this firsthand).
+  if (cached && typeof cached === 'object' && cached.failed) {
+    const errBox = el('div', {
+      style: 'padding:8px 10px;border-radius:6px;background:rgba(248,81,73,0.12);'
+           + 'border:1px solid var(--danger);font-size:11px;color:var(--text)',
+    });
+    errBox.appendChild(el('div', { text: fallbackLabel + ' — load failed' }));
+    errBox.appendChild(el('div', { class: 'muted', style: 'font-size:10px;margin-top:2px',
+                                    text: cached.error || 'unknown' }));
+    const retry = el('button', { class: 'ghost', style: 'margin-top:6px;font-size:11px',
+                                  text: 'Retry' });
+    retry.addEventListener('click', () => {
+      state.attachmentBlobs.delete(meta.filename);
+      const replacement = renderInboundImage(meta, fallbackLabel);
+      wrap.parentNode.replaceChild(replacement, wrap);
+    });
+    errBox.appendChild(retry);
+    wrap.appendChild(errBox);
     return wrap;
   }
   // Placeholder while fetching — small, low-key so it doesn't jump.
@@ -2075,13 +2121,21 @@ function renderInboundImage(meta, fallbackLabel) {
   state.transport.fetchAttachment(state.identityId, meta.filename).then(({ blob }) => {
     const url = URL.createObjectURL(blob);
     state.attachmentBlobs.set(meta.filename, url);
-    // Swap the placeholder for the image in-place.
     if (wrap.contains(placeholder)) {
       wrap.replaceChild(makeImg(url), placeholder);
     }
   }).catch((e) => {
-    state.attachmentBlobs.set(meta.filename, 'failed');
-    placeholder.textContent = fallbackLabel + ' — load failed: ' + (e.message || e);
+    // Mark failed with the error message so the retry-button render
+    // can show what went wrong. Object form distinguishes 'failed'
+    // from the URL-string success case.
+    state.attachmentBlobs.set(meta.filename, { failed: true, error: e.message || String(e) });
+    if (wrap.contains(placeholder)) {
+      // Re-render to switch placeholder → error-with-retry. Just
+      // swap the inner wrap on the parent so the existing layout
+      // stays put.
+      const replacement = renderInboundImage(meta, fallbackLabel);
+      if (wrap.parentNode) wrap.parentNode.replaceChild(replacement, wrap);
+    }
   });
   return wrap;
 }

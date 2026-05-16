@@ -22,7 +22,9 @@
 #include <Destination.h>
 
 #include <deque>
+#include <functional>
 #include <string>
+#include <vector>
 
 #include "LXMFTypes.h"
 #include "LXMFMinimal.h"   // for RawMsgPack helpers
@@ -37,11 +39,25 @@ namespace LXMF {
   };
 
   // Implemented below (in LXMFGateway.h) to break the include cycle.
-  bool announce_log_is_own_account(const RNS::Bytes& destination_hash);
+  bool announce_log_is_own_identity(const RNS::Bytes& destination_hash);
 
   class AnnounceLog {
   public:
     static constexpr size_t CAPACITY = 32;
+
+    // Subscribers invoked synchronously after each new announce has been
+    // appended to the rings. is_lxmf=true for lxmf.delivery announces
+    // (the "announces" ring), false for the everything-ring "paths".
+    // Subscribers must not block — they run on the LoRa RX thread.
+    using AnnounceCallback = std::function<void(const AnnounceRecord&, bool is_lxmf)>;
+    static void on_new_announce(AnnounceCallback cb) {
+      callbacks().push_back(std::move(cb));
+    }
+
+    static std::vector<AnnounceCallback>& callbacks() {
+      static std::vector<AnnounceCallback> s;
+      return s;
+    }
 
     static void setup() {
       if (_lxmf_handler) return;
@@ -76,7 +92,7 @@ namespace LXMF {
       virtual void received_announce(const RNS::Bytes& destination_hash,
                                      const RNS::Identity& announced_identity,
                                      const RNS::Bytes& app_data) override {
-        if (announce_log_is_own_account(destination_hash)) return;
+        if (announce_log_is_own_identity(destination_hash)) return;
 
         std::string display_name;
         if (app_data.size() > 0) {
@@ -113,6 +129,7 @@ namespace LXMF {
             rec.received_ms = millis();
             if (!display_name.empty()) rec.display_name = display_name;
             if (!aspect.empty())       rec.aspect       = aspect;
+            notify_subscribers(rec, _lxmf_only);
             return;
           }
         }
@@ -128,6 +145,14 @@ namespace LXMF {
                 destination_hash.toHex().c_str(),
                 aspect.empty() ? "transport/unknown" : aspect.c_str(),
                 display_name.c_str());
+        notify_subscribers(rec, _lxmf_only);
+      }
+
+      static void notify_subscribers(const AnnounceRecord& rec, bool is_lxmf) {
+        for (auto& cb : AnnounceLog::callbacks()) {
+          try { cb(rec, is_lxmf); }
+          catch (...) { /* one subscriber's failure must not break the chain */ }
+        }
       }
 
     private:

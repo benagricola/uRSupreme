@@ -10,3 +10,16 @@ build/*
 .pio/*
 .vscode/*
 Debug*
+
+# Local development / test runtime artifacts
+logcat.log
+tools/kiss-test/.token
+tools/kiss-test/.lr-token
+tools/kiss-test/.lr-addr
+tools/kiss-test/.lr-iden
+tools/kiss-test/.peer-address
+tools/kiss-test/test_identity
+tools/kiss-test/config
+tools/kiss-test/interfaces/
+tools/kiss-test/storage/
+tools/kiss-test/lxmf-storage/

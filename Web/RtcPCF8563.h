@@ -1,12 +1,13 @@
-// Hardware RTC driver for the PCF8563 (T-Beam Supreme V07).
+// Hardware RTC driver for the PCF8563 (T-Beam Supreme).
 //
-// The PCF8563 sits on the device's "user" I2C bus (SDA=17, SCL=18 on
-// the Supreme — not the PMU bus on 41/42). It has a coin-cell backup
-// so its time survives ESP32 power-off and reboot. We use it as a
-// cold-boot seed for Web::TimeManager and write back to it whenever
-// a higher-trust source (GPS, NTP, Browser) reports a new time. The
-// RTC is NOT a user-configurable source — see TimeManager.h for the
-// rationale.
+// The PCF8563 sits on the PMU I2C bus on this hardware (Wire1,
+// SDA=42 SCL=41 — NOT the user/sensor bus on 17/18), sharing the
+// bus with the AXP2101 PMU at 0x34. The RTC's own address is 0x51.
+// It has a coin-cell backup so its time survives ESP32 power-off
+// and reboot. We use it as a cold-boot seed for Web::TimeManager
+// and write back to it whenever a higher-trust source (GPS, NTP,
+// Browser) reports a new time. The RTC is NOT a user-configurable
+// source — see TimeManager.h for the rationale.
 //
 // Wire format on the bus, addr 0x51:
 //   reg 0x00: control_status_1 (bit 5 = STOP — must be 0 for clock to run)
@@ -106,27 +107,17 @@ inline void debug_bus_scan() {
 inline double read_epoch() {
   uint8_t b[7] = {0};
   if (!_detail::read_regs(0x02, b, 7)) return 0.0;
-  // b[0] bit 7 = VL flag. Set means the clock has lost time since
-  // last set — refuse to trust it.
-  if (b[0] & 0x80) return 0.0;
+  if (b[0] & 0x80) return 0.0;   // VL flag — chip says time is invalid
   struct tm t{};
   t.tm_sec   = _detail::bcd_to_bin(b[0] & 0x7F);
   t.tm_min   = _detail::bcd_to_bin(b[1] & 0x7F);
   t.tm_hour  = _detail::bcd_to_bin(b[2] & 0x3F);
   t.tm_mday  = _detail::bcd_to_bin(b[3] & 0x3F);
-  // b[4] is weekday (ignored — derived).
-  const uint8_t century = (b[5] & 0x80) ? 1900 : 2000;
+  const int century = (b[5] & 0x80) ? 1900 : 2000;
   t.tm_mon   = _detail::bcd_to_bin(b[5] & 0x1F) - 1;
   t.tm_year  = (int)(century - 1900) + (int)_detail::bcd_to_bin(b[6]);
   t.tm_isdst = 0;
-  const time_t e = mktime(&t);
-  // mktime treats tm as LOCAL time; we want UTC. Force-undo by using
-  // timegm if available; else compensate. ESP-IDF newlib lacks timegm
-  // but does provide a thread-safe gm-style — fall back to manual.
-  // Simplest: assume the RTC is storing UTC (which is what we always
-  // write) and that mktime returns local-as-if-UTC. Since the ESP32's
-  // tz is unset (UTC), mktime == timegm. Good enough.
-  return (double)e;
+  return (double)mktime(&t);
 }
 
 // Write a Unix-epoch time to the RTC. Caller is responsible for only
@@ -182,6 +173,38 @@ inline bool init_and_seed(TwoWire& wire, const Pins& pins) {
 
 // Is the chip present and responsive?
 inline bool available() { return _detail::available_ref(); }
+
+// Diagnostic snapshot: raw register bytes + parsed state. Used by the
+// /api/rtc endpoint so we can verify the chip is alive without
+// dragging serial logs around.
+struct DebugSnapshot {
+  bool     present;
+  bool     vl_set;             // bit 7 of reg 0x02 — clock-invalid flag
+  uint8_t  regs[7];            // 0x02..0x08
+  double   epoch;              // 0 if VL or read failed
+};
+inline DebugSnapshot debug_snapshot() {
+  DebugSnapshot s{};
+  s.present = _detail::available_ref();
+  if (!s.present) return s;
+  uint8_t b[7] = {0};
+  if (!_detail::read_regs(0x02, b, 7)) return s;
+  for (int i = 0; i < 7; ++i) s.regs[i] = b[i];
+  s.vl_set = (b[0] & 0x80) != 0;
+  if (!s.vl_set) {
+    struct tm t{};
+    t.tm_sec   = _detail::bcd_to_bin(b[0] & 0x7F);
+    t.tm_min   = _detail::bcd_to_bin(b[1] & 0x7F);
+    t.tm_hour  = _detail::bcd_to_bin(b[2] & 0x3F);
+    t.tm_mday  = _detail::bcd_to_bin(b[3] & 0x3F);
+    const int century = (b[5] & 0x80) ? 1900 : 2000;
+    t.tm_mon   = _detail::bcd_to_bin(b[5] & 0x1F) - 1;
+    t.tm_year  = (int)(century - 1900) + (int)_detail::bcd_to_bin(b[6]);
+    t.tm_isdst = 0;
+    s.epoch = (double)mktime(&t);
+  }
+  return s;
+}
 
 }  // namespace RtcPCF8563
 }  // namespace Web

@@ -116,8 +116,8 @@ namespace _detail {
     return (double)deg + minutes / 60.0;
   }
 
-  // "hhmmss.sss" → seconds-of-day, plus fractional. "ddmmyy" → date
-  // components. Together → unix epoch (UTC).
+  // "hhmmss.sss" → seconds-of-day. "ddmmyy" → date components.
+  // Together → unix epoch (UTC) via mktime.
   inline double parse_rmc_datetime(const char* time_str, const char* date_str) {
     if (!time_str || strlen(time_str) < 6) return 0.0;
     if (!date_str || strlen(date_str) != 6) return 0.0;
@@ -127,23 +127,14 @@ namespace _detail {
     auto digits2 = [](const char* p) {
       return (p[0] - '0') * 10 + (p[1] - '0');
     };
-    const int hh = digits2(t);
-    const int mm = digits2(t + 2);
-    const int ss = digits2(t + 4);
-    const int dd = digits2(date_str);
-    const int mo = digits2(date_str + 2);
-    const int yy = digits2(date_str + 4);
-    // L76K spits dates in this century. Take yy as 20yy.
     struct tm tt{};
-    tt.tm_year  = (2000 + yy) - 1900;
-    tt.tm_mon   = mo - 1;
-    tt.tm_mday  = dd;
-    tt.tm_hour  = hh;
-    tt.tm_min   = mm;
-    tt.tm_sec   = ss;
+    tt.tm_year  = (2000 + digits2(date_str + 4)) - 1900;
+    tt.tm_mon   = digits2(date_str + 2) - 1;
+    tt.tm_mday  = digits2(date_str);
+    tt.tm_hour  = digits2(t);
+    tt.tm_min   = digits2(t + 2);
+    tt.tm_sec   = digits2(t + 4);
     tt.tm_isdst = 0;
-    // mktime treats tt as local time; the firmware's TZ is unset
-    // (UTC) so this is timegm-equivalent. Good enough.
     return (double)mktime(&tt);
   }
 

@@ -813,8 +813,13 @@ void setup() {
     // on_adopt hook below which writes the new time back to the RTC.
 #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
     {
-      Web::RtcPCF8563::Pins pins{ /*sda=*/17, /*scl=*/18, /*hz=*/100000 };
-      Web::RtcPCF8563::init_and_seed(Wire, pins);
+      // T-Beam Supreme: PCF8563 RTC sits on the PMU I2C bus (Wire1),
+      // SDA=42 / SCL=41, addr 0x51. The "main" Wire bus on 17/18
+      // hosts the OLED + BME280 + magnetometer (Bus 0); the RTC is
+      // on Bus 1 alongside the AXP2101 PMU. See LilyGo's docs:
+      // https://wiki.lilygo.cc/get_started/en/LoRa_GPS/T-Beam-SUPREME
+      Web::RtcPCF8563::Pins pins{ /*sda=*/42, /*scl=*/41, /*hz=*/100000 };
+      Web::RtcPCF8563::init_and_seed(Wire1, pins);
       // RTC write-through whenever a higher-trust source adopts.
       Web::TimeManager::set_on_adopt([](Web::TimeManager::Source src, double epoch) {
         if (!Web::RtcPCF8563::available()) return;

@@ -2200,10 +2200,36 @@ function upsertMessage(m) {
     c = { peer, msgs: [], last_ts: 0, last_boot_epoch: 0, last_received_ms: 0, last_body: '', last_in: false };
     state.conversations.set(peer, c);
   }
-  // Dedup by seq + direction (inbox and outbox have independent seq counters).
-  if (c.msgs.some(x => x.seq === m.seq && x.in === m.in)) return;
-  c.msgs.push(m);
-  c.msgs.sort(msgCmp);
+  // Dedup by seq + direction (inbox and outbox have independent seq
+  // counters). When we already have this message — e.g. an optimistic
+  // outbox record inserted by sendMessage before the device's
+  // authoritative copy lands via /state refresh — merge the incoming
+  // fields in rather than discarding them. Optimistic records may have
+  // boot_epoch/received_ms = 0 if the clockAnchor wasn't set yet at
+  // send time, which would mis-sort them to the top of the thread.
+  const existing = c.msgs.find(x => x.seq === m.seq && x.in === m.in);
+  if (existing) {
+    let dirty = false;
+    if (m.boot_epoch && m.boot_epoch > (existing.boot_epoch || 0)) {
+      existing.boot_epoch = m.boot_epoch; dirty = true;
+    }
+    if (m.received_ms && m.received_ms > (existing.received_ms || 0)) {
+      existing.received_ms = m.received_ms; dirty = true;
+    }
+    if (m.ts && (!existing.ts || m.ts > existing.ts)) {
+      existing.ts = m.ts;
+    }
+    if (typeof m.status === 'string' && m.status !== existing.status) {
+      existing.status = m.status;
+    }
+    if (Array.isArray(m.attachments) && m.attachments.length > (existing.attachments || []).length) {
+      existing.attachments = m.attachments;
+    }
+    if (dirty) c.msgs.sort(msgCmp);
+  } else {
+    c.msgs.push(m);
+    c.msgs.sort(msgCmp);
+  }
   const last = c.msgs[c.msgs.length - 1];
   c.last_ts          = last.ts;
   c.last_boot_epoch  = last.boot_epoch || 0;
@@ -2305,18 +2331,36 @@ async function sendMessage() {
     // Server returns { queued_seq, status }. Mirror status in the
     // optimistic local copy so the bubble doesn't say "queued forever".
     const r = await state.transport.send(state.identityId, state.openPeer, '', text, attachments);
-    // Estimate boot_epoch + received_ms from the cached clock anchor so
-    // this optimistic local copy sorts to the top alongside the device's
-    // own outbox entry. /state on next refresh will replace these with
-    // the device's authoritative values.
-    const anchor = state.clockAnchor || {};
-    const nowDeviceMs = (anchor.deviceNowMs || 0) + (Date.now() - (anchor.localWallMs || Date.now()));
+    // Compute (boot_epoch, received_ms) so the optimistic record sorts
+    // to the bottom of the thread (most recent). Two sources, in
+    // priority order:
+    //   1. clockAnchor — set from the last /state fetch; gives the
+    //      best estimate of the device's millis() and current boot.
+    //   2. Fallback — sort just after the conversation's tail. Used
+    //      when the page is fresh and /state hasn't completed yet,
+    //      or when the cached anchor is from a prior boot epoch.
+    // Whatever we pick will be overwritten by upsertMessage when the
+    // device's authoritative record arrives via /state or SSE.
+    const anchor = state.clockAnchor;
+    const conv = state.conversations.get(state.openPeer);
+    const tail = conv && conv.msgs.length ? conv.msgs[conv.msgs.length - 1] : null;
+    let boot_epoch, received_ms;
+    if (anchor && typeof anchor.deviceNowMs === 'number' && typeof anchor.localWallMs === 'number') {
+      boot_epoch  = anchor.currentBootEpoch || (tail && tail.boot_epoch) || 1;
+      received_ms = anchor.deviceNowMs + (Date.now() - anchor.localWallMs);
+    } else if (tail) {
+      boot_epoch  = tail.boot_epoch || 1;
+      received_ms = (tail.received_ms || 0) + 1;
+    } else {
+      boot_epoch  = 1;
+      received_ms = 1;
+    }
     upsertMessage({
       peer: state.openPeer,
       seq: r.queued_seq || -Date.now(),
       ts: Date.now() / 1000,
-      boot_epoch: anchor.currentBootEpoch || 0,
-      received_ms: nowDeviceMs,
+      boot_epoch:  boot_epoch,
+      received_ms: received_ms,
       title: '',
       body: text,
       in: false,

@@ -108,12 +108,9 @@ namespace Web {
       _started = true;
       AuthTokens::load();
       BootCounter::init();  // emit the log line; current() is otherwise lazy
-      // Restore time-source priority/enable from EEPROM. Config.h's
-      // eeprom_addr() macro lives in WebUI.h's translation unit and
-      // can't be used inside TimeManager.h (Config.h declares vars at
-      // file scope so it can't be re-included). Pass the resolved
-      // address in here. (#113)
-      Web::TimeManager::load_config(eeprom_addr(ADDR_CONF_TIME_SRC));
+      // Restore time-source priority/enable/interval from
+      // /lxmf/time.json (#113).
+      Web::TimeManager::load_config(filesystem);
       register_routes();
       static const char* collect[] = {"Authorization"};
       server.collectHeaders(collect, sizeof(collect)/sizeof(collect[0]));
@@ -837,8 +834,9 @@ namespace Web {
         const auto src = (Source)i;
         const auto& cfg = Web::TimeManager::get_config(src);
         JsonObject s = sources[Web::TimeManager::source_name(src)].to<JsonObject>();
-        s["enabled"]  = cfg.enabled;
-        s["priority"] = cfg.priority;
+        s["enabled"]    = cfg.enabled;
+        s["priority"]   = cfg.priority;
+        s["interval_s"] = cfg.interval_s;
       }
       send_json(200, doc);
     }
@@ -897,11 +895,12 @@ namespace Web {
         if (!kv.value().is<JsonObject>()) continue;
         JsonObject o = kv.value().as<JsonObject>();
         auto cfg = Web::TimeManager::get_config(src);
-        if (o["enabled"].is<bool>())  cfg.enabled  = o["enabled"].as<bool>();
-        if (o["priority"].is<int>())  cfg.priority = (uint8_t)o["priority"].as<int>();
+        if (o["enabled"].is<bool>())   cfg.enabled    = o["enabled"].as<bool>();
+        if (o["priority"].is<int>())   cfg.priority   = (uint8_t)o["priority"].as<int>();
+        if (o["interval_s"].is<long>()) cfg.interval_s = (uint32_t)o["interval_s"].as<long>();
         Web::TimeManager::set_config(src, cfg);
       }
-      Web::TimeManager::persist_config(eeprom_addr(ADDR_CONF_TIME_SRC));
+      Web::TimeManager::persist_config(filesystem);
       NOTICE("WebUI: time-source config updated");
       handle_time_get();
     }

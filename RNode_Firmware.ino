@@ -32,6 +32,7 @@
 #include "LXMF/AnnounceLog.h"
 #include "LXMF/RatchetBridge.h"
 #include "Web/WebUI.h"
+#include "Web/RtcPCF8563.h"
 #endif
 
 #include <Arduino.h>
@@ -800,6 +801,28 @@ void setup() {
     }
 #else
     filesystem.init();
+#endif
+
+    // (#112) Seed the wall clock from the on-board hardware RTC.
+    // The PCF8563 on the T-Beam Supreme keeps time across reboots
+    // and shutdowns via its coin-cell backup. If it has a valid
+    // value we feed it to TimeManager so outbound LXMF timestamps
+    // are sensible even before any live source (GPS/NTP/Browser)
+    // reports. Once a live source adopts, TimeManager fires the
+    // on_adopt hook below which writes the new time back to the RTC.
+#if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+    {
+      Web::RtcPCF8563::Pins pins{ /*sda=*/17, /*scl=*/18, /*hz=*/100000 };
+      Web::RtcPCF8563::init_and_seed(Wire, pins);
+      // RTC write-through whenever a higher-trust source adopts.
+      Web::TimeManager::set_on_adopt([](Web::TimeManager::Source src, double epoch) {
+        if (!Web::RtcPCF8563::available()) return;
+        if (Web::RtcPCF8563::write_epoch(epoch)) {
+          NOTICEF("RtcPCF8563: write-through epoch %.0f (from %s)",
+                  epoch, Web::TimeManager::source_name(src));
+        }
+      });
+    }
 #endif
 
     // Remove legacy files

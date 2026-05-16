@@ -5,50 +5,55 @@
 // time-agnostic but the firmware also uses real time for "X ago"
 // labels in the SPA, log timestamps, certificate expiry, etc.
 //
-// Sources reported here, in default priority order (most trusted first):
+// Sources, in default priority order (most trusted first):
 //   1. GPS         — UTC from a fix; works without internet
 //   2. NTP         — when WiFi-STA has an internet route
 //   3. Browser     — POST /api/time from the SPA, populated with the
 //                    user's wall clock
 //   4. RNS peer    — LXMF::calibrate_time(); the remote's `ts` field
-//   5. Hardware RTC— AXP2101 RTC, only read once at cold boot to seed
 //
 // Each source is independently enable-able from the SPA settings UI
-// (auth-gated). When a source reports time, the manager adopts it
-// only if its configured priority is at least as high as the current
-// source's. This lets users disable GPS / NTP without losing the
-// Browser-set time, and vice versa.
+// (auth-gated) and the priority order is user-reorderable. When a
+// source reports time, the manager adopts it only if its configured
+// priority is at least as high as the current source's. Some sources
+// carry a per-source `interval_s` setting (GPS poll, NTP refresh)
+// that the source's driver reads.
 //
-// Implementation note: the time offset is stored as Unix-epoch
-// seconds at the moment `millis()` was zero. now_epoch() = offset +
-// millis()/1000. millis() rolls over every ~49 days, but the offset
-// is refreshed on every source report so we never actually hit the
-// wrap window unless the device sits uncalibrated for 49 days
-// straight.
+// Hardware RTC is *not* a user-configurable source. It's read once at
+// cold boot to seed the wall clock with a coarse value that survives
+// power-off (PCF8563 with coin-cell backup on the T-Beam Supreme),
+// and written through on each successful report from a higher-trust
+// source. The RTC handler lives in Web/RtcPCF8563.h and calls
+// `seed_from_rtc()` once during setup.
+//
+// Storage: source config is persisted to `/lxmf/time.json` via
+// microStore's filesystem adapter — same pattern as identity meta
+// files and `/lxmf/transport.json`. The wall-clock offset itself is
+// in-memory only (reseeded from RTC at boot).
 
 #pragma once
 
 #include <stdint.h>
-#include <Arduino.h>
-#include <EEPROM.h>
 #include <string.h>
-#include "../ROM.h"
+#include <Arduino.h>
+#include <ArduinoJson.h>
+#include <microStore/FileSystem.h>
 
 namespace Web {
 namespace TimeManager {
 
-// Source identifiers. Persisted to EEPROM as raw uint8_t — do not
-// reorder without bumping a schema version.
+// User-visible sources. Hardware RTC is intentionally NOT in this
+// list: it's an internal cold-boot seed + write-through cache, not a
+// configurable input.
 enum class Source : uint8_t {
   None    = 0,
   GPS     = 1,
   NTP     = 2,
   Browser = 3,
   RNS     = 4,
-  RTC     = 5,
 };
 
-constexpr uint8_t SOURCE_COUNT = 6;
+constexpr uint8_t SOURCE_COUNT = 5;  // includes None at index 0
 
 inline const char* source_name(Source s) {
   switch (s) {
@@ -56,7 +61,6 @@ inline const char* source_name(Source s) {
     case Source::NTP:     return "ntp";
     case Source::Browser: return "browser";
     case Source::RNS:     return "rns";
-    case Source::RTC:     return "rtc";
     case Source::None:    return "none";
   }
   return "unknown";
@@ -68,30 +72,28 @@ inline Source source_from_name(const char* name) {
   if (strcmp(name, "ntp")     == 0) return Source::NTP;
   if (strcmp(name, "browser") == 0) return Source::Browser;
   if (strcmp(name, "rns")     == 0) return Source::RNS;
-  if (strcmp(name, "rtc")     == 0) return Source::RTC;
   return Source::None;
 }
 
+// Per-source config. `interval_s` is interpreted by the source's
+// driver — for GPS, how often to consume an NMEA RMC fix and report
+// it; for NTP, how often to refresh against pool.ntp.org. Ignored
+// for sources where polling doesn't apply (Browser, RNS).
 struct SourceConfig {
-  bool    enabled;
-  uint8_t priority;  // 0 = highest priority; 255 = ignored. Sources at
-                     // equal priority are tie-broken by Source enum
-                     // ordinal (GPS < NTP < Browser < RNS < RTC).
+  bool     enabled;
+  uint8_t  priority;    // 0 = highest priority; 255 = ignored.
+  uint32_t interval_s;  // 0 = source-driver default; otherwise seconds.
 };
 
-// Default priority + enable flags. Mirrors the user-stated preference
-// (GPS, NTP, Browser, RNS) and adds RTC as a low-priority cold-boot
-// fallback (always enabled but only reported once at boot).
 inline SourceConfig default_config(Source s) {
   switch (s) {
-    case Source::GPS:     return { true,  0 };
-    case Source::NTP:     return { true,  1 };
-    case Source::Browser: return { true,  2 };
-    case Source::RNS:     return { true,  3 };
-    case Source::RTC:     return { true,  4 };
-    case Source::None:    return { false, 255 };
+    case Source::GPS:     return { true,  0, 60   };  // 60s between GPS time reports
+    case Source::NTP:     return { true,  1, 3600 };  // hourly NTP refresh
+    case Source::Browser: return { true,  2, 0    };  // event-driven
+    case Source::RNS:     return { true,  3, 0    };  // event-driven
+    case Source::None:    return { false, 255, 0  };
   }
-  return { false, 255 };
+  return { false, 255, 0 };
 }
 
 namespace _detail {
@@ -102,96 +104,131 @@ namespace _detail {
       default_config(Source::NTP),
       default_config(Source::Browser),
       default_config(Source::RNS),
-      default_config(Source::RTC),
     };
     return c[(uint8_t)s];
   }
-  // Current wall-clock state.
-  inline int64_t& offset_seconds_ref() { static int64_t v = 0; return v; }
-  inline Source&  current_source_ref() { static Source v = Source::None; return v; }
+  // Wall-clock offset: epoch_seconds at the moment millis() was 0.
+  // now_epoch() = offset + millis()/1000.
+  inline int64_t& offset_seconds_ref()   { static int64_t v = 0; return v; }
+  inline Source&  current_source_ref()   { static Source v = Source::None; return v; }
   inline uint8_t& current_priority_ref() { static uint8_t v = 255; return v; }
+  // RTC-seed hook — populated by the firmware-side RTC driver if the
+  // PCF8563 reads a sensible time at boot. Used for /api/info to
+  // surface "we have an RTC value but no live source" state.
+  inline bool& rtc_seed_applied_ref()    { static bool v = false; return v; }
+  // Post-adopt callback. Fires after a user-visible source's report
+  // is accepted (passed priority + sentinel checks). The RTC driver
+  // registers here to write the live time through to PCF8563 so the
+  // calibration survives reboots.
+  using on_adopt_fn = void (*)(Source, double /*epoch*/);
+  inline on_adopt_fn& on_adopt_ref()     { static on_adopt_fn fn = nullptr; return fn; }
 }
 
-// Returns whatever time has been set, or 0.0 if nothing has reported.
-// Callers that need a calibrated-only time should gate on is_calibrated().
+// Register a post-adopt callback. Only one slot — RtcPCF8563 takes
+// it on the firmware's behalf. Pass nullptr to unhook.
+inline void set_on_adopt(_detail::on_adopt_fn fn) {
+  _detail::on_adopt_ref() = fn;
+}
+
+// Reported time-source state. Returns 0.0 if no source has set time.
 inline double now_epoch() {
-  if (_detail::current_source_ref() == Source::None) return 0.0;
+  if (_detail::current_source_ref() == Source::None
+      && !_detail::rtc_seed_applied_ref()) return 0.0;
   return (double)_detail::offset_seconds_ref() + (double)millis() / 1000.0;
 }
+inline bool   is_calibrated() {
+  return _detail::current_source_ref() != Source::None
+         || _detail::rtc_seed_applied_ref();
+}
+inline Source current_source() { return _detail::current_source_ref(); }
 
-inline bool is_calibrated() {
-  return _detail::current_source_ref() != Source::None;
+// Internal helper that bypasses source-priority gating. Used by the
+// RTC seed path at boot — RTC isn't a user-visible source so its
+// values shouldn't compete in the priority list, but the wall clock
+// still needs a starting point if no live source reports. Marks
+// `rtc_seed_applied` so is_calibrated() returns true even before a
+// real source reports.
+inline void seed_from_rtc(double epoch_seconds) {
+  // Sanity-check: refuse anything before 2020 or past 2100.
+  if (epoch_seconds < 1577836800.0 || epoch_seconds > 4102444800.0) return;
+  _detail::offset_seconds_ref() = (int64_t)epoch_seconds - (int64_t)(millis() / 1000UL);
+  _detail::rtc_seed_applied_ref() = true;
+  // Leave current_source_ref at None so a live report still wins.
 }
 
-inline Source current_source() {
-  return _detail::current_source_ref();
-}
-
-// A source reports a time. Manager adopts it if the source is enabled
-// AND its priority is at least as high as the current source's (lower
-// numeric value = higher priority). Returns true if adopted.
+// A user-visible source reports a time. Adopted iff the source is
+// enabled AND its priority beats (or equals) the current source's,
+// and the value passes the sanity-check sentinel. Returns true if
+// adopted.
 inline bool report_time(Source src, double epoch_seconds) {
   if (src == Source::None) return false;
   SourceConfig& cfg = _detail::cfg_ref(src);
   if (!cfg.enabled) return false;
-  // Sentinel-check the reported time: anything before 2020-01-01 or
-  // after 2100-01-01 is clearly garbage.
-  static constexpr double MIN_EPOCH = 1577836800.0;  // 2020-01-01T00:00Z
-  static constexpr double MAX_EPOCH = 4102444800.0;  // 2100-01-01T00:00Z
-  if (epoch_seconds < MIN_EPOCH || epoch_seconds > MAX_EPOCH) return false;
+  if (epoch_seconds < 1577836800.0 || epoch_seconds > 4102444800.0) return false;
   // Refuse to be overridden by a lower-priority source. A re-report
   // from the same priority does refresh (e.g. NTP re-syncing).
-  if (cfg.priority > _detail::current_priority_ref()
-      && _detail::current_source_ref() != Source::None) return false;
+  if (_detail::current_source_ref() != Source::None
+      && cfg.priority > _detail::current_priority_ref()) return false;
 
-  const int64_t new_offset = (int64_t)epoch_seconds - (int64_t)(millis() / 1000UL);
-  _detail::offset_seconds_ref()  = new_offset;
-  _detail::current_source_ref()  = src;
-  _detail::current_priority_ref()= cfg.priority;
+  _detail::offset_seconds_ref()   = (int64_t)epoch_seconds - (int64_t)(millis() / 1000UL);
+  _detail::current_source_ref()   = src;
+  _detail::current_priority_ref() = cfg.priority;
+  // Fire the post-adopt hook (RTC write-through, etc). Exceptions
+  // here must not break the caller — the callback is fire-and-forget.
+  if (_detail::on_adopt_ref()) {
+    _detail::on_adopt_ref()(src, epoch_seconds);
+  }
   return true;
 }
 
-inline const SourceConfig& get_config(Source s) {
-  return _detail::cfg_ref(s);
-}
-
+inline const SourceConfig& get_config(Source s) { return _detail::cfg_ref(s); }
 inline void set_config(Source s, const SourceConfig& cfg) {
   if (s == Source::None) return;
   _detail::cfg_ref(s) = cfg;
 }
 
-// EEPROM layout for source-config persistence. One byte per source for
-// enable, one byte for priority. Anchored at the caller-supplied
-// eeprom_base address (which is `eeprom_addr(ADDR_CONF_TIME_SRC)` —
-// resolved by the firmware where Config.h is in scope). Magic byte on
-// the first slot doubles as the "config is valid" sentinel — 0xCB
-// means "loaded from EEPROM", anything else means "use defaults".
-//
-// Decoupled from the eeprom_addr() macro here because the macro is
-// defined in Config.h which can't be included from a header file
-// without causing duplicate-symbol errors (Config.h declares vars at
-// translation-unit scope). Callers pass the resolved address in. (#113)
-inline constexpr uint8_t TIME_SRC_MAGIC = 0xCB;
+// JSON persistence, matching the per-identity meta.json / transport.json
+// pattern. Path is /lxmf/time.json. Schema:
+//   { sources: { gps: {enabled, priority, interval_s}, ntp: {...}, … } }
+// Caller passes the filesystem because microStore::FileSystem is
+// non-default-constructible — it owns its adapter (Posix/FlashFS/SD).
+inline constexpr const char* CONFIG_PATH = "/lxmf/time.json";
 
-inline void load_config(int eeprom_base) {
-  const uint8_t magic = EEPROM.read(eeprom_base);
-  if (magic != TIME_SRC_MAGIC) return;
+inline void load_config(microStore::FileSystem& fs) {
+  if (!fs.exists(CONFIG_PATH)) return;
+  std::vector<uint8_t> data;
+  if (fs.readFile(CONFIG_PATH, data) == 0) return;
+  JsonDocument doc;
+  if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
+  JsonObjectConst sources = doc["sources"].as<JsonObjectConst>();
   for (uint8_t i = 1; i < SOURCE_COUNT; ++i) {
-    const uint8_t en  = EEPROM.read(eeprom_base + 1 + (i - 1) * 2);
-    const uint8_t pri = EEPROM.read(eeprom_base + 1 + (i - 1) * 2 + 1);
-    _detail::cfg_ref((Source)i).enabled  = (en != 0);
-    _detail::cfg_ref((Source)i).priority = pri;
+    const Source s = (Source)i;
+    JsonVariantConst v = sources[source_name(s)];
+    if (v.isNull()) continue;
+    SourceConfig c = _detail::cfg_ref(s);
+    if (v["enabled"].is<bool>())     c.enabled    = v["enabled"].as<bool>();
+    if (v["priority"].is<int>())     c.priority   = (uint8_t)v["priority"].as<int>();
+    if (v["interval_s"].is<long>())  c.interval_s = (uint32_t)v["interval_s"].as<long>();
+    _detail::cfg_ref(s) = c;
   }
 }
 
-inline void persist_config(int eeprom_base) {
-  EEPROM.write(eeprom_base, TIME_SRC_MAGIC);
+inline void persist_config(microStore::FileSystem& fs) {
+  JsonDocument doc;
+  JsonObject sources = doc["sources"].to<JsonObject>();
   for (uint8_t i = 1; i < SOURCE_COUNT; ++i) {
-    const SourceConfig& c = _detail::cfg_ref((Source)i);
-    EEPROM.write(eeprom_base + 1 + (i - 1) * 2,     c.enabled ? 1 : 0);
-    EEPROM.write(eeprom_base + 1 + (i - 1) * 2 + 1, c.priority);
+    const Source s = (Source)i;
+    const SourceConfig& c = _detail::cfg_ref(s);
+    JsonObject o = sources[source_name(s)].to<JsonObject>();
+    o["enabled"]    = c.enabled;
+    o["priority"]   = c.priority;
+    o["interval_s"] = c.interval_s;
   }
-  EEPROM.commit();
+  String out;
+  serializeJson(doc, out);
+  fs.writeFile(CONFIG_PATH,
+               reinterpret_cast<const uint8_t*>(out.c_str()),
+               out.length());
 }
 
 }  // namespace TimeManager

@@ -1095,6 +1095,21 @@ summary:hover { color: var(--text); }
             <div class="muted" style="font-size:11px;margin-top:6px">Turn OFF if you're reading the USB serial with <code>pio device monitor</code> or similar — KISS-framed binary bytes are otherwise interleaved with the diagnostic text log. Leave ON if you're using the device as a KISS host for tools like rnsd or MeshChat. Persists across reboots.</div>
           </div>
         </details>
+
+        <details class="cn-section" data-cn="time">
+          <summary>Time</summary>
+          <div class="cn-section-body">
+            <p class="muted" style="margin-top:0">LXMF stamps each outbound message with the sender's wall-clock time so peers display them with the right timestamp. The device picks the highest-priority enabled source available (lower number = higher priority).</p>
+            <div class="row" style="margin-bottom:14px;align-items:center">
+              <div><strong id="tm-current">—</strong><div class="muted" id="tm-source">no source</div></div>
+              <button id="btn-tm-browser-sync" style="margin:0">Sync to browser time</button>
+            </div>
+            <strong style="font-size:13px">Time sources</strong>
+            <div class="muted" style="font-size:11px;margin:4px 0 8px">Lower priority numbers win. Disable a source to skip it entirely. Save persists to EEPROM.</div>
+            <div id="tm-sources" style="display:grid;grid-template-columns:auto 1fr 70px;gap:6px 10px;align-items:center;margin-bottom:14px"></div>
+            <button id="btn-tm-save" style="width:100%">Save time-source config</button>
+          </div>
+        </details>
       </div>
 
       <!-- ============== App / UI tab ============== -->
@@ -3866,7 +3881,7 @@ function selectSettingsTab(tabId) {
   tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabId));
   panels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabId));
   // Lazy-populate per-tab data so the modal opens snappily.
-  if (tabId === 'connectivity') { populateRadioTab(); populateWifiTab(); populateDiagTab(); }
+  if (tabId === 'connectivity') { populateRadioTab(); populateWifiTab(); populateDiagTab(); populateTimeTab(); }
   if (tabId === 'identity')     populateIdentityTab();
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
   if (tabId === 'ui')           { $('pref-enter-sends').checked = !!state.prefs.enterSends; renderContacts(); }
@@ -3882,6 +3897,112 @@ function populateDiagTab() {
   if (!cb) return;
   cb.checked = !!(state.lastInfo && state.lastInfo.kiss_serial_output);
 }
+
+// ============================== TIME SETTINGS ==============================
+// LXMF needs a real wall clock for the message-timestamp field. The
+// device tracks several sources (GPS, NTP, browser-set, RNS peer
+// calibration, hardware RTC) and picks the highest-priority enabled
+// one. This pane lets the user enable/disable + reorder sources and
+// quick-sync from the browser. (#111, #113)
+const TIME_SOURCE_LABELS = {
+  gps:     ['GPS',         'UTC from a GPS fix; works without internet.'],
+  ntp:     ['NTP',         'WiFi-internet pool.ntp.org sync. Most accurate when online.'],
+  browser: ['Browser',     'Time the SPA pushed from your computer/phone clock.'],
+  rns:     ['RNS peer',    'Wall clock from an LXMF peer announce. Lowest trust, used as last resort.'],
+  rtc:     ['Hardware RTC','AXP2101 PMU RTC; survives reboots, read once at cold boot.'],
+};
+
+async function populateTimeTab() {
+  try {
+    const t = await state.transport._req('/api/time');
+    renderTimeStatus(t);
+    renderTimeSources(t.sources || {});
+  } catch (e) {
+    $('tm-current').textContent = 'unavailable';
+    $('tm-source').textContent = e.message || 'failed to fetch';
+  }
+}
+
+function renderTimeStatus(t) {
+  const cur = $('tm-current');
+  const src = $('tm-source');
+  if (t && t.calibrated && t.unix_ms) {
+    const d = new Date(Number(t.unix_ms));
+    cur.textContent = d.toLocaleString();
+    src.textContent = 'from ' + (t.source || 'unknown');
+  } else {
+    cur.textContent = 'uncalibrated';
+    src.textContent = 'no source has reported yet';
+  }
+}
+
+function renderTimeSources(sources) {
+  const wrap = $('tm-sources');
+  wrap.innerHTML = '';
+  // Header row
+  wrap.appendChild(el('div', { class: 'muted', style: 'font-size:11px', text: 'Source' }));
+  wrap.appendChild(el('div', { class: 'muted', style: 'font-size:11px', text: 'Description' }));
+  wrap.appendChild(el('div', { class: 'muted', style: 'font-size:11px;text-align:center', text: 'Priority' }));
+  // Stable display order matches typical preference: GPS, NTP, Browser, RNS, RTC.
+  for (const key of ['gps','ntp','browser','rns','rtc']) {
+    const cfg = sources[key] || { enabled: true, priority: 99 };
+    const [label, desc] = TIME_SOURCE_LABELS[key];
+    const cb = el('input', { type: 'checkbox', id: 'tm-en-' + key, style: 'width:auto;min-height:auto;margin-right:6px' });
+    cb.checked = !!cfg.enabled;
+    wrap.appendChild(el('label', { style: 'display:flex;align-items:center;font-size:13px' }, cb, el('span', { text: label })));
+    wrap.appendChild(el('div', { class: 'muted', style: 'font-size:11px', text: desc }));
+    const num = el('input', { type: 'number', id: 'tm-pri-' + key, min: '0', max: '255', style: 'text-align:center' });
+    num.value = (cfg.priority != null) ? String(cfg.priority) : '99';
+    wrap.appendChild(num);
+  }
+}
+
+$('btn-tm-browser-sync').addEventListener('click', async (ev) => {
+  ev.target.disabled = true;
+  ev.target.textContent = 'Syncing…';
+  try {
+    const r = await state.transport._req('/api/time',
+      { method: 'POST', body: { unix_ms: Date.now() } });
+    if (r.adopted) {
+      toast('Device clock set from browser', 'success');
+    } else if (r.calibrated) {
+      toast('Browser time recorded but a higher-priority source is in use (' + r.source + ')', 'info');
+    } else {
+      toast('Browser sync did not take effect — check that Browser is enabled in the source list', 'error');
+    }
+    renderTimeStatus(r);
+  } catch (e) {
+    toast('Sync failed: ' + (e.message || e), 'error');
+  } finally {
+    ev.target.disabled = false;
+    ev.target.textContent = 'Sync to browser time';
+  }
+});
+
+$('btn-tm-save').addEventListener('click', async (ev) => {
+  ev.target.disabled = true;
+  const body = { sources: {} };
+  for (const key of ['gps','ntp','browser','rns','rtc']) {
+    const cb = $('tm-en-' + key);
+    const pri = $('tm-pri-' + key);
+    if (!cb || !pri) continue;
+    body.sources[key] = {
+      enabled:  cb.checked,
+      priority: Math.max(0, Math.min(255, parseInt(pri.value, 10) || 0)),
+    };
+  }
+  try {
+    const r = await state.transport._req('/api/time/sources',
+      { method: 'POST', body });
+    toast('Time-source config saved', 'success');
+    renderTimeStatus(r);
+    renderTimeSources(r.sources || {});
+  } catch (e) {
+    toast('Save failed: ' + (e.message || e), 'error');
+  } finally {
+    ev.target.disabled = false;
+  }
+});
 
 $('cn-kiss-out').addEventListener('change', async (ev) => {
   const enabled = ev.target.checked;

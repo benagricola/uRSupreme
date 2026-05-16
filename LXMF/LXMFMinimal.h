@@ -40,6 +40,7 @@
 
 #include "LXMFTypes.h"
 #include "../Web/BootCounter.h"
+#include "../Web/TimeManager.h"
 
 namespace LXMF {
 
@@ -587,22 +588,26 @@ namespace LXMF {
       return true;
     }
 
-    // LXMF timestamps are seconds-since-epoch as float64. The device has
-    // no RTC in LoRa-only mode, so we use compile-time epoch + millis()
-    // until we receive a calibration timestamp from a peer.
+    // LXMF timestamps are Unix-epoch seconds as float64. Defer to the
+    // shared TimeManager (Web/TimeManager.h, #111) which arbitrates
+    // across all time sources — GPS, NTP, Browser, RNS peer, RTC.
+    // Falls back to a compile-time-epoch + millis() guess until the
+    // manager is calibrated, so outbound messages don't carry ts=0.
     double get_timestamp() {
+      if (Web::TimeManager::is_calibrated()) {
+        return Web::TimeManager::now_epoch();
+      }
       double up = (double)millis() / 1000.0;
-      if (_time_calibrated) return _time_offset + up;
       return _compile_time_epoch() + up;
     }
 
     void calibrate_time(double remote_ts) {
-      if (remote_ts > 1704067200.0 && !_time_calibrated) {
-        double up = (double)millis() / 1000.0;
-        _time_offset = remote_ts - up;
-        _time_calibrated = true;
-        NOTICEF("LXMF: time calibrated from peer, epoch offset %ld",
-                (long)_time_offset);
+      // Hand the peer-supplied ts to TimeManager as a low-priority
+      // RNS source; the manager will adopt it only if no
+      // higher-priority source has reported and the value is sane. (#111)
+      if (Web::TimeManager::report_time(
+            Web::TimeManager::Source::RNS, remote_ts)) {
+        NOTICEF("LXMF: time calibrated from peer (epoch %.0f)", remote_ts);
       }
     }
 

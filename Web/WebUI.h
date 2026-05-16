@@ -22,6 +22,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
+#include "TimeManager.h"
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
@@ -107,6 +108,12 @@ namespace Web {
       _started = true;
       AuthTokens::load();
       BootCounter::init();  // emit the log line; current() is otherwise lazy
+      // Restore time-source priority/enable from EEPROM. Config.h's
+      // eeprom_addr() macro lives in WebUI.h's translation unit and
+      // can't be used inside TimeManager.h (Config.h declares vars at
+      // file scope so it can't be re-included). Pass the resolved
+      // address in here. (#113)
+      Web::TimeManager::load_config(eeprom_addr(ADDR_CONF_TIME_SRC));
       register_routes();
       static const char* collect[] = {"Authorization"};
       server.collectHeaders(collect, sizeof(collect)/sizeof(collect[0]));
@@ -406,6 +413,14 @@ namespace Web {
       server.on("/api/system/factory_reset", HTTP_POST, handle_factory_reset);
       server.on("/api/system/transport",     HTTP_POST, handle_transport_toggle);
       server.on("/api/system/kiss",          HTTP_POST, handle_kiss_toggle);
+      // Time management (#111, #113). GET returns the current calibrated
+      // time + the source-priority config; POST /api/time {unix_ms}
+      // adopts a browser-supplied time; POST /api/time/sources
+      // {sources:{gps:{enabled,priority},…}} writes the source config.
+      // All bearer-auth-gated.
+      server.on("/api/time",                 HTTP_GET,  handle_time_get);
+      server.on("/api/time",                 HTTP_POST, handle_time_set);
+      server.on("/api/time/sources",         HTTP_POST, handle_time_sources_set);
       server.on(UriBraces("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
       server.on(UriBraces("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
       server.on(UriBraces("/api/identities/{}/send"),     HTTP_POST, handle_send);
@@ -468,6 +483,13 @@ namespace Web {
       doc["bootstrap"]  = bootstrap_mode;
       doc["identity_code_pending"] = !id_code().hex6.empty() && !id_code().consumed
                               && millis() < id_code().expires_ms;
+      // Time-manager state — surfaced so the SPA can prompt for a
+      // browser-sync when the device clock is uncalibrated or wildly
+      // off the browser's wall clock. (#111)
+      JsonObject t = doc["time"].to<JsonObject>();
+      t["calibrated"] = Web::TimeManager::is_calibrated();
+      t["source"]     = Web::TimeManager::source_name(Web::TimeManager::current_source());
+      t["unix_ms"]    = (uint64_t)(Web::TimeManager::now_epoch() * 1000.0);
       JsonArray accts = doc["identities"].to<JsonArray>();
       for (const auto* a : LXMF::LXMFGateway::active_identities()) {
         JsonObject obj = accts.add<JsonObject>();
@@ -795,6 +817,93 @@ namespace Web {
       JsonDocument doc;
       doc["enabled"] = enabled;
       send_json(200, doc);
+    }
+
+    // GET /api/time — returns the current calibrated time, the source
+    // that set it, and the source-priority/enable config. Open to any
+    // authenticated session (the time itself is also exposed via
+    // /api/info → clock.now_ms, so this just adds source detail). (#113)
+    static void handle_time_get() {
+      if (require_auth().empty()) return;
+      JsonDocument doc;
+      const double epoch = Web::TimeManager::now_epoch();
+      doc["calibrated"]  = Web::TimeManager::is_calibrated();
+      doc["unix_ms"]     = (uint64_t)(epoch * 1000.0);
+      doc["source"]      = Web::TimeManager::source_name(Web::TimeManager::current_source());
+      doc["uptime_ms"]   = (uint32_t)millis();
+      JsonObject sources = doc["sources"].to<JsonObject>();
+      using Web::TimeManager::Source;
+      for (uint8_t i = 1; i < Web::TimeManager::SOURCE_COUNT; ++i) {
+        const auto src = (Source)i;
+        const auto& cfg = Web::TimeManager::get_config(src);
+        JsonObject s = sources[Web::TimeManager::source_name(src)].to<JsonObject>();
+        s["enabled"]  = cfg.enabled;
+        s["priority"] = cfg.priority;
+      }
+      send_json(200, doc);
+    }
+
+    // POST /api/time {unix_ms} — adopt a browser-supplied time. Subject
+    // to the Browser source's enabled+priority config; if a higher-
+    // priority source has already set the time, the report is
+    // recorded but not adopted, and the response indicates that. (#111)
+    static void handle_time_set() {
+      if (require_auth().empty()) return;
+      JsonDocument body;
+      if (!read_body_json(body)) return;
+      if (!body["unix_ms"].is<uint64_t>() && !body["unix_ms"].is<double>()
+          && !body["unix_ms"].is<long long>()) {
+        send_error_with_message(400, "missing_unix_ms",
+          "Request body must include unix_ms (milliseconds since 1970).");
+        return;
+      }
+      const double unix_ms = (double)(body["unix_ms"] | 0.0);
+      if (unix_ms <= 0) {
+        send_error_with_message(400, "invalid_unix_ms",
+          "unix_ms must be a positive number of milliseconds since 1970.");
+        return;
+      }
+      const double epoch = unix_ms / 1000.0;
+      const bool adopted = Web::TimeManager::report_time(
+        Web::TimeManager::Source::Browser, epoch);
+      JsonDocument doc;
+      doc["adopted"]    = adopted;
+      doc["calibrated"] = Web::TimeManager::is_calibrated();
+      doc["source"]     = Web::TimeManager::source_name(Web::TimeManager::current_source());
+      doc["unix_ms"]    = (uint64_t)(Web::TimeManager::now_epoch() * 1000.0);
+      if (adopted) {
+        NOTICEF("WebUI: time set from browser to epoch %.3f", epoch);
+      }
+      send_json(200, doc);
+    }
+
+    // POST /api/time/sources {sources: {gps: {enabled, priority}, …}}
+    // — update which time sources are enabled and their priority
+    // ordering. Persisted to EEPROM. Sources not mentioned in the body
+    // keep their existing config. (#113)
+    static void handle_time_sources_set() {
+      if (require_auth().empty()) return;
+      JsonDocument body;
+      if (!read_body_json(body)) return;
+      if (!body["sources"].is<JsonObject>()) {
+        send_error_with_message(400, "missing_sources",
+          "Request body must include {sources: {<source>: {enabled, priority}, …}}.");
+        return;
+      }
+      JsonObject sources = body["sources"];
+      for (JsonPair kv : sources) {
+        Web::TimeManager::Source src = Web::TimeManager::source_from_name(kv.key().c_str());
+        if (src == Web::TimeManager::Source::None) continue;
+        if (!kv.value().is<JsonObject>()) continue;
+        JsonObject o = kv.value().as<JsonObject>();
+        auto cfg = Web::TimeManager::get_config(src);
+        if (o["enabled"].is<bool>())  cfg.enabled  = o["enabled"].as<bool>();
+        if (o["priority"].is<int>())  cfg.priority = (uint8_t)o["priority"].as<int>();
+        Web::TimeManager::set_config(src, cfg);
+      }
+      Web::TimeManager::persist_config(eeprom_addr(ADDR_CONF_TIME_SRC));
+      NOTICE("WebUI: time-source config updated");
+      handle_time_get();
     }
 
     static void handle_factory_reset() {

@@ -630,6 +630,12 @@ namespace Web {
         send_error(500, "token_issue_failed");
         return;
       }
+      // Fire an announce now so peers learn this identity immediately
+      // rather than waiting up to one auto-announce interval. Cheap
+      // (just packs + queues a Packet); failure here doesn't fail the
+      // login since the periodic announce loop will catch up.
+      LXMF::LXMFGateway::announce(iden_id);
+
       JsonDocument doc;
       doc["token"]         = token;
       doc["identity_id"]    = iden_id;

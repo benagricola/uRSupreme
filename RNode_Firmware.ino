@@ -33,6 +33,7 @@
 #include "LXMF/RatchetBridge.h"
 #include "Web/WebUI.h"
 #include "Web/RtcPCF8563.h"
+#include "Web/Gps.h"
 #endif
 
 #include <Arduino.h>
@@ -822,6 +823,13 @@ void setup() {
                   epoch, Web::TimeManager::source_name(src));
         }
       });
+    }
+    // (#109) GPS — L76K on UART1, pins 8/9, EN on 7. Pumps NMEA into
+    // the parser; valid RMC fixes call TimeManager::report_time
+    // (Source::GPS) per the user-configured interval.
+    {
+      Web::Gps::Pins pins{ /*rx=*/9, /*tx=*/8, /*en=*/7, /*baud=*/9600 };
+      Web::Gps::begin(Serial1, pins);
     }
 #endif
 
@@ -2480,6 +2488,14 @@ void loop() {
   // released here so the web_task gets a window before we re-enter
   // RNS work below. (#60)
   esp_task_wdt_reset();
+#endif
+
+  // (#109) Drain whatever NMEA the GPS module shoved at us this
+  // tick. Cheap if no bytes pending. No rns_lock needed — the GPS
+  // parser only touches its own static state and TimeManager (whose
+  // adopt path is reentrant-safe).
+#if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+  Web::Gps::pump();
 #endif
 
   if (radio_online) {

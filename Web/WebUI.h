@@ -23,6 +23,7 @@
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include "TimeManager.h"
+#include "Gps.h"
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
@@ -418,6 +419,8 @@ namespace Web {
       server.on("/api/time",                 HTTP_GET,  handle_time_get);
       server.on("/api/time",                 HTTP_POST, handle_time_set);
       server.on("/api/time/sources",         HTTP_POST, handle_time_sources_set);
+      // GPS fix — last RMC sentence parsed. (#109)
+      server.on("/api/gps",                  HTTP_GET,  handle_gps_get);
       server.on(UriBraces("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
       server.on(UriBraces("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
       server.on(UriBraces("/api/identities/{}/send"),     HTTP_POST, handle_send);
@@ -903,6 +906,27 @@ namespace Web {
       Web::TimeManager::persist_config(filesystem);
       NOTICE("WebUI: time-source config updated");
       handle_time_get();
+    }
+
+    // GET /api/gps — last RMC fix. Returns valid flag, position,
+    // speed/heading, UTC, and how recent the fix was. Auth-gated so
+    // attackers on the LAN can't passively scrape location. (#109)
+    static void handle_gps_get() {
+      if (require_auth().empty()) return;
+      JsonDocument doc;
+      const Web::Gps::Fix f = Web::Gps::last_fix();
+      doc["available"]   = Web::Gps::has_serial();
+      doc["valid"]       = f.valid;
+      doc["latitude"]    = f.latitude_deg;
+      doc["longitude"]   = f.longitude_deg;
+      doc["speed_knots"] = f.speed_knots;
+      doc["heading"]     = f.heading_deg;
+      doc["unix_ms"]     = (uint64_t)(f.unix_epoch * 1000.0);
+      doc["fix_age_ms"]  = f.fix_received_ms == 0 ? -1
+                            : (long)(millis() - f.fix_received_ms);
+      doc["last_byte_ms"] = f.last_byte_ms == 0 ? -1
+                            : (long)(millis() - f.last_byte_ms);
+      send_json(200, doc);
     }
 
     static void handle_factory_reset() {

@@ -30,8 +30,13 @@ namespace Web {
     static constexpr size_t      TOKEN_BYTES     = 16;
     static constexpr size_t      TOKEN_HEX_LEN   = 32;
     static constexpr uint32_t    DEFAULT_TTL_S   = 30 * 24 * 60 * 60;  // 30 days inactivity
-    static constexpr size_t      MAX_TOKENS      = 16;
-    static constexpr size_t      MAX_PER_ACCOUNT = 4;
+    // Total active tokens cap. Bumped from 16 to 64 — bench testing
+    // with the WS migration uncovered the 4-tokens-per-identity cap
+    // evicting parallel test sessions. The headline cap defends
+    // against unbounded growth from a malicious / buggy client; the
+    // per-identity cap is gone since legitimate use (multiple browser
+    // tabs across phones, laptops, etc.) routinely needs more than 4.
+    static constexpr size_t      MAX_TOKENS      = 64;
 
     struct Token {
       std::string       hex;
@@ -83,26 +88,23 @@ namespace Web {
                            body.length());
     }
 
-    // Issue a fresh token for an identity. Evicts the oldest token for that identity
-    // identity if it already has MAX_PER_ACCOUNT. Returns the hex token.
+    // Issue a fresh token for an identity. Returns the hex token. The
+    // total-tokens cap evicts the globally-oldest entry, regardless of
+    // identity — fair share is enforced implicitly by recency, not by
+    // a per-identity quota. (The old 4-per-identity quota was breaking
+    // multi-tab / multi-device workflows.)
     static std::string issue(const LXMF::IdentityId& identity_id) {
       if (identity_id.empty()) return {};
       auto& store = _tokens();
 
-      // Evict oldest for this identity if at cap.
-      size_t per_acct = 0;
-      Token* oldest = nullptr;
-      for (auto& t : store) {
-        if (t.identity_id == identity_id) {
-          per_acct++;
-          if (!oldest || t.last_seen_ms < oldest->last_seen_ms) oldest = &t;
+      // Cap total — evict the oldest entry by last_seen_ms.
+      while (store.size() >= MAX_TOKENS) {
+        auto oldest = store.begin();
+        for (auto it = store.begin(); it != store.end(); ++it) {
+          if (it->last_seen_ms < oldest->last_seen_ms) oldest = it;
         }
+        store.erase(oldest);
       }
-      if (per_acct >= MAX_PER_ACCOUNT && oldest) {
-        revoke(oldest->hex);
-      }
-      // Cap total
-      while (store.size() >= MAX_TOKENS) store.erase(store.begin());
 
       Token t;
       t.hex          = random_hex();

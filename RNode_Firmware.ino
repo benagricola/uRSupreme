@@ -34,6 +34,7 @@
 #include "Web/WebUI.h"
 #include "Web/RtcPCF8563.h"
 #include "Web/Gps.h"
+#include "Web/Ntp.h"
 #endif
 
 #include <Arduino.h>
@@ -836,6 +837,9 @@ void setup() {
       Web::Gps::Pins pins{ /*rx=*/9, /*tx=*/8, /*en=*/7, /*baud=*/9600 };
       Web::Gps::begin(Serial1, pins);
     }
+    // (#110) NTP — non-blocking SNTP against pool.ntp.org. Sync
+    // happens when WiFi STA becomes ready; pump() handles adoption.
+    Web::Ntp::begin();
 #endif
 
     // Remove legacy files
@@ -2501,6 +2505,10 @@ void loop() {
   // adopt path is reentrant-safe).
 #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
   Web::Gps::pump();
+  // (#110) NTP — cheap when no transition; checks SNTP sync status
+  // and forwards to TimeManager when a fresh epoch lands. Gated on
+  // WiFi STA connection internally.
+  Web::Ntp::pump();
 #endif
 
   if (radio_online) {

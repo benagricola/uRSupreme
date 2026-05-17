@@ -1160,7 +1160,7 @@ summary:hover { color: var(--text); }
       <!-- ============== Time tab ============== -->
       <div class="tab-panel" data-panel="time">
         <div class="card">
-          <p class="muted" style="margin-top:0">LXMF stamps each outbound message with the sender's wall-clock time so peers display them with the right timestamp. The device picks the highest-priority enabled source whose driver has reported a value.</p>
+          <p class="muted" style="margin-top:0">The highest-priority enabled source that's reported a value wins.</p>
           <div class="row" style="margin-bottom:14px;align-items:center;gap:12px">
             <div style="min-width:0;flex:1">
               <div><strong id="tm-current">—</strong></div>
@@ -1190,7 +1190,7 @@ summary:hover { color: var(--text); }
             <input type="checkbox" id="pref-auto-download-attachments" style="width:auto;min-height:auto">
             <span>Automatically download attachments</span>
           </label>
-          <div class="muted" style="margin-top:4px">When off (default): inbound images and audio show as click-to-load chips. Saves local bandwidth and avoids fetching anything you didn't ask for.</div>
+          <div class="muted" style="margin-top:4px">When off: inbound images and audio show as click-to-load chips.</div>
         </div>
         <div class="card" style="margin-top:14px">
           <strong>Transport</strong>
@@ -1202,7 +1202,7 @@ summary:hover { color: var(--text); }
         </div>
         <div class="card" style="margin-top:14px">
           <strong>Inbox retention</strong>
-          <div class="muted" style="margin-top:4px;margin-bottom:10px">Caps how many messages each identity keeps in RAM + on disk. Oldest are pruned when either limit is hit. Now that the device has a reliable wall clock, the TTL prunes anything older than the chosen window. Applies to every identity's inbox and outbox.</div>
+          <div class="muted" style="margin-top:4px;margin-bottom:10px">Caps how many messages each identity keeps. Oldest are pruned when either limit is hit. Applies to every identity's inbox and outbox.</div>
           <label>Message limit</label>
           <select id="inbox-cap" style="margin-bottom:8px">
             <option value="200">200 messages (default)</option>
@@ -3320,14 +3320,22 @@ function renderSystemPopover(s) {
     const gLine = $('sys-gps-line'); gLine.innerHTML = '';
     gLine.appendChild(el('span', { class: g.valid ? 'pill ok' : 'pill warn' },
       g.valid ? 'Fix' : 'No fix'));
-    $('sys-gps-pos').textContent = g.valid
-      ? g.latitude.toFixed(5) + ', ' + g.longitude.toFixed(5) : '—';
-    $('sys-gps-speed').textContent = g.valid
-      ? 'Speed ' + g.speed_knots.toFixed(1) + ' kn · heading ' + g.heading.toFixed(0) + '°'
-      : '';
-    $('sys-gps-age').textContent = (typeof g.fix_age_ms === 'number' && g.fix_age_ms >= 0)
-      ? 'Last fix ' + Math.round(g.fix_age_ms / 1000) + 's ago (GPS)'
-      : 'No data from module yet (GPS)';
+    // Hide position + speed lines entirely when there's no fix — a
+    // dash and an empty line take up space without telling the user
+    // anything they didn't already learn from the "No fix" pill.
+    $('sys-gps-pos').hidden   = !g.valid;
+    $('sys-gps-speed').hidden = !g.valid;
+    if (g.valid) {
+      $('sys-gps-pos').textContent =
+        g.latitude.toFixed(5) + ', ' + g.longitude.toFixed(5);
+      $('sys-gps-speed').textContent =
+        'Speed ' + g.speed_knots.toFixed(1) + ' kn · heading ' + g.heading.toFixed(0) + '°';
+    }
+    // "Last read Xs ago (L76K)" matches the other sensor sections.
+    // We use last_byte_ms (when the module last sent us NMEA) rather
+    // than fix_age_ms — the module is talking long before a fix lands.
+    const gWarming = typeof g.last_byte_ms !== 'number' || g.last_byte_ms < 0;
+    $('sys-gps-age').textContent = ageLine(g.last_byte_ms, 'L76K', gWarming);
   }
 
   // Generic three-state pill renderer for simple sensor sections.
@@ -3506,6 +3514,11 @@ function buildSensorConfigRow(section, key, sensor) {
     const body = { sensor: key, enabled: cb.checked, interval_s: parseInt(sel.value, 10) };
     try {
       await state.transport._req('/api/sensors/config', { method: 'POST', body });
+      // Pull a fresh /api/system_status and repaint so the change is
+      // visible immediately — without it the user has to close and
+      // re-open the popover before the new state shows up.
+      const fresh = await state.transport._req('/api/system_status');
+      renderSystemPopover(fresh);
     } catch (e) {
       toast('Sensor config save failed: ' + (e.message || e), 'error');
     }

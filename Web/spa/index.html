@@ -884,6 +884,11 @@ summary:hover { color: var(--text); }
     </div>
     <div class="muted mono" id="sys-storage-flash" style="font-size:11px;margin-top:6px"></div>
     <div class="muted mono" id="sys-storage-sd"    style="font-size:11px"></div>
+    <button id="sys-storage-migrate" class="ghost" hidden
+            style="margin-top:8px;font-size:11px;padding:4px 8px">
+      Move flash attachments to SD card
+    </button>
+    <div id="sys-storage-migrate-result" class="muted" style="font-size:11px;margin-top:4px"></div>
   </div>
   <div class="popover-section">
     <div class="popover-row">
@@ -3293,6 +3298,10 @@ function renderSystemPopover(s) {
   $('sys-storage-sd').textContent = (sd.present && sd.total_bytes)
     ? 'SD: ' + formatBytes(sd.used_bytes || 0) + ' / ' + formatBytes(sd.total_bytes)
     : 'SD: not present';
+  // Migration button visible only when SD is present + flash isn't
+  // mostly empty (no point offering it when there's nothing to free).
+  const flashUsed = fl.used_bytes || 0;
+  $('sys-storage-migrate').hidden = !(sd.present && flashUsed > 0);
 
   // Clock.
   const c = s.clock || {};
@@ -3471,6 +3480,33 @@ $('btn-system').addEventListener('click', () => {
     return;
   }
   openSystemPopover();
+});
+$('sys-storage-migrate').addEventListener('click', async () => {
+  const ok = await showConfirm({
+    title: 'Move attachments to SD card?',
+    body: 'Frees device flash storage. The files become unreachable if the SD card is later removed.',
+    okLabel: 'Move',
+  });
+  if (!ok) return;
+  const btn  = $('sys-storage-migrate');
+  const out  = $('sys-storage-migrate-result');
+  btn.disabled = true;
+  btn.textContent = 'Moving…';
+  out.textContent = '';
+  try {
+    const r = await state.transport._req('/api/storage/migrate_flash_to_sd', { method: 'POST' });
+    out.textContent = 'Moved ' + r.moved + ' file(s) · ' + formatBytes(r.bytes || 0)
+                    + (r.skipped ? ' · ' + r.skipped + ' already on SD' : '')
+                    + (r.failed  ? ' · ' + r.failed + ' failed' : '');
+    // Refresh the storage line so flash-used drops to reflect the new state.
+    const fresh = await state.transport._req('/api/system_status');
+    renderSystemPopover(fresh);
+  } catch (e) {
+    out.textContent = 'Migration failed: ' + (e.message || e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Move flash attachments to SD card';
+  }
 });
 
 // ============================== SYSTEM POPOVER — sensor config ==============================

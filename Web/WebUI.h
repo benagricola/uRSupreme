@@ -30,6 +30,7 @@
 #include "QmiImu.h"
 #include "SensorConfig.h"
 #include "OutboundStaging.h"
+#include "StorageMigration.h"
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
@@ -459,6 +460,8 @@ namespace Web {
                 HTTP_DELETE, handle_clear_conversation);
       server.on(UriBraces("/api/identities/{}/attachment/download/{}"),
                 HTTP_GET, handle_attachment_get);
+      server.on("/api/storage/migrate_flash_to_sd",
+                HTTP_POST, handle_migrate_flash_to_sd);
       // Paths
       server.on("/api/paths",         HTTP_GET,  handle_paths_list);
       server.on("/api/paths/lookup",  HTTP_POST, handle_path_lookup);
@@ -1526,6 +1529,31 @@ namespace Web {
         obj["age_ms"]       = (uint32_t)(now - it->received_ms);
       }
       doc["count"] = (uint32_t)ring.size();
+      send_json(200, doc);
+    }
+
+    // Bulk migration: walk every active identity's attachment dir on
+    // flash, copy each file to SD, delete the flash copy, and flip the
+    // backend field on the matching inbox/outbox records. Idempotent —
+    // running it twice in a row produces all-skipped on the second pass.
+    static void handle_migrate_flash_to_sd() {
+      LXMF::IdentityId caller = require_auth();
+      if (caller.empty()) return;
+      if (!Web::SDCard::present()) {
+        send_error_with_message(409, "sd_absent",
+          "No SD card is inserted — nothing to migrate to.");
+        return;
+      }
+      const auto result = Web::StorageMigration::run();
+      JsonDocument doc;
+      doc["moved"]            = (uint32_t)result.moved;
+      doc["skipped"]          = (uint32_t)result.skipped;
+      doc["failed"]           = (uint32_t)result.failed;
+      doc["bytes"]            = (uint64_t)result.bytes;
+      doc["records_updated"]  = (uint32_t)result.records_updated;
+      NOTICEF("Storage: flash→SD migration done — moved=%u skipped=%u failed=%u bytes=%llu",
+              (unsigned)result.moved, (unsigned)result.skipped,
+              (unsigned)result.failed, (unsigned long long)result.bytes);
       send_json(200, doc);
     }
 

@@ -223,6 +223,25 @@ namespace LXMF {
       return update_status(packet_hash, OutboxStatus::Delivered);
     }
 
+    // Walk every record and flip any attachment whose backend matches
+    // `from` to `to`. Rewrites the spool if anything changed. Used by
+    // the flash→SD migration to keep the SD-unavailable warning logic
+    // in the SPA honest after files move between backends.
+    size_t update_attachment_backends(const std::string& from,
+                                      const std::string& to) {
+      size_t changed = 0;
+      for (auto& rec : _ring) {
+        for (auto& att : rec.attachments) {
+          if (att.backend == from) {
+            att.backend = to;
+            ++changed;
+          }
+        }
+      }
+      if (changed > 0) rewrite_spool();
+      return changed;
+    }
+
     // Remove every record whose peer_hash matches. Rewrites the spool to
     // shrink the JSONL file. Used by the per-conversation clear endpoint.
     size_t purge_peer(const RNS::Bytes& peer_hash) {

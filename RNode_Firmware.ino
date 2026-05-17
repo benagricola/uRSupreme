@@ -35,6 +35,7 @@
 #include "Web/RtcPCF8563.h"
 #include "Web/Gps.h"
 #include "Web/Ntp.h"
+#include "Web/SDCard.h"
 #endif
 
 #include <Arduino.h>
@@ -840,6 +841,10 @@ void setup() {
     // (#110) NTP — non-blocking SNTP against pool.ntp.org. Sync
     // happens when WiFi STA becomes ready; pump() handles adoption.
     Web::Ntp::begin();
+    // (#122) SD card — mount the microSD slot if a card is inserted.
+    // Bus is shared with nothing else on this platform; left disabled
+    // when no card is present.
+    Web::SDCard::begin();
 #endif
 
     // Remove legacy files

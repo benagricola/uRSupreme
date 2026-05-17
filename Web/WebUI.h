@@ -25,6 +25,7 @@
 #include "TimeManager.h"
 #include "Gps.h"
 #include "RtcPCF8563.h"
+#include "SDCard.h"
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
@@ -621,15 +622,15 @@ namespace Web {
         flash["free_bytes"]  = (uint32_t)avail;
         flash["used_bytes"]  = (uint32_t)((total > avail) ? (total - avail) : 0);
       }
-      #ifdef HAS_SDCARD
+      {
         JsonObject sd = storage["sd"].to<JsonObject>();
-        sd["present"]     = true;
-        sd["total_bytes"] = (uint64_t)SD.totalBytes();
-        sd["used_bytes"]  = (uint64_t)SD.usedBytes();
-      #else
-        JsonObject sd = storage["sd"].to<JsonObject>();
-        sd["present"] = false;
-      #endif
+        sd["present"] = Web::SDCard::present();
+        if (Web::SDCard::present()) {
+          sd["card_type"]   = Web::SDCard::card_type_name();
+          sd["total_bytes"] = (uint64_t)Web::SDCard::total_bytes();
+          sd["used_bytes"]  = (uint64_t)Web::SDCard::used_bytes();
+        }
+      }
 
       JsonObject transport = doc["transport"].to<JsonObject>();
       transport["enabled"]      = RNS::Reticulum::transport_enabled();
@@ -949,10 +950,14 @@ namespace Web {
         fl["total_bytes"] = (uint32_t)total;
         fl["free_bytes"]  = (uint32_t)avail;
         fl["used_bytes"]  = (uint32_t)((total > avail) ? (total - avail) : 0);
-        // SD card — stubbed (no driver yet, #122). Shape stable for
-        // the SPA so adding the SD path later is a one-line tweak.
+        // SD card — real state from the SDCard driver. (#122)
         JsonObject sd = st["sd"].to<JsonObject>();
-        sd["present"] = false;
+        sd["present"] = Web::SDCard::present();
+        if (Web::SDCard::present()) {
+          sd["card_type"]   = Web::SDCard::card_type_name();
+          sd["total_bytes"] = (uint64_t)Web::SDCard::total_bytes();
+          sd["used_bytes"]  = (uint64_t)Web::SDCard::used_bytes();
+        }
       }
 
       // ---- clock ----

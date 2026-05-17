@@ -91,9 +91,14 @@ def test_upload_too_large_400(sx):
 def test_send_with_staging_id(sx, lr):
     """SX uploads + sends; LR doesn't actually need to receive for this
     test (covered elsewhere). We just confirm the /send accepts the
-    staging_id and returns 202."""
+    staging_id and returns 202. Triggers an LR announce first so the SX
+    has a public key for the recipient."""
+    import time as _time
     s_sx, dsx = sx
     s_lr, dlr = lr
+    # Prime: LR fires an announce so SX learns the public key.
+    s_lr.post(f"{dlr.url}/api/identities/{dlr.identity}/announce", timeout=10)
+    _time.sleep(3)
     blob = _tiny_jpeg()
     up = s_sx.post(
         f"{dsx.url}/api/identities/{dsx.identity}/attachment/upload",

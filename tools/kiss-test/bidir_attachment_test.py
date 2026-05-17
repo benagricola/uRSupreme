@@ -25,12 +25,23 @@ def _f(name): return open(os.path.join(HERE, name)).read().strip()
 
 SX_URL  = 'http://192.168.1.116'
 LR_URL  = 'http://192.168.1.118'
-SX_IDEN = '140991649b164ece'
-SX_TOK  = _f('.token')
-SX_ADDR = 'e60cf2202cd0609925c0948cf84147a9'
-LR_IDEN = _f('.lr-iden')
-LR_TOK  = _f('.lr-token')
-LR_ADDR = _f('.lr-addr')
+
+# Auto-discover the active identity from /api/info so the script
+# survives full chip-erase wipes. Falls back to a fresh login with the
+# bench tester passwords (memory: sxtester2026 / lrtester2026).
+def _discover(url: str, pw: str):
+    info = requests.get(f'{url}/api/info', timeout=5).json()
+    if not info.get('identities'):
+        raise RuntimeError(f'no identity on {url} — provision it first')
+    iden = info['identities'][0]['id']
+    addr = info['identities'][0]['address']
+    tok = requests.post(f'{url}/api/auth/login',
+                        json={'identity_id': iden, 'password': pw},
+                        timeout=5).json()['token']
+    return iden, addr, tok
+
+SX_IDEN, SX_ADDR, SX_TOK = _discover(SX_URL, 'sxtester2026')
+LR_IDEN, LR_ADDR, LR_TOK = _discover(LR_URL, 'lrtester2026')
 
 SAMPLE_IMG = os.path.normpath(os.path.join(HERE, '..', '..', 'Documentation', 'rnfw_1.jpg'))
 # LoRa-friendly: keep the on-wire payload small so the test finishes

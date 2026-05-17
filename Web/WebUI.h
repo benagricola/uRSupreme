@@ -30,6 +30,7 @@
 #include "QmcMag.h"
 #include "QmiImu.h"
 #include "SensorConfig.h"
+#include "OutboundStaging.h"
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
@@ -436,6 +437,16 @@ namespace Web {
       // Global inbox capacity + wall-clock TTL pruning. (#129)
       server.on("/api/inbox_config",         HTTP_GET,  handle_inbox_config_get);
       server.on("/api/inbox_config",         HTTP_POST, handle_inbox_config_post);
+      // Streaming outbound attachment upload — PSRAM/SD-backed staging
+      // that the /send path consumes by id. (#130) Pattern is the
+      // standard WebServer "two-arg on(): final handler + upload chunk
+      // handler". The body is multipart/form-data with one file field
+      // and ?total=N&hash=... query params; the server allocates the
+      // staging buffer on UPLOAD_FILE_START and appends per chunk.
+      server.on(UriBraces("/api/identities/{}/outbound/upload"),
+                HTTP_POST,
+                handle_outbound_upload_final,
+                handle_outbound_upload_chunk);
       server.on(UriBraces("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
       server.on(UriBraces("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
       server.on(UriBraces("/api/identities/{}/send"),     HTTP_POST, handle_send);
@@ -1067,6 +1078,19 @@ namespace Web {
         }
       }
 
+      // ---- outbound staging caps ----
+      // The SPA uses these to clamp image-resize options, file picker
+      // size limits, and recorder duration to whatever the device's
+      // chosen backend can actually accept. (#130)
+      {
+        const auto caps = Web::OutboundStaging::current_caps();
+        JsonObject oc = doc["outbound_caps"].to<JsonObject>();
+        oc["max_bytes"]       = (uint32_t)caps.max_bytes;
+        oc["backend"]         = caps.chosen_backend == Web::OutboundStaging::Backend::Sd ? "sd" : "psram";
+        oc["psram_free_bytes"] = (uint32_t)caps.psram_free;
+        if (caps.sd_present) oc["sd_free_bytes"] = (uint32_t)caps.sd_free;
+      }
+
       send_json(200, doc);
     }
 
@@ -1234,6 +1258,109 @@ namespace Web {
     // ones the inbox JSONL stores (see LXMFGateway attachment-persist
     // callback: "<msg_hash_hex>_<tag>_<idx>.bin"). The filename is
     // strictly validated against [0-9a-f_].bin to forbid traversal.
+    // Per-request staging-buffer ID. The chunk-callback sets it during
+    // UPLOAD_FILE_START; the final-handler reports it back to the
+    // client. Reset to 0 at each request via UPLOAD_FILE_START so a
+    // failed request doesn't leak its id into the next one.
+    static uint32_t& _current_upload_staging_id() { static uint32_t v = 0; return v; }
+    // Sticky error string for the final-handler response when the
+    // chunk path bailed.
+    static const char*& _current_upload_error() { static const char* v = nullptr; return v; }
+
+    // Per-chunk handler. Fires repeatedly during a multipart POST:
+    // START → many WRITEs → END (or ABORTED on failure). The actual
+    // HTTP response is sent by the final handler below.
+    static void handle_outbound_upload_chunk() {
+      HTTPUpload& u = server.upload();
+      auto& staging_id = _current_upload_staging_id();
+      auto& err        = _current_upload_error();
+      switch (u.status) {
+        case UPLOAD_FILE_START: {
+          staging_id = 0;
+          err        = nullptr;
+          // total size is passed as a query param so we can allocate
+          // the staging buffer in one shot. Multipart itself doesn't
+          // carry the total upfront.
+          const char* total_str = server.arg("total").c_str();
+          const size_t total = (size_t)atoll(total_str);
+          if (total == 0) {
+            err = "Missing or invalid `total` query parameter.";
+            return;
+          }
+          const uint32_t id = Web::OutboundStaging::allocate(total);
+          if (id == 0) {
+            err = "Allocation rejected — file too large or PSRAM/SD unavailable.";
+            return;
+          }
+          staging_id = id;
+          break;
+        }
+        case UPLOAD_FILE_WRITE: {
+          if (staging_id == 0) return;  // error already set
+          if (!Web::OutboundStaging::append(staging_id, u.buf, u.currentSize)) {
+            err = "Chunk write failed (overrun or backing-store error).";
+            Web::OutboundStaging::release(staging_id);
+            staging_id = 0;
+          }
+          break;
+        }
+        case UPLOAD_FILE_END: {
+          if (staging_id == 0) return;
+          if (!Web::OutboundStaging::complete(staging_id)) {
+            err = "Upload ended before all bytes were received.";
+            Web::OutboundStaging::release(staging_id);
+            staging_id = 0;
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
+    // Final handler — runs once after the upload completes (or fails).
+    // Reports the staging_id the client should hand to /send.
+    static void handle_outbound_upload_final() {
+      LXMF::IdentityId caller = require_auth();
+      if (caller.empty()) {
+        // Auth fail. Drop any staging buffer the chunk path may have
+        // built up — we shouldn't keep bytes for an unauthorized peer.
+        uint32_t id = _current_upload_staging_id();
+        if (id) Web::OutboundStaging::release(id);
+        _current_upload_staging_id() = 0;
+        _current_upload_error()      = nullptr;
+        return;
+      }
+      std::string requested = std::string(server.pathArg(0).c_str());
+      if (caller != requested) {
+        uint32_t id = _current_upload_staging_id();
+        if (id) Web::OutboundStaging::release(id);
+        _current_upload_staging_id() = 0;
+        _current_upload_error()      = nullptr;
+        send_error(403, "forbidden");
+        return;
+      }
+      const char* err = _current_upload_error();
+      const uint32_t id = _current_upload_staging_id();
+      _current_upload_staging_id() = 0;
+      _current_upload_error()      = nullptr;
+      if (err) {
+        send_error_with_message(400, "upload_failed", err);
+        return;
+      }
+      if (id == 0) {
+        send_error_with_message(400, "upload_failed",
+          "Upload completed but no staging buffer was created.");
+        return;
+      }
+      JsonDocument doc;
+      doc["staging_id"] = id;
+      doc["total_bytes"] = (uint32_t)Web::OutboundStaging::total_bytes(id);
+      doc["backend"]     = Web::OutboundStaging::backend_of(id) == Web::OutboundStaging::Backend::Sd
+                            ? "sd" : "psram";
+      send_json(200, doc);
+    }
+
     static void handle_attachment_get() {
       LXMF::IdentityId caller = require_auth();
       if (caller.empty()) return;

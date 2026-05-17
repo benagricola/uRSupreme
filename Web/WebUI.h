@@ -10,9 +10,10 @@
 
 #include <Arduino.h>
 #include <EEPROM.h>
+#include <WiFi.h>
 #include <esp_wifi.h>
-#include <WebServer.h>
-#include <uri/UriBraces.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncJson.h>
 #include <ArduinoJson.h>
 #include <Log.h>
 #include <Reticulum.h>
@@ -77,7 +78,7 @@ extern bool     kiss_serial_output;  // toggle KISS-framed bytes on USB UART
 #include <vector>
 #include <string>
 
-extern WebServer server;          // declared in Console.h
+extern AsyncWebServer server;     // declared in Console.h
 extern bool      wifi_initialized;
 // WiFi state from Remote.h. Exposed so /api/info can surface the
 // current connection mode + SSID and so the /api/wifi/softap handler
@@ -121,17 +122,13 @@ namespace Web {
       // /lxmf/time.json.
       Web::TimeManager::load_config(filesystem);
       register_routes();
-      static const char* collect[] = {"Authorization", "Content-Length", "X-Total-Length"};
-      server.collectHeaders(collect, sizeof(collect)/sizeof(collect[0]));
       server.begin();
       NOTICE("WebUI: listening on port 80");
     }
 
-    // Main-loop hook. Used only for the token-expiry sweep now; the
-    // server.handleClient() loop runs in its own FreeRTOS task pinned to
-    // core 0 (see start_task() below). The main loop still calls this so
-    // the existing RNode_Firmware.ino integration doesn't need to know
-    // about the task split.
+    // Main-loop hook. Token-expiry sweep + identity-code sweep. The
+    // HTTP server itself runs in AsyncTCP's own task and doesn't need
+    // a tick here.
     static void loop() {
       if (!_started) return;
       uint32_t now = millis();
@@ -195,44 +192,10 @@ namespace Web {
       ESP.restart();
     }
 
-    // FreeRTOS task body. Calls server.handleClient() in a tight loop
-    // with a brief vTaskDelay between iterations so the FreeRTOS
-    // scheduler can preempt for higher-priority work. Each call takes
-    // the rns_lock briefly while routing through the handlers; the
-    // handlers can also hold the lock for their own RNS calls.
-    static void web_task(void* /*arg*/) {
-      NOTICE("WebUI: web_task started on core 0");
-      while (true) {
-        if (_started) {
-          if (acquire_rns_lock(20)) {
-            server.handleClient();
-            release_rns_lock();
-          }
-        }
-        // 5ms gives the main loop plenty of opportunity to acquire the
-        // lock between requests. Without this the WebServer task can
-        // hog the lock if requests come in rapid succession.
-        vTaskDelay(pdMS_TO_TICKS(5));
-      }
-    }
-
-    // Spawn the WebServer task. Call once from setup() after WiFi is up
-    // and start() has been called. Pinned to core 0 (PRO_CPU) — same
-    // core as WiFi / lwIP — so HTTP traffic stays out of the radio
-    // event loop's path on core 1.
-    static void start_task() {
-      static TaskHandle_t handle = nullptr;
-      if (handle) return;   // already running
-      xTaskCreatePinnedToCore(
-        web_task,           // task function
-        "webui",            // human-readable name
-        8192,               // stack bytes — handlers can use a few KB for JSON
-        nullptr,            // task arg (unused)
-        1,                  // priority — same as the loopTask
-        &handle,            // task handle
-        0                   // core 0 (PRO_CPU)
-      );
-    }
+    // AsyncWebServer drives requests from AsyncTCP's own task — no
+    // need to spawn or pump a handler loop here. Handlers still take
+    // the rns_lock themselves around any RNS access.
+    static void start_task() {}
 
     // Called from the button handler in RNode_Firmware.ino when the user
     // short-presses the device's USR1 button. Generates a fresh 16-byte
@@ -329,25 +292,26 @@ namespace Web {
       return u;
     }
 
-    static void send_json(int code, const JsonDocument& doc) {
+    static void send_json(AsyncWebServerRequest* req, int code, const JsonDocument& doc) {
       String body;
       serializeJson(doc, body);
-      server.send(code, "application/json", body);
+      req->send(code, "application/json", body);
     }
 
-    static void send_error(int code, const char* msg) {
+    static void send_error(AsyncWebServerRequest* req, int code, const char* msg) {
       JsonDocument doc;
       doc["error"]   = msg;
-      send_json(code, doc);
+      send_json(req, code, doc);
     }
 
     // Same shape as send_error but also includes a free-text `message`
     // field the SPA can display directly to the user.
-    static void send_error_with_message(int code, const char* err, const char* msg) {
+    static void send_error_with_message(AsyncWebServerRequest* req, int code,
+                                        const char* err, const char* msg) {
       JsonDocument doc;
       doc["error"]   = err;
       doc["message"] = msg;
-      send_json(code, doc);
+      send_json(req, code, doc);
     }
 
     // Extract bearer-token identity from the Authorization header. Falls
@@ -384,36 +348,28 @@ namespace Web {
       }
     }
 
-    static LXMF::IdentityId require_auth() {
+    static LXMF::IdentityId require_auth(AsyncWebServerRequest* req) {
       std::string token;
-      String h = server.header("Authorization");
-      if (h.startsWith("Bearer ")) {
-        String hex_str = h.substring(7);
-        hex_str.trim();
-        token = std::string(hex_str.c_str());
-      } else if (server.hasArg("token")) {
-        token = std::string(server.arg("token").c_str());
-      } else {
-        send_error(401, "missing_bearer");
+      if (req->hasHeader("Authorization")) {
+        String h = req->header("Authorization");
+        if (h.startsWith("Bearer ")) {
+          String hex_str = h.substring(7);
+          hex_str.trim();
+          token = std::string(hex_str.c_str());
+        }
+      }
+      if (token.empty() && req->hasArg("token")) {
+        token = std::string(req->arg("token").c_str());
+      }
+      if (token.empty()) {
+        send_error(req, 401, "missing_bearer");
         return {};
       }
       LXMF::IdentityId acc = AuthTokens::validate(token);
       if (acc.empty()) {
-        send_error(401, "invalid_or_expired_token");
+        send_error(req, 401, "invalid_or_expired_token");
       }
       return acc;
-    }
-
-    // Read JSON body. Returns empty doc on failure (and sends a 400 to the
-    // client).
-    static bool read_body_json(JsonDocument& out) {
-      String body = server.arg("plain");
-      DeserializationError err = deserializeJson(out, body);
-      if (err) {
-        send_error(400, "invalid_json");
-        return false;
-      }
-      return true;
     }
 
     static RNS::Bytes hex_to_bytes(const std::string& hex, size_t expected = 0) {
@@ -426,6 +382,41 @@ namespace Web {
 
     // ---- Routes ----
 
+    // Build an AsyncURIMatcher from a path containing `{}` placeholders
+    // (legacy syntax inherited from WebServer.h's UriBraces). Each `{}`
+    // becomes `([^/]+)` in the compiled regex; the resulting matcher
+    // exposes the captures via request->pathArg(N). Paths without `{}`
+    // get the matcher's default Exact behaviour for free.
+    static AsyncURIMatcher uri(const String& path) {
+      if (path.indexOf("{}") < 0) return AsyncURIMatcher(path);
+      String pattern = "^";
+      for (size_t i = 0; i < path.length(); ++i) {
+        const char c = path[i];
+        if (c == '{' && i + 1 < path.length() && path[i + 1] == '}') {
+          pattern += "([^/]+)";
+          ++i;
+        } else if (c == '.' || c == '/' || c == '^' || c == '$'
+                || c == '?' || c == '*' || c == '+' || c == '\\'
+                || c == '(' || c == ')' || c == '[' || c == ']') {
+          pattern += '\\';
+          pattern += c;
+        } else {
+          pattern += c;
+        }
+      }
+      pattern += "$";
+      return AsyncURIMatcher::regex(pattern);
+    }
+
+    // Helper: register a JSON-body POST route. AsyncCallbackJsonWebHandler
+    // collects the body, parses it, then invokes the handler with the
+    // parsed JsonVariant.
+    static void on_json_post(const char* path, void (*fn)(AsyncWebServerRequest*, JsonVariant&)) {
+      auto* h = new AsyncCallbackJsonWebHandler(uri(path), fn);
+      h->setMethod(HTTP_POST);
+      server.addHandler(h);
+    }
+
     static void register_routes() {
       // SPA — single embedded HTML file, served gzipped at / and /index.html
       server.on("/",              HTTP_GET, handle_spa);
@@ -434,30 +425,29 @@ namespace Web {
       // Public
       server.on("/api/info",          HTTP_GET,  handle_info);
       // Auth
-      server.on("/api/auth/login",    HTTP_POST, handle_login);
+      on_json_post("/api/auth/login",   handle_login);
       server.on("/api/auth/logout",   HTTP_POST, handle_logout);
       // Identities
-      server.on("/api/identities",      HTTP_POST, handle_create_identity);
-      server.on(UriBraces("/api/identities/{}"), HTTP_GET,    handle_get_identity);
-      server.on(UriBraces("/api/identities/{}"), HTTP_DELETE, handle_delete_identity);
-      server.on(UriBraces("/api/identities/{}/delete"), HTTP_POST, handle_delete_identity);
-      server.on(UriBraces("/api/identities/{}/announce"), HTTP_POST, handle_announce);
-      server.on(UriBraces("/api/identities/{}/settings"), HTTP_POST, handle_identity_settings);
+      on_json_post("/api/identities",  handle_create_identity);
+      server.on(uri("/api/identities/{}"), HTTP_GET,    handle_get_identity);
+      server.on(uri("/api/identities/{}"), HTTP_DELETE, handle_delete_identity);
+      server.on(uri("/api/identities/{}/delete"), HTTP_POST, handle_delete_identity);
+      server.on(uri("/api/identities/{}/announce"), HTTP_POST, handle_announce);
+      on_json_post("/api/identities/{}/settings", handle_identity_settings);
       // Announces (recent LXMF endpoint announces seen by the device)
       server.on("/api/announces",     HTTP_GET, handle_announces);
       // System — full wipe, gated by identity_code (physical presence).
       // Only path to recovery if every identity password is forgotten.
-      server.on("/api/system/factory_reset", HTTP_POST, handle_factory_reset);
-      server.on("/api/system/transport",     HTTP_POST, handle_transport_toggle);
-      server.on("/api/system/kiss",          HTTP_POST, handle_kiss_toggle);
-      // Time management (#111, #113). GET returns the current calibrated
-      // time + the source-priority config; POST /api/time {unix_ms}
-      // adopts a browser-supplied time; POST /api/time/sources
-      // {sources:{gps:{enabled,priority},…}} writes the source config.
-      // All bearer-auth-gated.
+      on_json_post("/api/system/factory_reset", handle_factory_reset);
+      on_json_post("/api/system/transport",     handle_transport_toggle);
+      on_json_post("/api/system/kiss",          handle_kiss_toggle);
+      // Time management. GET returns the current calibrated time +
+      // source-priority config; POST /api/time {unix_ms} adopts a
+      // browser-supplied time; POST /api/time/sources {sources:{...}}
+      // writes the source config. All bearer-auth-gated.
       server.on("/api/time",                 HTTP_GET,  handle_time_get);
-      server.on("/api/time",                 HTTP_POST, handle_time_set);
-      server.on("/api/time/sources",         HTTP_POST, handle_time_sources_set);
+      on_json_post("/api/time",                 handle_time_set);
+      on_json_post("/api/time/sources",         handle_time_sources_set);
       // GPS fix — last RMC sentence parsed.
       server.on("/api/gps",                  HTTP_GET,  handle_gps_get);
       // RTC diagnostics — raw chip state.
@@ -465,78 +455,79 @@ namespace Web {
       // Aggregated device status: storage + clock + sensors.
       server.on("/api/system_status",        HTTP_GET,  handle_system_status);
       // Per-sensor enable + polling-interval overrides.
-      server.on("/api/sensors/config",       HTTP_POST, handle_sensors_config_post);
+      on_json_post("/api/sensors/config",       handle_sensors_config_post);
       // Global inbox capacity + wall-clock TTL pruning.
       server.on("/api/inbox_config",         HTTP_GET,  handle_inbox_config_get);
-      server.on("/api/inbox_config",         HTTP_POST, handle_inbox_config_post);
+      on_json_post("/api/inbox_config",         handle_inbox_config_post);
       // Streaming outbound attachment upload — PSRAM/SD-backed staging
-      // that the /send path consumes by id. Pattern is the
-      // standard WebServer "two-arg on(): final handler + upload chunk
-      // handler". The body is multipart/form-data with one file field
-      // and ?total=N&hash=... query params; the server allocates the
-      // staging buffer on UPLOAD_FILE_START and appends per chunk.
-      server.on(UriBraces("/api/identities/{}/attachment/upload"),
+      // that the /send path consumes by id. The body is multipart/
+      // form-data with one file field; the X-Total-Length header tells
+      // us how much to allocate up front.
+      server.on(uri("/api/identities/{}/attachment/upload"),
                 HTTP_POST,
                 handle_outbound_upload_final,
                 handle_outbound_upload_chunk);
-      server.on(UriBraces("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
-      server.on(UriBraces("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
-      server.on(UriBraces("/api/identities/{}/send"),     HTTP_POST, handle_send);
+      server.on(uri("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
+      server.on(uri("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
+      on_json_post("/api/identities/{}/send",     handle_send);
       // POST /api/identities/{id}/outbox/{seq}/retry — manually re-queue
       // a Failed outbox entry. Resets the auto-retry budget.
-      server.on(UriBraces("/api/identities/{}/outbox/{}/retry"),
+      server.on(uri("/api/identities/{}/outbox/{}/retry"),
                 HTTP_POST, handle_outbox_retry);
-      server.on(UriBraces("/api/identities/{}/events"),   HTTP_GET,  handle_events);
-      server.on(UriBraces("/api/identities/{}/state"),    HTTP_GET,  handle_state);
-      server.on(UriBraces("/api/identities/{}/conversations/{}"),
+      server.on(uri("/api/identities/{}/events"),   HTTP_GET,  handle_events);
+      server.on(uri("/api/identities/{}/state"),    HTTP_GET,  handle_state);
+      server.on(uri("/api/identities/{}/conversations/{}"),
                 HTTP_DELETE, handle_clear_conversation);
-      server.on(UriBraces("/api/identities/{}/attachment/download/{}"),
+      server.on(uri("/api/identities/{}/attachment/download/{}"),
                 HTTP_GET, handle_attachment_get);
       server.on("/api/storage/migrate_flash_to_sd",
                 HTTP_POST, handle_migrate_flash_to_sd);
       // Paths
       server.on("/api/paths",         HTTP_GET,  handle_paths_list);
-      server.on("/api/paths/lookup",  HTTP_POST, handle_path_lookup);
+      on_json_post("/api/paths/lookup",  handle_path_lookup);
       server.on("/api/paths/estimate",HTTP_GET,  handle_path_estimate);
       // WiFi config — gated by bearer token OR identity_code in body.
       // Reboots on save.
       server.on("/api/wifi/scan",     HTTP_GET,  handle_wifi_scan);
-      server.on("/api/wifi/configure",HTTP_POST, handle_wifi_configure);
-      server.on("/api/wifi/softap",   HTTP_POST, handle_wifi_force_softap);
+      on_json_post("/api/wifi/configure", handle_wifi_configure);
+      on_json_post("/api/wifi/softap",    handle_wifi_force_softap);
       server.on("/api/wifi/saved",    HTTP_GET,  handle_wifi_saved_list);
-      server.on("/api/wifi/forget",   HTTP_POST, handle_wifi_forget);
+      on_json_post("/api/wifi/forget",    handle_wifi_forget);
       // Radio config — read requires bearer auth; write/reset require
       // bearer OR identity_code. Both write paths reboot on success.
       server.on("/api/radio",         HTTP_GET,  handle_radio_get);
-      server.on("/api/radio",         HTTP_POST, handle_radio_set);
-      server.on("/api/radio/reset",   HTTP_POST, handle_radio_reset);
-      server.on("/api/radio/airtime", HTTP_POST, handle_radio_airtime);
+      on_json_post("/api/radio",         handle_radio_set);
+      on_json_post("/api/radio/reset",   handle_radio_reset);
+      on_json_post("/api/radio/airtime", handle_radio_airtime);
     }
 
-    static void handle_spa() {
-      server.sendHeader("Content-Encoding", "gzip");
+    static void handle_spa(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      AsyncWebServerResponse* resp = req->beginResponse_P(
+          200, "text/html",
+          Web::SPA_HTML_GZ, Web::SPA_HTML_GZ_LEN);
+      resp->addHeader("Content-Encoding", "gzip");
       // no-store, not no-cache: no-cache lets the browser keep a copy and
       // revalidate, but our handler doesn't implement 304, so stale SPAs
       // get served. no-store guarantees a fresh fetch every load.
-      server.sendHeader("Cache-Control", "no-store");
-      server.send_P(200, "text/html",
-                    reinterpret_cast<const char*>(Web::SPA_HTML_GZ),
-                    Web::SPA_HTML_GZ_LEN);
+      resp->addHeader("Cache-Control", "no-store");
+      req->send(resp);
     }
 
-    static void handle_alpine_js() {
-      server.sendHeader("Content-Encoding", "gzip");
+    static void handle_alpine_js(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      AsyncWebServerResponse* resp = req->beginResponse_P(
+          200, "application/javascript",
+          Web::SPA_ALPINE_JS_GZ, Web::SPA_ALPINE_JS_GZ_LEN);
+      resp->addHeader("Content-Encoding", "gzip");
       // Alpine doesn't change between SPA versions, so let the browser
-      // cache it indefinitely — it's the largest asset by far. The
-      // filename includes no hash today; if we ever bump versions we'll
-      // need to either rename or bust the cache from the SPA loader.
-      server.sendHeader("Cache-Control", "public, max-age=31536000, immutable");
-      server.send_P(200, "application/javascript",
-                    reinterpret_cast<const char*>(Web::SPA_ALPINE_JS_GZ),
-                    Web::SPA_ALPINE_JS_GZ_LEN);
+      // cache it indefinitely — largest asset by far.
+      resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
+      req->send(resp);
     }
 
-    static void handle_info() {
+    static void handle_info(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
       JsonDocument doc;
       doc["fw_version"] = "lxmf-gateway-0.1";
       doc["uptime_ms"]  = (uint32_t)millis();
@@ -679,27 +670,26 @@ namespace Web {
       // TODO microReticulum doesn't yet expose live path/packet counters
       // through a stable static getter. Add an accessor on the local
       // clone branch when we want to surface them in the SPA.
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_login() {
-      JsonDocument body;
-      if (!read_body_json(body)) return;
+    static void handle_login(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
       const char* acc_str = body["identity_id"] | "";
       const char* pw_str  = body["password"]   | "";
       if (!*acc_str) {
-        send_error_with_message(400, "missing_identity_id",
+        send_error_with_message(req, 400, "missing_identity_id",
           "Identity ID is required.");
         return;
       }
       if (!*pw_str) {
-        send_error_with_message(400, "missing_password",
+        send_error_with_message(req, 400, "missing_password",
           "Password is required.");
         return;
       }
       LXMF::IdentityId iden_id = acc_str;
       if (!LXMF::LXMFGateway::identity_by_id(iden_id)) {
-        send_error_with_message(404, "unknown_identity",
+        send_error_with_message(req, 404, "unknown_identity",
           "No identity with that ID exists on this device.");
         return;
       }
@@ -707,13 +697,13 @@ namespace Web {
       // explicitly NOT a path to login because a stolen device could
       // otherwise be unlocked by anyone with hands on it.
       if (!LXMF::LXMFGateway::check_password(iden_id, pw_str, PasswordHash::verify)) {
-        send_error_with_message(401, "invalid_password",
+        send_error_with_message(req, 401, "invalid_password",
           "Incorrect password for that identity.");
         return;
       }
       std::string token = AuthTokens::issue(iden_id);
       if (token.empty()) {
-        send_error(500, "token_issue_failed");
+        send_error(req, 500, "token_issue_failed");
         return;
       }
       // Fire an announce now so peers learn this identity immediately
@@ -726,33 +716,33 @@ namespace Web {
       doc["token"]         = token;
       doc["identity_id"]    = iden_id;
       doc["expires_in_s"]  = AuthTokens::DEFAULT_TTL_S;
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_logout() {
-      String h = server.header("Authorization");
+    static void handle_logout(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      String h = req->header("Authorization");
       if (h.startsWith("Bearer ")) {
         String hex_str = h.substring(7);
         hex_str.trim();
         AuthTokens::revoke(std::string(hex_str.c_str()));
       }
-      server.send(204, "text/plain", "");
+      req->send(204, "text/plain", "");
     }
 
-    static void handle_create_identity() {
-      JsonDocument body;
-      if (!read_body_json(body)) return;
+    static void handle_create_identity(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
       const char* name      = body["display_name"]     | "";
       const char* proof_str = body["identity_code"]    | "";
       const char* pw        = body["password"]         | "";
       const char* pw_conf   = body["password_confirm"] | "";
-      if (!*name) { send_error(400, "missing_display_name"); return; }
+      if (!*name) { send_error(req, 400, "missing_display_name"); return; }
       if (strlen(pw) < PasswordHash::MIN_PASSWORD_LEN) {
-        send_error(400, "password_too_short");
+        send_error(req, 400, "password_too_short");
         return;
       }
       if (strcmp(pw, pw_conf) != 0) {
-        send_error(400, "password_mismatch");
+        send_error(req, 400, "password_mismatch");
         return;
       }
       // Physical-presence proof required for identity creation —
@@ -761,13 +751,13 @@ namespace Web {
       // possible without someone physically present at the device.
       const char* code_err = explain_identity_code_failure(proof_str);
       if (code_err) {
-        send_error_with_message(401, "identity_code_required", code_err);
+        send_error_with_message(req, 401, "identity_code_required", code_err);
         return;
       }
       LXMF::IdentityId iden_id = LXMF::LXMFGateway::create_identity(
           name, pw, PasswordHash::derive, PasswordHash::new_salt);
       if (iden_id.empty()) {
-        send_error(500, "create_failed");
+        send_error(req, 500, "create_failed");
         return;
       }
       std::string token = AuthTokens::issue(iden_id);
@@ -776,16 +766,17 @@ namespace Web {
       doc["id"]      = iden_id;
       doc["address"] = a ? a->address_hex() : "";
       doc["token"]   = token;
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_get_identity() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_get_identity(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(server.pathArg(0).c_str());
-      if (caller != requested) { send_error(403, "forbidden"); return; }
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
-      if (!a) { send_error(404, "unknown_identity"); return; }
+      if (!a) { send_error(req, 404, "unknown_identity"); return; }
       JsonDocument doc;
       doc["id"]                   = a->id;
       doc["display_name"]         = a->display_name;
@@ -803,33 +794,33 @@ namespace Web {
         next_in = (elapsed >= a->announce_interval_ms) ? 0 : (a->announce_interval_ms - elapsed);
       }
       doc["next_announce_in_ms"]  = next_in;
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_delete_identity() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_delete_identity(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(server.pathArg(0).c_str());
-      if (caller != requested) { send_error(403, "forbidden"); return; }
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
       AuthTokens::revoke_for_identity(requested);
       if (!LXMF::LXMFGateway::delete_identity(requested)) {
-        send_error(404, "unknown_identity");
+        send_error(req, 404, "unknown_identity");
         return;
       }
-      server.send(204, "text/plain", "");
+      req->send(204, "text/plain", "");
     }
 
     // Toggle Reticulum transport mode on or off at runtime. Persists
     // the choice to /lxmf/transport.json so it survives reboots.
     // Requires an authenticated session — anyone with a token can flip
     // it for now, since we don't have per-identity admin yet.
-    static void handle_transport_toggle() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_transport_toggle(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      JsonDocument body;
-      if (!read_body_json(body)) return;
       if (!body["enabled"].is<bool>()) {
-        send_error_with_message(400, "missing_enabled",
+        send_error_with_message(req, 400, "missing_enabled",
             "Request must include {enabled: true|false}.");
         return;
       }
@@ -846,7 +837,7 @@ namespace Web {
               enabled ? "true" : "false", caller.c_str());
       JsonDocument doc;
       doc["enabled"] = enabled;
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // POST /api/system/kiss { enabled: bool }
@@ -855,12 +846,11 @@ namespace Web {
     // 0x01=on). No reboot — takes effect on the next call to
     // serial_write(). Auth: bearer token only; the user is in front
     // of the serial monitor when they want to flip this.
-    static void handle_kiss_toggle() {
-      if (require_auth().empty()) return;
-      JsonDocument body;
-      if (!read_body_json(body)) return;
+    static void handle_kiss_toggle(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       if (!body["enabled"].is<bool>()) {
-        send_error_with_message(400, "missing_enabled",
+        send_error_with_message(req, 400, "missing_enabled",
             "Request must include {enabled: true|false}.");
         return;
       }
@@ -871,15 +861,16 @@ namespace Web {
               enabled ? "true" : "false");
       JsonDocument doc;
       doc["enabled"] = enabled;
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // GET /api/time — returns the current calibrated time, the source
     // that set it, and the source-priority/enable config. Open to any
     // authenticated session (the time itself is also exposed via
     // /api/info → clock.now_ms, so this just adds source detail).
-    static void handle_time_get() {
-      if (require_auth().empty()) return;
+    static void handle_time_get(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       JsonDocument doc;
       const double epoch = Web::TimeManager::now_epoch();
       doc["calibrated"]  = Web::TimeManager::is_calibrated();
@@ -896,26 +887,25 @@ namespace Web {
         s["priority"]   = cfg.priority;
         s["interval_s"] = cfg.interval_s;
       }
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // POST /api/time {unix_ms} — adopt a browser-supplied time. Subject
     // to the Browser source's enabled+priority config; if a higher-
     // priority source has already set the time, the report is
     // recorded but not adopted, and the response indicates that.
-    static void handle_time_set() {
-      if (require_auth().empty()) return;
-      JsonDocument body;
-      if (!read_body_json(body)) return;
+    static void handle_time_set(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       if (!body["unix_ms"].is<uint64_t>() && !body["unix_ms"].is<double>()
           && !body["unix_ms"].is<long long>()) {
-        send_error_with_message(400, "missing_unix_ms",
+        send_error_with_message(req, 400, "missing_unix_ms",
           "Request body must include unix_ms (milliseconds since 1970).");
         return;
       }
       const double unix_ms = (double)(body["unix_ms"] | 0.0);
       if (unix_ms <= 0) {
-        send_error_with_message(400, "invalid_unix_ms",
+        send_error_with_message(req, 400, "invalid_unix_ms",
           "unix_ms must be a positive number of milliseconds since 1970.");
         return;
       }
@@ -930,19 +920,18 @@ namespace Web {
       if (adopted) {
         NOTICEF("WebUI: time set from browser to epoch %.3f", epoch);
       }
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // POST /api/time/sources {sources: {gps: {enabled, priority}, …}}
     // — update which time sources are enabled and their priority
     // ordering. Persisted to EEPROM. Sources not mentioned in the body
     // keep their existing config.
-    static void handle_time_sources_set() {
-      if (require_auth().empty()) return;
-      JsonDocument body;
-      if (!read_body_json(body)) return;
+    static void handle_time_sources_set(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       if (!body["sources"].is<JsonObject>()) {
-        send_error_with_message(400, "missing_sources",
+        send_error_with_message(req, 400, "missing_sources",
           "Request body must include {sources: {<source>: {enabled, priority}, …}}.");
         return;
       }
@@ -960,14 +949,15 @@ namespace Web {
       }
       Web::TimeManager::persist_config(filesystem);
       NOTICE("WebUI: time-source config updated");
-      handle_time_get();
+      handle_time_get(req);
     }
 
     // GET /api/rtc — diagnostic snapshot of the on-board PCF8563.
     // Live I2C read; surfaces VL flag + raw regs so we can confirm
     // the hardware is wired and persisting.
-    static void handle_rtc_get() {
-      if (require_auth().empty()) return;
+    static void handle_rtc_get(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       JsonDocument doc;
       const auto s = Web::RtcPCF8563::debug_snapshot();
       doc["available"] = Web::RtcPCF8563::available();
@@ -976,7 +966,7 @@ namespace Web {
       JsonArray regs   = doc["regs"].to<JsonArray>();
       for (int i = 0; i < 7; ++i) regs.add(s.regs[i]);
       doc["unix_ms"]   = (uint64_t)(s.epoch * 1000.0);
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // GET /api/system_status — aggregator for the device-status popover.
@@ -984,8 +974,9 @@ namespace Web {
     // readings into one call so the SPA can populate the whole popover
     // in a single round-trip. Auth-gated for the same reason GPS is —
     // device location and sensor data are sensitive on a shared LAN.
-    static void handle_system_status() {
-      if (require_auth().empty()) return;
+    static void handle_system_status(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       JsonDocument doc;
 
       // ---- storage ----
@@ -1131,41 +1122,41 @@ namespace Web {
 
       emit_battery_detail(doc);
 
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // GET /api/inbox_config — current capacity + TTL. ram_capacity is
     // emitted as 0 for "unlimited" so the SPA dropdown can render it
     // explicitly; the server-side sentinel is SIZE_MAX.
-    static void handle_inbox_config_get() {
-      if (require_auth().empty()) return;
+    static void handle_inbox_config_get(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       const auto& cfg = LXMF::InboxConfig::current();
       JsonDocument doc;
       doc["ram_capacity"] = (cfg.ram_capacity >= 0xFFFFFFFEu)
           ? (uint32_t)0 : (uint32_t)cfg.ram_capacity;
       doc["ttl_seconds"]  = cfg.ttl_seconds;
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // POST /api/inbox_config — body = {"ram_capacity":uint, "ttl_seconds":uint}.
     // ram_capacity 0 means unlimited. ttl_seconds 0 means TTL off.
     // Applies + persists across all active identity inboxes.
-    static void handle_inbox_config_post() {
-      if (require_auth().empty()) return;
-      JsonDocument body;
-      if (!read_body_json(body)) return;
+    static void handle_inbox_config_post(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       const uint32_t cap = body["ram_capacity"] | (uint32_t)LXMF::LXMFInbox::DEFAULT_RAM_CAPACITY;
       const uint32_t ttl = body["ttl_seconds"]  | (uint32_t)0;
       // Sanity caps: 10 years TTL max, no ram_capacity ceiling here
       // because 0/SIZE_MAX is the "unlimited" sentinel.
       if (ttl > 10UL * 365UL * 86400UL) {
-        send_error_with_message(400, "ttl_too_large",
+        send_error_with_message(req, 400, "ttl_too_large",
           "TTL must be no more than 10 years.");
         return;
       }
       LXMF::InboxConfig::set(filesystem, cap, ttl);
       LXMF::LXMFGateway::apply_inbox_config_to_all();
-      handle_inbox_config_get();
+      handle_inbox_config_get(req);
     }
 
     // POST /api/sensors/config — body = {"sensor":"bme280|magnetometer|imu",
@@ -1173,25 +1164,24 @@ namespace Web {
     // running driver and persists to /lxmf/sensors.json so it survives
     // reboot. GPS isn't routed through here — its enable/interval are
     // bound to the time-source priority list (see /api/time/sources).
-    static void handle_sensors_config_post() {
-      if (require_auth().empty()) return;
-      JsonDocument body;
-      if (!read_body_json(body)) return;
+    static void handle_sensors_config_post(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       const char* key       = body["sensor"]      | "";
       const bool  enabled   = body["enabled"]     | true;
       const uint32_t iv_s   = (uint32_t)(body["interval_s"] | 60);
       if (!*key) {
-        send_error_with_message(400, "missing_sensor",
+        send_error_with_message(req, 400, "missing_sensor",
           "Body must include `sensor` (one of bme280, magnetometer, imu).");
         return;
       }
       if (iv_s > 7 * 24 * 3600UL) {
-        send_error_with_message(400, "interval_too_large",
+        send_error_with_message(req, 400, "interval_too_large",
           "Interval must be no more than 7 days.");
         return;
       }
       if (!Web::SensorConfig::update_one(filesystem, key, enabled, iv_s)) {
-        send_error_with_message(400, "unknown_sensor",
+        send_error_with_message(req, 400, "unknown_sensor",
           "Unknown sensor key. Expected bme280, magnetometer, or imu.");
         return;
       }
@@ -1200,14 +1190,15 @@ namespace Web {
       doc["sensor"]     = key;
       doc["enabled"]    = enabled;
       doc["interval_s"] = iv_s;
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // GET /api/gps — last RMC fix. Returns valid flag, position,
     // speed/heading, UTC, and how recent the fix was. Auth-gated so
     // attackers on the LAN can't passively scrape location.
-    static void handle_gps_get() {
-      if (require_auth().empty()) return;
+    static void handle_gps_get(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       JsonDocument doc;
       const Web::Gps::Fix f = Web::Gps::last_fix();
       doc["available"]   = Web::Gps::has_serial();
@@ -1221,19 +1212,18 @@ namespace Web {
                             : (long)(millis() - f.fix_received_ms);
       doc["last_byte_ms"] = f.last_byte_ms == 0 ? -1
                             : (long)(millis() - f.last_byte_ms);
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_factory_reset() {
-      JsonDocument body;
-      if (!read_body_json(body)) return;
+    static void handle_factory_reset(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
       // Physical-presence required, regardless of any active session —
       // factory reset wipes ALL identities and all messages, so the
       // proof-of-possession bar applies just like identity creation.
       const char* proof = body["identity_code"] | "";
       const char* code_err = explain_identity_code_failure(proof);
       if (code_err) {
-        send_error_with_message(401, "identity_code_required", code_err);
+        send_error_with_message(req, 401, "identity_code_required", code_err);
         return;
       }
       NOTICE("WebUI: factory reset triggered — wiping /lxmf and rebooting");
@@ -1256,7 +1246,7 @@ namespace Web {
       JsonDocument doc;
       doc["status"]  = "wiped";
       doc["restart"] = true;
-      send_json(200, doc);
+      send_json(req, 200, doc);
       persist_and_restart();
     }
 
@@ -1264,23 +1254,24 @@ namespace Web {
     // Bearer-auth gated. Removes every inbox + outbox record for this
     // identity whose peer_hash matches peer_hex. Rewrites the JSONL
     // spool. Identity itself, keys, and other peers are untouched.
-    static void handle_clear_conversation() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_clear_conversation(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(server.pathArg(0).c_str());
-      if (caller != requested) { send_error(403, "forbidden"); return; }
-      std::string peer_hex = std::string(server.pathArg(1).c_str());
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      std::string peer_hex = std::string(req->pathArg(1).c_str());
       RNS::Bytes peer = hex_to_bytes(peer_hex, LXMF::HASH_LEN);
       if (peer.size() != LXMF::HASH_LEN) {
         char msg[120];
         snprintf(msg, sizeof(msg),
                  "Peer address must be 32 hex characters (got %u).",
                  (unsigned)peer_hex.size());
-        send_error_with_message(400, "invalid_peer_hash", msg);
+        send_error_with_message(req, 400, "invalid_peer_hash", msg);
         return;
       }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
-      if (!a) { send_error(404, "unknown_identity"); return; }
+      if (!a) { send_error(req, 404, "unknown_identity"); return; }
       size_t inbox_removed  = a->inbox  ? a->inbox->purge_peer(peer)  : 0;
       size_t outbox_removed = a->outbox ? a->outbox->purge_peer(peer) : 0;
       NOTICEF("WebUI: cleared conversation %s <-> %s (inbox=%u outbox=%u)",
@@ -1289,7 +1280,7 @@ namespace Web {
       JsonDocument doc;
       doc["inbox_removed"]  = (uint32_t)inbox_removed;
       doc["outbox_removed"] = (uint32_t)outbox_removed;
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // GET /api/identities/{id}/attachments/{filename}
@@ -1307,105 +1298,83 @@ namespace Web {
     // chunk path bailed.
     static const char*& _current_upload_error() { static const char* v = nullptr; return v; }
 
-    // Per-chunk handler. Fires repeatedly during a multipart POST:
-    // START → many WRITEs → END (or ABORTED on failure). The actual
-    // HTTP response is sent by the final handler below.
-    static void handle_outbound_upload_chunk() {
-      HTTPUpload& u = server.upload();
+    // Per-chunk multipart-upload handler. AsyncWebServer invokes this
+    // repeatedly during the upload: index==0 marks the first chunk
+    // (allocate the buffer), final==true marks the last (validate +
+    // commit), in-between calls append bytes. The actual HTTP
+    // response is produced by handle_outbound_upload_final below.
+    static void handle_outbound_upload_chunk(AsyncWebServerRequest* req,
+                                             const String& /*filename*/,
+                                             size_t index, uint8_t* data,
+                                             size_t len, bool final) {
       auto& staging_id = _current_upload_staging_id();
       auto& err        = _current_upload_error();
-      switch (u.status) {
-        case UPLOAD_FILE_START: {
+      if (index == 0) {
+        staging_id = 0;
+        err        = nullptr;
+        // Total size is the X-Total-Length header — query args are
+        // not reliable during multipart parsing. strtoull lets us
+        // reject >4 GiB values before narrowing to size_t.
+        if (!req->hasHeader("X-Total-Length")) {
+          err = "Missing X-Total-Length header.";
+          return;
+        }
+        const String hdr_total = req->header("X-Total-Length");
+        char* end = nullptr;
+        const unsigned long long total64 = strtoull(hdr_total.c_str(), &end, 10);
+        if (hdr_total.length() == 0 || end == hdr_total.c_str() || total64 == 0) {
+          err = "Invalid X-Total-Length header.";
+          return;
+        }
+        if (total64 > (unsigned long long)Web::OutboundStaging::ABSOLUTE_MAX_BYTES) {
+          err = "Requested upload size exceeds the device's absolute ceiling.";
+          return;
+        }
+        const size_t total = (size_t)total64;
+        // Cross-check against Content-Length: must be ≥ total
+        // (multipart wrapping adds bytes), and within 16 KiB of it.
+        if (req->hasHeader("Content-Length")) {
+          const unsigned long long clen =
+            strtoull(req->header("Content-Length").c_str(), nullptr, 10);
+          if (clen > 0 && clen < total64) {
+            err = "Content-Length is smaller than declared `total`.";
+            return;
+          }
+          if (clen > total64 + 16 * 1024) {
+            err = "Content-Length is far larger than declared `total`.";
+            return;
+          }
+        }
+        const uint32_t id = Web::OutboundStaging::allocate(total);
+        if (id == 0) {
+          err = "Allocation rejected — file too large or PSRAM/SD unavailable.";
+          return;
+        }
+        staging_id = id;
+      }
+      if (staging_id == 0) return;  // error already set
+      if (len > 0 && !Web::OutboundStaging::append(staging_id, data, len)) {
+        // append() refuses any write that would push past the
+        // allocated size; treat as a hard fault.
+        err = "Chunk write failed (overrun or backing-store error).";
+        Web::OutboundStaging::release(staging_id);
+        staging_id = 0;
+        return;
+      }
+      if (final) {
+        if (!Web::OutboundStaging::complete(staging_id)) {
+          err = "Upload ended before all bytes were received.";
+          Web::OutboundStaging::release(staging_id);
           staging_id = 0;
-          err        = nullptr;
-          // Total size is passed as the X-Total-Length header so we can
-          // allocate the staging buffer up front. We can't use a query
-          // param here — the ESP32 WebServer's multipart parser wipes
-          // URL args before UPLOAD_FILE_START fires, so server.arg("total")
-          // comes back empty. Headers survive the same code path because
-          // they're parsed earlier and collectHeaders() pinned the field
-          // we need. Parse via strtoull so a >4 GiB value can't silently
-          // truncate to size_t before the bound check below.
-          if (!server.hasHeader("X-Total-Length")) {
-            err = "Missing X-Total-Length header.";
-            return;
-          }
-          const String hdr_total = server.header("X-Total-Length");
-          char* end = nullptr;
-          const unsigned long long total64 = strtoull(hdr_total.c_str(), &end, 10);
-          if (hdr_total.length() == 0 || end == hdr_total.c_str() || total64 == 0) {
-            err = "Invalid X-Total-Length header.";
-            return;
-          }
-          if (total64 > (unsigned long long)Web::OutboundStaging::ABSOLUTE_MAX_BYTES) {
-            err = "Requested upload size exceeds the device's absolute ceiling.";
-            return;
-          }
-          const size_t total = (size_t)total64;
-          // Cross-check against Content-Length: it's allowed to be
-          // larger than `total` because multipart adds MIME boundaries
-          // / headers (~few hundred bytes), but if it's *smaller* the
-          // client is lying about the upload size.
-          if (server.hasHeader("Content-Length")) {
-            const unsigned long long clen =
-              strtoull(server.header("Content-Length").c_str(), nullptr, 10);
-            if (clen > 0 && clen < total64) {
-              err = "Content-Length is smaller than declared `total`.";
-              return;
-            }
-            // Allow up to 16 KiB of multipart framing overhead.
-            if (clen > total64 + 16 * 1024) {
-              err = "Content-Length is far larger than declared `total`.";
-              return;
-            }
-          }
-          const uint32_t id = Web::OutboundStaging::allocate(total);
-          if (id == 0) {
-            err = "Allocation rejected — file too large or PSRAM/SD unavailable.";
-            return;
-          }
-          staging_id = id;
-          break;
         }
-        case UPLOAD_FILE_WRITE: {
-          if (staging_id == 0) return;  // error already set
-          if (!Web::OutboundStaging::append(staging_id, u.buf, u.currentSize)) {
-            // append() refuses any write that would push past the
-            // allocated size; we treat that as a hard fault. The
-            // backing buffer is bounded and there's no path here that
-            // could overflow it, even with attacker-controlled chunks.
-            err = "Chunk write failed (overrun or backing-store error).";
-            Web::OutboundStaging::release(staging_id);
-            staging_id = 0;
-          }
-          break;
-        }
-        case UPLOAD_FILE_END: {
-          if (staging_id == 0) return;
-          if (!Web::OutboundStaging::complete(staging_id)) {
-            err = "Upload ended before all bytes were received.";
-            Web::OutboundStaging::release(staging_id);
-            staging_id = 0;
-          }
-          break;
-        }
-        case UPLOAD_FILE_ABORTED: {
-          if (staging_id) {
-            Web::OutboundStaging::release(staging_id);
-            staging_id = 0;
-          }
-          if (!err) err = "Upload aborted.";
-          break;
-        }
-        default:
-          break;
       }
     }
 
     // Final handler — runs once after the upload completes (or fails).
     // Reports the staging_id the client should hand to /send.
-    static void handle_outbound_upload_final() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_outbound_upload_final(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) {
         // Auth fail. Drop any staging buffer the chunk path may have
         // built up — we shouldn't keep bytes for an unauthorized peer.
@@ -1415,13 +1384,13 @@ namespace Web {
         _current_upload_error()      = nullptr;
         return;
       }
-      std::string requested = std::string(server.pathArg(0).c_str());
+      std::string requested = std::string(req->pathArg(0).c_str());
       if (caller != requested) {
         uint32_t id = _current_upload_staging_id();
         if (id) Web::OutboundStaging::release(id);
         _current_upload_staging_id() = 0;
         _current_upload_error()      = nullptr;
-        send_error(403, "forbidden");
+        send_error(req, 403, "forbidden");
         return;
       }
       const char* err = _current_upload_error();
@@ -1429,11 +1398,11 @@ namespace Web {
       _current_upload_staging_id() = 0;
       _current_upload_error()      = nullptr;
       if (err) {
-        send_error_with_message(400, "upload_failed", err);
+        send_error_with_message(req, 400, "upload_failed", err);
         return;
       }
       if (id == 0) {
-        send_error_with_message(400, "upload_failed",
+        send_error_with_message(req, 400, "upload_failed",
           "Upload completed but no staging buffer was created.");
         return;
       }
@@ -1442,15 +1411,16 @@ namespace Web {
       doc["total_bytes"] = (uint32_t)Web::OutboundStaging::total_bytes(id);
       doc["backend"]     = Web::OutboundStaging::backend_of(id) == Web::OutboundStaging::Backend::Sd
                             ? "sd" : "psram";
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_attachment_get() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_attachment_get(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(server.pathArg(0).c_str());
-      if (caller != requested) { send_error(403, "forbidden"); return; }
-      std::string fname = std::string(server.pathArg(1).c_str());
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      std::string fname = std::string(req->pathArg(1).c_str());
       // [ATTDBG] Log the raw filename (full hex dump) so we can pin-point
       // any URL-decode quirks or stray whitespace.
       {
@@ -1491,12 +1461,12 @@ namespace Web {
         }
       }
       if (!ok) {
-        send_error_with_message(400, "invalid_attachment_name",
+        send_error_with_message(req, 400, "invalid_attachment_name",
           "Attachment filename must match <msg_hex>_<tag>_<idx>.bin.");
         return;
       }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
-      if (!a) { send_error(404, "unknown_identity"); return; }
+      if (!a) { send_error(req, 404, "unknown_identity"); return; }
       const std::string full = a->dir() + "/attachments/" + fname;
       // Backend dispatch. Try SD first if a card is mounted —
       // big attachments live there; small/pre-SD ones on LittleFS. If
@@ -1504,7 +1474,7 @@ namespace Web {
       const bool on_sd    = Web::SDCard::present() && Web::SDCard::exists(full.c_str());
       const bool on_flash = !on_sd && filesystem.exists(full.c_str());
       if (!on_sd && !on_flash) {
-        send_error(404, "attachment_not_found");
+        send_error(req, 404, "attachment_not_found");
         return;
       }
       size_t total = 0;
@@ -1512,36 +1482,47 @@ namespace Web {
       microStore::File flash_f;
       if (on_sd) {
         sd_f = Web::SDCard::open_read(full.c_str());
-        if (!sd_f) { send_error(500, "attachment_open_failed"); return; }
+        if (!sd_f) { send_error(req, 500, "attachment_open_failed"); return; }
         total = sd_f.size();
       } else {
         flash_f = filesystem.open(full.c_str(), microStore::File::ModeRead);
-        if (!flash_f) { send_error(500, "attachment_open_failed"); return; }
+        if (!flash_f) { send_error(req, 500, "attachment_open_failed"); return; }
         total = flash_f.size();
       }
-      // Set headers, then stream in chunks so we don't need the whole
-      // blob in RAM at once (attachments can run up to ~1 MiB).
-      server.setContentLength(total);
-      server.sendHeader("Content-Disposition",
-                        String("attachment; filename=\"") + fname.c_str() + "\"");
-      // We don't track MIME here — the SPA infers from the tag and the
-      // .bin payload is opaque. Browsers will Save-As regardless.
-      server.send(200, "application/octet-stream", "");
-      uint8_t buf[512];
-      size_t remaining = total;
-      while (remaining > 0) {
-        size_t want = remaining < sizeof(buf) ? remaining : sizeof(buf);
-        size_t got = on_sd ? sd_f.read(buf, want) : flash_f.read(buf, want);
-        if (got == 0) break;
-        server.client().write(buf, got);
-        remaining -= got;
-      }
-      if (on_sd)  sd_f.close();
-      else        flash_f.close();
+      // Stream chunked so we don't need the whole blob in RAM. AsyncTCP
+      // invokes the producer lambda each time it has buffer space; we
+      // produce up to `maxLen` bytes from whichever backend the file
+      // lives on. The lambda captures the file handle by value into a
+      // heap-allocated struct so it survives across producer calls.
+      struct StreamState {
+        bool on_sd;
+        File sd_f;
+        microStore::File flash_f;
+      };
+      auto* st = new StreamState{ on_sd, sd_f, flash_f };
+      AsyncWebServerResponse* resp = req->beginChunkedResponse(
+          "application/octet-stream",
+          [st](uint8_t* buffer, size_t maxLen, size_t /*index*/) -> size_t {
+            const size_t want = maxLen;
+            const size_t got = st->on_sd
+                ? (size_t)st->sd_f.read(buffer, want)
+                : (size_t)st->flash_f.read(buffer, want);
+            if (got == 0) {
+              // EOF — close handles and signal stream end.
+              if (st->on_sd) st->sd_f.close();
+              else           st->flash_f.close();
+              delete st;
+            }
+            return got;
+          });
+      resp->addHeader("Content-Disposition",
+                      String("attachment; filename=\"") + fname.c_str() + "\"");
+      req->send(resp);
     }
 
-    static void handle_announces() {
-      if (require_auth().empty()) return;
+    static void handle_announces(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       const auto& ring = LXMF::AnnounceLog::announces();
       JsonDocument doc;
       JsonArray arr = doc["announces"].to<JsonArray>();
@@ -1553,18 +1534,19 @@ namespace Web {
         obj["age_ms"]       = (uint32_t)(now - it->received_ms);
       }
       doc["count"] = (uint32_t)ring.size();
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // Bulk migration: walk every active identity's attachment dir on
     // flash, copy each file to SD, delete the flash copy, and flip the
     // backend field on the matching inbox/outbox records. Idempotent —
     // running it twice in a row produces all-skipped on the second pass.
-    static void handle_migrate_flash_to_sd() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_migrate_flash_to_sd(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
       if (!Web::SDCard::present()) {
-        send_error_with_message(409, "sd_absent",
+        send_error_with_message(req, 409, "sd_absent",
           "No SD card is inserted — nothing to migrate to.");
         return;
       }
@@ -1578,30 +1560,30 @@ namespace Web {
       NOTICEF("Storage: flash→SD migration done — moved=%u skipped=%u failed=%u bytes=%llu",
               (unsigned)result.moved, (unsigned)result.skipped,
               (unsigned)result.failed, (unsigned long long)result.bytes);
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_announce() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_announce(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(server.pathArg(0).c_str());
-      if (caller != requested) { send_error(403, "forbidden"); return; }
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
       if (!LXMF::LXMFGateway::announce(requested)) {
-        send_error(404, "unknown_identity");
+        send_error(req, 404, "unknown_identity");
         return;
       }
       JsonDocument doc;
       doc["status"] = "announced";
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_identity_settings() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_identity_settings(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(server.pathArg(0).c_str());
-      if (caller != requested) { send_error(403, "forbidden"); return; }
-      JsonDocument body;
-      if (!read_body_json(body)) return;
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
       // Per-identity settings. POST accepts any combination of fields;
       // GET-like behaviour returns the current state at the end.
       if (body["announce_interval_ms"].is<JsonVariant>()) {
@@ -1610,14 +1592,14 @@ namespace Web {
         // typo can't melt the radio's duty-cycle budget.
         if (ms != 0 && ms < 10000) ms = 10000;
         if (!LXMF::LXMFGateway::set_announce_interval(requested, ms)) {
-          send_error(404, "unknown_identity");
+          send_error(req, 404, "unknown_identity");
           return;
         }
       }
       if (body["persist_outbound_attachments"].is<JsonVariant>()) {
         const bool on = (bool)body["persist_outbound_attachments"];
         if (!LXMF::LXMFGateway::set_persist_outbound_attachments(requested, on)) {
-          send_error(404, "unknown_identity");
+          send_error(req, 404, "unknown_identity");
           return;
         }
       }
@@ -1626,7 +1608,7 @@ namespace Web {
       doc["id"]                            = requested;
       doc["announce_interval_ms"]          = a ? a->announce_interval_ms : 0;
       doc["persist_outbound_attachments"]  = a ? a->persist_outbound_attachments : true;
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     static void emit_messages_array(JsonArray arr,
@@ -1663,40 +1645,42 @@ namespace Web {
       }
     }
 
-    static void handle_inbox() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_inbox(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(server.pathArg(0).c_str());
-      if (caller != requested) { send_error(403, "forbidden"); return; }
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
-      if (!a || !a->inbox) { send_error(404, "unknown_identity"); return; }
-      uint32_t since = (uint32_t)server.arg("since").toInt();
-      size_t   limit = (size_t)server.arg("limit").toInt();
+      if (!a || !a->inbox) { send_error(req, 404, "unknown_identity"); return; }
+      uint32_t since = (uint32_t)req->arg("since").toInt();
+      size_t   limit = (size_t)req->arg("limit").toInt();
       if (limit == 0 || limit > 50) limit = 50;
       auto msgs = since > 0 ? a->inbox->since(since) : a->inbox->recent(limit);
       JsonDocument doc;
       JsonArray arr = doc["messages"].to<JsonArray>();
       emit_messages_array(arr, msgs);
       doc["next_since"] = a->inbox->next_seq();
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_outbox() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_outbox(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(server.pathArg(0).c_str());
-      if (caller != requested) { send_error(403, "forbidden"); return; }
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
-      if (!a || !a->outbox) { send_error(404, "unknown_identity"); return; }
-      uint32_t since = (uint32_t)server.arg("since").toInt();
-      size_t   limit = (size_t)server.arg("limit").toInt();
+      if (!a || !a->outbox) { send_error(req, 404, "unknown_identity"); return; }
+      uint32_t since = (uint32_t)req->arg("since").toInt();
+      size_t   limit = (size_t)req->arg("limit").toInt();
       if (limit == 0 || limit > 50) limit = 50;
       auto msgs = since > 0 ? a->outbox->since(since) : a->outbox->recent(limit);
       JsonDocument doc;
       JsonArray arr = doc["messages"].to<JsonArray>();
       emit_messages_array(arr, msgs);
       doc["next_since"] = a->outbox->next_seq();
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // POST /api/identities/{id}/outbox/{seq}/retry — manually re-queue
@@ -1704,14 +1688,15 @@ namespace Web {
     // outbox seq -> MessageRecord -> packet_hash (== PendingLinkSend
     // record_hash) lookup gives us the entry; LXMFMinimal::manual_retry
     // resets the budget and schedules an immediate retry.
-    static void handle_outbox_retry() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_outbox_retry(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(server.pathArg(0).c_str());
-      if (caller != requested) { send_error(403, "forbidden"); return; }
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
-      if (!a || !a->outbox) { send_error(404, "unknown_identity"); return; }
-      const uint32_t seq = (uint32_t)atoi(server.pathArg(1).c_str());
+      if (!a || !a->outbox) { send_error(req, 404, "unknown_identity"); return; }
+      const uint32_t seq = (uint32_t)atoi(req->pathArg(1).c_str());
       // Find the outbox record. We pull a window large enough to cover
       // anything the SPA might be looking at — outbox ring is bounded
       // (see LXMFInbox::MAX_RAM_RING).
@@ -1721,7 +1706,7 @@ namespace Web {
         if (m.seq == seq) { rec = &m; break; }
       }
       if (!rec) {
-        send_error_with_message(404, "outbox_seq_not_found",
+        send_error_with_message(req, 404, "outbox_seq_not_found",
           "No outbox entry with that sequence number was found in the recent window.");
         return;
       }
@@ -1730,34 +1715,33 @@ namespace Web {
         snprintf(msg, sizeof(msg),
                  "Outbox entry %lu is %s, not Failed — only Failed entries can be retried.",
                  (unsigned long)seq, LXMF::outbox_status_name(rec->status));
-        send_error_with_message(409, "outbox_not_failed", msg);
+        send_error_with_message(req, 409, "outbox_not_failed", msg);
         return;
       }
       if (rec->packet_hash.size() != LXMF::HASH_LEN) {
-        send_error_with_message(409, "outbox_no_packet_hash",
+        send_error_with_message(req, 409, "outbox_no_packet_hash",
           "Outbox entry has no link-hash; cannot manual-retry.");
         return;
       }
       if (!LXMF::LXMFMinimal::manual_retry(rec->packet_hash)) {
         // Wire bytes were dropped (server reboot or stale_failed prune)
         // — the user has to re-send the message manually.
-        send_error_with_message(410, "outbox_state_gone",
+        send_error_with_message(req, 410, "outbox_state_gone",
           "The original send-state is no longer available (likely after a reboot). Send the message again.");
         return;
       }
       JsonDocument doc;
       doc["status"]      = "retry_scheduled";
       doc["queued_seq"]  = seq;
-      send_json(202, doc);
+      send_json(req, 202, doc);
     }
 
-    static void handle_send() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_send(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(server.pathArg(0).c_str());
-      if (caller != requested) { send_error(403, "forbidden"); return; }
-      JsonDocument body;
-      if (!read_body_json(body)) return;
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
       std::string to_hex  = (const char*)(body["to"]      | "");
       std::string title   = (const char*)(body["title"]   | "");
       // The SPA sends `content`; legacy / external clients may still send
@@ -1769,7 +1753,7 @@ namespace Web {
         snprintf(msg, sizeof(msg),
                  "Destination address must be 32 hex characters (got %u).",
                  (unsigned)to_hex.size());
-        send_error_with_message(400, "invalid_destination_hash", msg);
+        send_error_with_message(req, 400, "invalid_destination_hash", msg);
         return;
       }
 
@@ -1789,18 +1773,18 @@ namespace Web {
           if (tag != LXMF::FIELD_FILE_ATTACHMENTS
               && tag != LXMF::FIELD_IMAGE
               && tag != LXMF::FIELD_AUDIO) {
-            send_error_with_message(400, "invalid_attachment_tag",
+            send_error_with_message(req, 400, "invalid_attachment_tag",
               "Attachment tag must be 5 (file), 6 (image), or 7 (audio).");
             return;
           }
           uint32_t sid = (uint32_t)(a["staging_id"] | 0);
           if (sid == 0) {
-            send_error_with_message(400, "missing_staging_id",
+            send_error_with_message(req, 400, "missing_staging_id",
               "Attachment is missing staging_id — upload bytes via /attachment/upload first.");
             return;
           }
           if (!Web::OutboundStaging::complete(sid)) {
-            send_error_with_message(409, "staging_incomplete",
+            send_error_with_message(req, 409, "staging_incomplete",
               "Attachment staging buffer hasn't finished uploading.");
             return;
           }
@@ -1835,7 +1819,7 @@ namespace Web {
       }
 
       if (content.empty() && attachments.empty()) {
-        send_error_with_message(400, "missing_content",
+        send_error_with_message(req, 400, "missing_content",
             "Message body is empty. Type something or attach a file before sending.");
         return;
       }
@@ -1844,27 +1828,28 @@ namespace Web {
       if (!LXMF::LXMFGateway::send(requested, to, title, content,
                                    attachments.empty() ? nullptr : &attachments,
                                    rec, &err)) {
-        send_error_with_message(503, "send_failed",
+        send_error_with_message(req, 503, "send_failed",
                                 err ? err : "Send failed for an unknown reason.");
         return;
       }
       JsonDocument doc;
       doc["queued_seq"] = rec.seq;
       doc["status"]     = LXMF::outbox_status_name(rec.status);
-      send_json(202, doc);
+      send_json(req, 202, doc);
     }
 
-    static void handle_state() {
+    static void handle_state(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
       // One-shot snapshot the SPA fetches on first connect (and on
       // SSE-reconnect after a long drop). Returns the conversation list,
       // both announce rings, and the since markers the SPA passes to the
       // SSE handler so deltas resume cleanly without duplicating events.
-      LXMF::IdentityId caller = require_auth();
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(server.pathArg(0).c_str());
-      if (caller != requested) { send_error(403, "forbidden"); return; }
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
-      if (!a) { send_error(404, "unknown_identity"); return; }
+      if (!a) { send_error(req, 404, "unknown_identity"); return; }
 
       JsonDocument doc;
       // Identity self-info.
@@ -1998,10 +1983,11 @@ namespace Web {
       clock["now_ms"]            = millis();
       clock["current_boot_epoch"] = Web::BootCounter::current();
 
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_events() {
+    static void handle_events(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
       // Short-poll dressed as SSE: drain any events newer than the per-stream
       // since markers, send a retry: hint so the browser reconnects quickly,
       // and return. This keeps the main Arduino task free to service the
@@ -2014,27 +2000,30 @@ namespace Web {
       //   announces_since  — global received_ms threshold (lxmf.delivery only)
       //   paths_since      — global received_ms threshold (every aspect)
       // The browser advances each marker as events arrive.
-      LXMF::IdentityId caller = require_auth();
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(server.pathArg(0).c_str());
-      if (caller != requested) { send_error(403, "forbidden"); return; }
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
-      if (!a || !a->inbox) { send_error(404, "unknown_identity"); return; }
+      if (!a || !a->inbox) { send_error(req, 404, "unknown_identity"); return; }
 
       // Accept both the legacy `since` and the new `inbox_since` query name.
-      uint32_t inbox_since = (uint32_t)server.arg("inbox_since").toInt();
-      if (inbox_since == 0) inbox_since = (uint32_t)server.arg("since").toInt();
-      uint32_t announces_since = (uint32_t)server.arg("announces_since").toInt();
-      uint32_t paths_since     = (uint32_t)server.arg("paths_since").toInt();
+      uint32_t inbox_since = (uint32_t)req->arg("inbox_since").toInt();
+      if (inbox_since == 0) inbox_since = (uint32_t)req->arg("since").toInt();
+      uint32_t announces_since = (uint32_t)req->arg("announces_since").toInt();
+      uint32_t paths_since     = (uint32_t)req->arg("paths_since").toInt();
 
-      server.sendHeader("Cache-Control", "no-cache");
-      server.sendHeader("Connection", "close");
-      server.setContentLength(CONTENT_LENGTH_UNKNOWN);
-      server.send(200, "text/event-stream", "");
-      // Tell EventSource to reconnect every 500 ms instead of the 3 s
-      // browser default. Combined with the immediate return below this
-      // gives sub-second event-delivery latency without busy-parking.
-      server.sendContent("retry: 500\n\n");
+      // Build the entire event payload up front into a String buffer,
+      // then ship it as one async response. The browser's EventSource
+      // closes the connection on EOF and reconnects after `retry:`ms
+      // with advanced since-markers, same behaviour the sync version
+      // had — just packaged for AsyncTCP's producer-callback model.
+      // AsyncEventSource would be the long-term home for true server-
+      // push but that's a separate task.
+      const uint32_t progress_since = (uint32_t)req->arg("progress_since").toInt();
+      String body;
+      body.reserve(2048);
+      body += "retry: 500\n\n";
 
       // 1. Inbox messages since the per-identity seq marker.
       auto pending = a->inbox->since(inbox_since);
@@ -2064,7 +2053,7 @@ namespace Web {
         }
         String line;
         serializeJson(item, line);
-        server.sendContent(String("data: ") + line + "\n\n");
+        body += "data: "; body += line; body += "\n\n";
       }
       // 2. Announces ring (lxmf.delivery only), filtered by received_ms.
       for (const auto& rec : LXMF::AnnounceLog::announces()) {
@@ -2078,7 +2067,7 @@ namespace Web {
         item["age_ms"]        = millis() - rec.received_ms;
         String line;
         serializeJson(item, line);
-        server.sendContent(String("data: ") + line + "\n\n");
+        body += "data: "; body += line; body += "\n\n";
       }
       // 3. Paths ring (every aspect), filtered by received_ms.
       for (const auto& rec : LXMF::AnnounceLog::paths()) {
@@ -2092,17 +2081,14 @@ namespace Web {
         item["age_ms"]        = millis() - rec.received_ms;
         String line;
         serializeJson(item, line);
-        server.sendContent(String("data: ") + line + "\n\n");
+        body += "data: "; body += line; body += "\n\n";
       }
       // 4. Identity-code edge events (button-press triggered).
       if (_id_code_event_pending) {
         _id_code_event_pending = false;
-        server.sendContent("data: {\"type\":\"identity_code_available\"}\n\n");
+        body += "data: {\"type\":\"identity_code_available\"}\n\n";
       }
-      // 5. Resource transfer progress for messages owned by this identity.
-      // Filter the ring by identity_id + caller's progress_since marker
-      // so each identity's stream only sees its own transfers.
-      uint32_t progress_since = (uint32_t)server.arg("progress_since").toInt();
+      // 5. Resource transfer progress events scoped to this identity.
       for (const auto& ev : progress_ring()) {
         if (ev.seq <= progress_since) continue;
         if (ev.identity_id != caller) continue;
@@ -2117,30 +2103,41 @@ namespace Web {
         item["finished"]    = ev.finished;
         String line;
         serializeJson(item, line);
-        server.sendContent(String("data: ") + line + "\n\n");
+        body += "data: "; body += line; body += "\n\n";
       }
-      // Connection closes when the handler returns; browser reconnects
-      // after `retry:` ms with the advanced since markers.
+      // Always emit at least a heartbeat so the stream isn't empty —
+      // empty streams trip the regression suite + waste a round-trip.
+      if (body == "retry: 500\n\n") {
+        body += "data: {\"type\":\"heartbeat\"}\n\n";
+      }
+      AsyncWebServerResponse* resp = req->beginResponse(
+          200, "text/event-stream", body);
+      resp->addHeader("Cache-Control", "no-cache");
+      resp->addHeader("Connection", "close");
+      req->send(resp);
     }
 
     // Verify that this request has physical-presence authority — either a
     // valid bearer token (which required a button press to obtain) or a
     // current identity_code in the request body.
-    static bool require_physical_auth(const JsonDocument& body) {
-      String h = server.header("Authorization");
-      if (h.startsWith("Bearer ")) {
-        String hex_str = h.substring(7); hex_str.trim();
-        LXMF::IdentityId acc = AuthTokens::validate(std::string(hex_str.c_str()));
-        if (!acc.empty()) return true;
+    static bool require_physical_auth(AsyncWebServerRequest* req, const JsonVariant& body) {
+      if (req->hasHeader("Authorization")) {
+        String h = req->header("Authorization");
+        if (h.startsWith("Bearer ")) {
+          String hex_str = h.substring(7); hex_str.trim();
+          LXMF::IdentityId acc = AuthTokens::validate(std::string(hex_str.c_str()));
+          if (!acc.empty()) return true;
+        }
       }
       const char* code = body["identity_code"] | "";
       const char* code_err = explain_identity_code_failure(code);
       if (code_err == nullptr) return true;
-      send_error_with_message(401, "identity_code_required", code_err);
+      send_error_with_message(req, 401, "identity_code_required", code_err);
       return false;
     }
 
-    static void handle_wifi_scan() {
+    static void handle_wifi_scan(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
       // Scan results aren't sensitive; gate only the configure write.
       int n = WiFi.scanNetworks();
       JsonDocument doc;
@@ -2152,21 +2149,20 @@ namespace Web {
         obj["secure"]  = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
       }
       WiFi.scanDelete();
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_wifi_configure() {
-      JsonDocument body;
-      if (!read_body_json(body)) return;
-      if (!require_physical_auth(body)) return;
+    static void handle_wifi_configure(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (!require_physical_auth(req, body)) return;
       String ssid = body["ssid"] | "";
       String psk  = body["psk"]  | "";
       if (ssid.length() == 0 || ssid.length() > 32) {
-        send_error(400, "invalid_ssid");
+        send_error(req, 400, "invalid_ssid");
         return;
       }
       if (psk.length() > 32) {
-        send_error(400, "invalid_psk");
+        send_error(req, 400, "invalid_psk");
         return;
       }
       // Write SSID, PSK, and STA mode to EEPROM using the same code paths
@@ -2184,7 +2180,7 @@ namespace Web {
       JsonDocument doc;
       doc["status"]  = "saved";
       doc["restart"] = true;
-      send_json(200, doc);
+      send_json(req, 200, doc);
 
       // Reboot so STA mode applies cleanly.
       persist_and_restart();
@@ -2196,8 +2192,9 @@ namespace Web {
     // The endpoint exists so the SPA can render a stable "Saved
     // networks" UI; extending to multi-network storage later only
     // changes the body, not the URL.
-    static void handle_wifi_saved_list() {
-      if (require_auth().empty()) return;
+    static void handle_wifi_saved_list(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       JsonDocument doc;
       JsonArray arr = doc["networks"].to<JsonArray>();
       char ssid[33] = {0};
@@ -2219,7 +2216,7 @@ namespace Web {
         n["ssid"]    = ssid;
         n["has_psk"] = has_psk;
       }
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // POST /api/wifi/forget — zero the saved SSID + PSK in EEPROM and
@@ -2227,10 +2224,9 @@ namespace Web {
     // existing bootstrap path turns into the softAP captive-portal
     // for first-time setup. Identity-code auth required because this
     // disconnects every client.
-    static void handle_wifi_forget() {
-      JsonDocument body;
-      if (!read_body_json(body)) return;
-      if (!require_physical_auth(body)) return;
+    static void handle_wifi_forget(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (!require_physical_auth(req, body)) return;
       // Optional ssid arg lets a future multi-network UI target a
       // specific entry; for the single-entry EEPROM layout we just
       // wipe whatever's stored.
@@ -2241,12 +2237,12 @@ namespace Web {
         current[i] = (c == 0xFF) ? 0x00 : (char)c;
       }
       if (current[0] == 0x00) {
-        send_error_with_message(404, "no_saved_network",
+        send_error_with_message(req, 404, "no_saved_network",
           "No saved WiFi network to forget.");
         return;
       }
       if (*ssid_arg && strncmp(ssid_arg, current, 32) != 0) {
-        send_error_with_message(404, "ssid_not_saved",
+        send_error_with_message(req, 404, "ssid_not_saved",
           "Requested SSID is not in the saved-networks list.");
         return;
       }
@@ -2263,7 +2259,7 @@ namespace Web {
       JsonDocument doc;
       doc["status"]  = "forgotten";
       doc["restart"] = true;
-      send_json(200, doc);
+      send_json(req, 200, doc);
       persist_and_restart();
     }
 
@@ -2274,12 +2270,11 @@ namespace Web {
     // wants to reconfigure without physically resetting. Gated by
     // bearer auth + identity_code (the existing physical-presence
     // pattern) since switching the AP drops every other client.
-    static void handle_wifi_force_softap() {
-      JsonDocument body;
-      if (!read_body_json(body)) return;
-      if (!require_physical_auth(body)) return;
+    static void handle_wifi_force_softap(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (!require_physical_auth(req, body)) return;
       if (wifi_mode == WR_WIFI_AP) {
-        send_error_with_message(409, "already_softap",
+        send_error_with_message(req, 409, "already_softap",
           "Device is already in softAP mode.");
         return;
       }
@@ -2290,11 +2285,12 @@ namespace Web {
       JsonDocument doc;
       doc["status"] = "queued";
       doc["note"]   = "Switching to softAP — reconnect to the device's bootstrap SSID.";
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_radio_get() {
-      if (require_auth().empty()) return;
+    static void handle_radio_get(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       JsonDocument doc;
       doc["frequency"]        = (uint32_t)lora_freq;
       doc["bandwidth"]        = (uint32_t)lora_bw;
@@ -2316,13 +2312,12 @@ namespace Web {
       doc["limits"]["cr_min"]  = 5;
       doc["limits"]["cr_max"]  = 8;
       doc["limits"]["txp_max"] = 22;
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_radio_set() {
-      JsonDocument body;
-      if (!read_body_json(body)) return;
-      if (!require_physical_auth(body)) return;
+    static void handle_radio_set(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (!require_physical_auth(req, body)) return;
       // Accept the long field names the SPA uses. (Earlier versions used
       // short names freq_hz/bw_hz/sf/cr/txp — those are gone.)
       // airtime_limit_pct + longterm_airtime_limit_pct are optional —
@@ -2338,23 +2333,23 @@ namespace Web {
       char msg[160];
       if (freq < 100000000u || freq > 2500000000u) {
         snprintf(msg, sizeof(msg), "Frequency must be 100 MHz – 2.5 GHz (got %lu Hz). Tip: pick a region preset.", (unsigned long)freq);
-        send_error_with_message(400, "invalid_radio_params", msg); return;
+        send_error_with_message(req, 400, "invalid_radio_params", msg); return;
       }
       if (bw < 7800 || bw > 500000) {
         snprintf(msg, sizeof(msg), "Bandwidth must be 7.8 kHz – 500 kHz (got %lu Hz). Common: 125000.", (unsigned long)bw);
-        send_error_with_message(400, "invalid_radio_params", msg); return;
+        send_error_with_message(req, 400, "invalid_radio_params", msg); return;
       }
       if (sf < 5 || sf > 12) {
         snprintf(msg, sizeof(msg), "Spreading factor must be 5–12 (got %d). Common: 7 for speed, 11 for range.", sf);
-        send_error_with_message(400, "invalid_radio_params", msg); return;
+        send_error_with_message(req, 400, "invalid_radio_params", msg); return;
       }
       if (cr < 5 || cr > 8) {
         snprintf(msg, sizeof(msg), "Coding rate must be 5–8 (4/5 through 4/8). Got %d. Common: 5.", cr);
-        send_error_with_message(400, "invalid_radio_params", msg); return;
+        send_error_with_message(req, 400, "invalid_radio_params", msg); return;
       }
       if (txp < 0 || txp > 22) {
         snprintf(msg, sizeof(msg), "TX power must be 0–22 dBm (got %d). Regulatory limit varies by region.", txp);
-        send_error_with_message(400, "invalid_radio_params", msg); return;
+        send_error_with_message(req, 400, "invalid_radio_params", msg); return;
       }
       // Direct EEPROM write, mirroring eeprom_conf_save() but bypassing
       // its hw_ready+radio_online guard. On a fresh device the radio is
@@ -2380,7 +2375,7 @@ namespace Web {
         if (v < 0 || v > 99) {
           snprintf(msg, sizeof(msg),
                    "airtime_limit_pct must be 0-99 (got %d). 0 disables the cap.", v);
-          send_error_with_message(400, "invalid_radio_params", msg); return;
+          send_error_with_message(req, 400, "invalid_radio_params", msg); return;
         }
         eeprom_update(eeprom_addr(ADDR_CONF_AIRTIME), (uint8_t)v);
         st_airtime_limit = (float)v / 100.0f;
@@ -2390,7 +2385,7 @@ namespace Web {
         if (v < 0 || v > 99) {
           snprintf(msg, sizeof(msg),
                    "longterm_airtime_limit_pct must be 0-99 (got %d). 0 disables the cap.", v);
-          send_error_with_message(400, "invalid_radio_params", msg); return;
+          send_error_with_message(req, 400, "invalid_radio_params", msg); return;
         }
         eeprom_update(eeprom_addr(ADDR_CONF_LT_AIRTIME), (uint8_t)v);
         lt_airtime_limit = (float)v / 100.0f;
@@ -2400,19 +2395,18 @@ namespace Web {
       JsonDocument doc;
       doc["status"]  = "saved";
       doc["restart"] = true;
-      send_json(200, doc);
+      send_json(req, 200, doc);
       persist_and_restart();
     }
 
-    static void handle_radio_reset() {
-      JsonDocument body;
-      if (!read_body_json(body)) return;
-      if (!require_physical_auth(body)) return;
+    static void handle_radio_reset(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (!require_physical_auth(req, body)) return;
       eeprom_update(eeprom_addr(ADDR_CONF_OK), 0x00);
       JsonDocument doc;
       doc["status"]  = "cleared";
       doc["restart"] = true;
-      send_json(200, doc);
+      send_json(req, 200, doc);
       persist_and_restart();
     }
 
@@ -2425,15 +2419,14 @@ namespace Web {
     // regulated bands — caller's responsibility). Values are NOT persisted
     // across reboots yet; the firmware default in Config.h applies on next
     // boot. (See task #57 for EEPROM persistence.)
-    static void handle_radio_airtime() {
-      JsonDocument body;
-      if (!read_body_json(body)) return;
-      if (!require_physical_auth(body)) return;
+    static void handle_radio_airtime(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (!require_physical_auth(req, body)) return;
 
       const bool has_st = body["airtime_limit_pct"].is<int>();
       const bool has_lt = body["longterm_airtime_limit_pct"].is<int>();
       if (!has_st && !has_lt) {
-        send_error_with_message(400, "no_fields",
+        send_error_with_message(req, 400, "no_fields",
           "Body must include airtime_limit_pct and/or longterm_airtime_limit_pct (integer 0-99).");
         return;
       }
@@ -2443,7 +2436,7 @@ namespace Web {
           char msg[120];
           snprintf(msg, sizeof(msg),
                    "airtime_limit_pct must be 0-99 (got %d). 0 disables the cap.", v);
-          send_error_with_message(400, "invalid_limit", msg); return;
+          send_error_with_message(req, 400, "invalid_limit", msg); return;
         }
         st_airtime_limit = (v == 0) ? 0.0f : ((float)v / 100.0f);
       }
@@ -2453,7 +2446,7 @@ namespace Web {
           char msg[120];
           snprintf(msg, sizeof(msg),
                    "longterm_airtime_limit_pct must be 0-99 (got %d). 0 disables the cap.", v);
-          send_error_with_message(400, "invalid_limit", msg); return;
+          send_error_with_message(req, 400, "invalid_limit", msg); return;
         }
         lt_airtime_limit = (v == 0) ? 0.0f : ((float)v / 100.0f);
       }
@@ -2469,13 +2462,14 @@ namespace Web {
       doc["longterm_airtime_limit_pct"] = (int)(lt_airtime_limit * 100);
       doc["airtime_locked"]             = airtime_lock;
       doc["persisted"]                  = false;   // RAM-only for now
-      send_json(200, doc);
+      send_json(req, 200, doc);
       NOTICEF("Airtime caps set via API: st=%d%% lt=%d%% lock=%d",
               (int)(st_airtime_limit*100), (int)(lt_airtime_limit*100), (int)airtime_lock);
     }
 
-    static void handle_paths_list() {
-      if (require_auth().empty()) return;
+    static void handle_paths_list(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
       // We read from AnnounceLog::paths() rather than Transport's path
       // table because microReticulum's get_path_table() returns the
       // in-memory _path_table which is dead code in current versions
@@ -2500,18 +2494,17 @@ namespace Web {
         obj["hops"]   = (int)RNS::Transport::hops_to(it->destination);
       }
       doc["count"] = (uint32_t)ring.size();
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
-    static void handle_path_lookup() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_path_lookup(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      JsonDocument body;
-      if (!read_body_json(body)) return;
       std::string to_hex = (const char*)(body["to"] | "");
       RNS::Bytes to = hex_to_bytes(to_hex, LXMF::HASH_LEN);
       if (to.size() != LXMF::HASH_LEN) {
-        send_error(400, "invalid_destination_hash");
+        send_error(req, 400, "invalid_destination_hash");
         return;
       }
       bool known = RNS::Transport::has_path(to);
@@ -2521,7 +2514,7 @@ namespace Web {
         RNS::Transport::request_path(to);
         doc["requested"] = true;
       }
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
     // GET /api/paths/estimate?to=<32 hex>&bytes=<N>
@@ -2537,15 +2530,16 @@ namespace Web {
     // Bytes is the total LXMF wire size, which the SPA computes from
     // the message body + sum-of-attachments + a ~120-byte overhead
     // (hash + signature + msgpack framing).
-    static void handle_path_estimate() {
-      LXMF::IdentityId caller = require_auth();
+    static void handle_path_estimate(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      const std::string to_hex = std::string(server.arg("to").c_str());
-      const uint32_t bytes = (uint32_t)std::strtoul(server.arg("bytes").c_str(),
+      const std::string to_hex = std::string(req->arg("to").c_str());
+      const uint32_t bytes = (uint32_t)std::strtoul(req->arg("bytes").c_str(),
                                                     nullptr, 10);
       RNS::Bytes to = hex_to_bytes(to_hex, LXMF::HASH_LEN);
       if (to.size() != LXMF::HASH_LEN) {
-        send_error_with_message(400, "invalid_destination_hash",
+        send_error_with_message(req, 400, "invalid_destination_hash",
           "Destination must be 32 hex characters.");
         return;
       }
@@ -2555,13 +2549,13 @@ namespace Web {
       if (LXMF::LXMFGateway::is_own_destination(to)) {
         doc["kind"]   = "local";
         doc["eta_ms"] = 0;
-        send_json(200, doc);
+        send_json(req, 200, doc);
         return;
       }
       if (!RNS::Transport::has_path(to)) {
         doc["kind"]    = "unknown";
         doc["eta_ms"]  = nullptr;
-        send_json(200, doc);
+        send_json(req, 200, doc);
         return;
       }
       const uint32_t bitrate = RNS::Transport::next_hop_interface_bitrate(to);
@@ -2581,7 +2575,7 @@ namespace Web {
       } else {
         doc["eta_ms"] = nullptr;
       }
-      send_json(200, doc);
+      send_json(req, 200, doc);
     }
 
   public:

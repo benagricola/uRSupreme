@@ -16,7 +16,7 @@
 #include <FS.h>
 #include <SPIFFS.h>
 #include <WiFi.h>
-#include <WebServer.h>
+#include <ESPAsyncWebServer.h>
 
 #include "SD.h"
 #include "SPI.h"
@@ -38,7 +38,7 @@
 #error Target CONFIG_IDF_TARGET is not supported
 #endif
 
-WebServer server(80);
+AsyncWebServer server(80);
 
 void console_dbg(String msg) {
     Serial.print("[Webserver] ");
@@ -55,8 +55,8 @@ bool exists(String path){
   return yes;
 }
 
-String console_get_content_type(String filename) {
-  if (server.hasArg("download")) {
+String console_get_content_type(AsyncWebServerRequest* req, String filename) {
+  if (req && req->hasArg("download")) {
     return "application/octet-stream";
   } else if (filename.endsWith(".htm")) {
     return "text/html";
@@ -88,7 +88,7 @@ String console_get_content_type(String filename) {
   return "text/plain";
 }
 
-bool console_serve_file(String path) {
+bool console_serve_file(AsyncWebServerRequest* req, String path) {
   console_dbg("Request for: "+path);
   if (path.endsWith("/")) {
     path += "index.html";
@@ -101,20 +101,16 @@ bool console_serve_file(String path) {
     path = "/h.html";
   }
 
-
-  String content_type = console_get_content_type(path);
+  String content_type = console_get_content_type(req, path);
   String pathWithGz = path + ".gz";
   if (exists(pathWithGz) || exists(path)) {
     if (exists(pathWithGz)) {
       path += ".gz";
     }
-    
-    File file = SPIFFS.open(path, "r");
-    console_dbg("Serving file to client");
-    server.streamFile(file, content_type);
-    file.close();
-
-    console_dbg("File serving done\n");
+    AsyncWebServerResponse* resp = req->beginResponse(SPIFFS, path, content_type);
+    if (path.endsWith(".gz")) resp->addHeader("Content-Encoding", "gzip");
+    req->send(resp);
+    console_dbg("File serving queued");
     return true;
   } else {
     int spos = pathWithGz.lastIndexOf('/');
@@ -124,13 +120,10 @@ bool console_serve_file(String path) {
       Serial.println(remap_path);
 
       if (exists(remap_path)) {
-        File file = SPIFFS.open(remap_path, "r");
-        console_dbg("Serving remapped file to client");
-        server.streamFile(file, content_type);
-        console_dbg("Closing file");
-        file.close();
-        
-        console_dbg("File serving done\n");
+        AsyncWebServerResponse* resp = req->beginResponse(SPIFFS, remap_path, content_type);
+        if (remap_path.endsWith(".gz")) resp->addHeader("Content-Encoding", "gzip");
+        req->send(resp);
+        console_dbg("Remapped file serving queued");
         return true;
       }
     }
@@ -141,9 +134,9 @@ bool console_serve_file(String path) {
 }
 
 void console_register_pages() {
-  server.onNotFound([]() {
-    if (!console_serve_file(server.uri())) {
-      server.send(404, "text/plain", "Not Found");
+  server.onNotFound([](AsyncWebServerRequest* req) {
+    if (!console_serve_file(req, req->url())) {
+      req->send(404, "text/plain", "Not Found");
     }
   });
 }
@@ -196,8 +189,8 @@ void console_start() {
 }
 
 void console_loop(){
-    server.handleClient();
-    // Internally, this yields the thread and allows
-    // other tasks to run.
+    // AsyncWebServer runs in its own AsyncTCP task — nothing to drive
+    // from here. Keep the function so the existing call site doesn't
+    // need to change; just yield.
     delay(2);
 }

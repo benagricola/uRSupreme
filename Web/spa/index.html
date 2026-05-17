@@ -894,34 +894,34 @@ summary:hover { color: var(--text); }
     <div class="muted" id="sys-clock-source" style="font-size:11px"></div>
     <div class="muted mono" id="sys-clock-rtc"    style="font-size:11px;margin-top:4px"></div>
   </div>
-  <div class="popover-section">
+  <div class="popover-section" id="sys-section-gps" hidden>
     <div class="popover-row">
-      <div class="popover-label">GPS</div>
+      <div class="popover-label">Position</div>
       <div id="sys-gps-line"></div>
     </div>
     <div class="mono" id="sys-gps-pos"    style="font-size:11px;margin-top:6px"></div>
     <div class="muted mono" id="sys-gps-speed"  style="font-size:11px"></div>
     <div class="muted mono" id="sys-gps-age"    style="font-size:11px"></div>
   </div>
-  <div class="popover-section">
+  <div class="popover-section" id="sys-section-bme" hidden>
     <div class="popover-row">
-      <div class="popover-label">BME280 — temp / humidity / pressure</div>
+      <div class="popover-label">Atmospheric</div>
       <div id="sys-bme-line"></div>
     </div>
     <div class="mono" id="sys-bme-values"  style="font-size:11px;margin-top:6px"></div>
     <div class="muted mono" id="sys-bme-age"  style="font-size:11px"></div>
   </div>
-  <div class="popover-section">
+  <div class="popover-section" id="sys-section-mag" hidden>
     <div class="popover-row">
-      <div class="popover-label">Magnetometer (QMC6310)</div>
+      <div class="popover-label">Compass</div>
       <div id="sys-mag-line"></div>
     </div>
     <div class="mono" id="sys-mag-values"  style="font-size:11px;margin-top:6px"></div>
     <div class="muted mono" id="sys-mag-age"  style="font-size:11px"></div>
   </div>
-  <div class="popover-section">
+  <div class="popover-section" id="sys-section-imu" hidden>
     <div class="popover-row">
-      <div class="popover-label">IMU (QMI8658)</div>
+      <div class="popover-label">Motion</div>
       <div id="sys-imu-line"></div>
     </div>
     <div class="mono" id="sys-imu-accel"   style="font-size:11px;margin-top:6px"></div>
@@ -3135,15 +3135,13 @@ function renderSystemPopover(s) {
     : (rtc.vl_set ? 'RTC chip: present (voltage-low — time invalid)'
                   : 'RTC chip: present, ticking');
 
-  // GPS.
+  // Position — GPS. Hide the whole section when no module is wired
+  // (e.g. non-Supreme boards). Sections with available=false stay
+  // out of the popover entirely rather than showing an "Absent" pill.
   const g = (s.sensors && s.sensors.gps) || {};
-  const gLine = $('sys-gps-line'); gLine.innerHTML = '';
-  if (!g.available) {
-    gLine.appendChild(el('span', { class: 'pill' }, 'Absent'));
-    $('sys-gps-pos').textContent   = '';
-    $('sys-gps-speed').textContent = '';
-    $('sys-gps-age').textContent   = '';
-  } else {
+  $('sys-section-gps').hidden = !g.available;
+  if (g.available) {
+    const gLine = $('sys-gps-line'); gLine.innerHTML = '';
     gLine.appendChild(el('span', { class: g.valid ? 'pill ok' : 'pill warn' },
       g.valid ? 'Fix' : 'No fix'));
     $('sys-gps-pos').textContent = g.valid
@@ -3151,21 +3149,16 @@ function renderSystemPopover(s) {
     $('sys-gps-speed').textContent = g.valid
       ? 'Speed ' + g.speed_knots.toFixed(1) + ' kn · heading ' + g.heading.toFixed(0) + '°'
       : '';
-    const age = (typeof g.fix_age_ms === 'number' && g.fix_age_ms >= 0)
-      ? 'Last fix ' + Math.round(g.fix_age_ms / 1000) + ' s ago'
-      : 'No data from module yet';
-    $('sys-gps-age').textContent = age;
+    $('sys-gps-age').textContent = (typeof g.fix_age_ms === 'number' && g.fix_age_ms >= 0)
+      ? 'Last fix ' + Math.round(g.fix_age_ms / 1000) + 's ago (GPS)'
+      : 'No data from module yet (GPS)';
   }
 
-  // Generic three-state pill renderer for the simple sensor sections.
-  // Returns the pill class + label and clears the detail fields if
-  // the sensor isn't producing data.
-  function renderSensorState(line, container, available, enabled, valid) {
+  // Generic three-state pill renderer for simple sensor sections.
+  // Caller has already confirmed available=true and unhidden the
+  // section. Returns 'disabled' / 'warming' / 'live'.
+  function renderSensorState(line, enabled, valid) {
     line.innerHTML = '';
-    if (!available) {
-      line.appendChild(el('span', { class: 'pill' }, 'Absent'));
-      return 'absent';
-    }
     if (!enabled) {
       line.appendChild(el('span', { class: 'pill warn' }, 'Disabled'));
       return 'disabled';
@@ -3178,50 +3171,61 @@ function renderSystemPopover(s) {
     return 'live';
   }
 
-  // BME280 — temperature / humidity / pressure.
+  // "Last read 24s ago (Model)" — consistent age-line format. Empty
+  // string for sensors that haven't produced a reading yet.
+  function ageLine(age_ms, model, warming) {
+    if (warming) return 'Waiting for first read… (' + model + ')';
+    if (typeof age_ms !== 'number' || age_ms < 0) return '';
+    return 'Last read ' + Math.round(age_ms / 1000) + 's ago (' + model + ')';
+  }
+
+  // Atmospheric — BME280.
   const b = (s.sensors && s.sensors.bme280) || {};
-  const bState = renderSensorState($('sys-bme-line'), null, b.available, b.enabled, b.valid);
-  if (bState === 'live') {
-    $('sys-bme-values').textContent =
-      b.temp_c.toFixed(1) + ' °C · ' +
-      b.humidity_pct.toFixed(0) + ' %RH · ' +
-      (b.pressure_pa / 100).toFixed(1) + ' hPa';
-    $('sys-bme-age').textContent = (typeof b.age_ms === 'number' && b.age_ms >= 0)
-      ? 'Last read ' + Math.round(b.age_ms / 1000) + ' s ago' : '';
-  } else {
-    $('sys-bme-values').textContent = '';
-    $('sys-bme-age').textContent = bState === 'warming' ? 'Waiting for first read…' : '';
+  $('sys-section-bme').hidden = !b.available;
+  if (b.available) {
+    const bState = renderSensorState($('sys-bme-line'), b.enabled, b.valid);
+    if (bState === 'live') {
+      $('sys-bme-values').textContent =
+        b.temp_c.toFixed(1) + ' °C · ' +
+        b.humidity_pct.toFixed(0) + ' %RH · ' +
+        (b.pressure_pa / 100).toFixed(1) + ' hPa';
+    } else {
+      $('sys-bme-values').textContent = '';
+    }
+    $('sys-bme-age').textContent = ageLine(b.age_ms, 'BME280', bState === 'warming');
   }
 
-  // Magnetometer — QMC6310.
+  // Compass — QMC6310 magnetometer.
   const mg = (s.sensors && s.sensors.magnetometer) || {};
-  const mState = renderSensorState($('sys-mag-line'), null, mg.available, mg.enabled, mg.valid);
-  if (mState === 'live') {
-    $('sys-mag-values').textContent =
-      'Heading ' + mg.heading_deg.toFixed(0) + '° · ' +
-      mg.x_uT.toFixed(1) + ' / ' + mg.y_uT.toFixed(1) + ' / ' + mg.z_uT.toFixed(1) + ' µT';
-    $('sys-mag-age').textContent = (typeof mg.age_ms === 'number' && mg.age_ms >= 0)
-      ? 'Last read ' + Math.round(mg.age_ms / 1000) + ' s ago' : '';
-  } else {
-    $('sys-mag-values').textContent = '';
-    $('sys-mag-age').textContent = mState === 'warming' ? 'Waiting for first read…' : '';
+  $('sys-section-mag').hidden = !mg.available;
+  if (mg.available) {
+    const mState = renderSensorState($('sys-mag-line'), mg.enabled, mg.valid);
+    if (mState === 'live') {
+      $('sys-mag-values').textContent =
+        'Heading ' + mg.heading_deg.toFixed(0) + '° · ' +
+        mg.x_uT.toFixed(1) + ' / ' + mg.y_uT.toFixed(1) + ' / ' + mg.z_uT.toFixed(1) + ' µT';
+    } else {
+      $('sys-mag-values').textContent = '';
+    }
+    $('sys-mag-age').textContent = ageLine(mg.age_ms, 'QMC6310', mState === 'warming');
   }
 
-  // IMU — QMI8658.
+  // Motion — QMI8658 IMU.
   const im = (s.sensors && s.sensors.imu) || {};
-  const iState = renderSensorState($('sys-imu-line'), null, im.available, im.enabled, im.valid);
-  if (iState === 'live') {
-    $('sys-imu-accel').textContent = 'Accel ' +
-      im.accel_x_g.toFixed(2) + ' / ' + im.accel_y_g.toFixed(2) + ' / ' + im.accel_z_g.toFixed(2) + ' g';
-    $('sys-imu-gyro').textContent = 'Gyro  ' +
-      im.gyro_x_dps.toFixed(1) + ' / ' + im.gyro_y_dps.toFixed(1) + ' / ' + im.gyro_z_dps.toFixed(1) + ' °/s · ' +
-      im.temp_c.toFixed(1) + ' °C';
-    $('sys-imu-age').textContent = (typeof im.age_ms === 'number' && im.age_ms >= 0)
-      ? 'Last read ' + Math.round(im.age_ms / 1000) + ' s ago' : '';
-  } else {
-    $('sys-imu-accel').textContent = '';
-    $('sys-imu-gyro').textContent = '';
-    $('sys-imu-age').textContent = iState === 'warming' ? 'Waiting for first read…' : '';
+  $('sys-section-imu').hidden = !im.available;
+  if (im.available) {
+    const iState = renderSensorState($('sys-imu-line'), im.enabled, im.valid);
+    if (iState === 'live') {
+      $('sys-imu-accel').textContent = 'Accel ' +
+        im.accel_x_g.toFixed(2) + ' / ' + im.accel_y_g.toFixed(2) + ' / ' + im.accel_z_g.toFixed(2) + ' g';
+      $('sys-imu-gyro').textContent = 'Gyro  ' +
+        im.gyro_x_dps.toFixed(1) + ' / ' + im.gyro_y_dps.toFixed(1) + ' / ' + im.gyro_z_dps.toFixed(1) + ' °/s · ' +
+        im.temp_c.toFixed(1) + ' °C';
+    } else {
+      $('sys-imu-accel').textContent = '';
+      $('sys-imu-gyro').textContent = '';
+    }
+    $('sys-imu-age').textContent = ageLine(im.age_ms, 'QMI8658', iState === 'warming');
   }
 }
 

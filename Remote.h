@@ -132,12 +132,14 @@ void wifi_remote_start_sta() {
   if (wr_ssid[0] != 0x00) {
     if (wr_psk[0] != 0x00) { WiFi.begin(wr_ssid, wr_psk); }
     else                   { WiFi.begin(wr_ssid); }
-    // Modem-sleep between DTIM beacons. The WiFi modem powers down
-    // while the chip is otherwise idle, then wakes for the next
-    // beacon. Saves a chunk of idle current at the cost of a small
-    // wake latency on the first packet after a long idle period —
-    // not noticeable for chat / API traffic.
-    WiFi.setSleep(WIFI_PS_MIN_MODEM);
+    // We deliberately don't call WiFi.setSleep() here. ESP-IDF
+    // aborts at boot with "Should enable WiFi modem sleep when both
+    // WiFi and Bluetooth are enabled" if PS_NONE is set while the
+    // BT controller is compiled in (HAS_BLE on Supreme builds), and
+    // explicitly setting PS_MIN_MODEM gave the same wake-latency
+    // grief as the default. Leaving it as Arduino's default — when
+    // we want to tune this it needs (a) BT-controller-runtime aware
+    // gating and (b) retry-aware HTTP transports both sides.
   }
 
   delay(500);

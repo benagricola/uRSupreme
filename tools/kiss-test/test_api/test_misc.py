@@ -1,0 +1,105 @@
+"""Endpoints not covered by the per-area files but still important
+for the WebServer migration baseline.
+"""
+import pytest
+
+
+def test_storage_migrate_sd_absent_returns_409(sx):
+    """When no SD card is present, the migration endpoint must refuse
+    with a structured error — not a 500."""
+    s, d = sx
+    sys_status = s.get(f"{d.url}/api/system_status", timeout=15).json()
+    if sys_status["storage"]["sd"]["present"]:
+        pytest.skip("SD card is inserted on the bench device — skip the absent-path test")
+    r = s.post(f"{d.url}/api/storage/migrate_flash_to_sd", timeout=10)
+    assert r.status_code == 409
+    body = r.json()
+    assert body.get("error") == "sd_absent"
+    assert "message" in body
+
+
+def test_inbox_config_get(sx):
+    s, d = sx
+    r = s.get(f"{d.url}/api/inbox_config", timeout=15)
+    assert r.status_code == 200
+    body = r.json()
+    assert "ram_capacity" in body
+    assert "ttl_seconds" in body
+
+
+def test_inbox_config_post_roundtrip(sx):
+    s, d = sx
+    before = s.get(f"{d.url}/api/inbox_config", timeout=15).json()
+    new_ttl = (before["ttl_seconds"] or 0) + 1
+    r = s.post(f"{d.url}/api/inbox_config",
+               json={"ttl_seconds": new_ttl,
+                     "ram_capacity": before["ram_capacity"]},
+               timeout=15)
+    assert r.status_code == 200
+    after = r.json()
+    assert after["ttl_seconds"] == new_ttl
+    # Restore.
+    s.post(f"{d.url}/api/inbox_config",
+           json={"ttl_seconds": before["ttl_seconds"],
+                 "ram_capacity": before["ram_capacity"]},
+           timeout=15)
+
+
+def test_sensors_config_post_roundtrip(sx):
+    """Toggle BME280 enable on/off + back."""
+    s, d = sx
+    sys_status = s.get(f"{d.url}/api/system_status", timeout=15).json()
+    bme = sys_status.get("sensors", {}).get("bme280")
+    if not bme or not bme.get("available"):
+        pytest.skip("BME280 not available on this board")
+    initial = bme.get("enabled", True)
+    interval = max(1, int(bme.get("interval_ms", 60000) / 1000))
+    r = s.post(f"{d.url}/api/sensors/config",
+               json={"sensor": "bme280", "enabled": not initial,
+                     "interval_s": interval}, timeout=15)
+    assert r.status_code == 200
+    # Restore.
+    s.post(f"{d.url}/api/sensors/config",
+           json={"sensor": "bme280", "enabled": initial,
+                 "interval_s": interval}, timeout=15)
+
+
+def test_paths_lookup_unknown(sx):
+    """Looking up an all-zero (unknown) destination. Synchronous
+    WebServer may close the socket rather than return a clean 404 —
+    accept ConnectionError as evidence of refusal. Post-migration to
+    ESPAsyncWebServer, expect 200 with empty result or 404."""
+    import requests
+    s, d = sx
+    try:
+        r = s.post(f"{d.url}/api/paths/lookup",
+                   json={"to": "0" * 32}, timeout=15)
+    except requests.exceptions.ConnectionError:
+        return  # treated as "no path / refused", which is the intent
+    assert r.status_code in (200, 404)
+
+
+def test_paths_estimate(sx, lr):
+    """We know the SX has a path to LR (the bidir test sets it up)."""
+    s_sx, dsx = sx
+    _, dlr = lr
+    r = s_sx.get(
+        f"{dsx.url}/api/paths/estimate?to={dlr.address}&bytes=1024",
+        timeout=10,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert "kind" in body
+    # `kind` is a string indicating the routing strategy; exact set has
+    # drifted over time. Just assert it's one of the documented values.
+    assert body["kind"] in ("local", "unknown", "loopback", "remote",
+                            "direct", "path", "transport")
+
+
+def test_radio_get(sx):
+    s, d = sx
+    r = s.get(f"{d.url}/api/radio", timeout=15)
+    assert r.status_code == 200
+    body = r.json()
+    # have_conf may be false on a fresh device — that's still a 200.
+    assert "have_conf" in body

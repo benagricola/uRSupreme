@@ -1112,9 +1112,10 @@ namespace Web {
       {
         const auto caps = Web::OutboundStaging::current_caps();
         JsonObject oc = doc["outbound_caps"].to<JsonObject>();
-        oc["max_bytes"]       = (uint32_t)caps.max_bytes;
-        oc["backend"]         = caps.chosen_backend == Web::OutboundStaging::Backend::Sd ? "sd" : "psram";
+        oc["max_bytes"]        = (uint32_t)caps.max_bytes;
+        oc["backend"]          = caps.chosen_backend == Web::OutboundStaging::Backend::Sd ? "sd" : "psram";
         oc["psram_free_bytes"] = (uint32_t)caps.psram_free;
+        oc["sd_present"]       = caps.sd_present;
         if (caps.sd_present) oc["sd_free_bytes"] = (uint32_t)caps.sd_free;
       }
 

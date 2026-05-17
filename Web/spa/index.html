@@ -903,6 +903,14 @@ summary:hover { color: var(--text); }
     <div class="muted mono" id="sys-gps-speed"  style="font-size:11px"></div>
     <div class="muted mono" id="sys-gps-age"    style="font-size:11px"></div>
   </div>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">BME280 — temp / humidity / pressure</div>
+      <div id="sys-bme-line"></div>
+    </div>
+    <div class="mono" id="sys-bme-values"  style="font-size:11px;margin-top:6px"></div>
+    <div class="muted mono" id="sys-bme-age"  style="font-size:11px"></div>
+  </div>
 </div>
 
 <!-- ===================== EMOJI PICKER ===================== -->
@@ -3130,6 +3138,33 @@ function renderSystemPopover(s) {
       ? 'Last fix ' + Math.round(g.fix_age_ms / 1000) + ' s ago'
       : 'No data from module yet';
     $('sys-gps-age').textContent = age;
+  }
+
+  // BME280 — temperature / humidity / pressure.
+  const b = (s.sensors && s.sensors.bme280) || {};
+  const bLine = $('sys-bme-line'); bLine.innerHTML = '';
+  if (!b.available) {
+    bLine.appendChild(el('span', { class: 'pill' }, 'Absent'));
+    $('sys-bme-values').textContent = '';
+    $('sys-bme-age').textContent    = '';
+  } else if (!b.enabled) {
+    bLine.appendChild(el('span', { class: 'pill warn' }, 'Disabled'));
+    $('sys-bme-values').textContent = '';
+    $('sys-bme-age').textContent    = '';
+  } else if (!b.valid) {
+    bLine.appendChild(el('span', { class: 'pill warn' }, 'Warming up'));
+    $('sys-bme-values').textContent = '';
+    $('sys-bme-age').textContent    = 'Waiting for first read…';
+  } else {
+    bLine.appendChild(el('span', { class: 'pill ok' }, 'Live'));
+    $('sys-bme-values').textContent =
+      b.temp_c.toFixed(1) + ' °C · ' +
+      b.humidity_pct.toFixed(0) + ' %RH · ' +
+      (b.pressure_pa / 100).toFixed(1) + ' hPa';
+    const age = (typeof b.age_ms === 'number' && b.age_ms >= 0)
+      ? 'Last read ' + Math.round(b.age_ms / 1000) + ' s ago'
+      : '';
+    $('sys-bme-age').textContent = age;
   }
 }
 

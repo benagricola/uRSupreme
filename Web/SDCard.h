@@ -64,12 +64,7 @@ inline bool begin() {
   _detail::spi_ref()->begin(SD_CLK, SD_MISO, SD_MOSI);
   NOTICEF("SDCard: probing pins clk=%d miso=%d mosi=%d cs=%d imu_cs=%d (held high)",
           SD_CLK, SD_MISO, SD_MOSI, SD_CS, IMU_CS);
-  // Try the default (~25 MHz) first; if that fails, retry at 1 MHz
-  // and again at 400 kHz. Some older / cheap cards refuse the fast
-  // init phase. The slow paths are still plenty fast for our use.
-  if (!SD.begin(SD_CS, *_detail::spi_ref())
-      && !SD.begin(SD_CS, *_detail::spi_ref(), 1000000UL)
-      && !SD.begin(SD_CS, *_detail::spi_ref(), 400000UL)) {
+  if (!SD.begin(SD_CS, *_detail::spi_ref())) {
     _detail::last_status_ref() = "sd_begin_failed";
     NOTICE("SDCard: SD.begin() failed — card absent, wrong pinout, or unsupported FS (try FAT32)");
     _detail::present_ref() = false;

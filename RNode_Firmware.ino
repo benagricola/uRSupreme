@@ -36,6 +36,7 @@
 #include "Web/Gps.h"
 #include "Web/Ntp.h"
 #include "Web/SDCard.h"
+#include "Web/Bme280.h"
 #endif
 
 #include <Arduino.h>
@@ -869,6 +870,12 @@ void setup() {
               (void*)PMU, PMU ? (int)PMU->getChipModel() : -1);
     }
     Web::SDCard::begin();
+    // (#120) Bring up the user/sensor I2C bus (Wire) at SDA=17 SCL=18
+    // — this is where BME280 lives (and where future QMC6310
+    // magnetometer + any other Wire-side sensors will sit). PMU /
+    // RTC are on Wire1 (42/41), untouched by this.
+    Wire.begin(17, 18);
+    Web::Bme280::begin(Wire);
 #endif
 
     // Remove legacy files
@@ -2508,8 +2515,12 @@ void loop() {
     // RNS state from its core-0 task) doesn't race against state
     // mutations inside reticulum.loop(). The lock is released as
     // soon as the loop returns so the WebServer task can run during
-    // the radio/serial/display work that follows.
+    // the radio/serial/display work that follows. The lock only
+    // exists when the WebUI is compiled in — on builds without
+    // HAS_LXMF_GATEWAY there's no second accessor and no lock.
+#if defined(HAS_LXMF_GATEWAY)
     Web::WebUI::RnsLockGuard guard;
+#endif
     try {
       reticulum.loop();
     }
@@ -2538,6 +2549,9 @@ void loop() {
   // and forwards to TimeManager when a fresh epoch lands. Gated on
   // WiFi STA connection internally.
   Web::Ntp::pump();
+  // (#120) BME280 — periodic temp/humidity/pressure poll, gated by
+  // the driver's own interval. No-op if the chip wasn't detected.
+  Web::Bme280::pump();
 #endif
 
   if (radio_online) {

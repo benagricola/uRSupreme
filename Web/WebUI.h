@@ -26,6 +26,7 @@
 #include "Gps.h"
 #include "RtcPCF8563.h"
 #include "SDCard.h"
+#include "Bme280.h"
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
@@ -1003,6 +1004,23 @@ namespace Web {
                               : (long)(millis() - f.fix_received_ms);
         g["last_byte_ms"] = f.last_byte_ms == 0 ? -1
                               : (long)(millis() - f.last_byte_ms);
+      }
+      {
+        JsonObject b = sensors["bme280"].to<JsonObject>();
+        const Web::Bme280::Reading r = Web::Bme280::last_reading();
+        b["available"]    = Web::Bme280::present();
+        b["enabled"]      = Web::Bme280::enabled();
+        b["interval_ms"]  = (uint32_t)Web::Bme280::interval_ms();
+        b["valid"]        = r.valid;
+        if (r.valid) {
+          b["temp_c"]        = r.temp_c;
+          b["humidity_pct"]  = r.humidity_pct;
+          b["pressure_pa"]   = r.pressure_pa;
+          b["age_ms"]        = (long)(millis() - r.taken_ms);
+        }
+        if (Web::Bme280::present()) {
+          b["address"] = Web::Bme280::address();
+        }
       }
 
       send_json(200, doc);

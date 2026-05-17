@@ -40,6 +40,26 @@ namespace _detail {
   inline String& last_status_ref()  { static String v = "not_probed"; return v; }
 }
 
+// Idempotent shared-bus init. The SD card and the QMI8658 IMU both
+// live on the HSPI bus on this hardware (#120/#122). Whichever module
+// runs first creates the bus + drives IMU_CS HIGH to keep the IMU
+// from squatting MISO. The other reuses it. Returns the SPIClass on
+// success, nullptr on boards that don't have the slot.
+inline SPIClass* ensure_shared_bus() {
+#if defined(BOARD_MODEL) && (BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1)
+  if (_detail::spi_ref()) return _detail::spi_ref();
+  // Drive IMU_CS HIGH (deassert) before touching the bus so the IMU
+  // doesn't ACK during SD comms (or vice versa).
+  pinMode(IMU_CS, OUTPUT);
+  digitalWrite(IMU_CS, HIGH);
+  _detail::spi_ref() = new SPIClass(HSPI);
+  _detail::spi_ref()->begin(SD_CLK, SD_MISO, SD_MOSI);
+  return _detail::spi_ref();
+#else
+  return nullptr;
+#endif
+}
+
 // One-shot init. Safe to call when HAS_SD == false at the board level
 // (just no-ops). Returns true if a card was detected and mounted.
 inline bool begin() {
@@ -47,24 +67,17 @@ inline bool begin() {
   // SD_* are only defined on T-Beam Supreme variants in Boards.h, so
   // gate everything on the same board check the .ino uses.
 #if defined(BOARD_MODEL) && (BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1)
-  // The T-Beam Supreme shares this SPI bus between the microSD slot
-  // (CS=47) and the on-board IMU (QMI8658, CS=34). At reset IMU_CS
-  // floats — and a floating CS can read as LOW (the active level for
-  // SPI chip-selects), which means the IMU would respond to SD bus
-  // traffic and scramble MISO during SD init. Drive IMU_CS HIGH
-  // before touching the bus so only the SD card is listening.
-  pinMode(IMU_CS, OUTPUT);
-  digitalWrite(IMU_CS, HIGH);
-
-  // Dedicated SPI bus — HSPI is unused on this platform so we own it.
-  // Match LilyGo's reference setup exactly: 3-arg SPI begin (no CS in
-  // the SPI bus init — the SD library drives CS itself) and the SD
-  // library's default speed.
-  _detail::spi_ref() = new SPIClass(HSPI);
-  _detail::spi_ref()->begin(SD_CLK, SD_MISO, SD_MOSI);
+  // Bus init is shared with the IMU; whichever module runs first
+  // owns the SPIClass(HSPI) + drives IMU_CS HIGH. (ensure_shared_bus
+  // is idempotent.)
+  SPIClass* bus = ensure_shared_bus();
+  if (!bus) {
+    _detail::last_status_ref() = "no_slot_on_board";
+    return false;
+  }
   NOTICEF("SDCard: probing pins clk=%d miso=%d mosi=%d cs=%d imu_cs=%d (held high)",
           SD_CLK, SD_MISO, SD_MOSI, SD_CS, IMU_CS);
-  if (!SD.begin(SD_CS, *_detail::spi_ref())) {
+  if (!SD.begin(SD_CS, *bus)) {
     _detail::last_status_ref() = "sd_begin_failed";
     NOTICE("SDCard: SD.begin() failed — card absent, wrong pinout, or unsupported FS (try FAT32)");
     _detail::present_ref() = false;

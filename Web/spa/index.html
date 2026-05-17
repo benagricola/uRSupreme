@@ -911,6 +911,23 @@ summary:hover { color: var(--text); }
     <div class="mono" id="sys-bme-values"  style="font-size:11px;margin-top:6px"></div>
     <div class="muted mono" id="sys-bme-age"  style="font-size:11px"></div>
   </div>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">Magnetometer (QMC6310)</div>
+      <div id="sys-mag-line"></div>
+    </div>
+    <div class="mono" id="sys-mag-values"  style="font-size:11px;margin-top:6px"></div>
+    <div class="muted mono" id="sys-mag-age"  style="font-size:11px"></div>
+  </div>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">IMU (QMI8658)</div>
+      <div id="sys-imu-line"></div>
+    </div>
+    <div class="mono" id="sys-imu-accel"   style="font-size:11px;margin-top:6px"></div>
+    <div class="mono" id="sys-imu-gyro"    style="font-size:11px"></div>
+    <div class="muted mono" id="sys-imu-age" style="font-size:11px"></div>
+  </div>
 </div>
 
 <!-- ===================== EMOJI PICKER ===================== -->
@@ -3140,31 +3157,71 @@ function renderSystemPopover(s) {
     $('sys-gps-age').textContent = age;
   }
 
+  // Generic three-state pill renderer for the simple sensor sections.
+  // Returns the pill class + label and clears the detail fields if
+  // the sensor isn't producing data.
+  function renderSensorState(line, container, available, enabled, valid) {
+    line.innerHTML = '';
+    if (!available) {
+      line.appendChild(el('span', { class: 'pill' }, 'Absent'));
+      return 'absent';
+    }
+    if (!enabled) {
+      line.appendChild(el('span', { class: 'pill warn' }, 'Disabled'));
+      return 'disabled';
+    }
+    if (!valid) {
+      line.appendChild(el('span', { class: 'pill warn' }, 'Warming up'));
+      return 'warming';
+    }
+    line.appendChild(el('span', { class: 'pill ok' }, 'Live'));
+    return 'live';
+  }
+
   // BME280 — temperature / humidity / pressure.
   const b = (s.sensors && s.sensors.bme280) || {};
-  const bLine = $('sys-bme-line'); bLine.innerHTML = '';
-  if (!b.available) {
-    bLine.appendChild(el('span', { class: 'pill' }, 'Absent'));
-    $('sys-bme-values').textContent = '';
-    $('sys-bme-age').textContent    = '';
-  } else if (!b.enabled) {
-    bLine.appendChild(el('span', { class: 'pill warn' }, 'Disabled'));
-    $('sys-bme-values').textContent = '';
-    $('sys-bme-age').textContent    = '';
-  } else if (!b.valid) {
-    bLine.appendChild(el('span', { class: 'pill warn' }, 'Warming up'));
-    $('sys-bme-values').textContent = '';
-    $('sys-bme-age').textContent    = 'Waiting for first read…';
-  } else {
-    bLine.appendChild(el('span', { class: 'pill ok' }, 'Live'));
+  const bState = renderSensorState($('sys-bme-line'), null, b.available, b.enabled, b.valid);
+  if (bState === 'live') {
     $('sys-bme-values').textContent =
       b.temp_c.toFixed(1) + ' °C · ' +
       b.humidity_pct.toFixed(0) + ' %RH · ' +
       (b.pressure_pa / 100).toFixed(1) + ' hPa';
-    const age = (typeof b.age_ms === 'number' && b.age_ms >= 0)
-      ? 'Last read ' + Math.round(b.age_ms / 1000) + ' s ago'
-      : '';
-    $('sys-bme-age').textContent = age;
+    $('sys-bme-age').textContent = (typeof b.age_ms === 'number' && b.age_ms >= 0)
+      ? 'Last read ' + Math.round(b.age_ms / 1000) + ' s ago' : '';
+  } else {
+    $('sys-bme-values').textContent = '';
+    $('sys-bme-age').textContent = bState === 'warming' ? 'Waiting for first read…' : '';
+  }
+
+  // Magnetometer — QMC6310.
+  const mg = (s.sensors && s.sensors.magnetometer) || {};
+  const mState = renderSensorState($('sys-mag-line'), null, mg.available, mg.enabled, mg.valid);
+  if (mState === 'live') {
+    $('sys-mag-values').textContent =
+      'Heading ' + mg.heading_deg.toFixed(0) + '° · ' +
+      mg.x_uT.toFixed(1) + ' / ' + mg.y_uT.toFixed(1) + ' / ' + mg.z_uT.toFixed(1) + ' µT';
+    $('sys-mag-age').textContent = (typeof mg.age_ms === 'number' && mg.age_ms >= 0)
+      ? 'Last read ' + Math.round(mg.age_ms / 1000) + ' s ago' : '';
+  } else {
+    $('sys-mag-values').textContent = '';
+    $('sys-mag-age').textContent = mState === 'warming' ? 'Waiting for first read…' : '';
+  }
+
+  // IMU — QMI8658.
+  const im = (s.sensors && s.sensors.imu) || {};
+  const iState = renderSensorState($('sys-imu-line'), null, im.available, im.enabled, im.valid);
+  if (iState === 'live') {
+    $('sys-imu-accel').textContent = 'Accel ' +
+      im.accel_x_g.toFixed(2) + ' / ' + im.accel_y_g.toFixed(2) + ' / ' + im.accel_z_g.toFixed(2) + ' g';
+    $('sys-imu-gyro').textContent = 'Gyro  ' +
+      im.gyro_x_dps.toFixed(1) + ' / ' + im.gyro_y_dps.toFixed(1) + ' / ' + im.gyro_z_dps.toFixed(1) + ' °/s · ' +
+      im.temp_c.toFixed(1) + ' °C';
+    $('sys-imu-age').textContent = (typeof im.age_ms === 'number' && im.age_ms >= 0)
+      ? 'Last read ' + Math.round(im.age_ms / 1000) + ' s ago' : '';
+  } else {
+    $('sys-imu-accel').textContent = '';
+    $('sys-imu-gyro').textContent = '';
+    $('sys-imu-age').textContent = iState === 'warming' ? 'Waiting for first read…' : '';
   }
 }
 

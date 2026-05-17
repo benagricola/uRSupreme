@@ -37,6 +37,8 @@
 #include "Web/Ntp.h"
 #include "Web/SDCard.h"
 #include "Web/Bme280.h"
+#include "Web/QmcMag.h"
+#include "Web/QmiImu.h"
 #endif
 
 #include <Arduino.h>
@@ -876,6 +878,12 @@ void setup() {
     // RTC are on Wire1 (42/41), untouched by this.
     Wire.begin(17, 18);
     Web::Bme280::begin(Wire);
+    // (#120) QMC6310 magnetometer — also on Wire (0x1C or 0x3C).
+    Web::QmcMag::begin(Wire);
+    // (#120) QMI8658 IMU — on the HSPI bus shared with the SD slot.
+    // Its begin() reuses SDCard::ensure_shared_bus() so we don't
+    // double-init the bus.
+    Web::QmiImu::begin();
 #endif
 
     // Remove legacy files
@@ -2552,6 +2560,9 @@ void loop() {
   // (#120) BME280 — periodic temp/humidity/pressure poll, gated by
   // the driver's own interval. No-op if the chip wasn't detected.
   Web::Bme280::pump();
+  // (#120) QMC6310 magnetometer + QMI8658 IMU — same pattern.
+  Web::QmcMag::pump();
+  Web::QmiImu::pump();
 #endif
 
   if (radio_online) {

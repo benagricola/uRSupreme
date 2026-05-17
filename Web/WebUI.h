@@ -27,6 +27,8 @@
 #include "RtcPCF8563.h"
 #include "SDCard.h"
 #include "Bme280.h"
+#include "QmcMag.h"
+#include "QmiImu.h"
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
@@ -1020,6 +1022,42 @@ namespace Web {
         }
         if (Web::Bme280::present()) {
           b["address"] = Web::Bme280::address();
+        }
+      }
+      {
+        JsonObject m = sensors["magnetometer"].to<JsonObject>();
+        const Web::QmcMag::Reading r = Web::QmcMag::last_reading();
+        m["available"]   = Web::QmcMag::present();
+        m["enabled"]     = Web::QmcMag::enabled();
+        m["interval_ms"] = (uint32_t)Web::QmcMag::interval_ms();
+        m["valid"]       = r.valid;
+        if (r.valid) {
+          m["heading_deg"] = r.heading_deg;
+          m["x_uT"]        = r.x_uT;
+          m["y_uT"]        = r.y_uT;
+          m["z_uT"]        = r.z_uT;
+          m["age_ms"]      = (long)(millis() - r.taken_ms);
+        }
+        if (Web::QmcMag::present()) {
+          m["address"] = Web::QmcMag::address();
+        }
+      }
+      {
+        JsonObject i = sensors["imu"].to<JsonObject>();
+        const Web::QmiImu::Reading r = Web::QmiImu::last_reading();
+        i["available"]   = Web::QmiImu::present();
+        i["enabled"]     = Web::QmiImu::enabled();
+        i["interval_ms"] = (uint32_t)Web::QmiImu::interval_ms();
+        i["valid"]       = r.valid;
+        if (r.valid) {
+          i["accel_x_g"]  = r.accel_x_g;
+          i["accel_y_g"]  = r.accel_y_g;
+          i["accel_z_g"]  = r.accel_z_g;
+          i["gyro_x_dps"] = r.gyro_x_dps;
+          i["gyro_y_dps"] = r.gyro_y_dps;
+          i["gyro_z_dps"] = r.gyro_z_dps;
+          i["temp_c"]     = r.temp_c;
+          i["age_ms"]     = (long)(millis() - r.taken_ms);
         }
       }
 

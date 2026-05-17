@@ -591,9 +591,12 @@ bool init_pmu() {
     PMU->setPowerChannelVoltage(XPOWERS_ALDO3, 3300);
     PMU->enablePowerOutput(XPOWERS_ALDO3);
 
-    // m.2 interface
+    // m.2 expansion slot rail. Default build doesn't drive anything
+    // on the m.2 pins, so we leave DCDC3 disabled to save the rail's
+    // idle current. Re-enable here if you wire an m.2 module that
+    // needs 3.3 V.
     PMU->setPowerChannelVoltage(XPOWERS_DCDC3, 3300);
-    PMU->enablePowerOutput(XPOWERS_DCDC3);
+    PMU->disablePowerOutput(XPOWERS_DCDC3);
 
     /**
      * ALDO2 cannot be turned off.

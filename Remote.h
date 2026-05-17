@@ -132,8 +132,14 @@ void wifi_remote_start_sta() {
   if (wr_ssid[0] != 0x00) {
     if (wr_psk[0] != 0x00) { WiFi.begin(wr_ssid, wr_psk); }
     else                   { WiFi.begin(wr_ssid); }
+    // Modem-sleep between DTIM beacons. The WiFi modem powers down
+    // while the chip is otherwise idle, then wakes for the next
+    // beacon. Saves a chunk of idle current at the cost of a small
+    // wake latency on the first packet after a long idle period —
+    // not noticeable for chat / API traffic.
+    WiFi.setSleep(WIFI_PS_MIN_MODEM);
   }
-  
+
   delay(500);
   //delay(10000);
   wr_wifi_status = WiFi.status(); 

@@ -32,6 +32,7 @@
 #include <string>
 #include <stdint.h>
 #include "../LXMF/LXMFTypes.h"
+#include "../LXMF/AnnounceLog.h"
 
 namespace LXMF { struct MessageRecord; }
 
@@ -146,25 +147,12 @@ namespace WS {
 
   // Announce / path events. These are global (every connected client
   // gets them) so the SPA's contacts list and path table stay live.
-  struct AnnounceRecord {
-    RNS::Bytes  destination;
-    std::string display_name;
-    std::string aspect;
-    uint32_t    received_ms;
-  };
-  inline void publish_announce(const AnnounceRecord& rec) {
+  // is_lxmf=true → "announce_seen" (lxmf.delivery aspect, populates
+  // contacts), is_lxmf=false → "path_seen" (any aspect, populates the
+  // path table).
+  inline void publish_announce_or_path(const LXMF::AnnounceRecord& rec, bool is_lxmf) {
     JsonDocument doc;
-    doc["type"]         = "announce_seen";
-    doc["dest"]         = rec.destination.toHex();
-    doc["display_name"] = rec.display_name;
-    doc["aspect"]       = rec.aspect;
-    doc["received_ms"]  = rec.received_ms;
-    doc["age_ms"]       = (uint32_t)(millis() - rec.received_ms);
-    broadcast(doc);
-  }
-  inline void publish_path(const AnnounceRecord& rec) {
-    JsonDocument doc;
-    doc["type"]         = "path_seen";
+    doc["type"]         = is_lxmf ? "announce_seen" : "path_seen";
     doc["dest"]         = rec.destination.toHex();
     doc["display_name"] = rec.display_name;
     doc["aspect"]       = rec.aspect;

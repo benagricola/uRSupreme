@@ -1666,6 +1666,61 @@ void eeprom_erase() {
 	hard_reset();
 }
 
+// Auto-provision the EEPROM provisioning bytes when the chip is
+// completely blank (post-`pio run -t erase`). Lets the bench come up
+// without the RNode signing toolchain — we just bake in the values
+// rnodeconf would have written, derived from the compile-time
+// BOARD_MODEL define. Production / signed RNodes write these via
+// rnodeconf at the factory, so this path only fires on dev hardware.
+void auto_provision_eeprom_if_blank() {
+  #if MCU_VARIANT != MCU_ESP32
+    return;
+  #else
+  // Already provisioned — nothing to do.
+  if (EEPROM.read(eeprom_addr(ADDR_INFO_LOCK)) == INFO_LOCK_BYTE) return;
+  // Detect blank flash: every byte in the checksummed region must be
+  // 0xFF or 0x00. If even one looks "real," don't clobber — the device
+  // has partial provisioning we shouldn't second-guess.
+  bool blank = true;
+  for (uint8_t i = 0; i < CHECKSUMMED_SIZE; i++) {
+    const uint8_t v = EEPROM.read(eeprom_addr(i));
+    if (v != 0xFF && v != 0x00) { blank = false; break; }
+  }
+  if (!blank) return;
+
+  uint8_t product, model;
+  #if BOARD_MODEL == BOARD_TBEAM_S_V1
+    product = PRODUCT_TBEAM_S_V1;
+    model   = MODEL_DC;                       // 868 MHz SX1262 variant
+  #elif BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+    product = PRODUCT_TBEAM_S_V1;
+    model   = MODEL_D7;                       // 868 MHz LR1121 variant
+  #else
+    // Unknown board — skip auto-provisioning. User can still drive the
+    // device via rnodeconf if they want this path to fire.
+    return;
+  #endif
+
+  Serial.println("EEPROM blank — auto-provisioning from compile-time board defaults");
+  eeprom_update(eeprom_addr(ADDR_PRODUCT), product);
+  eeprom_update(eeprom_addr(ADDR_MODEL),   model);
+  eeprom_update(eeprom_addr(ADDR_HW_REV),  0x01);
+  // Compute the MD5 over the first CHECKSUMMED_SIZE bytes and write it
+  // into ADDR_CHKSUM..+0xF so eeprom_checksum_valid() passes.
+  char buf[CHECKSUMMED_SIZE];
+  for (uint8_t i = 0; i < CHECKSUMMED_SIZE; i++) buf[i] = (char)EEPROM.read(eeprom_addr(i));
+  unsigned char *hash = MD5::make_hash(buf, CHECKSUMMED_SIZE);
+  for (uint8_t i = 0; i < 16; i++) eeprom_update(eeprom_addr(ADDR_CHKSUM + i), hash[i]);
+  free(hash);
+  // INFO_LOCK marks the device as provisioned. Must be written last
+  // so a power-cut mid-provisioning doesn't leave a half-state that
+  // looks legit.
+  eeprom_update(eeprom_addr(ADDR_INFO_LOCK), INFO_LOCK_BYTE);
+  EEPROM.commit();
+  Serial.println("EEPROM auto-provisioned");
+  #endif
+}
+
 bool eeprom_lock_set() {
     #if HAS_EEPROM
 	    if (EEPROM.read(eeprom_addr(ADDR_INFO_LOCK)) == INFO_LOCK_BYTE) {

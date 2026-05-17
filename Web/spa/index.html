@@ -1343,7 +1343,6 @@ const state = {
   openPeer: null,
   announces: new Map(),             // dest_hex → record
   paths: new Map(),
-  markers: { inbox_since: 0, announces_since: 0, paths_since: 0, progress_since: 0 },
   transfers: new Map(),   // link_hash → { peer, incoming, bytes_done, bytes_total }
   contacts: JSON.parse(localStorage.getItem(LS.CONTACTS) || '{}'),
   prefs: loadPrefs(),
@@ -1746,45 +1745,73 @@ class UReticulumHTTPTransport extends Transport {
                    + '/conversations/' + encodeURIComponent(peerHex),
                      { method: 'DELETE' });
   }
-  subscribe(identityId, markers, onEvent) {
-    let es = null;
+  subscribe(identityId, onEvent) {
+    // Persistent WebSocket — one TCP connection that lives as long as
+    // the SPA tab does, with backoff reconnect on close. Replaces the
+    // EventSource short-poll, which churned a fresh TCP connection
+    // every 500 ms and was the dominant source of PSRAM allocation
+    // pressure on the device.
+    let ws = null;
     let stopped = false;
-    let opened = false;
+    let reconnectAttempts = 0;
+    let reconnectTimer = null;
+    let pingTimer = null;
+    const wsUrl = () => {
+      const proto = (location.protocol === 'https:') ? 'wss:' : 'ws:';
+      return proto + '//' + location.host
+        + '/api/ws?token=' + encodeURIComponent(this.tokenGetter() || '')
+        + '&identity_id=' + encodeURIComponent(identityId);
+    };
     const onOpen = () => {
+      reconnectAttempts = 0;
       if (state.reconnectStart) {
         state.reconnectStart = 0;
         $('toast-reconnect').hidden = true;
       }
-      opened = true;
+      // App-level keepalive (every 25 s) so middleboxes that idle
+      // out silent WS connections still see traffic.
+      if (pingTimer) clearInterval(pingTimer);
+      pingTimer = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send('{"type":"ping"}');
+        }
+      }, 25000);
     };
-    const onError = () => {
+    const onClose = () => {
+      if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+      if (stopped) return;
       if (!state.reconnectStart) state.reconnectStart = Date.now();
-      // Show "Reconnecting…" if disconnected for > 5s.
+      // Show "Reconnecting…" if disconnected > 5 s.
       setTimeout(() => {
         if (state.reconnectStart && Date.now() - state.reconnectStart > 5000) {
           $('toast-reconnect').hidden = false;
-          // Trigger a resync on next open.
-          if (!stopped && onEvent) onEvent({ type: '_reconnect' });
         }
       }, 5200);
+      // Exponential backoff capped at 30 s. Tell the app to resync
+      // any state that may have drifted while disconnected.
+      const delay = Math.min(30000, 500 * Math.pow(2, Math.min(reconnectAttempts, 6)));
+      reconnectAttempts++;
+      if (onEvent) onEvent({ type: '_reconnect' });
+      reconnectTimer = setTimeout(open, delay);
     };
     const open = () => {
       if (stopped) return;
-      const url = '/api/identities/' + encodeURIComponent(identityId) + '/events'
-        + '?token=' + encodeURIComponent(this.tokenGetter() || '')
-        + '&inbox_since=' + (markers.inbox_since || 0)
-        + '&announces_since=' + (markers.announces_since || 0)
-        + '&paths_since=' + (markers.paths_since || 0)
-        + '&progress_since=' + (markers.progress_since || 0);
-      es = new EventSource(url);
-      es.onopen = onOpen;
-      es.onmessage = (ev) => {
+      try { ws = new WebSocket(wsUrl()); }
+      catch (e) { onClose(); return; }
+      ws.onopen    = onOpen;
+      ws.onmessage = (ev) => {
         try { onEvent(JSON.parse(ev.data)); } catch (e) { /* ignore */ }
       };
-      es.onerror = onError;
+      ws.onclose   = onClose;
+      ws.onerror   = () => { /* close fires after */ };
     };
     open();
-    return () => { stopped = true; if (es) es.close(); };
+    return () => {
+      stopped = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (pingTimer)      clearInterval(pingTimer);
+      if (ws) ws.close();
+    };
   }
   async getRadio() { return this._req('/api/radio'); }
   async setRadio(cfg) { return this._req('/api/radio', { method: 'POST', body: cfg }); }
@@ -2759,8 +2786,12 @@ async function blobImageDimensions(blob) {
   return { w, h };
 }
 
+// Returns just the duration string (e.g. "≈2.4 s") or null when the
+// device couldn't compute one (no path, local destination, etc).
+// Callers prefix "ETA: " themselves and pick their own unknown-state
+// text — keeps display copy consistent everywhere.
 function formatEta(ms) {
-  if (ms == null) return 'ETA ?';
+  if (ms == null) return null;
   if (ms < 1000) return '~' + ms + ' ms';
   const s = ms / 1000;
   if (s < 60) return '≈' + s.toFixed(1) + ' s';
@@ -2998,7 +3029,10 @@ async function openImageResizePicker(file) {
         if (!node) continue;
         if (r.kind === 'local')      node.textContent = 'ETA: instant (same device)';
         else if (r.kind === 'unknown') node.textContent = 'ETA: unknown route';
-        else                          node.textContent = 'ETA: ' + formatEta(r.eta_ms);
+        else {
+          const e = formatEta(r.eta_ms);
+          node.textContent = e ? ('ETA: ' + e) : 'ETA: pending path estimate';
+        }
       } catch (_) { /* leave blank */ }
     }
   };
@@ -3100,10 +3134,15 @@ function renderAttachTray() {
     } else if (a.staging_id) {
       etaText = 'uploaded';
     } else {
-      etaText = a.kind === 'local' ? 'instant'
-              : a.kind === 'unknown' ? 'ETA unknown'
-              : a.eta_ms != null ? formatEta(a.eta_ms)
-              : '';
+      // a.kind comes from /api/paths/estimate at stage-time; fall back
+      // to a.eta_ms if present. "?" / blank states are deliberate —
+      // signal "device couldn't size this route", not a missing UI.
+      if      (a.kind === 'local')   etaText = 'instant';
+      else if (a.kind === 'unknown') etaText = 'no route';
+      else {
+        const e = formatEta(a.eta_ms);
+        etaText = e || 'sizing…';
+      }
     }
     if (etaText) chip.appendChild(el('span', { class: 'eta', text: etaText }));
     const x = el('span', { class: 'drop', text: '×', title: 'Drop attachment' });
@@ -3832,16 +3871,21 @@ setInterval(() => {
 
 function persistContacts() { localStorage.setItem(LS.CONTACTS, JSON.stringify(state.contacts)); }
 
-// ============================== SSE EVENT DISPATCH ==============================
+// ============================== WS EVENT DISPATCH ==============================
 function dispatchEvent(ev) {
   if (ev.type === '_reconnect') {
     // We've been disconnected long enough — re-fetch /state to resync.
     refreshState();
     return;
   }
+  if (ev.type === 'hello') {
+    // Server-side handshake confirmation. Nothing to do — refreshState
+    // already ran on first open.
+    return;
+  }
+  if (ev.type === 'pong') return;
   if (ev.type === 'incoming') {
     const m = ev.msg || {};
-    state.markers.inbox_since = Math.max(state.markers.inbox_since, m.seq);
     upsertMessage({
       peer: m.peer, seq: m.seq, ts: m.ts,
       // boot_epoch + received_ms are required for correct sort order —
@@ -3856,7 +3900,6 @@ function dispatchEvent(ev) {
     renderConversations();
     if (state.openPeer === m.peer) renderThread();
   } else if (ev.type === 'announce_seen') {
-    state.markers.announces_since = Math.max(state.markers.announces_since, ev.received_ms);
     // Convert the device's monotonic age_ms to a wall-clock anchor so
     // we can refresh "X ago" labels purely client-side.
     ev.seenAt = Date.now() - (ev.age_ms || 0);
@@ -3864,7 +3907,6 @@ function dispatchEvent(ev) {
     renderAnnounces();
     renderConversations();  // also surfaces in the Discovered group
   } else if (ev.type === 'path_seen') {
-    state.markers.paths_since = Math.max(state.markers.paths_since, ev.received_ms);
     ev.seenAt = Date.now() - (ev.age_ms || 0);
     state.paths.set(ev.dest, ev);
     renderPaths();
@@ -3874,8 +3916,36 @@ function dispatchEvent(ev) {
       // Already waiting to consume — open the modal.
       openIdCodeModal();
     }
+  } else if (ev.type === 'outbox_status') {
+    // Lifecycle pill update for an outbound message bubble. The
+    // status pill flips queued → sent → delivered without a re-fetch.
+    const link = ev.link_hash;
+    if (!link) return;
+    // Find any cached outbound message whose link_hash matches and
+    // flip its status field, then re-render the open thread.
+    let touched = false;
+    for (const conv of state.conversations.values()) {
+      for (const m of conv.msgs) {
+        if (!m.in && m.packet_hash === link) {
+          m.status = ev.status;
+          touched = true;
+        }
+      }
+    }
+    if (touched) {
+      renderConversations();
+      renderThread();
+    }
+  } else if (ev.type === 'time_update') {
+    // Wall-clock source changed. Update clock anchor so relative-time
+    // labels stay accurate, then repaint the time pill if it's open.
+    if (typeof ev.unix_ms === 'number') {
+      state.timeSource = ev.source;
+      state.timeCalibrated = !!ev.calibrated;
+    }
+    // The system popover (if open) shows the live clock; tickSystemClock
+    // already runs every second, so it will pick this up on its next tick.
   } else if (ev.type === 'message_progress' || ev.type === 'message_complete') {
-    state.markers.progress_since = Math.max(state.markers.progress_since || 0, ev.seq);
     if (!state.transfers) state.transfers = new Map();
     const key = ev.link_hash;
     if (!key) return;
@@ -3904,7 +3974,6 @@ async function refreshState() {
   try {
     const r = await state.transport.getState(state.identityId);
     state.self = r.identity;
-    state.markers = r.markers || state.markers;
     state.announces.clear();
     for (const a of (r.announces || [])) {
       a.seenAt = Date.now() - (a.age_ms || 0);
@@ -3956,7 +4025,7 @@ async function refreshState() {
 let _unsubscribe = null;
 function startEventStream() {
   if (_unsubscribe) _unsubscribe();
-  _unsubscribe = state.transport.subscribe(state.identityId, state.markers, dispatchEvent);
+  _unsubscribe = state.transport.subscribe(state.identityId, dispatchEvent);
 }
 
 // ============================== BOOT / VIEW FLOW ==============================

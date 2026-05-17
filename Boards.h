@@ -630,6 +630,12 @@
     #elif BOARD_MODEL == BOARD_TBEAM_S_V1
       #define IS_ESP32S3 true
       #define MODEM SX1262
+      // T-Beam Supreme is a development board, not a signed RNode
+      // product. Firmware-signature validation gates the radio behind a
+      // signing chain we don't participate in. Disable so a fresh
+      // chip-erase + reflash boots functional. Matches the LR variant.
+      #undef VALIDATE_FIRMWARE
+      #define VALIDATE_FIRMWARE false
       #define DIO2_AS_RF_SWITCH true
       #define HAS_BUSY true
       #define HAS_TCXO true

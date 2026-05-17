@@ -132,12 +132,24 @@ namespace _detail {
   // calibration survives reboots.
   using on_adopt_fn = void (*)(Source, double /*epoch*/);
   inline on_adopt_fn& on_adopt_ref()     { static on_adopt_fn fn = nullptr; return fn; }
+  // Separate hook for emit-style observers (the WebSocket push, the
+  // SPA's clock pill, anyone who wants to know "the clock just moved
+  // / its source just changed"). Distinct from on_adopt_ref so the
+  // RTC-write slot can't be clobbered by a publisher.
+  using on_change_fn = void (*)(Source, double /*epoch*/);
+  inline on_change_fn& on_change_ref() { static on_change_fn fn = nullptr; return fn; }
 }
 
 // Register a post-adopt callback. Only one slot — RtcPCF8563 takes
 // it on the firmware's behalf. Pass nullptr to unhook.
 inline void set_on_adopt(_detail::on_adopt_fn fn) {
   _detail::on_adopt_ref() = fn;
+}
+
+// Register an observer for time changes. Separate from on_adopt so the
+// RTC write-through hook can coexist with an event publisher.
+inline void set_on_change(_detail::on_change_fn fn) {
+  _detail::on_change_ref() = fn;
 }
 
 // Reported time-source state. Returns 0.0 if no source has set time.
@@ -168,6 +180,9 @@ inline void seed_from_rtc(double epoch_seconds) {
   // report still wins via the report_time priority check.
   _detail::current_source_ref()   = Source::RTC;
   _detail::current_priority_ref() = 255;
+  if (_detail::on_change_ref()) {
+    _detail::on_change_ref()(Source::RTC, epoch_seconds);
+  }
 }
 
 // A user-visible source reports a time. Adopted iff the source is
@@ -191,6 +206,9 @@ inline bool report_time(Source src, double epoch_seconds) {
   // here must not break the caller — the callback is fire-and-forget.
   if (_detail::on_adopt_ref()) {
     _detail::on_adopt_ref()(src, epoch_seconds);
+  }
+  if (_detail::on_change_ref()) {
+    _detail::on_change_ref()(src, epoch_seconds);
   }
   return true;
 }

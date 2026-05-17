@@ -8,7 +8,7 @@ def test_state_shape(sx):
     assert r.status_code == 200
     body = r.json()
     assert_has_keys(body, ["identity", "conversations", "announces",
-                           "paths", "markers", "clock"])
+                           "paths", "clock"])
 
 
 def test_conversations_messages_shape(sx):

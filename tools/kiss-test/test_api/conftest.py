@@ -26,34 +26,68 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 KISS_TEST_DIR = os.path.dirname(HERE)
 
 
-@dataclass(frozen=True)
+@dataclass
 class Device:
     name: str            # "sx" / "lr"
     url: str             # base URL (no trailing slash)
-    identity: str        # 16-hex identity id
-    address: str         # 32-hex destination address
+    identity: str        # 16-hex identity id   (auto-discovered)
+    address: str         # 32-hex address       (auto-discovered)
     password: str
     token_file: str      # path under tools/kiss-test/
 
 
+# Bench layout. Identity id/address are auto-discovered from /api/info at
+# session start so the suite survives full flash wipes — the user just
+# keeps the display_name + password stable.
 _DEVICES = [
     Device(
         name="sx",
         url="http://192.168.1.116",
-        identity="140991649b164ece",
-        address="e60cf2202cd0609925c0948cf84147a9",
-        password="kisstester2026",
+        identity="",
+        address="",
+        password="sxtester2026",
         token_file=os.path.join(KISS_TEST_DIR, ".token"),
     ),
     Device(
         name="lr",
         url="http://192.168.1.118",
-        identity="4a02615103d65186",
-        address="26919c4cd54cf3c8b7f3c736a5d1e819",
+        identity="",
+        address="",
         password="lrtester2026",
         token_file=os.path.join(KISS_TEST_DIR, ".lr-token"),
     ),
 ]
+
+
+# Display-name mapping for auto-discovery. The first identity matching
+# the expected display name (or, if absent, the first identity at all)
+# wins. Lets the suite handle either the seeded "sx-tester" / "lr-tester"
+# pair or a freshly-named identity post-wipe.
+_DISPLAY_NAMES = {"sx": "sx-tester", "lr": "lr-tester"}
+
+
+def _discover(dev: Device) -> None:
+    """Populate dev.identity + dev.address from /api/info if empty."""
+    if dev.identity and dev.address:
+        return
+    r = requests.get(f"{dev.url}/api/info", timeout=DEFAULT_TIMEOUT)
+    r.raise_for_status()
+    idents = r.json().get("identities", [])
+    if not idents:
+        raise RuntimeError(
+            f"{dev.name}: no identity provisioned on {dev.url}. "
+            "Press the button + POST /api/identities to create one."
+        )
+    target = _DISPLAY_NAMES.get(dev.name)
+    pick = None
+    for i in idents:
+        if target and i.get("display_name") == target:
+            pick = i
+            break
+    if not pick:
+        pick = idents[0]
+    dev.identity = pick["id"]
+    dev.address  = pick["address"]
 
 
 DEFAULT_TIMEOUT = 15  # Some endpoints (paths/lookup over slow LoRa) take >5 s.
@@ -61,6 +95,7 @@ DEFAULT_TIMEOUT = 15  # Some endpoints (paths/lookup over slow LoRa) take >5 s.
 
 def _login(dev: Device) -> str:
     """Fresh bearer token from /api/auth/login. Cached on disk too."""
+    _discover(dev)
     r = requests.post(
         f"{dev.url}/api/auth/login",
         json={"identity_id": dev.identity, "password": dev.password},

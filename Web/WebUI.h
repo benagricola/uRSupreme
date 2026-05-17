@@ -124,6 +124,22 @@ namespace Web {
       Web::TimeManager::load_config(filesystem);
       register_routes();
       server.begin();
+      // Wire AnnounceLog → WebSocket. Every new announce / path now
+      // pushes a typed frame to every connected client. is_lxmf flips
+      // between announce_seen and path_seen on the wire.
+      LXMF::AnnounceLog::on_new_announce(
+        [](const LXMF::AnnounceRecord& rec, bool is_lxmf) {
+          Web::WS::publish_announce_or_path(rec, is_lxmf);
+        });
+      // Wire TimeManager → WebSocket. Fires when a source (NTP, GPS,
+      // browser, RTC seed) adopts a new wall-clock value, so the SPA
+      // clock pill updates without polling /api/time.
+      Web::TimeManager::set_on_change(
+        [](Web::TimeManager::Source src, double epoch_s) {
+          const uint64_t unix_ms = (uint64_t)(epoch_s * 1000.0);
+          Web::WS::publish_time(Web::TimeManager::source_name(src),
+                                unix_ms, /*calibrated=*/true);
+        });
       NOTICE("WebUI: listening on port 80");
     }
 
@@ -216,7 +232,7 @@ namespace Web {
       Serial.print("\n\n==== IDENTITY CODE: ");
       Serial.print(id_code().hex6.c_str());
       Serial.println(" (valid 60s) ====\n");
-      _id_code_event_pending = true;
+      Web::WS::publish_identity_code_available();
     }
 
     // Display accessors so the OLED renderer can show the identity code
@@ -422,29 +438,10 @@ namespace Web {
       server.addHandler(h);
     }
 
-    // Custom handler for our short-poll-dressed-as-SSE endpoint. The stock
-    // AsyncCallbackWebHandler::canHandle requires isHTTP(), which is false
-    // when the client sends `Accept: text/event-stream` (browsers' built-in
-    // EventSource always does). That would drop the request through to the
-    // 404 catch-all. This handler accepts both HTTP and SSE request types.
-    class SseShortPollHandler : public AsyncWebHandler {
-      AsyncURIMatcher _uri;
-      std::function<void(AsyncWebServerRequest*)> _cb;
-    public:
-      SseShortPollHandler(AsyncURIMatcher u, std::function<void(AsyncWebServerRequest*)> cb)
-          : _uri(std::move(u)), _cb(std::move(cb)) {}
-      bool canHandle(AsyncWebServerRequest* req) const override {
-        if (req->method() != HTTP_GET) return false;
-        if (!req->isHTTP() && !req->isSSE()) return false;
-        return _uri.matches(req);
-      }
-      void handleRequest(AsyncWebServerRequest* req) override { _cb(req); }
-    };
-
     static void register_routes() {
-      // WebSocket event channel — replaces the SSE short-poll on
-      // /api/identities/{}/events. The SSE endpoint is kept registered
-      // below for transitional compatibility; the SPA prefers WS.
+      // WebSocket event channel at /api/ws. Single push channel for
+      // every realtime event the SPA cares about. The old SSE short-
+      // poll lived here too; deleted now that the SPA is WS-only.
       Web::WS::bind_validator(&AuthTokens::validate);
       Web::WS::server().onEvent(Web::WS::on_event);
       Web::WS::server().handleHandshake(Web::WS::on_handshake);
@@ -505,7 +502,6 @@ namespace Web {
       // a Failed outbox entry. Resets the auto-retry budget.
       server.on(uri("/api/identities/{}/outbox/{}/retry"),
                 HTTP_POST, handle_outbox_retry);
-      server.addHandler(new SseShortPollHandler(uri("/api/identities/{}/events"), handle_events));
       server.on(uri("/api/identities/{}/state"),    HTTP_GET,  handle_state);
       server.on(uri("/api/identities/{}/conversations/{}"),
                 HTTP_DELETE, handle_clear_conversation);
@@ -1975,10 +1971,10 @@ namespace Web {
         }
       }
 
-      // Announce ring snapshot. The SPA uses received_ms of the newest
-      // entry as the SSE announces_since marker.
+      // Announce ring snapshot. Realtime updates flow via WebSocket
+      // (announce_seen / path_seen events) — this is just the initial
+      // catch-up at SPA load.
       JsonArray announces = doc["announces"].to<JsonArray>();
-      uint32_t announces_high_water = 0;
       for (const auto& rec : LXMF::AnnounceLog::announces()) {
         JsonObject o = announces.add<JsonObject>();
         o["dest"]          = rec.destination.toHex();
@@ -1986,11 +1982,9 @@ namespace Web {
         o["aspect"]        = rec.aspect;
         o["received_ms"]   = rec.received_ms;
         o["age_ms"]        = millis() - rec.received_ms;
-        if (rec.received_ms > announces_high_water) announces_high_water = rec.received_ms;
       }
 
       JsonArray paths = doc["paths"].to<JsonArray>();
-      uint32_t paths_high_water = 0;
       for (const auto& rec : LXMF::AnnounceLog::paths()) {
         JsonObject o = paths.add<JsonObject>();
         o["dest"]          = rec.destination.toHex();
@@ -1998,14 +1992,7 @@ namespace Web {
         o["aspect"]        = rec.aspect;
         o["received_ms"]   = rec.received_ms;
         o["age_ms"]        = millis() - rec.received_ms;
-        if (rec.received_ms > paths_high_water) paths_high_water = rec.received_ms;
       }
-
-      // Since markers — SPA passes these to /events on first SSE connect.
-      JsonObject markers = doc["markers"].to<JsonObject>();
-      markers["inbox_since"]     = a->inbox  ? a->inbox->next_seq()  - 1 : 0;
-      markers["announces_since"] = announces_high_water;
-      markers["paths_since"]     = paths_high_water;
 
       // Display-time anchor: SPA snapshots (Date.now_browser, now_ms)
       // at fetch time and computes wall-clock for any record via
@@ -2018,137 +2005,6 @@ namespace Web {
       clock["current_boot_epoch"] = Web::BootCounter::current();
 
       send_json(req, 200, doc);
-    }
-
-    static void handle_events(AsyncWebServerRequest* req) {
-      RnsLockGuard _g;
-      // Short-poll dressed as SSE: drain any events newer than the per-stream
-      // since markers, send a retry: hint so the browser reconnects quickly,
-      // and return. This keeps the main Arduino task free to service the
-      // LoRa modem and reticulum.loop() — parking the handler for any
-      // meaningful duration would block both, since handleClient() runs
-      // synchronously inside the same loop iteration.
-      //
-      // Three independent since markers tracked per-stream:
-      //   inbox_since      — per-identity monotonic seq (was `since` in v0)
-      //   announces_since  — global received_ms threshold (lxmf.delivery only)
-      //   paths_since      — global received_ms threshold (every aspect)
-      // The browser advances each marker as events arrive.
-      LXMF::IdentityId caller = require_auth(req);
-      if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
-      const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
-      if (!a || !a->inbox) { send_error(req, 404, "unknown_identity"); return; }
-
-      // Accept both the legacy `since` and the new `inbox_since` query name.
-      uint32_t inbox_since = (uint32_t)req->arg("inbox_since").toInt();
-      if (inbox_since == 0) inbox_since = (uint32_t)req->arg("since").toInt();
-      uint32_t announces_since = (uint32_t)req->arg("announces_since").toInt();
-      uint32_t paths_since     = (uint32_t)req->arg("paths_since").toInt();
-
-      // Build the entire event payload up front into a String buffer,
-      // then ship it as one async response. The browser's EventSource
-      // closes the connection on EOF and reconnects after `retry:`ms
-      // with advanced since-markers, same behaviour the sync version
-      // had — just packaged for AsyncTCP's producer-callback model.
-      // AsyncEventSource would be the long-term home for true server-
-      // push but that's a separate task.
-      const uint32_t progress_since = (uint32_t)req->arg("progress_since").toInt();
-      String body;
-      body.reserve(2048);
-      body += "retry: 500\n\n";
-
-      // 1. Inbox messages since the per-identity seq marker.
-      auto pending = a->inbox->since(inbox_since);
-      for (const auto& m : pending) {
-        JsonDocument item;
-        item["type"] = "incoming";
-        JsonObject msg = item["msg"].to<JsonObject>();
-        msg["seq"]         = m.seq;
-        msg["ts"]          = m.ts;
-        msg["boot_epoch"]  = m.boot_epoch;
-        msg["received_ms"] = m.received_ms;
-        msg["peer"]        = m.peer_hash.toHex();
-        msg["title"]       = m.title;
-        msg["body"]        = m.content;
-        msg["sig_ok"]      = m.signature_ok;
-        if (!m.attachments.empty()) {
-          JsonArray atts = msg["attachments"].to<JsonArray>();
-          for (const auto& a : m.attachments) {
-            JsonObject o = atts.add<JsonObject>();
-            o["tag"]      = a.tag;
-            o["size"]     = a.size;
-            o["filename"] = a.filename;
-            if (!a.display_name.empty()) o["display_name"] = a.display_name;
-            if (!a.mime.empty()) o["mime"] = a.mime;
-            if (!a.backend.empty()) o["backend"] = a.backend;
-          }
-        }
-        String line;
-        serializeJson(item, line);
-        body += "data: "; body += line; body += "\n\n";
-      }
-      // 2. Announces ring (lxmf.delivery only), filtered by received_ms.
-      for (const auto& rec : LXMF::AnnounceLog::announces()) {
-        if (rec.received_ms <= announces_since) continue;
-        JsonDocument item;
-        item["type"]          = "announce_seen";
-        item["dest"]          = rec.destination.toHex();
-        item["display_name"]  = rec.display_name;
-        item["aspect"]        = rec.aspect;
-        item["received_ms"]   = rec.received_ms;
-        item["age_ms"]        = millis() - rec.received_ms;
-        String line;
-        serializeJson(item, line);
-        body += "data: "; body += line; body += "\n\n";
-      }
-      // 3. Paths ring (every aspect), filtered by received_ms.
-      for (const auto& rec : LXMF::AnnounceLog::paths()) {
-        if (rec.received_ms <= paths_since) continue;
-        JsonDocument item;
-        item["type"]          = "path_seen";
-        item["dest"]          = rec.destination.toHex();
-        item["display_name"]  = rec.display_name;
-        item["aspect"]        = rec.aspect;
-        item["received_ms"]   = rec.received_ms;
-        item["age_ms"]        = millis() - rec.received_ms;
-        String line;
-        serializeJson(item, line);
-        body += "data: "; body += line; body += "\n\n";
-      }
-      // 4. Identity-code edge events (button-press triggered).
-      if (_id_code_event_pending) {
-        _id_code_event_pending = false;
-        body += "data: {\"type\":\"identity_code_available\"}\n\n";
-      }
-      // 5. Resource transfer progress events scoped to this identity.
-      for (const auto& ev : progress_ring()) {
-        if (ev.seq <= progress_since) continue;
-        if (ev.identity_id != caller) continue;
-        JsonDocument item;
-        item["type"]        = ev.finished ? "message_complete" : "message_progress";
-        item["seq"]         = ev.seq;
-        item["peer"]        = ev.peer_hash.toHex();
-        item["link_hash"]   = ev.link_hash.toHex();
-        item["incoming"]    = ev.incoming;
-        item["bytes_done"]  = ev.bytes_done;
-        item["bytes_total"] = ev.bytes_total;
-        item["finished"]    = ev.finished;
-        String line;
-        serializeJson(item, line);
-        body += "data: "; body += line; body += "\n\n";
-      }
-      // Always emit at least a heartbeat so the stream isn't empty —
-      // empty streams trip the regression suite + waste a round-trip.
-      if (body == "retry: 500\n\n") {
-        body += "data: {\"type\":\"heartbeat\"}\n\n";
-      }
-      AsyncWebServerResponse* resp = req->beginResponse(
-          200, "text/event-stream", body);
-      resp->addHeader("Cache-Control", "no-cache");
-      resp->addHeader("Connection", "close");
-      req->send(resp);
     }
 
     // Verify that this request has physical-presence authority — either a
@@ -2612,40 +2468,9 @@ namespace Web {
       send_json(req, 200, doc);
     }
 
-  public:
-    // ---- Resource transfer progress ring -----------------------------
-    // A tiny ring of recent `message_progress` events. Each LXMF Resource
-    // send/receive fires a progress callback per part; we publish those
-    // to the per-identity SSE stream so the SPA can show a "5 KB / 12 KB"
-    // bar on a message bubble that's still mid-flight.
-    //
-    // Bounded ring (~16 entries) — the SPA polls every 500 ms via SSE
-    // reconnect, and we issue ~2-3 progress events per part, so even a
-    // 1 MiB resource at SDU≈300 B = ~3000 parts spread over many seconds
-    // can't overrun the ring.
-    struct ProgressEvent {
-      uint32_t           seq;
-      LXMF::IdentityId   identity_id;
-      RNS::Bytes         peer_hash;
-      RNS::Bytes         link_hash;
-      bool               incoming;
-      uint32_t           bytes_done;
-      uint32_t           bytes_total;
-      bool               finished;   // true on completion → SPA swaps for final bubble
-    };
-    static std::deque<ProgressEvent>& progress_ring() {
-      static std::deque<ProgressEvent> r;
-      return r;
-    }
-    static uint32_t next_progress_seq() {
-      static uint32_t s = 0;
-      return ++s;
-    }
-
   private:
     static inline bool     _started = false;
     static inline uint32_t _last_sweep = 0;
-    static inline bool     _id_code_event_pending = false;
   };
 
   // Free function the LXMF gateway calls to publish a Resource-transfer
@@ -2660,13 +2485,6 @@ namespace Web {
                                     uint32_t bytes_done,
                                     uint32_t bytes_total,
                                     bool finished) {
-    auto& r = WebUI::progress_ring();
-    r.push_back({WebUI::next_progress_seq(), identity_id, peer_hash, link_hash,
-                 incoming, bytes_done, bytes_total, finished});
-    while (r.size() > 16) r.pop_front();
-    // Push immediately to any connected WebSocket client scoped to this
-    // identity. The SSE ring above is kept so a freshly-reconnecting
-    // SPA still gets a catch-up replay.
     Web::WS::publish_progress(identity_id, peer_hash, link_hash,
                               incoming, bytes_done, bytes_total, finished);
   }

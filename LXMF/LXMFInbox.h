@@ -127,6 +127,7 @@ namespace LXMF {
           o["f"] = a.filename;
           if (!a.display_name.empty()) o["d"] = a.display_name;
           if (!a.mime.empty()) o["m"] = a.mime;
+          if (!a.backend.empty()) o["b"] = a.backend;
         }
       }
 
@@ -242,6 +243,7 @@ namespace LXMF {
           m.filename     = (const char*)(o["f"] | "");
           m.display_name = (const char*)(o["d"] | "");
           m.mime         = (const char*)(o["m"] | "");
+          m.backend      = (const char*)(o["b"] | "flash");  // pre-#122 records default to flash
           rec.attachments.push_back(m);
         }
       }

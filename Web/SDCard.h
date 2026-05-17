@@ -78,6 +78,55 @@ inline bool      present()      { return _detail::present_ref(); }
 inline uint64_t  total_bytes()  { return _detail::present_ref() ? (uint64_t)SD.totalBytes() : 0; }
 inline uint64_t  used_bytes()   { return _detail::present_ref() ? (uint64_t)SD.usedBytes()  : 0; }
 inline uint8_t   card_type()    { return _detail::card_type_ref(); }
+
+// ---- File helpers used by the LXMF attachment routing. ----
+
+// Make sure every directory in `path` exists, walking down from
+// the root. SD.mkdir is single-level only.
+inline bool ensure_parent_dirs(const char* path) {
+  if (!_detail::present_ref()) return false;
+  String p = path;
+  int slash = 0;
+  // Walk forward through each "/segment", mkdir-ing the prefix.
+  while ((slash = p.indexOf('/', slash + 1)) > 0) {
+    String prefix = p.substring(0, slash);
+    if (!SD.exists(prefix)) {
+      if (!SD.mkdir(prefix)) {
+        WARNINGF("SDCard: mkdir failed: %s", prefix.c_str());
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// Write `data` to `path` atomically-ish. Returns bytes written, or
+// 0 on failure. Mirrors microStore::FileSystem::writeFile semantics.
+inline size_t write_file(const char* path, const uint8_t* data, size_t len) {
+  if (!_detail::present_ref()) return 0;
+  if (!ensure_parent_dirs(path)) return 0;
+  File f = SD.open(path, FILE_WRITE);
+  if (!f) {
+    WARNINGF("SDCard: open(WRITE) failed: %s", path);
+    return 0;
+  }
+  size_t wrote = f.write(data, len);
+  f.close();
+  return wrote;
+}
+
+inline bool exists(const char* path) {
+  if (!_detail::present_ref()) return false;
+  return SD.exists(path);
+}
+
+// Open `path` for reading. Caller checks the result truthiness and
+// is responsible for close(). Used by the attachment download
+// endpoint to stream big blobs without loading them into RAM.
+inline File open_read(const char* path) {
+  if (!_detail::present_ref()) return File();
+  return SD.open(path, FILE_READ);
+}
 inline const char* card_type_name() {
   switch (_detail::card_type_ref()) {
     case CARD_MMC:  return "MMC";

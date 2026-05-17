@@ -1146,17 +1146,27 @@ namespace Web {
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a) { send_error(404, "unknown_identity"); return; }
       const std::string full = a->dir() + "/attachments/" + fname;
-      if (!filesystem.exists(full.c_str())) {
+      // Backend dispatch (#122). Try SD first if a card is mounted —
+      // big attachments live there; small/pre-SD ones on LittleFS. If
+      // neither has the file, return 404.
+      const bool on_sd    = Web::SDCard::present() && Web::SDCard::exists(full.c_str());
+      const bool on_flash = !on_sd && filesystem.exists(full.c_str());
+      if (!on_sd && !on_flash) {
         send_error(404, "attachment_not_found");
         return;
       }
-      microStore::File f = filesystem.open(full.c_str(),
-                                           microStore::File::ModeRead);
-      if (!f) {
-        send_error(500, "attachment_open_failed");
-        return;
+      size_t total = 0;
+      File         sd_f;
+      microStore::File flash_f;
+      if (on_sd) {
+        sd_f = Web::SDCard::open_read(full.c_str());
+        if (!sd_f) { send_error(500, "attachment_open_failed"); return; }
+        total = sd_f.size();
+      } else {
+        flash_f = filesystem.open(full.c_str(), microStore::File::ModeRead);
+        if (!flash_f) { send_error(500, "attachment_open_failed"); return; }
+        total = flash_f.size();
       }
-      const size_t total = f.size();
       // Set headers, then stream in chunks so we don't need the whole
       // blob in RAM at once (attachments can run up to ~1 MiB).
       server.setContentLength(total);
@@ -1169,12 +1179,13 @@ namespace Web {
       size_t remaining = total;
       while (remaining > 0) {
         size_t want = remaining < sizeof(buf) ? remaining : sizeof(buf);
-        size_t got = f.read(buf, want);
+        size_t got = on_sd ? sd_f.read(buf, want) : flash_f.read(buf, want);
         if (got == 0) break;
         server.client().write(buf, got);
         remaining -= got;
       }
-      f.close();
+      if (on_sd)  sd_f.close();
+      else        flash_f.close();
     }
 
     static void handle_announces() {

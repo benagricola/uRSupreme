@@ -60,6 +60,11 @@ namespace LXMF {
     std::string filename;       // on-disk stem (attacker-safe)
     std::string display_name;   // sender-supplied label (display-only)
     std::string mime;
+    // Where the bytes actually live. "flash" (default) = LittleFS via
+    // the microStore filesystem; "sd" = T-Beam Supreme's microSD slot
+    // via the Arduino SD library. The download endpoint dispatches
+    // on this value. (#122)
+    std::string backend;
   };
 
   // A received or sent message, in normalized form for inbox/outbox storage.

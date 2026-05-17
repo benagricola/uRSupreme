@@ -5,6 +5,7 @@
 #include <Identity.h>
 #include <Utilities/OS.h>
 #include <microStore/FileSystem.h>
+#include "../Web/SDCard.h"
 
 #include <memory>
 #include <string>
@@ -376,18 +377,21 @@ namespace LXMF {
           });
       // Attachment persistence — when an incoming LXMF message carries
       // FIELD_FILE_ATTACHMENTS / FIELD_IMAGE / FIELD_AUDIO blobs, write
-      // each one to <identity_dir>/attachments/. On-disk filenames are
-      // always "<msg_hash_hex>_<tag>_<idx>.bin" — a stable, attacker-
-      // safe naming scheme. The sender-supplied filename (FieldBlob's
-      // `filename`, populated by the Sideband decoder) is propagated
-      // onto the AttachmentMeta for the SPA to display and use as the
-      // download-prompt name.
+      // each one to <identity_dir>/attachments/ (#122 routing: SD if a
+      // card is mounted, else LittleFS). On-disk filenames are always
+      // "<msg_hash_hex>_<tag>_<idx>.bin". The sender-supplied filename
+      // (Sideband convention, populated by the FieldBlob) is propagated
+      // onto AttachmentMeta.display_name for the SPA to use as the
+      // download-prompt label.
       a.lxmf.set_attachment_persist_callback(
           [p](const RNS::Bytes& msg_hash,
               const std::vector<LXMFMinimal::FieldBlob>& fields) -> std::vector<AttachmentMeta> {
             std::vector<AttachmentMeta> out;
             if (!p->active) return out;
+            const bool use_sd = Web::SDCard::present();
             const std::string att_dir = p->dir() + "/attachments";
+            // LittleFS-side directory still gets prepared even when SD
+            // is mounted — small attachments (or fallback) land here.
             if (!filesystem.isDirectory(att_dir.c_str())) {
               filesystem.mkdir(att_dir.c_str());
             }
@@ -397,35 +401,45 @@ namespace LXMF {
               snprintf(on_disk, sizeof(on_disk), "%s_%02x_%u.bin",
                        msg_hash.toHex().c_str(), (unsigned)f.tag, (unsigned)i);
               const std::string full = att_dir + "/" + on_disk;
+              bool wrote_ok = false;
+              std::string backend = "flash";
               RNS::Utilities::OS::reset_watchdog();
-              const size_t wrote = filesystem.writeFile(full.c_str(),
-                                                        f.raw, f.raw_len);
-              RNS::Utilities::OS::reset_watchdog();
-              if (wrote != f.raw_len) {
-                WARNINGF("LXMF: attachment write short (wrote %u/%u) for %s",
-                         (unsigned)wrote, (unsigned)f.raw_len, on_disk);
-                continue;
+              if (use_sd) {
+                // Try SD first. On failure, fall back to LittleFS so the
+                // user doesn't lose the attachment due to a flaky card.
+                const size_t w = Web::SDCard::write_file(full.c_str(), f.raw, f.raw_len);
+                if (w == f.raw_len) { wrote_ok = true; backend = "sd"; }
+                else {
+                  WARNINGF("LXMF: SD attachment write short (wrote %u/%u for %s) — falling back to flash",
+                           (unsigned)w, (unsigned)f.raw_len, on_disk);
+                }
               }
+              if (!wrote_ok) {
+                const size_t w = filesystem.writeFile(full.c_str(), f.raw, f.raw_len);
+                if (w == f.raw_len) wrote_ok = true;
+                else WARNINGF("LXMF: flash attachment write short (wrote %u/%u) for %s",
+                              (unsigned)w, (unsigned)f.raw_len, on_disk);
+              }
+              RNS::Utilities::OS::reset_watchdog();
+              if (!wrote_ok) continue;
               AttachmentMeta meta;
               meta.tag      = f.tag;
               meta.size     = (uint32_t)f.raw_len;
-              // `filename` here is the on-disk stem (what /api/attachment
-              // serves). The sender-supplied display name goes into
-              // `display_name` so the SPA can offer it as the download
-              // target without trusting it for filesystem access.
               meta.filename = on_disk;
-              // Sideband's FIELD_IMAGE only carries the extension (e.g.
-              // "png", "webp"). Construct a usable display name from it.
-              // For FILE_ATTACHMENTS, f.filename is already the full
-              // sender-supplied name. AUDIO has no name; leave empty.
+              meta.backend  = backend;
+              // Sideband's FIELD_IMAGE only carries the extension
+              // (e.g. "png", "webp"). Construct a usable display name
+              // from it. For FILE_ATTACHMENTS, f.filename is already
+              // the full sender-supplied name. AUDIO has no name.
               if (f.tag == LXMF::FIELD_IMAGE && !f.filename.empty()) {
                 meta.display_name = "image." + f.filename;
               } else if (f.tag == LXMF::FIELD_FILE_ATTACHMENTS) {
                 meta.display_name = f.filename;
               }
               out.push_back(meta);
-              NOTICEF("LXMF: persisted attachment %s (%u B, display='%s')",
-                      on_disk, (unsigned)f.raw_len, meta.display_name.c_str());
+              NOTICEF("LXMF: persisted attachment %s (%u B, backend=%s, display='%s')",
+                      on_disk, (unsigned)f.raw_len,
+                      backend.c_str(), meta.display_name.c_str());
             }
             return out;
           });

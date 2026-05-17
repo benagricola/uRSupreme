@@ -3379,11 +3379,19 @@ function renderSystemPopover(s) {
   $('sys-section-gps').hidden = !g.available;
   if (g.available) {
     const gLine = $('sys-gps-line'); gLine.innerHTML = '';
-    gLine.appendChild(el('span', { class: g.valid ? 'pill ok' : 'pill warn' },
-      g.valid ? 'Fix' : 'No fix'));
+    // Pill priority: Fix > Acquiring > Sleeping > No fix.
+    // Sleeping is the pulsed-mode idle state — chip is off between
+    // polls. Acquiring is when we've powered on and are waiting for
+    // first valid RMC. "No fix" is the (rare) case where the chip is
+    // on continuously but no satellites are visible.
+    let pillClass = 'pill warn', pillText = 'No fix';
+    if (g.valid)                          { pillClass = 'pill ok';   pillText = 'Fix';       }
+    else if (g.pulse_state === 'acquiring') { pillClass = 'pill warn'; pillText = 'Acquiring'; }
+    else if (g.powered === false)          { pillClass = 'pill';      pillText = 'Sleeping';  }
+    gLine.appendChild(el('span', { class: pillClass }, pillText));
     // Hide position + speed lines entirely when there's no fix — a
     // dash and an empty line take up space without telling the user
-    // anything they didn't already learn from the "No fix" pill.
+    // anything they didn't already learn from the pill.
     $('sys-gps-pos').hidden   = !g.valid;
     $('sys-gps-speed').hidden = !g.valid;
     if (g.valid) {

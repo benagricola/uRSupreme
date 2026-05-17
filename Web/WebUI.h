@@ -1042,6 +1042,14 @@ namespace Web {
                               : (long)(millis() - f.fix_received_ms);
         g["last_byte_ms"] = f.last_byte_ms == 0 ? -1
                               : (long)(millis() - f.last_byte_ms);
+        // Power-cycle state. The L76K runs in pulsed mode when the
+        // GPS time-source interval is long enough; the SPA uses this
+        // to render "Sleeping" vs "Acquiring" instead of "No fix".
+        g["powered"] = Web::Gps::is_powered();
+        switch (Web::Gps::pulse_state()) {
+          case Web::Gps::PulseState::Acquiring: g["pulse_state"] = "acquiring"; break;
+          default:                              g["pulse_state"] = "idle";      break;
+        }
       }
       {
         JsonObject b = sensors["bme280"].to<JsonObject>();

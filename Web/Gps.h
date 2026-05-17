@@ -12,22 +12,32 @@
 //     `Web::TimeManager::report_time(Source::GPS, epoch)`.
 //   * Expose the last fix via `last_fix()` so the SPA can read
 //     position over the existing HTTP surface.
+//   * Power-cycle the module via the AXP2101's ALDO4 rail when the
+//     poll interval is long enough that pulsed-mode operation saves
+//     meaningful current.
+//
+// Power management:
+//   GPS time-source enabled  + interval_s <  PULSE_THRESHOLD_S → always on
+//   GPS time-source enabled  + interval_s >= PULSE_THRESHOLD_S → pulsed
+//                              (power up, acquire fix, report, power down)
+//   GPS time-source disabled                                    → powered off
+//   Position tracking follows the same gating as time reports —
+//   if the user disables GPS, the chip is off and position is stale.
 //
 // The parser is line-based — calls into `pump()` from loopTask drain
 // up to a few hundred bytes per pass, accumulate one line in a
 // fixed-size buffer, dispatch when '\n' arrives or the buffer fills.
 // No dynamic allocation in the hot path.
-//
-// Position is intentionally not gated on the time-source enable
-// flag: the user might want location even if they've disabled GPS
-// for time. Time reports are gated.
 
 #pragma once
 
 #include <stdint.h>
 #include <Arduino.h>
 #include <time.h>
+#include <XPowersLib.h>
 #include "TimeManager.h"
+
+extern XPowersLibInterface* PMU;
 
 namespace Web {
 namespace Gps {
@@ -50,6 +60,17 @@ struct Fix {
   uint32_t last_byte_ms    = 0;      // millis() last time the UART produced anything
 };
 
+// If the user's GPS poll interval is at or above this, run the chip
+// in pulsed mode: power on, hunt for a fix, report, power off. Below
+// it, keep the chip continuously powered — frequent cycling would
+// shred the cold-start budget.
+inline constexpr uint32_t PULSE_THRESHOLD_S    = 5 * 60;     // 5 min
+inline constexpr uint32_t PULSE_ACQUIRE_TIMEOUT_MS = 120000; // give up after 2 min hunting
+inline constexpr uint32_t PULSE_RETRY_BACKOFF_MS   = 60000;  // try again 60 s later on timeout
+
+enum class PowerMode : uint8_t { Off, AlwaysOn, Pulsed };
+enum class PulseState : uint8_t { Idle, Acquiring };
+
 namespace _detail {
   inline HardwareSerial*& serial_ref() { static HardwareSerial* v = nullptr; return v; }
   inline Pins&           pins_ref()    { static Pins p{ -1, -1, -1, 9600 }; return p; }
@@ -60,6 +81,10 @@ namespace _detail {
   inline size_t&         line_len_ref() { static size_t v = 0; return v; }
   // Last time we reported a time to TimeManager (millis()). 0 = never.
   inline uint32_t&       last_report_ms_ref() { static uint32_t v = 0; return v; }
+  // Power-mode state.
+  inline bool&           hw_powered_ref()     { static bool v = false; return v; }
+  inline PulseState&     pulse_state_ref()    { static PulseState v = PulseState::Idle; return v; }
+  inline uint32_t&       pulse_started_ms_ref(){ static uint32_t v = 0; return v; }
 
   // XOR-checksum the chars between '$' and '*' exclusive. The
   // sentence may or may not include the leading '$'.
@@ -204,16 +229,120 @@ inline void begin(HardwareSerial& serial, const Pins& pins) {
     delay(20);
   }
   serial.begin(pins.baud, SERIAL_8N1, pins.rx, pins.tx);
+  // Power.h has already enabled ALDO4 at PMU init; mark the rail as
+  // tracked so power_off() knows it's safe to cut it.
+  _detail::hw_powered_ref() = true;
   NOTICEF("GPS: UART up on rx=%d tx=%d en=%d baud=%lu",
           pins.rx, pins.tx, pins.en, (unsigned long)pins.baud);
 }
 
+// Bring the GPS chip back up — ALDO4 on, GPS_EN high. Idempotent.
+inline void power_on() {
+  if (PMU && !PMU->isPowerChannelEnable(XPOWERS_ALDO4)) {
+    PMU->setPowerChannelVoltage(XPOWERS_ALDO4, 3300);
+    PMU->enablePowerOutput(XPOWERS_ALDO4);
+  }
+  const int en = _detail::pins_ref().en;
+  if (en >= 0) digitalWrite(en, HIGH);
+  _detail::hw_powered_ref() = true;
+}
+
+// Cut power to the GPS chip. ALDO4 off, GPS_EN low. Drops the in-
+// flight NMEA parser state so partial lines don't bleed into the
+// next power-on. Idempotent.
+inline void power_off() {
+  if (PMU) PMU->disablePowerOutput(XPOWERS_ALDO4);
+  const int en = _detail::pins_ref().en;
+  if (en >= 0) digitalWrite(en, LOW);
+  _detail::hw_powered_ref()      = false;
+  _detail::line_len_ref()        = 0;
+  _detail::fix_ref().last_byte_ms = 0;
+}
+
+inline bool is_powered() { return _detail::hw_powered_ref(); }
+inline PulseState pulse_state() { return _detail::pulse_state_ref(); }
+
+// Decide the current target power mode from the user's GPS time-
+// source config. Source enable-disable is the master switch; the
+// interval picks always-on vs pulsed.
+inline PowerMode target_mode() {
+  const auto& cfg = Web::TimeManager::get_config(Web::TimeManager::Source::GPS);
+  if (!cfg.enabled)                              return PowerMode::Off;
+  if (cfg.interval_s < PULSE_THRESHOLD_S)        return PowerMode::AlwaysOn;
+  return PowerMode::Pulsed;
+}
+
 // Drain whatever's in the UART buffer and feed it to the line parser.
-// Call from the main loop; cheap when nothing's pending.
+// Also drives the power-mode state machine so the chip cycles on
+// only when a poll is due. Call from the main loop; cheap when
+// nothing's pending.
 inline void pump() {
   HardwareSerial* s = _detail::serial_ref();
   if (!s) return;
-  Fix& f = _detail::fix_ref();
+  const PowerMode mode = target_mode();
+  const uint32_t  now  = millis();
+  Fix&            f    = _detail::fix_ref();
+  const auto&     cfg  = Web::TimeManager::get_config(Web::TimeManager::Source::GPS);
+
+  // ---- power-mode transitions ----
+  if (mode == PowerMode::Off) {
+    if (_detail::hw_powered_ref()) power_off();
+    _detail::pulse_state_ref() = PulseState::Idle;
+    return;                                         // no bytes will come; skip drain
+  }
+  if (mode == PowerMode::AlwaysOn) {
+    if (!_detail::hw_powered_ref()) power_on();
+    _detail::pulse_state_ref() = PulseState::Idle;
+  }
+  if (mode == PowerMode::Pulsed) {
+    const uint32_t last_rep = _detail::last_report_ms_ref();
+    const uint32_t interval_ms = (uint32_t)cfg.interval_s * 1000UL;
+    const bool first_time = (last_rep == 0);
+    const bool due        = first_time || ((now - last_rep) >= interval_ms);
+    if (_detail::pulse_state_ref() == PulseState::Idle) {
+      if (due) {
+        power_on();
+        _detail::pulse_state_ref()      = PulseState::Acquiring;
+        _detail::pulse_started_ms_ref() = now;
+        NOTICEF("GPS: pulse start (interval=%lus, last=%lums ago)",
+                (unsigned long)cfg.interval_s,
+                (unsigned long)(first_time ? 0 : (now - last_rep)));
+      } else {
+        // Idle between polls — make sure power is off.
+        if (_detail::hw_powered_ref()) power_off();
+      }
+    } else /* Acquiring */ {
+      const bool acquired = (last_rep >= _detail::pulse_started_ms_ref())
+                         && (last_rep != 0);
+      const bool timed_out = (now - _detail::pulse_started_ms_ref())
+                              > PULSE_ACQUIRE_TIMEOUT_MS;
+      if (acquired) {
+        // Got a fix + reported time; back to sleep.
+        NOTICEF("GPS: pulse acquired in %lums", (unsigned long)(now - _detail::pulse_started_ms_ref()));
+        power_off();
+        _detail::pulse_state_ref() = PulseState::Idle;
+      } else if (timed_out) {
+        // No fix within the window. Power down and back off slightly
+        // so we don't immediately retry; next poll attempt happens
+        // PULSE_RETRY_BACKOFF_MS from now.
+        WARNINGF("GPS: pulse timed out after %lums; backing off %lums",
+                 (unsigned long)PULSE_ACQUIRE_TIMEOUT_MS,
+                 (unsigned long)PULSE_RETRY_BACKOFF_MS);
+        power_off();
+        _detail::pulse_state_ref() = PulseState::Idle;
+        // Set last_report_ms so the next due-check fires PULSE_RETRY_BACKOFF_MS
+        // from now rather than interval_s from "never".
+        if (interval_ms > PULSE_RETRY_BACKOFF_MS) {
+          _detail::last_report_ms_ref() = now - (interval_ms - PULSE_RETRY_BACKOFF_MS);
+        } else {
+          _detail::last_report_ms_ref() = now;
+        }
+      }
+    }
+  }
+
+  // ---- drain UART (only meaningful if powered) ----
+  if (!_detail::hw_powered_ref()) return;
   while (s->available()) {
     const int c = s->read();
     if (c < 0) break;

@@ -903,30 +903,36 @@ summary:hover { color: var(--text); }
     <div class="muted mono" id="sys-gps-speed"  style="font-size:11px"></div>
     <div class="muted mono" id="sys-gps-age"    style="font-size:11px"></div>
   </div>
-  <div class="popover-section" id="sys-section-bme" hidden>
-    <div class="popover-row">
+  <div class="popover-section" id="sys-section-bme" data-sensor="bme280" hidden>
+    <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Atmospheric</div>
       <div id="sys-bme-line"></div>
+      <span class="muted" data-role="chev" style="font-size:11px;opacity:0.55;transition:transform .12s">▾</span>
     </div>
     <div class="mono" id="sys-bme-values"  style="font-size:11px;margin-top:6px"></div>
     <div class="muted mono" id="sys-bme-age"  style="font-size:11px"></div>
+    <div class="sensor-config" data-role="config" hidden style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bg-elev-2);display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
   </div>
-  <div class="popover-section" id="sys-section-mag" hidden>
-    <div class="popover-row">
+  <div class="popover-section" id="sys-section-mag" data-sensor="magnetometer" hidden>
+    <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Compass</div>
       <div id="sys-mag-line"></div>
+      <span class="muted" data-role="chev" style="font-size:11px;opacity:0.55;transition:transform .12s">▾</span>
     </div>
     <div class="mono" id="sys-mag-values"  style="font-size:11px;margin-top:6px"></div>
     <div class="muted mono" id="sys-mag-age"  style="font-size:11px"></div>
+    <div class="sensor-config" data-role="config" hidden style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bg-elev-2);display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
   </div>
-  <div class="popover-section" id="sys-section-imu" hidden>
-    <div class="popover-row">
+  <div class="popover-section" id="sys-section-imu" data-sensor="imu" hidden>
+    <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Motion</div>
       <div id="sys-imu-line"></div>
+      <span class="muted" data-role="chev" style="font-size:11px;opacity:0.55;transition:transform .12s">▾</span>
     </div>
     <div class="mono" id="sys-imu-accel"   style="font-size:11px;margin-top:6px"></div>
     <div class="mono" id="sys-imu-gyro"    style="font-size:11px"></div>
     <div class="muted mono" id="sys-imu-age" style="font-size:11px"></div>
+    <div class="sensor-config" data-role="config" hidden style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bg-elev-2);display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
   </div>
 </div>
 
@@ -3252,6 +3258,11 @@ function renderSystemPopover(s) {
     }
     $('sys-imu-age').textContent = ageLine(im.age_ms, 'QMI8658', iState === 'warming');
   }
+
+  // Build / refresh the per-sensor enable+interval config rows
+  // beneath each section header (#131). Sections that are hidden
+  // (sensor not present) are skipped.
+  updateSensorConfigUI(s);
 }
 
 function tickSystemClock() {
@@ -3303,6 +3314,94 @@ $('btn-system').addEventListener('click', () => {
   }
   openSystemPopover();
 });
+
+// ============================== SYSTEM POPOVER — sensor config ==============================
+// Each sensor section (Atmospheric / Compass / Motion) has a click-
+// to-expand row revealing an enable checkbox + interval dropdown.
+// Save fires immediately on change — small enough payload that the
+// user expects instant feedback. GPS is read-only here; its
+// settings live in the Time tab's source list.
+const SENSOR_INTERVALS = [
+  { value: 10,    label: 'Every 10 sec' },
+  { value: 60,    label: 'Every minute' },
+  { value: 300,   label: 'Every 5 min' },
+  { value: 3600,  label: 'Every hour' },
+  { value: 0,     label: 'At boot only' },
+];
+function sensorIntervalSnap(secs) {
+  if (secs == null) return 60;
+  // Match exact preset, else nearest non-zero log-distance.
+  for (const p of SENSOR_INTERVALS) if (p.value === secs) return p.value;
+  let best = 60, bestDist = Infinity;
+  for (const p of SENSOR_INTERVALS) {
+    if (p.value === 0) continue;
+    const d = Math.abs(Math.log(Math.max(secs, 1)) - Math.log(p.value));
+    if (d < bestDist) { best = p.value; bestDist = d; }
+  }
+  return best;
+}
+
+function buildSensorConfigRow(section, key, sensor) {
+  const wrap = section.querySelector('[data-role="config"]');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const enable = el('label', { style: 'display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer' });
+  const cb = el('input', { type: 'checkbox', style: 'width:auto;min-height:auto;margin:0' });
+  cb.checked = !!sensor.enabled;
+  enable.appendChild(cb);
+  enable.appendChild(el('span', { text: 'Enabled' }));
+  const sel = el('select', { style: 'flex:1;max-width:140px;font-size:12px' });
+  const snapped = sensorIntervalSnap(Math.round((sensor.interval_ms || 60000) / 1000));
+  for (const p of SENSOR_INTERVALS) {
+    const opt = el('option', { value: String(p.value), text: p.label });
+    if (p.value === snapped) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  const save = async () => {
+    const body = { sensor: key, enabled: cb.checked, interval_s: parseInt(sel.value, 10) };
+    try {
+      await state.transport._req('/api/sensors/config', { method: 'POST', body });
+    } catch (e) {
+      toast('Sensor config save failed: ' + (e.message || e), 'error');
+    }
+  };
+  cb.addEventListener('change', save);
+  sel.addEventListener('change', save);
+  wrap.appendChild(enable);
+  wrap.appendChild(sel);
+}
+
+function attachSensorConfigToggle(section) {
+  if (section.dataset.toggleWired) return;
+  section.dataset.toggleWired = '1';
+  const header = section.querySelector('[data-role="header"]');
+  const config = section.querySelector('[data-role="config"]');
+  const chev   = section.querySelector('[data-role="chev"]');
+  header.addEventListener('click', () => {
+    const open = !config.hidden;
+    config.hidden = open;
+    chev.style.transform = open ? '' : 'rotate(180deg)';
+  });
+}
+
+// Hook into renderSystemPopover by patching the existing data flow.
+// Each sensor's section gets its config row (re)built whenever the
+// popover renders, so a fresh /api/system_status fetch refreshes the
+// dropdown selection if the device-side value changed.
+function updateSensorConfigUI(s) {
+  const map = {
+    bme280:       'sys-section-bme',
+    magnetometer: 'sys-section-mag',
+    imu:          'sys-section-imu',
+  };
+  for (const [key, secId] of Object.entries(map)) {
+    const section = $(secId);
+    if (!section || section.hidden) continue;
+    const sensor = (s.sensors && s.sensors[key]) || {};
+    buildSensorConfigRow(section, key, sensor);
+    attachSensorConfigToggle(section);
+  }
+}
 $('btn-toggle-transport').addEventListener('click', async () => {
   const cur = !!(state.lastInfo && state.lastInfo.transport && state.lastInfo.transport.enabled);
   $('btn-toggle-transport').disabled = true;

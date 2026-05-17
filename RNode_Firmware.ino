@@ -39,6 +39,7 @@
 #include "Web/Bme280.h"
 #include "Web/QmcMag.h"
 #include "Web/QmiImu.h"
+#include "Web/SensorConfig.h"
 #endif
 
 #include <Arduino.h>
@@ -884,6 +885,10 @@ void setup() {
     // Its begin() reuses SDCard::ensure_shared_bus() so we don't
     // double-init the bus.
     Web::QmiImu::begin();
+    // (#131) Restore user-configured enable/interval overrides on
+    // top of the driver defaults. No-op if /lxmf/sensors.json doesn't
+    // exist yet (factory state).
+    Web::SensorConfig::load(filesystem);
 #endif
 
     // Remove legacy files

@@ -29,6 +29,7 @@
 #include "Bme280.h"
 #include "QmcMag.h"
 #include "QmiImu.h"
+#include "SensorConfig.h"
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
@@ -430,6 +431,8 @@ namespace Web {
       server.on("/api/rtc",                  HTTP_GET,  handle_rtc_get);
       // Aggregated device status: storage + clock + sensors. (#120)
       server.on("/api/system_status",        HTTP_GET,  handle_system_status);
+      // Per-sensor enable + polling-interval overrides. (#131)
+      server.on("/api/sensors/config",       HTTP_POST, handle_sensors_config_post);
       server.on(UriBraces("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
       server.on(UriBraces("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
       server.on(UriBraces("/api/identities/{}/send"),     HTTP_POST, handle_send);
@@ -1061,6 +1064,41 @@ namespace Web {
         }
       }
 
+      send_json(200, doc);
+    }
+
+    // POST /api/sensors/config — body = {"sensor":"bme280|magnetometer|imu",
+    // "enabled":bool, "interval_s":uint}. Applies the override to the
+    // running driver and persists to /lxmf/sensors.json so it survives
+    // reboot. GPS isn't routed through here — its enable/interval are
+    // bound to the time-source priority list (see /api/time/sources). (#131)
+    static void handle_sensors_config_post() {
+      if (require_auth().empty()) return;
+      JsonDocument body;
+      if (!read_body_json(body)) return;
+      const char* key       = body["sensor"]      | "";
+      const bool  enabled   = body["enabled"]     | true;
+      const uint32_t iv_s   = (uint32_t)(body["interval_s"] | 60);
+      if (!*key) {
+        send_error_with_message(400, "missing_sensor",
+          "Body must include `sensor` (one of bme280, magnetometer, imu).");
+        return;
+      }
+      if (iv_s > 7 * 24 * 3600UL) {
+        send_error_with_message(400, "interval_too_large",
+          "Interval must be no more than 7 days.");
+        return;
+      }
+      if (!Web::SensorConfig::update_one(filesystem, key, enabled, iv_s)) {
+        send_error_with_message(400, "unknown_sensor",
+          "Unknown sensor key. Expected bme280, magnetometer, or imu.");
+        return;
+      }
+      JsonDocument doc;
+      doc["status"]     = "applied";
+      doc["sensor"]     = key;
+      doc["enabled"]    = enabled;
+      doc["interval_s"] = iv_s;
       send_json(200, doc);
     }
 

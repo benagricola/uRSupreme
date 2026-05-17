@@ -772,6 +772,10 @@ summary:hover { color: var(--text); }
       <!-- antenna -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M7.76 7.76a6 6 0 0 0 0 8.48"/><path d="M16.24 7.76a6 6 0 0 1 0 8.48"/><circle cx="12" cy="12" r="2"/></svg>
     </button>
+    <button class="icon" id="btn-system" title="System status">
+      <!-- chip / cpu -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+    </button>
     <button class="icon" id="btn-settings"  title="Settings">
       <!-- gear -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -862,19 +866,42 @@ summary:hover { color: var(--text); }
   </div>
   <div class="popover-section">
     <div class="popover-row">
-      <div class="popover-label">Storage</div>
-      <div id="status-storage-line"></div>
-    </div>
-    <div class="muted mono" id="status-storage-flash" style="font-size:11px;margin-top:6px"></div>
-    <div class="muted mono" id="status-storage-sd"    style="font-size:11px"></div>
-  </div>
-  <div class="popover-section">
-    <div class="popover-row">
       <div class="popover-label">Transport</div>
       <div id="status-transport-line"></div>
     </div>
     <button class="secondary" id="btn-toggle-transport" style="width:100%;margin-top:8px">…</button>
     <div class="muted" style="font-size:11px;margin-top:6px">Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots.</div>
+  </div>
+</div>
+
+<!-- Anchored below #btn-system. Mirrors #popover-status' style but
+     hosts device-side state: storage, clock + RTC, on-board sensors. -->
+<div id="popover-system" class="popover" hidden>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">Storage</div>
+      <div id="sys-storage-line"></div>
+    </div>
+    <div class="muted mono" id="sys-storage-flash" style="font-size:11px;margin-top:6px"></div>
+    <div class="muted mono" id="sys-storage-sd"    style="font-size:11px"></div>
+  </div>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">Clock</div>
+      <div id="sys-clock-line"></div>
+    </div>
+    <div class="mono" id="sys-clock-now" style="font-size:13px;margin-top:6px"></div>
+    <div class="muted" id="sys-clock-source" style="font-size:11px"></div>
+    <div class="muted mono" id="sys-clock-rtc"    style="font-size:11px;margin-top:4px"></div>
+  </div>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">GPS</div>
+      <div id="sys-gps-line"></div>
+    </div>
+    <div class="mono" id="sys-gps-pos"    style="font-size:11px;margin-top:6px"></div>
+    <div class="muted mono" id="sys-gps-speed"  style="font-size:11px"></div>
+    <div class="muted mono" id="sys-gps-age"    style="font-size:11px"></div>
   </div>
 </div>
 
@@ -3007,32 +3034,8 @@ function renderStatusPopover() {
   $('btn-force-softap').hidden = !showSoftapBtn;
   $('status-wifi-hint').hidden  = !showSoftapBtn;
 
-  // Storage. Flash is always reported; SD shows present/used when the
-  // build has HAS_SDCARD wired up (currently off on T-Beam Supreme).
-  const st = info.storage || {};
-  const flash = st.flash || {};
-  const sd    = st.sd    || {};
-  const sLine = $('status-storage-line');
-  sLine.innerHTML = '';
-  const flashFreePct = (flash.total_bytes > 0)
-    ? Math.round(100 * (flash.free_bytes || 0) / flash.total_bytes) : 0;
-  if (flash.total_bytes) {
-    const pillClass = flashFreePct < 10 ? 'pill bad'
-                    : flashFreePct < 25 ? 'pill warn'
-                    : 'pill ok';
-    sLine.appendChild(el('span', { class: pillClass }, flashFreePct + '% free'));
-  } else {
-    sLine.appendChild(el('span', { class: 'pill' }, '—'));
-  }
-  $('status-storage-flash').textContent = flash.total_bytes
-    ? 'Flash: ' + formatBytes(flash.used_bytes || 0) + ' / ' + formatBytes(flash.total_bytes)
-    : '';
-  if (sd.present && sd.total_bytes) {
-    $('status-storage-sd').textContent =
-      'SD: ' + formatBytes(sd.used_bytes || 0) + ' / ' + formatBytes(sd.total_bytes);
-  } else {
-    $('status-storage-sd').textContent = 'SD: not present';
-  }
+  // Storage now lives in the System-status popover (#120); /api/info
+  // still surfaces the same data for any other consumer.
 
   const tLine = $('status-transport-line');
   tLine.innerHTML = '';
@@ -3056,8 +3059,128 @@ function openStatusPopover() {
 }
 $('btn-status').addEventListener('click', async () => {
   if (!$('popover-status').hidden) { $('popover-status').hidden = true; return; }
+  // Both popovers share the top-right position — close the other.
+  $('popover-system').hidden = true; stopSystemTicker();
   await refreshStatus();
   openStatusPopover();
+});
+
+// ============================== SYSTEM POPOVER ==============================
+// Storage + clock + sensor snapshot. Source data: /api/system_status,
+// fetched on each open (cheap aggregation, no SSE needed for now). A
+// 1 s ticker keeps the displayed clock live while the popover is open.
+const sysPopover = { ticker: null, clockAnchor: null };
+
+function renderSystemPopover(s) {
+  // Storage.
+  const fl = (s.storage && s.storage.flash) || {};
+  const sd = (s.storage && s.storage.sd)    || {};
+  const sLine = $('sys-storage-line'); sLine.innerHTML = '';
+  const pct = (fl.total_bytes > 0)
+    ? Math.round(100 * (fl.free_bytes || 0) / fl.total_bytes) : 0;
+  const cls = pct < 10 ? 'pill bad' : pct < 25 ? 'pill warn' : 'pill ok';
+  sLine.appendChild(el('span', { class: fl.total_bytes ? cls : 'pill' },
+    fl.total_bytes ? (pct + '% free') : '—'));
+  $('sys-storage-flash').textContent = fl.total_bytes
+    ? 'Flash: ' + formatBytes(fl.used_bytes || 0) + ' / ' + formatBytes(fl.total_bytes)
+    : '';
+  $('sys-storage-sd').textContent = (sd.present && sd.total_bytes)
+    ? 'SD: ' + formatBytes(sd.used_bytes || 0) + ' / ' + formatBytes(sd.total_bytes)
+    : 'SD: not present';
+
+  // Clock.
+  const c = s.clock || {};
+  const cLine = $('sys-clock-line'); cLine.innerHTML = '';
+  cLine.appendChild(el('span', { class: c.calibrated ? 'pill ok' : 'pill warn' },
+    c.calibrated ? 'Calibrated' : 'Uncalibrated'));
+  if (c.unix_ms) {
+    sysPopover.clockAnchor = {
+      deviceUnixMs: Number(c.unix_ms),
+      localNowMs:   performance.now(),
+    };
+    $('sys-clock-now').textContent = new Date(Number(c.unix_ms)).toLocaleString();
+  } else {
+    sysPopover.clockAnchor = null;
+    $('sys-clock-now').textContent = '—';
+  }
+  $('sys-clock-source').textContent = 'Source: ' + (c.source || 'unknown');
+  const rtc = c.rtc || {};
+  $('sys-clock-rtc').textContent = !rtc.available
+    ? 'RTC chip: not detected'
+    : (rtc.vl_set ? 'RTC chip: present (voltage-low — time invalid)'
+                  : 'RTC chip: present, ticking');
+
+  // GPS.
+  const g = (s.sensors && s.sensors.gps) || {};
+  const gLine = $('sys-gps-line'); gLine.innerHTML = '';
+  if (!g.available) {
+    gLine.appendChild(el('span', { class: 'pill' }, 'Absent'));
+    $('sys-gps-pos').textContent   = '';
+    $('sys-gps-speed').textContent = '';
+    $('sys-gps-age').textContent   = '';
+  } else {
+    gLine.appendChild(el('span', { class: g.valid ? 'pill ok' : 'pill warn' },
+      g.valid ? 'Fix' : 'No fix'));
+    $('sys-gps-pos').textContent = g.valid
+      ? g.latitude.toFixed(5) + ', ' + g.longitude.toFixed(5) : '—';
+    $('sys-gps-speed').textContent = g.valid
+      ? 'Speed ' + g.speed_knots.toFixed(1) + ' kn · heading ' + g.heading.toFixed(0) + '°'
+      : '';
+    const age = (typeof g.fix_age_ms === 'number' && g.fix_age_ms >= 0)
+      ? 'Last fix ' + Math.round(g.fix_age_ms / 1000) + ' s ago'
+      : 'No data from module yet';
+    $('sys-gps-age').textContent = age;
+  }
+}
+
+function tickSystemClock() {
+  const a = sysPopover.clockAnchor;
+  if (!a) return;
+  const nowMs = a.deviceUnixMs + (performance.now() - a.localNowMs);
+  const el = $('sys-clock-now');
+  if (el) el.textContent = new Date(nowMs).toLocaleString();
+}
+
+function startSystemTicker() {
+  if (sysPopover.ticker) return;
+  sysPopover.ticker = setInterval(tickSystemClock, 1000);
+}
+
+function stopSystemTicker() {
+  if (sysPopover.ticker) { clearInterval(sysPopover.ticker); sysPopover.ticker = null; }
+}
+
+async function openSystemPopover() {
+  try {
+    const s = await state.transport._req('/api/system_status');
+    renderSystemPopover(s);
+  } catch (e) {
+    toast('System status: ' + (e.message || e), 'error');
+    return;
+  }
+  // Close the other popover (same anchor position).
+  $('popover-status').hidden = true;
+  $('popover-system').hidden = false;
+  startSystemTicker();
+  setTimeout(() => {
+    const dismiss = (ev) => {
+      if (!$('popover-system').contains(ev.target) && ev.target !== $('btn-system') && !$('btn-system').contains(ev.target)) {
+        $('popover-system').hidden = true;
+        stopSystemTicker();
+        document.removeEventListener('click', dismiss);
+      }
+    };
+    document.addEventListener('click', dismiss);
+  }, 0);
+}
+
+$('btn-system').addEventListener('click', () => {
+  if (!$('popover-system').hidden) {
+    $('popover-system').hidden = true;
+    stopSystemTicker();
+    return;
+  }
+  openSystemPopover();
 });
 $('btn-toggle-transport').addEventListener('click', async () => {
   const cur = !!(state.lastInfo && state.lastInfo.transport && state.lastInfo.transport.enabled);

@@ -424,6 +424,8 @@ namespace Web {
       server.on("/api/gps",                  HTTP_GET,  handle_gps_get);
       // RTC diagnostics — raw chip state. (#112)
       server.on("/api/rtc",                  HTTP_GET,  handle_rtc_get);
+      // Aggregated device status: storage + clock + sensors. (#120)
+      server.on("/api/system_status",        HTTP_GET,  handle_system_status);
       server.on(UriBraces("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
       server.on(UriBraces("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
       server.on(UriBraces("/api/identities/{}/send"),     HTTP_POST, handle_send);
@@ -924,6 +926,70 @@ namespace Web {
       JsonArray regs   = doc["regs"].to<JsonArray>();
       for (int i = 0; i < 7; ++i) regs.add(s.regs[i]);
       doc["unix_ms"]   = (uint64_t)(s.epoch * 1000.0);
+      send_json(200, doc);
+    }
+
+    // GET /api/system_status — aggregator for the device-status popover.
+    // Combines storage, clock, RTC chip state, and per-sensor live
+    // readings into one call so the SPA can populate the whole popover
+    // in a single round-trip. Auth-gated for the same reason GPS is —
+    // device location and sensor data are sensitive on a shared LAN.
+    static void handle_system_status() {
+      if (require_auth().empty()) return;
+      JsonDocument doc;
+
+      // ---- storage ----
+      {
+        JsonObject st = doc["storage"].to<JsonObject>();
+        // Flash (LittleFS) — total/used/free (bytes). Mirrors the
+        // microStore API that /api/info uses.
+        const size_t total = filesystem.storageSize();
+        const size_t avail = filesystem.storageAvailable();
+        JsonObject fl = st["flash"].to<JsonObject>();
+        fl["total_bytes"] = (uint32_t)total;
+        fl["free_bytes"]  = (uint32_t)avail;
+        fl["used_bytes"]  = (uint32_t)((total > avail) ? (total - avail) : 0);
+        // SD card — stubbed (no driver yet, #122). Shape stable for
+        // the SPA so adding the SD path later is a one-line tweak.
+        JsonObject sd = st["sd"].to<JsonObject>();
+        sd["present"] = false;
+      }
+
+      // ---- clock ----
+      {
+        JsonObject c = doc["clock"].to<JsonObject>();
+        c["calibrated"] = Web::TimeManager::is_calibrated();
+        c["unix_ms"]    = (uint64_t)(Web::TimeManager::now_epoch() * 1000.0);
+        c["source"]     = Web::TimeManager::source_name(Web::TimeManager::current_source());
+        // RTC chip diagnostic. Lets the SPA show "PCF8563 ✓ / VL set / absent".
+        JsonObject rtc = c["rtc"].to<JsonObject>();
+        const auto rs = Web::RtcPCF8563::debug_snapshot();
+        rtc["available"] = Web::RtcPCF8563::available();
+        rtc["vl_set"]    = rs.vl_set;
+        rtc["unix_ms"]   = (uint64_t)(rs.epoch * 1000.0);
+      }
+
+      // ---- sensors ----
+      // Each entry is keyed by sensor name. SPA iterates and renders
+      // a section per present sensor. Add new sensor blocks here as
+      // their drivers land (BME280, IMU, magnetometer — #120 followup).
+      JsonObject sensors = doc["sensors"].to<JsonObject>();
+      {
+        JsonObject g = sensors["gps"].to<JsonObject>();
+        const Web::Gps::Fix f = Web::Gps::last_fix();
+        g["available"]    = Web::Gps::has_serial();
+        g["valid"]        = f.valid;
+        g["latitude"]     = f.latitude_deg;
+        g["longitude"]    = f.longitude_deg;
+        g["speed_knots"]  = f.speed_knots;
+        g["heading"]      = f.heading_deg;
+        g["unix_ms"]      = (uint64_t)(f.unix_epoch * 1000.0);
+        g["fix_age_ms"]   = f.fix_received_ms == 0 ? -1
+                              : (long)(millis() - f.fix_received_ms);
+        g["last_byte_ms"] = f.last_byte_ms == 0 ? -1
+                              : (long)(millis() - f.last_byte_ms);
+      }
+
       send_json(200, doc);
     }
 

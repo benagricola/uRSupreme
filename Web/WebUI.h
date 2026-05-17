@@ -953,10 +953,20 @@ namespace Web {
         // SD card — real state from the SDCard driver. (#122)
         JsonObject sd = st["sd"].to<JsonObject>();
         sd["present"] = Web::SDCard::present();
+        sd["status"]  = Web::SDCard::last_status();
         if (Web::SDCard::present()) {
           sd["card_type"]   = Web::SDCard::card_type_name();
           sd["total_bytes"] = (uint64_t)Web::SDCard::total_bytes();
           sd["used_bytes"]  = (uint64_t)Web::SDCard::used_bytes();
+        }
+        // Captured-at-boot rail state, for diagnostic purposes.
+        const auto rs = Web::SDCard::rail_state();
+        if (rs.captured) {
+          JsonObject rails = sd["rails"].to<JsonObject>();
+          rails["bldo1_on"] = rs.bldo1_on;
+          rails["bldo1_mV"] = rs.bldo1_mV;
+          rails["bldo2_on"] = rs.bldo2_on;
+          rails["bldo2_mV"] = rs.bldo2_mV;
         }
       }
 

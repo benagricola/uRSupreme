@@ -842,8 +842,32 @@ void setup() {
     // happens when WiFi STA becomes ready; pump() handles adoption.
     Web::Ntp::begin();
     // (#122) SD card — mount the microSD slot if a card is inserted.
-    // Bus is shared with nothing else on this platform; left disabled
-    // when no card is present.
+    // The card's power rails (BLDO1 + BLDO2 on the AXP2101) are
+    // disabled by default in Power.h. Bring them up here, and do a
+    // full power-cycle (off → wait → on) matching LilyGo's factory
+    // reference — some cards need the off-edge before they'll
+    // initialise cleanly.
+    if (PMU && PMU->getChipModel() == XPOWERS_AXP2101) {
+      NOTICE("SDCard: power-cycling BLDO1/BLDO2 (AXP2101 SD rails)");
+      PMU->disablePowerOutput(XPOWERS_BLDO1);
+      PMU->disablePowerOutput(XPOWERS_BLDO2);
+      delay(250);
+      PMU->setPowerChannelVoltage(XPOWERS_BLDO1, 3300);
+      PMU->enablePowerOutput(XPOWERS_BLDO1);
+      PMU->setPowerChannelVoltage(XPOWERS_BLDO2, 3300);
+      PMU->enablePowerOutput(XPOWERS_BLDO2);
+      delay(100);
+      const bool b1_on = PMU->isPowerChannelEnable(XPOWERS_BLDO1);
+      const int  b1_mV = PMU->getPowerChannelVoltage(XPOWERS_BLDO1);
+      const bool b2_on = PMU->isPowerChannelEnable(XPOWERS_BLDO2);
+      const int  b2_mV = PMU->getPowerChannelVoltage(XPOWERS_BLDO2);
+      NOTICEF("SDCard: BLDO1 on=%d %dmV  BLDO2 on=%d %dmV",
+              (int)b1_on, b1_mV, (int)b2_on, b2_mV);
+      Web::SDCard::set_rail_state(b1_on, b1_mV, b2_on, b2_mV);
+    } else {
+      NOTICEF("SDCard: PMU=%p chip=%d — not AXP2101, leaving rails alone",
+              (void*)PMU, PMU ? (int)PMU->getChipModel() : -1);
+    }
     Web::SDCard::begin();
 #endif
 

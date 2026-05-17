@@ -31,9 +31,13 @@ namespace Web {
 namespace SDCard {
 
 namespace _detail {
-  inline bool&     present_ref()   { static bool v = false; return v; }
-  inline SPIClass*& spi_ref()      { static SPIClass* v = nullptr; return v; }
-  inline uint8_t&  card_type_ref() { static uint8_t v = CARD_NONE; return v; }
+  inline bool&     present_ref()    { static bool v = false; return v; }
+  inline SPIClass*& spi_ref()       { static SPIClass* v = nullptr; return v; }
+  inline uint8_t&  card_type_ref()  { static uint8_t v = CARD_NONE; return v; }
+  // Last diagnostic line from begin() — surfaced via the API when
+  // probe fails so the user can tell "no card in slot" from
+  // "card present, mount failed" from "wrong filesystem", etc.
+  inline String& last_status_ref()  { static String v = "not_probed"; return v; }
 }
 
 // One-shot init. Safe to call when HAS_SD == false at the board level
@@ -43,17 +47,38 @@ inline bool begin() {
   // SD_* are only defined on T-Beam Supreme variants in Boards.h, so
   // gate everything on the same board check the .ino uses.
 #if defined(BOARD_MODEL) && (BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1)
+  // The T-Beam Supreme shares this SPI bus between the microSD slot
+  // (CS=47) and the on-board IMU (QMI8658, CS=34). At reset IMU_CS
+  // floats — and a floating CS can read as LOW (the active level for
+  // SPI chip-selects), which means the IMU would respond to SD bus
+  // traffic and scramble MISO during SD init. Drive IMU_CS HIGH
+  // before touching the bus so only the SD card is listening.
+  pinMode(IMU_CS, OUTPUT);
+  digitalWrite(IMU_CS, HIGH);
+
   // Dedicated SPI bus — HSPI is unused on this platform so we own it.
+  // Match LilyGo's reference setup exactly: 3-arg SPI begin (no CS in
+  // the SPI bus init — the SD library drives CS itself) and the SD
+  // library's default speed.
   _detail::spi_ref() = new SPIClass(HSPI);
-  _detail::spi_ref()->begin(SD_CLK, SD_MISO, SD_MOSI, SD_CS);
-  if (!SD.begin(SD_CS, *_detail::spi_ref(), 4000000UL)) {
-    NOTICE("SDCard: no card detected (or mount failed)");
+  _detail::spi_ref()->begin(SD_CLK, SD_MISO, SD_MOSI);
+  NOTICEF("SDCard: probing pins clk=%d miso=%d mosi=%d cs=%d imu_cs=%d (held high)",
+          SD_CLK, SD_MISO, SD_MOSI, SD_CS, IMU_CS);
+  // Try the default (~25 MHz) first; if that fails, retry at 1 MHz
+  // and again at 400 kHz. Some older / cheap cards refuse the fast
+  // init phase. The slow paths are still plenty fast for our use.
+  if (!SD.begin(SD_CS, *_detail::spi_ref())
+      && !SD.begin(SD_CS, *_detail::spi_ref(), 1000000UL)
+      && !SD.begin(SD_CS, *_detail::spi_ref(), 400000UL)) {
+    _detail::last_status_ref() = "sd_begin_failed";
+    NOTICE("SDCard: SD.begin() failed — card absent, wrong pinout, or unsupported FS (try FAT32)");
     _detail::present_ref() = false;
     return false;
   }
   const uint8_t ct = SD.cardType();
   _detail::card_type_ref() = ct;
   if (ct == CARD_NONE) {
+    _detail::last_status_ref() = "card_type_none";
     NOTICE("SDCard: SD.begin succeeded but cardType == CARD_NONE — slot empty");
     SD.end();
     _detail::present_ref() = false;
@@ -64,15 +89,41 @@ inline bool begin() {
                      : ct == CARD_SD   ? "SD"
                      : ct == CARD_SDHC ? "SDHC"
                      : "unknown";
+  _detail::last_status_ref() = "mounted";
   NOTICEF("SDCard: mounted %s, total=%llu bytes used=%llu bytes",
           ct_name,
           (unsigned long long)SD.totalBytes(),
           (unsigned long long)SD.usedBytes());
   return true;
 #else
+  _detail::last_status_ref() = "no_slot_on_board";
   return false;
 #endif
 }
+
+// Diagnostic string from the most recent begin() — values:
+// "not_probed", "sd_begin_failed", "card_type_none", "mounted",
+// "no_slot_on_board".
+inline const char* last_status() { return _detail::last_status_ref().c_str(); }
+
+// PMU rail snapshot captured by the .ino just before SDCard::begin
+// runs. Used by /api/system_status to distinguish "rails came up"
+// from "card not detected". Set via set_rail_state().
+struct RailState {
+  bool captured  = false;
+  bool bldo1_on  = false;
+  int  bldo1_mV  = 0;
+  bool bldo2_on  = false;
+  int  bldo2_mV  = 0;
+};
+namespace _detail { inline RailState& rail_state_ref() { static RailState v; return v; } }
+inline void set_rail_state(bool b1_on, int b1_mV, bool b2_on, int b2_mV) {
+  RailState& r = _detail::rail_state_ref();
+  r.captured = true;
+  r.bldo1_on = b1_on; r.bldo1_mV = b1_mV;
+  r.bldo2_on = b2_on; r.bldo2_mV = b2_mV;
+}
+inline const RailState& rail_state() { return _detail::rail_state_ref(); }
 
 inline bool      present()      { return _detail::present_ref(); }
 inline uint64_t  total_bytes()  { return _detail::present_ref() ? (uint64_t)SD.totalBytes() : 0; }

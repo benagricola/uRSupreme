@@ -1071,6 +1071,11 @@ summary:hover { color: var(--text); }
           <label style="margin-top:12px">Auto-announce</label>
           <select id="id-announce-interval"></select>
           <div class="muted" style="margin-top:4px">How often this identity automatically broadcasts an announce so peers can find and route to it. Manual announces via the megaphone icon work regardless of this setting.</div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:16px 0 0">
+            <input type="checkbox" id="id-persist-outbound" style="width:auto;min-height:auto">
+            <span>Keep a copy of attachments I send</span>
+          </label>
+          <div class="muted" style="margin-top:4px">Lets the chat history show an inline preview of images and audio you've sent. Off saves storage at the cost of preview.</div>
         </div>
       </div>
 
@@ -2084,24 +2089,24 @@ function renderThread() {
           const name = (a.display_name || '').trim();
           const label = icon + ' ' + (name || typeWord)
                       + ' (' + formatBytes(a.size || 0) + ')';
-          // Outbound attachments aren't persisted on the device (the
-          // bytes are only in the recipient's inbox); show as a plain
-          // chip without a download action. Inbound chips: images
-          // auto-load inline (cached per filename across rerenders);
-          // everything else is click-to-download.
-          const inbound = !!m.in && /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename);
+          // Any attachment with a persisted on-disk blob (filename
+          // matches the canonical hash_tag_idx.bin layout) can be
+          // fetched from the device. Holds for both received messages
+          // and ones the user sent themselves when the per-identity
+          // "persist outbound attachments" toggle is on.
+          const hasBlob = /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename || '');
           // SD-backed attachment when card has been removed → blob is
           // unreachable until the user re-inserts and reboots. Show a
           // dead chip with a clear warning rather than let the user
           // click into a 404.
-          const sdUnreachable = inbound && a.backend === 'sd' && state.sdPresent === false;
+          const sdUnreachable = hasBlob && a.backend === 'sd' && state.sdPresent === false;
           if (sdUnreachable) {
             bubble.appendChild(el('div', {
               style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,180,90,0.15);font-size:11px;color:inherit',
               text: label + ' — SD card unavailable',
               title: 'This attachment was saved on the SD card. Re-insert the card and reboot the device to recover it.',
             }));
-          } else if (inbound && (a.tag === 6 || a.tag === 7)) {
+          } else if (hasBlob && (a.tag === 6 || a.tag === 7)) {
             // Auto-render only if the user has opted into auto-downloads
             // OR the blob is already cached from a manual click — once
             // fetched, the inline preview persists across rerenders.
@@ -2121,7 +2126,7 @@ function renderThread() {
               chip.addEventListener('click', () => downloadAttachment(state.identityId, a, chip, bubble));
               bubble.appendChild(chip);
             }
-          } else if (inbound) {
+          } else if (hasBlob) {
             const chip = el('button', {
               class: 'attachment-chip',
               style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block',
@@ -4399,6 +4404,7 @@ async function populateIdentityTab() {
     $('id-announce-interval').value = exact
       ? String(exact.ms)
       : String(ANNOUNCE_INTERVALS.reduce((a, b) => Math.abs(b.ms - ms) < Math.abs(a.ms - ms) ? b : a).ms);
+    $('id-persist-outbound').checked = me.persist_outbound_attachments !== false;
     // Resync the topbar's announce-countdown anchor based on this fetch.
     seedAnnounceCountdown(me.next_announce_in_ms || 0, ms);
   } catch (err) {
@@ -4848,6 +4854,15 @@ $('id-announce-interval').addEventListener('change', async (e) => {
   }
 });
 
+$('id-persist-outbound').addEventListener('change', async (e) => {
+  const on = !!e.target.checked;
+  try {
+    await state.transport.setIdentitySettings(state.identityId, { persist_outbound_attachments: on });
+    if (state.self) state.self.persist_outbound_attachments = on;
+  } catch (err) {
+    toast('Could not update setting: ' + (err.message || err), 'error');
+  }
+});
 $('btn-settings').addEventListener('click', () => openSettingsModal('identity', false));
 $('pref-enter-sends').addEventListener('change', (e) => {
   savePrefs({ enterSends: !!e.target.checked });

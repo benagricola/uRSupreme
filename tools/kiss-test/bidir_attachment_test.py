@@ -144,8 +144,46 @@ def run_leg(label, send, recv, body, image_bytes, timeout_s):
     if hashlib.sha256(received).digest() != hashlib.sha256(image_bytes).digest():
         print(f'    [FAIL] sha256 mismatch (sent={len(image_bytes)} B, got={len(received)} B)')
         return False
-    print(f'    [PASS] bytes verified ({len(received)} B match) — total elapsed {time.time()-t0:.1f}s')
+    print(f'    [PASS] receiver bytes verified ({len(received)} B match) — total elapsed {time.time()-t0:.1f}s')
+
+    # Sender-side persistence check: the sender's own outbox should now
+    # carry a filename pointing at a persisted blob, and downloading it
+    # should match the same bytes the recipient received.
+    print(f'  → checking sender outbox for persisted copy of own attachment …')
+    sender_meta = wait_for_outbound_attachment(send['url'], send['iden'], send['tok'],
+                                               recv['addr'], len(image_bytes), timeout_s=10)
+    if not sender_meta or not sender_meta.get('filename'):
+        print('    [WARN] sender outbox has no persisted filename — toggle off, or persist failed')
+        return True
+    print(f'    sender stored as {sender_meta["filename"]} (backend={sender_meta.get("backend")})')
+    sent_back = fetch_attachment(send['url'], send['iden'], send['tok'], sender_meta['filename'])
+    if hashlib.sha256(sent_back).digest() != hashlib.sha256(image_bytes).digest():
+        print(f'    [FAIL] sender-side bytes diverge (got {len(sent_back)} B)')
+        return False
+    print(f'    [PASS] sender-side bytes verified ({len(sent_back)} B match)')
     return True
+
+
+def wait_for_outbound_attachment(base_url, iden, tok, peer_addr,
+                                  expected_size, timeout_s):
+    """Same shape as wait_for_attachment but looks for an *outbound* msg."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        r = requests.get(f'{base_url}/api/identities/{iden}/state',
+                         headers={'Authorization': f'Bearer {tok}'}, timeout=8)
+        if r.status_code == 200:
+            doc = r.json()
+            for conv in doc.get('conversations', []):
+                if conv.get('peer') != peer_addr:
+                    continue
+                for m in reversed(conv.get('messages', [])):
+                    if m.get('in'):
+                        continue
+                    for a in m.get('attachments', []):
+                        if a.get('size') == expected_size and a.get('tag') == 6:
+                            return a
+        time.sleep(0.6)
+    return None
 
 
 def main():

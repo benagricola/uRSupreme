@@ -774,9 +774,10 @@ namespace Web {
       doc["id"]                   = a->id;
       doc["display_name"]         = a->display_name;
       doc["address"]              = a->address_hex();
-      doc["announce_interval_ms"] = a->announce_interval_ms;
-      doc["inbox_size"]           = a->inbox  ? (uint32_t)a->inbox->size()  : 0;
-      doc["outbox_size"]          = a->outbox ? (uint32_t)a->outbox->size() : 0;
+      doc["announce_interval_ms"]         = a->announce_interval_ms;
+      doc["persist_outbound_attachments"] = a->persist_outbound_attachments;
+      doc["inbox_size"]                   = a->inbox  ? (uint32_t)a->inbox->size()  : 0;
+      doc["outbox_size"]                  = a->outbox ? (uint32_t)a->outbox->size() : 0;
       // Time until the next *auto* announce. 0 when auto-announce is
       // disabled or when the timer has already elapsed (next loop tick
       // will announce). Lets the SPA drive a countdown badge.
@@ -1549,8 +1550,8 @@ namespace Web {
       if (caller != requested) { send_error(403, "forbidden"); return; }
       JsonDocument body;
       if (!read_body_json(body)) return;
-      // Per-identity settings. Currently just the auto-announce interval;
-      // more knobs will plug in here as we add them.
+      // Per-identity settings. POST accepts any combination of fields;
+      // GET-like behaviour returns the current state at the end.
       if (body["announce_interval_ms"].is<JsonVariant>()) {
         uint32_t ms = (uint32_t)(body["announce_interval_ms"] | 0);
         // 0 == disabled. Otherwise clamp to a sane minimum (10s) so a
@@ -1561,10 +1562,18 @@ namespace Web {
           return;
         }
       }
+      if (body["persist_outbound_attachments"].is<JsonVariant>()) {
+        const bool on = (bool)body["persist_outbound_attachments"];
+        if (!LXMF::LXMFGateway::set_persist_outbound_attachments(requested, on)) {
+          send_error(404, "unknown_identity");
+          return;
+        }
+      }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       JsonDocument doc;
-      doc["id"]                   = requested;
-      doc["announce_interval_ms"] = a ? a->announce_interval_ms : 0;
+      doc["id"]                            = requested;
+      doc["announce_interval_ms"]          = a ? a->announce_interval_ms : 0;
+      doc["persist_outbound_attachments"]  = a ? a->persist_outbound_attachments : true;
       send_json(200, doc);
     }
 
@@ -1596,6 +1605,7 @@ namespace Web {
             o["filename"] = a.filename;
             if (!a.display_name.empty()) o["display_name"] = a.display_name;
             if (!a.mime.empty()) o["mime"] = a.mime;
+            if (!a.backend.empty()) o["backend"] = a.backend;
           }
         }
       }
@@ -1997,6 +2007,7 @@ namespace Web {
             o["filename"] = a.filename;
             if (!a.display_name.empty()) o["display_name"] = a.display_name;
             if (!a.mime.empty()) o["mime"] = a.mime;
+            if (!a.backend.empty()) o["backend"] = a.backend;
           }
         }
         String line;

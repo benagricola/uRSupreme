@@ -726,19 +726,24 @@ namespace LXMF {
       out_rec.content      = content;
       out_rec.incoming     = false;
       out_rec.signature_ok = true;
-      // Metadata-only outbox attachments — bytes aren't kept locally on
-      // the device (we only persist incoming attachments to disk). The
-      // SPA renders these as "📎 file (12 KB)" placeholders so the
-      // sender can see what they attached.
+      // Outbox attachments. When the gateway has registered an
+      // outbound-persist callback (and the per-identity toggle is on),
+      // each attachment's bytes are copied to disk and the resulting
+      // filename + backend land on AttachmentMeta — same shape the
+      // inbox uses, so the SPA can render an inline preview of what
+      // we sent. With persistence off, we fall back to metadata-only
+      // entries: tag + size + display_name + mime, no filename.
       if (attachments) {
+        std::vector<AttachmentMeta> persisted;
+        if (_persist_outbound_fn) {
+          persisted = _persist_outbound_fn(message_hash, *attachments);
+        }
+        const bool have_persisted = persisted.size() == attachments->size();
         for (size_t i = 0; i < attachments->size(); ++i) {
           const auto& a = (*attachments)[i];
-          AttachmentMeta m;
+          AttachmentMeta m = have_persisted ? persisted[i] : AttachmentMeta{};
           m.tag  = a.tag;
           m.size = (uint32_t)a.byte_count();
-          // For outbox display: filename field is empty (no on-disk blob
-          // for sent attachments); display_name carries what the user
-          // attached so their own bubble still shows the right label.
           if (a.tag == FIELD_IMAGE) {
             m.display_name = a.ext.empty() ? a.filename : ("image." + a.ext);
           } else {
@@ -1355,6 +1360,18 @@ namespace LXMF {
     void set_attachment_persist_callback(AttachmentPersistFn cb) {
       _persist_attachments_fn = std::move(cb);
     }
+
+    // Sibling hook for outbound: when we send an attachment, the
+    // gateway gets a chance to copy the bytes to the sender's storage
+    // dir so the SPA can render the same inline preview in the
+    // sender's own chat bubble. The returned vector mirrors the input
+    // order; entries with non-empty filename get rendered inline.
+    using OutboundPersistFn = std::function<std::vector<AttachmentMeta>(
+        const RNS::Bytes& /*msg_hash*/,
+        const std::vector<OutgoingAttachment>& /*outgoing*/)>;
+    void set_outbound_persist_callback(OutboundPersistFn cb) {
+      _persist_outbound_fn = std::move(cb);
+    }
     void _persist_attachments(const RNS::Bytes& msg_hash,
                               const std::vector<FieldBlob>& fields,
                               std::vector<AttachmentMeta>& out) {
@@ -1592,6 +1609,7 @@ namespace LXMF {
     OutboxStatusCallback _on_outbox_status;
     ProgressCallback  _on_progress;
     AttachmentPersistFn _persist_attachments_fn;
+    OutboundPersistFn   _persist_outbound_fn;
   };
 
 } // namespace LXMF

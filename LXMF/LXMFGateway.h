@@ -6,6 +6,8 @@
 #include <Utilities/OS.h>
 #include <microStore/FileSystem.h>
 #include "../Web/SDCard.h"
+#include "../Web/OutboundStaging.h"
+#include <SD.h>
 
 #include <memory>
 #include <string>
@@ -61,6 +63,11 @@ namespace LXMF {
     std::unique_ptr<LXMFInbox> outbox;
     uint32_t             last_announce_ms = 0;
     uint32_t             announce_interval_ms = LXMF_DEFAULT_ANNOUNCE_INTERVAL_MS;
+    // When true, attachments sent from this identity get a copy
+    // persisted on the device so the sender's chat history can
+    // render the image / play the audio inline. When false, the
+    // outbox shows a chip-only "attachment (12 KB)" placeholder.
+    bool                 persist_outbound_attachments = true;
     bool                 active = false;
     // Password hash (PBKDF2-HMAC-SHA256) + per-identity salt. Set at
     // identity creation; required for login. Empty if identity is from an
@@ -121,6 +128,14 @@ namespace LXMF {
       if (!a) return false;
       a->announce_interval_ms = interval_ms;
       a->last_announce_ms = millis();  // reset so a tiny new interval doesn't fire immediately
+      write_meta(*a);
+      return true;
+    }
+
+    static bool set_persist_outbound_attachments(const IdentityId& iden_id, bool on) {
+      LXMFIdentity* a = identity_by_id_mut(iden_id);
+      if (!a) return false;
+      a->persist_outbound_attachments = on;
       write_meta(*a);
       return true;
     }
@@ -326,7 +341,8 @@ namespace LXMF {
       JsonDocument doc;
       doc["display_name"]         = a.display_name;
       doc["created_ms"]           = (uint32_t)millis();
-      doc["announce_interval_ms"] = a.announce_interval_ms;
+      doc["announce_interval_ms"]         = a.announce_interval_ms;
+      doc["persist_outbound_attachments"] = a.persist_outbound_attachments;
       if (a.password_hash.size() > 0) doc["password_hash"] = a.password_hash.toHex();
       if (a.password_salt.size() > 0) doc["password_salt"] = a.password_salt.toHex();
       String body;
@@ -344,6 +360,7 @@ namespace LXMF {
       if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
       a.display_name         = (const char*)(doc["display_name"] | "LXMF Identity");
       a.announce_interval_ms = (uint32_t)(doc["announce_interval_ms"] | LXMF_DEFAULT_ANNOUNCE_INTERVAL_MS);
+      a.persist_outbound_attachments = (bool)(doc["persist_outbound_attachments"] | true);
       std::string ph = (const char*)(doc["password_hash"] | "");
       std::string ps = (const char*)(doc["password_salt"] | "");
       if (!ph.empty()) a.password_hash.assignHex(ph.c_str());
@@ -467,6 +484,103 @@ namespace LXMF {
               NOTICEF("LXMF: persisted attachment %s (%u B, backend=%s, display='%s')",
                       on_disk, (unsigned)f.raw_len,
                       backend.c_str(), meta.display_name.c_str());
+            }
+            return out;
+          });
+      // Outbound attachment persistence — copy the staging bytes to
+      // the sender's identity dir so their own chat bubble can show
+      // an inline preview of what they sent. Same filename layout as
+      // the inbound path; the SPA renders both from the same endpoint.
+      a.lxmf.set_outbound_persist_callback(
+          [p](const RNS::Bytes& msg_hash,
+              const std::vector<LXMFMinimal::OutgoingAttachment>& outgoing)
+              -> std::vector<AttachmentMeta> {
+            std::vector<AttachmentMeta> out;
+            if (!p->active || !p->persist_outbound_attachments) return out;
+            const bool use_sd = Web::SDCard::present();
+            const std::string att_dir = p->dir() + "/attachments";
+            if (!filesystem.isDirectory(att_dir.c_str())) {
+              filesystem.mkdir(att_dir.c_str());
+            }
+            out.resize(outgoing.size());
+            for (size_t i = 0; i < outgoing.size(); ++i) {
+              const auto& a = outgoing[i];
+              if (a.staging_id == 0 && a.data.empty()) continue;
+              char on_disk[96];
+              snprintf(on_disk, sizeof(on_disk), "%s_%02x_%u.bin",
+                       msg_hash.toHex().c_str(), (unsigned)a.tag, (unsigned)i);
+              const std::string full = att_dir + "/" + on_disk;
+              const size_t total = a.staging_id ? a.staging_total_bytes : a.data.size();
+              // Stream the bytes in 4 KiB chunks so a multi-MB
+              // attachment doesn't need to materialise twice in RAM.
+              // The destination file is built up chunk by chunk
+              // (truncate first, then append-write).
+              if (filesystem.exists(full.c_str())) filesystem.remove(full.c_str());
+              bool wrote_ok = false;
+              std::string backend = "flash";
+              std::vector<uint8_t> chunk;
+              chunk.reserve(4096);
+              size_t off = 0;
+              auto next_chunk = [&](uint8_t* buf, size_t want) -> size_t {
+                if (a.staging_id) {
+                  return Web::OutboundStaging::read(a.staging_id, off, want, buf);
+                }
+                const size_t avail = a.data.size() > off ? a.data.size() - off : 0;
+                const size_t take = std::min(want, avail);
+                if (take) memcpy(buf, a.data.data() + off, take);
+                return take;
+              };
+              if (use_sd) {
+                File f = SD.open(full.c_str(), FILE_WRITE);
+                if (f) {
+                  size_t written = 0;
+                  uint8_t buf[1024];
+                  while (off < total) {
+                    const size_t want = std::min((size_t)sizeof(buf), total - off);
+                    const size_t got = next_chunk(buf, want);
+                    if (got == 0) break;
+                    const size_t w = f.write(buf, got);
+                    if (w != got) break;
+                    off += got;
+                    written += w;
+                    RNS::Utilities::OS::reset_watchdog();
+                  }
+                  f.close();
+                  if (written == total) { wrote_ok = true; backend = "sd"; }
+                  else WARNINGF("LXMF: SD outbound write short (%u/%u) for %s — fallback to flash",
+                                (unsigned)written, (unsigned)total, on_disk);
+                }
+                if (!wrote_ok && SD.exists(full.c_str())) SD.remove(full.c_str());
+              }
+              if (!wrote_ok) {
+                // Buffer the whole thing on the heap for the flash
+                // writeFile API. Outbound persistence on flash is best-
+                // effort: it'll fail silently for multi-MB images on
+                // an 8 MB part, which is fine — that's why the user
+                // bought an SD card.
+                std::vector<uint8_t> all(total);
+                size_t roff = 0;
+                while (roff < total) {
+                  const size_t want = std::min((size_t)4096, total - roff);
+                  const size_t got = next_chunk(all.data() + roff, want);
+                  if (got == 0) break;
+                  roff += got;
+                  off  += got;
+                }
+                if (roff == total) {
+                  const size_t w = filesystem.writeFile(full.c_str(), all.data(), all.size());
+                  if (w == total) wrote_ok = true;
+                  else WARNINGF("LXMF: flash outbound write short (%u/%u) for %s",
+                                (unsigned)w, (unsigned)total, on_disk);
+                }
+              }
+              if (!wrote_ok) continue;
+              out[i].tag      = a.tag;
+              out[i].size     = (uint32_t)total;
+              out[i].filename = on_disk;
+              out[i].backend  = backend;
+              NOTICEF("LXMF: persisted outbound attachment %s (%u B, backend=%s)",
+                      on_disk, (unsigned)total, backend.c_str());
             }
             return out;
           });

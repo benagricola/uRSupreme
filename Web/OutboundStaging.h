@@ -41,6 +41,11 @@ inline constexpr size_t   PSRAM_CAP_BYTES   = 4 * 1024 * 1024;
 // SD soft cap. Files this big over LoRa take hours; cap is more
 // about "don't accidentally fill the user's SD card" than ESP32 RAM.
 inline constexpr size_t   SD_CAP_BYTES      = 32 * 1024 * 1024;
+// Hard ceiling enforced regardless of what the dynamic caps say. Even
+// if current_caps() ever reports a giant max_bytes, we will not honour
+// it. Defends against pathological client-supplied `total` values and
+// any future drift in how the caps are computed.
+inline constexpr size_t   ABSOLUTE_MAX_BYTES = 32 * 1024 * 1024;
 // Garbage-collect untouched buffers older than this. Browser may
 // upload and then disconnect; reclaim within a minute.
 inline constexpr uint32_t STAGING_TIMEOUT_MS = 60000;
@@ -131,16 +136,27 @@ inline Caps current_caps() {
     c.max_bytes      = psram_max;
     c.chosen_backend = Backend::Psram;
   }
+  // Defense-in-depth: never report more than the absolute ceiling, no
+  // matter what the underlying backend says is free.
+  if (c.max_bytes > ABSOLUTE_MAX_BYTES) c.max_bytes = ABSOLUTE_MAX_BYTES;
   return c;
 }
 
 // Allocate a new staging buffer. Returns 0 on failure (over cap,
-// PSRAM exhausted, SD write-fail).
+// PSRAM exhausted, SD write-fail). The size check rejects the request
+// before any allocation happens, so a malicious or buggy client can't
+// trigger a PSRAM exhaustion / SD fill through a wildly inflated
+// `total` parameter.
 inline uint32_t allocate(size_t total_bytes) {
   _detail::gc(millis());
+  if (total_bytes == 0 || total_bytes > ABSOLUTE_MAX_BYTES) {
+    WARNINGF("OutboundStaging: refusing alloc — %u bytes outside absolute bounds (0, %u]",
+             (unsigned)total_bytes, (unsigned)ABSOLUTE_MAX_BYTES);
+    return 0;
+  }
   const Caps c = current_caps();
-  if (total_bytes == 0 || total_bytes > c.max_bytes) {
-    WARNINGF("OutboundStaging: refusing alloc — %u bytes > cap %u",
+  if (total_bytes > c.max_bytes) {
+    WARNINGF("OutboundStaging: refusing alloc — %u bytes > dynamic cap %u",
              (unsigned)total_bytes, (unsigned)c.max_bytes);
     return 0;
   }
@@ -172,11 +188,16 @@ inline uint32_t allocate(size_t total_bytes) {
 }
 
 // Append a chunk. Returns true on success, false on overrun / unknown id.
+// The overrun check uses subtraction (not addition) so we can't get
+// fooled by a wrap-around on attacker-supplied `len` — the bound check
+// stays correct for any size_t input.
 inline bool append(uint32_t id, const uint8_t* data, size_t len) {
   Buffer* b = _detail::find(id);
   if (!b) return false;
-  if (b->written + len > b->total_bytes) return false;
+  if (b->written > b->total_bytes) return false;                 // invariant
+  if (len > b->total_bytes - b->written) return false;           // overrun
   if (b->backend == Backend::Psram) {
+    if (!b->psram_ptr) return false;
     memcpy(b->psram_ptr + b->written, data, len);
   } else {
     File f = SD.open(b->sd_path, FILE_APPEND);

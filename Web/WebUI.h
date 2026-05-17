@@ -119,7 +119,7 @@ namespace Web {
       // /lxmf/time.json (#113).
       Web::TimeManager::load_config(filesystem);
       register_routes();
-      static const char* collect[] = {"Authorization"};
+      static const char* collect[] = {"Authorization", "Content-Length"};
       server.collectHeaders(collect, sizeof(collect)/sizeof(collect[0]));
       server.begin();
       NOTICE("WebUI: listening on port 80");
@@ -1292,12 +1292,38 @@ namespace Web {
           err        = nullptr;
           // total size is passed as a query param so we can allocate
           // the staging buffer in one shot. Multipart itself doesn't
-          // carry the total upfront.
+          // carry the total upfront. Parse via strtoull to avoid the
+          // (size_t)(long long) wrap a 32-bit cast would silently do
+          // on a >4 GB value — for the bound check we want the raw
+          // 64-bit number, then we reject before narrowing.
           const char* total_str = server.arg("total").c_str();
-          const size_t total = (size_t)atoll(total_str);
-          if (total == 0) {
+          char* end = nullptr;
+          const unsigned long long total64 = strtoull(total_str, &end, 10);
+          if (!total_str || total_str[0] == '\0' || end == total_str || total64 == 0) {
             err = "Missing or invalid `total` query parameter.";
             return;
+          }
+          if (total64 > (unsigned long long)Web::OutboundStaging::ABSOLUTE_MAX_BYTES) {
+            err = "Requested upload size exceeds the device's absolute ceiling.";
+            return;
+          }
+          const size_t total = (size_t)total64;
+          // Cross-check against Content-Length: it's allowed to be
+          // larger than `total` because multipart adds MIME boundaries
+          // / headers (~few hundred bytes), but if it's *smaller* the
+          // client is lying about the upload size.
+          if (server.hasHeader("Content-Length")) {
+            const unsigned long long clen =
+              strtoull(server.header("Content-Length").c_str(), nullptr, 10);
+            if (clen > 0 && clen < total64) {
+              err = "Content-Length is smaller than declared `total`.";
+              return;
+            }
+            // Allow up to 16 KiB of multipart framing overhead.
+            if (clen > total64 + 16 * 1024) {
+              err = "Content-Length is far larger than declared `total`.";
+              return;
+            }
           }
           const uint32_t id = Web::OutboundStaging::allocate(total);
           if (id == 0) {
@@ -1310,6 +1336,10 @@ namespace Web {
         case UPLOAD_FILE_WRITE: {
           if (staging_id == 0) return;  // error already set
           if (!Web::OutboundStaging::append(staging_id, u.buf, u.currentSize)) {
+            // append() refuses any write that would push past the
+            // allocated size; we treat that as a hard fault. The
+            // backing buffer is bounded and there's no path here that
+            // could overflow it, even with attacker-controlled chunks.
             err = "Chunk write failed (overrun or backing-store error).";
             Web::OutboundStaging::release(staging_id);
             staging_id = 0;
@@ -1323,6 +1353,14 @@ namespace Web {
             Web::OutboundStaging::release(staging_id);
             staging_id = 0;
           }
+          break;
+        }
+        case UPLOAD_FILE_ABORTED: {
+          if (staging_id) {
+            Web::OutboundStaging::release(staging_id);
+            staging_id = 0;
+          }
+          if (!err) err = "Upload aborted.";
           break;
         }
         default:

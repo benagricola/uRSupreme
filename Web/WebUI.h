@@ -11,7 +11,6 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <esp_wifi.h>
-#include <mbedtls/base64.h>
 #include <WebServer.h>
 #include <uri/UriBraces.h>
 #include <ArduinoJson.h>
@@ -650,6 +649,19 @@ namespace Web {
           sd["total_bytes"] = (uint64_t)Web::SDCard::total_bytes();
           sd["used_bytes"]  = (uint64_t)Web::SDCard::used_bytes();
         }
+      }
+
+      // Same outbound caps surface as /api/system_status, here too so
+      // the attachment picker / recorder don't need an extra round trip
+      // before staging a file. (#130)
+      {
+        const auto caps = Web::OutboundStaging::current_caps();
+        JsonObject oc = doc["outbound_caps"].to<JsonObject>();
+        oc["max_bytes"]        = (uint32_t)caps.max_bytes;
+        oc["backend"]          = caps.chosen_backend == Web::OutboundStaging::Backend::Sd ? "sd" : "psram";
+        oc["psram_free_bytes"] = (uint32_t)caps.psram_free;
+        oc["sd_present"]       = caps.sd_present;
+        if (caps.sd_present) oc["sd_free_bytes"] = (uint32_t)caps.sd_free;
       }
 
       JsonObject transport = doc["transport"].to<JsonObject>();
@@ -1633,14 +1645,6 @@ namespace Web {
       send_json(202, doc);
     }
 
-    // Per-message + per-attachment caps for outbound attachments.
-    // Constrained by available heap on ESP32-S3 — `server.arg("plain")`
-    // copies the request body into a String, then ArduinoJson holds a
-    // reference, then base64 decode allocates the raw bytes. Peak
-    // ~2.3× the raw attachment size. 48 KB/message is comfortable.
-    static constexpr size_t OUTBOUND_ATTACHMENT_MAX_TOTAL = 48 * 1024;
-    static constexpr size_t OUTBOUND_ATTACHMENT_MAX_EACH  = 48 * 1024;
-
     static void handle_send() {
       LXMF::IdentityId caller = require_auth();
       if (caller.empty()) return;
@@ -1663,13 +1667,16 @@ namespace Web {
         return;
       }
 
-      // Optional `attachments`: array of { tag, data_b64, filename, mime }.
-      // tag is one of FIELD_FILE_ATTACHMENTS (5) / FIELD_IMAGE (6) /
-      // FIELD_AUDIO (7). data_b64 is the raw bytes base64-encoded.
-      // filename + mime are kept for the local outbox metadata; peers
-      // receive only the raw bytes under the FIELD_* tag.
+      // Attachments are referenced by `staging_id` only — bytes were
+      // uploaded ahead of time via /outbound/upload (#130). This keeps
+      // the JSON body tiny regardless of attachment size, and lets the
+      // backing buffer live in PSRAM (or SD when present) rather than
+      // RAM-doubling through base64.
+      //
+      // Each entry: { tag, staging_id, filename?, mime?, ext?, audio_mode? }.
+      // send_message() takes ownership of the staging buffers and
+      // releases them on success or failure.
       std::vector<LXMF::LXMFMinimal::OutgoingAttachment> attachments;
-      size_t total_bytes = 0;
       if (body["attachments"].is<JsonArrayConst>()) {
         for (JsonObjectConst a : body["attachments"].as<JsonArrayConst>()) {
           int tag = a["tag"] | 0;
@@ -1680,44 +1687,23 @@ namespace Web {
               "Attachment tag must be 5 (file), 6 (image), or 7 (audio).");
             return;
           }
-          const char* b64 = a["data_b64"] | "";
-          if (!*b64) {
-            send_error_with_message(400, "empty_attachment",
-              "Attachment data_b64 was missing or empty.");
+          uint32_t sid = (uint32_t)(a["staging_id"] | 0);
+          if (sid == 0) {
+            send_error_with_message(400, "missing_staging_id",
+              "Attachment is missing staging_id — upload bytes via /outbound/upload first.");
             return;
           }
-          // Probe decode size first so we can reject before allocating.
-          size_t decoded_len = 0;
-          const size_t b64_len = strlen(b64);
-          mbedtls_base64_decode(nullptr, 0, &decoded_len,
-                                (const unsigned char*)b64, b64_len);
-          if (decoded_len == 0 || decoded_len > OUTBOUND_ATTACHMENT_MAX_EACH) {
-            char msg[128];
-            snprintf(msg, sizeof(msg),
-                     "Attachment too large (%u B) — cap is %u B per attachment.",
-                     (unsigned)decoded_len, (unsigned)OUTBOUND_ATTACHMENT_MAX_EACH);
-            send_error_with_message(413, "attachment_too_large", msg);
-            return;
-          }
-          total_bytes += decoded_len;
-          if (total_bytes > OUTBOUND_ATTACHMENT_MAX_TOTAL) {
-            send_error_with_message(413, "attachments_too_large",
-              "Combined attachments exceed the 48 KB per-message cap.");
+          if (!Web::OutboundStaging::complete(sid)) {
+            send_error_with_message(409, "staging_incomplete",
+              "Attachment staging buffer hasn't finished uploading.");
             return;
           }
           LXMF::LXMFMinimal::OutgoingAttachment oa;
-          oa.tag = (uint8_t)tag;
-          oa.data.resize(decoded_len);
-          size_t out_len = 0;
-          int rc = mbedtls_base64_decode(oa.data.data(), decoded_len, &out_len,
-                                         (const unsigned char*)b64, b64_len);
-          if (rc != 0 || out_len != decoded_len) {
-            send_error_with_message(400, "invalid_attachment_base64",
-              "Attachment data_b64 could not be decoded.");
-            return;
-          }
-          oa.filename = a["filename"] | "";
-          oa.mime     = a["mime"]     | "";
+          oa.tag                  = (uint8_t)tag;
+          oa.staging_id           = sid;
+          oa.staging_total_bytes  = Web::OutboundStaging::total_bytes(sid);
+          oa.filename             = a["filename"] | "";
+          oa.mime                 = a["mime"]     | "";
           // Per Sideband convention, FIELD_IMAGE carries an `ext` string
           // (e.g. "webp"). Derive from mime "image/xyz" if the SPA didn't
           // send an explicit ext, else fall back to the filename suffix

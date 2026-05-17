@@ -26,7 +26,9 @@
 #include <Arduino.h>
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include <Reticulum.h>
 #include <Identity.h>
@@ -41,6 +43,8 @@
 #include "LXMFTypes.h"
 #include "../Web/BootCounter.h"
 #include "../Web/TimeManager.h"
+#include "../Web/OutboundStaging.h"
+#include <esp_heap_caps.h>
 
 namespace LXMF {
 
@@ -137,21 +141,40 @@ namespace LXMF {
       return false;
     }
 
-    inline size_t pack_bin(uint8_t* buf, size_t buflen, const uint8_t* data, size_t dlen) {
-      size_t pos = 0;
+    // Just the bin-format header (bin8 / bin16 / bin32). Returns the
+    // header length; caller writes the body bytes into the buffer
+    // separately. Used for staging-backed attachments where the body
+    // bytes are streamed into the encode buffer chunk by chunk
+    // rather than memcpy'd from a vector. (#130)
+    inline size_t pack_bin_header(uint8_t* buf, size_t buflen, size_t dlen) {
       if (dlen <= 255) {
-        if (pos + 2 + dlen > buflen) return 0;
-        buf[pos++] = 0xC4;
-        buf[pos++] = (uint8_t)dlen;
-      } else {
-        if (pos + 3 + dlen > buflen) return 0;
-        buf[pos++] = 0xC5;
-        buf[pos++] = (dlen >> 8) & 0xFF;
-        buf[pos++] = dlen & 0xFF;
+        if (buflen < 2) return 0;
+        buf[0] = 0xC4;
+        buf[1] = (uint8_t)dlen;
+        return 2;
       }
+      if (dlen <= 0xFFFF) {
+        if (buflen < 3) return 0;
+        buf[0] = 0xC5;
+        buf[1] = (dlen >> 8) & 0xFF;
+        buf[2] = dlen & 0xFF;
+        return 3;
+      }
+      if (buflen < 5) return 0;
+      buf[0] = 0xC6;
+      buf[1] = (dlen >> 24) & 0xFF;
+      buf[2] = (dlen >> 16) & 0xFF;
+      buf[3] = (dlen >> 8) & 0xFF;
+      buf[4] = dlen & 0xFF;
+      return 5;
+    }
+
+    inline size_t pack_bin(uint8_t* buf, size_t buflen, const uint8_t* data, size_t dlen) {
+      size_t pos = pack_bin_header(buf, buflen, dlen);
+      if (pos == 0) return 0;
+      if (pos + dlen > buflen) return 0;
       memcpy(&buf[pos], data, dlen);
-      pos += dlen;
-      return pos;
+      return pos + dlen;
     }
 
     inline size_t pack_bin_str(uint8_t* buf, size_t buflen, const std::string& str) {
@@ -452,11 +475,24 @@ namespace LXMF {
     // `mime` is local metadata only, mirrored onto the outbox record.
     struct OutgoingAttachment {
       uint8_t              tag;
+      // Byte source — exactly one of these is populated:
+      //   * staging_id != 0: bytes live in OutboundStaging (PSRAM or
+      //     SD-backed). Read via Web::OutboundStaging::read() during
+      //     encoding. This is the only path the SPA exercises today
+      //     (#130 wholesale switch).
+      //   * data non-empty: bytes inlined here. Kept for code paths
+      //     that don't use the staging upload (test fixtures, etc).
+      uint32_t             staging_id = 0;
+      uint32_t             staging_total_bytes = 0;
       std::vector<uint8_t> data;
       std::string          filename;     // FIELD_FILE_ATTACHMENTS
       std::string          ext;          // FIELD_IMAGE  e.g. "webp", "png"
       uint8_t              audio_mode = 0xFF;  // FIELD_AUDIO  (AM_CUSTOM default)
       std::string          mime;         // local-only, not on the wire
+
+      size_t byte_count() const {
+        return staging_id ? staging_total_bytes : data.size();
+      }
     };
 
     bool send_message(const RNS::Bytes& dest_hash,
@@ -474,6 +510,18 @@ namespace LXMF {
                       MessageRecord& out_rec,
                       const char** out_err = nullptr) {
       auto fail = [&](const char* msg) { if (out_err) *out_err = msg; return false; };
+      // send_message takes ownership of any staging buffers referenced
+      // in `attachments` — they get released on every exit path so the
+      // caller doesn't have to track them across success/failure.
+      struct StagingReleaser {
+        const std::vector<OutgoingAttachment>* atts;
+        ~StagingReleaser() {
+          if (!atts) return;
+          for (const auto& a : *atts) {
+            if (a.staging_id) Web::OutboundStaging::release(a.staging_id);
+          }
+        }
+      } releaser{attachments};
       if (!_initialized) return fail("LXMF gateway not initialised");
       if (dest_hash.size() != HASH_LEN) {
         ERROR("LXMF: send_message: destination hash must be 16 bytes");
@@ -501,7 +549,7 @@ namespace LXMF {
       size_t att_names_bytes = 0;
       if (attachments) {
         for (const auto& a : *attachments) {
-          att_bytes += a.data.size();
+          att_bytes += a.byte_count();
           att_names_bytes += a.filename.size() + a.ext.size();
         }
       }
@@ -509,8 +557,25 @@ namespace LXMF {
       // inner [name, bytes] wrapping, +map header.
       const size_t mp_cap = 96 + title.size() + content.size()
                           + att_bytes + att_names_bytes + 16 * (attachments ? attachments->size() : 0);
-      std::vector<uint8_t> mp_buf(mp_cap);
-      uint8_t* mp = mp_buf.data();
+      // Large attachments (multi-MB) won't fit in DRAM. Allocate the
+      // working buffer from PSRAM when above an SRAM-safe threshold;
+      // small messages stay on the heap for zero PSRAM pressure. The
+      // unique_ptr's custom deleter ensures cleanup on any return path.
+      constexpr size_t DRAM_BUF_THRESHOLD = 64 * 1024;
+      std::vector<uint8_t> mp_buf_dram;
+      std::unique_ptr<uint8_t, void(*)(void*)> mp_psram(nullptr, heap_caps_free);
+      uint8_t* mp = nullptr;
+      if (mp_cap > DRAM_BUF_THRESHOLD) {
+        mp_psram.reset((uint8_t*)heap_caps_malloc(mp_cap, MALLOC_CAP_SPIRAM));
+        if (!mp_psram) {
+          ERRORF("LXMF: send: PSRAM alloc of %u bytes failed", (unsigned)mp_cap);
+          return fail("Not enough memory to encode this message.");
+        }
+        mp = mp_psram.get();
+      } else {
+        mp_buf_dram.resize(mp_cap);
+        mp = mp_buf_dram.data();
+      }
       size_t mp_pos = 0;
       mp[mp_pos++] = 0x94;  // fixarray(4)
 
@@ -552,9 +617,13 @@ namespace LXMF {
         if (n == 0) { ERROR("LXMF: send: map header pack failed"); return fail("Too many attachments."); }
         mp_pos += n;
 
+        // Pack one [name_or_mode, bytes] pair. When the attachment was
+        // staged (uploaded via the multipart endpoint), stream the
+        // bytes out of OutboundStaging in 4 KiB chunks rather than
+        // expecting them in `a.data`.
         auto pack_pair = [&](const std::string& name_or_ext, uint8_t audio_mode,
                              bool use_audio_mode,
-                             const std::vector<uint8_t>& bytes,
+                             const OutgoingAttachment& a,
                              const char* err_label) -> bool {
           size_t m = RawMsgPack::pack_array_header(&mp[mp_pos], mp_cap - mp_pos, 2);
           if (m == 0) { ERROR("LXMF: send: pair header pack failed"); return false; }
@@ -566,9 +635,24 @@ namespace LXMF {
           }
           if (m == 0) { ERRORF("LXMF: send: %s name pack failed", err_label); return false; }
           mp_pos += m;
-          m = RawMsgPack::pack_bin(&mp[mp_pos], mp_cap - mp_pos, bytes.data(), bytes.size());
-          if (m == 0) { ERRORF("LXMF: send: %s bytes pack failed", err_label); return false; }
-          mp_pos += m;
+          const size_t dlen = a.byte_count();
+          const size_t hdr = RawMsgPack::pack_bin_header(&mp[mp_pos], mp_cap - mp_pos, dlen);
+          if (hdr == 0) { ERRORF("LXMF: send: %s bin header pack failed", err_label); return false; }
+          mp_pos += hdr;
+          if (mp_pos + dlen > mp_cap) { ERRORF("LXMF: send: %s bytes overflow", err_label); return false; }
+          if (a.staging_id) {
+            size_t off = 0;
+            while (off < dlen) {
+              const size_t want = std::min((size_t)4096, dlen - off);
+              const size_t got = Web::OutboundStaging::read(a.staging_id, off, want, &mp[mp_pos]);
+              if (got == 0) { ERRORF("LXMF: send: %s staging read failed at %u", err_label, (unsigned)off); return false; }
+              mp_pos += got;
+              off += got;
+            }
+          } else {
+            memcpy(&mp[mp_pos], a.data.data(), dlen);
+            mp_pos += dlen;
+          }
           return true;
         };
 
@@ -576,14 +660,14 @@ namespace LXMF {
           const auto& a = (*attachments)[image_idxs.front()];
           n = RawMsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, FIELD_IMAGE);
           if (n == 0) return fail("Internal error packing image key."); mp_pos += n;
-          if (!pack_pair(a.ext, 0, false, a.data, "image"))
+          if (!pack_pair(a.ext, 0, false, a, "image"))
             return fail("Internal error packing image attachment.");
         }
         if (!audio_idxs.empty()) {
           const auto& a = (*attachments)[audio_idxs.front()];
           n = RawMsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, FIELD_AUDIO);
           if (n == 0) return fail("Internal error packing audio key."); mp_pos += n;
-          if (!pack_pair("", a.audio_mode, true, a.data, "audio"))
+          if (!pack_pair("", a.audio_mode, true, a, "audio"))
             return fail("Internal error packing audio attachment.");
         }
         if (!file_idxs.empty()) {
@@ -593,7 +677,7 @@ namespace LXMF {
           if (n == 0) return fail("Too many file attachments to encode."); mp_pos += n;
           for (size_t idx : file_idxs) {
             const auto& a = (*attachments)[idx];
-            if (!pack_pair(a.filename, 0, false, a.data, "file"))
+            if (!pack_pair(a.filename, 0, false, a, "file"))
               return fail("Internal error packing file attachment.");
           }
         }
@@ -651,7 +735,7 @@ namespace LXMF {
           const auto& a = (*attachments)[i];
           AttachmentMeta m;
           m.tag  = a.tag;
-          m.size = (uint32_t)a.data.size();
+          m.size = (uint32_t)a.byte_count();
           // For outbox display: filename field is empty (no on-disk blob
           // for sent attachments); display_name carries what the user
           // attached so their own bubble still shows the right label.

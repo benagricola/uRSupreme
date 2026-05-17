@@ -1319,6 +1319,10 @@ const state = {
                                     // /api/system_status responds. Attachment
                                     // chips with backend=="sd" surface a warn
                                     // pill when this flips false.
+  outboundCaps: null,               // { max_bytes, backend, psram_free_bytes,
+                                    //   sd_free_bytes?, sd_present } from /api/info.
+                                    // Used to gate image-resize options + file
+                                    // picker + recorder duration. (#130)
   reconnectStart: 0,
   skipBootstrap: false,             // set true by "skip" button on view-bootstrap so subsequent
                                     // routing doesn't bounce back into bootstrap mode
@@ -1635,10 +1639,45 @@ class UReticulumHTTPTransport extends Transport {
     return this._req('/api/identities/' + encodeURIComponent(identityId) + '/state');
   }
   async send(identityId, destHex, title, content, attachments) {
+    // Wire format (post-#130): attachments reference pre-uploaded staging
+    // buffers by id. Bytes must have been pushed to /outbound/upload first.
     const body = { to: destHex, title: title || '', content };
     if (attachments && attachments.length) body.attachments = attachments;
     return this._req('/api/identities/' + encodeURIComponent(identityId) + '/send',
       { method: 'POST', body });
+  }
+  // Upload bytes for a single attachment. Resolves to { staging_id, total_bytes, backend }.
+  // Uses XHR (not fetch) so we can surface upload progress to the SPA tray.
+  async uploadAttachment(identityId, bytes, filename, mime, onProgress) {
+    const total = bytes.length;
+    const url = '/api/identities/' + encodeURIComponent(identityId)
+              + '/outbound/upload?total=' + total;
+    const tok = this.tokenGetter();
+    const form = new FormData();
+    form.append('file', new Blob([bytes], { type: mime || 'application/octet-stream' }), filename || 'blob.bin');
+    return await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      if (tok) xhr.setRequestHeader('Authorization', 'Bearer ' + tok);
+      if (xhr.upload && onProgress) {
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable) onProgress(ev.loaded, ev.total);
+        };
+      }
+      xhr.onload = () => {
+        let body = {};
+        try { body = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch { /* opaque */ }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(body);
+        } else {
+          const msg = body.message || body.error || ('http ' + xhr.status);
+          const err = new Error(msg); err.status = xhr.status; err.body = body;
+          reject(err);
+        }
+      };
+      xhr.onerror = () => reject(new Error('upload network error'));
+      xhr.send(form);
+    });
   }
   async announceNow(identityId) {
     return this._req('/api/identities/' + encodeURIComponent(identityId) + '/announce', { method: 'POST' });
@@ -2478,13 +2517,32 @@ async function sendMessage() {
   if (!text && state.pendingAttachments.length === 0) return;
   $('btn-send').disabled = true;
   try {
-    // Encode any staged attachments to base64 for the JSON body.
-    const attachments = state.pendingAttachments.map(a => ({
-      tag:      a.tag,
-      filename: a.filename,
-      mime:     a.mime,
-      data_b64: bytesToBase64(a.bytes),
-    }));
+    // Upload each pending attachment's bytes ahead of the JSON /send
+    // call (#130). Skip ones that already carry a staging_id from a
+    // prior partial-send attempt. Upload progress is mirrored back into
+    // the tray chip's `eta` slot via renderAttachTray.
+    for (const a of state.pendingAttachments) {
+      if (a.staging_id) continue;
+      a.uploading = true;
+      a.uploaded_bytes = 0;
+      renderAttachTray();
+      try {
+        const r = await state.transport.uploadAttachment(
+          state.identityId, a.bytes, a.filename, a.mime,
+          (loaded, _total) => { a.uploaded_bytes = loaded; renderAttachTray(); });
+        a.staging_id     = r.staging_id;
+        a.staging_backend = r.backend;
+      } finally {
+        a.uploading = false;
+      }
+    }
+    const attachments = state.pendingAttachments.map(a => {
+      const e = { tag: a.tag, staging_id: a.staging_id,
+                  filename: a.filename, mime: a.mime };
+      if (a.audio_mode !== undefined) e.audio_mode = a.audio_mode;
+      if (a.ext) e.ext = a.ext;
+      return e;
+    });
     // Server returns { queued_seq, status }. Mirror status in the
     // optimistic local copy so the bubble doesn't say "queued forever".
     const r = await state.transport.send(state.identityId, state.openPeer, '', text, attachments);
@@ -2568,12 +2626,26 @@ async function retryFailedMessage(msg, button) {
 
 // ============================== ATTACHMENTS ==============================
 // LXMF fields-dict tag numbers (canonical, see LXMF::FIELD_* in
-// LXMFTypes.h). Bytes per attachment are subject to the device's
-// OUTBOUND_ATTACHMENT_MAX_EACH cap (~48 KB today).
+// LXMFTypes.h). Per-attachment cap is the device-reported outbound
+// staging max — PSRAM (~4 MB) or SD card free space, whichever
+// backend the device chose. Falls back to a conservative 64 KB when
+// /api/info hasn't reported caps yet.
 const FIELD_FILE_ATTACHMENTS = 0x05;
 const FIELD_IMAGE            = 0x06;
 const FIELD_AUDIO            = 0x07;
-const ATTACH_MAX_BYTES       = 48 * 1024;
+const ATTACH_FALLBACK_BYTES  = 64 * 1024;
+function attachMaxBytes() {
+  const c = state.outboundCaps;
+  return (c && Number.isFinite(c.max_bytes) && c.max_bytes > 0)
+       ? c.max_bytes : ATTACH_FALLBACK_BYTES;
+}
+function attachBackendLabel() {
+  const c = state.outboundCaps;
+  if (!c) return null;
+  if (c.backend === 'sd') return 'SD card';
+  if (c.backend === 'psram') return 'PSRAM';
+  return null;
+}
 
 // Resize an image File to a target max dimension, returning a JPEG
 // Blob. Quality 0.78 keeps small/medium variants well under the cap
@@ -2605,16 +2677,6 @@ async function blobImageDimensions(blob) {
   const w = bmp.width, h = bmp.height;
   bmp.close();
   return { w, h };
-}
-
-// Base64-encode a Uint8Array. btoa() can't take a binary string > ~64K
-// efficiently, but our 48 KB cap fits comfortably; chunk via String.fromCharCode.
-function bytesToBase64(bytes) {
-  let s = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-  }
-  return btoa(s);
 }
 
 function formatEta(ms) {
@@ -2705,9 +2767,10 @@ async function startRecording() {
     $('btn-mic').classList.remove('recording');
     renderAttachTray();
     if (state.recorderStopReason === 'cancel' || blob.size === 0) return;
-    if (blob.size > ATTACH_MAX_BYTES) {
+    const cap = attachMaxBytes();
+    if (blob.size > cap) {
       toast('Recording too large (' + formatBytes(blob.size)
-            + ') — cap is ' + formatBytes(ATTACH_MAX_BYTES) + '.', 'error', 6000);
+            + ') — cap is ' + formatBytes(cap) + '.', 'error', 6000);
       return;
     }
     const bytes = await blobToBytes(blob);
@@ -2746,9 +2809,10 @@ $('attach-file').addEventListener('change', async (ev) => {
 });
 
 async function stageNonImageAttachment(file) {
-  if (file.size > ATTACH_MAX_BYTES) {
+  const cap = attachMaxBytes();
+  if (file.size > cap) {
     toast('File is ' + formatBytes(file.size) + ' — cap is '
-          + formatBytes(ATTACH_MAX_BYTES) + ' per attachment.', 'error', 6000);
+          + formatBytes(cap) + ' per attachment.', 'error', 6000);
     return;
   }
   const bytes = await blobToBytes(file);
@@ -2760,7 +2824,10 @@ async function stageNonImageAttachment(file) {
 
 async function openImageResizePicker(file) {
   const modal = $('modal-image-resize');
-  $('ir-source').textContent = file.name + ' · ' + formatBytes(file.size);
+  const cap   = attachMaxBytes();
+  const backendLabel = attachBackendLabel();
+  $('ir-source').textContent = file.name + ' · ' + formatBytes(file.size)
+        + (backendLabel ? ('  ·  staging: ' + backendLabel + ' (' + formatBytes(cap) + ')') : '');
   const wrap = $('ir-options');
   wrap.innerHTML = '';
   // Compute candidate sizes up-front. "Resize" here means downscaling
@@ -2789,13 +2856,13 @@ async function openImageResizePicker(file) {
   const smallVariant = prepared.find(p => p.key === 'small') || prepared[0];
   const thumbBox = Math.min(200, Math.max(smallVariant.dims.w, smallVariant.dims.h));
 
-  // Default selection: first candidate that fits the cap.
-  let chosen = prepared.find(p => p.size <= ATTACH_MAX_BYTES) || prepared[0];
+  // Default selection: largest candidate that still fits the cap.
+  let chosen = [...prepared].reverse().find(p => p.size <= cap) || prepared[0];
 
   const renderOptions = () => {
     wrap.innerHTML = '';
     for (const p of prepared) {
-      const tooBig = p.size > ATTACH_MAX_BYTES;
+      const tooBig = p.size > cap;
       const isChosen = p.key === chosen.key && !tooBig;
       const card = el('div', {
         style: 'display:flex;gap:12px;padding:8px;border-radius:6px;'
@@ -2823,7 +2890,7 @@ async function openImageResizePicker(file) {
         text: p.dims.w + '×' + p.dims.h + ' · ' + formatBytes(p.size) }));
       if (tooBig) {
         info.appendChild(el('div', { style: 'color:var(--danger-2);font-size:11px;margin-top:4px',
-          text: 'Too large — cap is ' + formatBytes(ATTACH_MAX_BYTES) }));
+          text: 'Too large — cap is ' + formatBytes(cap) }));
       }
       info.appendChild(el('div', { class: 'muted mono',
         'data-eta-for': p.key,
@@ -2844,7 +2911,7 @@ async function openImageResizePicker(file) {
     const peer = state.openPeer;
     if (!peer) return;
     for (const p of prepared) {
-      if (p.size > ATTACH_MAX_BYTES) continue;
+      if (p.size > cap) continue;
       try {
         const r = await state.transport.pathEstimate(peer, p.size + 120);
         const node = wrap.querySelector('[data-eta-for="' + p.key + '"]');
@@ -2941,10 +3008,23 @@ function renderAttachTray() {
     chip.appendChild(el('span', { text: icon }));
     chip.appendChild(el('span', { class: 'label',
                                   text: a.filename + ' · ' + formatBytes(a.bytes.length) }));
-    const etaText = a.kind === 'local' ? 'instant'
-                  : a.kind === 'unknown' ? 'ETA unknown'
-                  : a.eta_ms != null ? formatEta(a.eta_ms)
-                  : '';
+    // Upload-progress trumps the ETA pill while bytes are being shipped
+    // to the device's staging buffer (#130). After upload finishes (or
+    // before it starts), we fall back to the ETA estimate.
+    let etaText = '';
+    if (a.uploading) {
+      const pct = a.bytes.length > 0
+                ? Math.round(100 * (a.uploaded_bytes || 0) / a.bytes.length)
+                : 0;
+      etaText = 'uploading ' + pct + '%';
+    } else if (a.staging_id) {
+      etaText = 'uploaded';
+    } else {
+      etaText = a.kind === 'local' ? 'instant'
+              : a.kind === 'unknown' ? 'ETA unknown'
+              : a.eta_ms != null ? formatEta(a.eta_ms)
+              : '';
+    }
     if (etaText) chip.appendChild(el('span', { class: 'eta', text: etaText }));
     const x = el('span', { class: 'drop', text: '×', title: 'Drop attachment' });
     x.addEventListener('click', () => { state.pendingAttachments.splice(idx, 1); renderAttachTray(); });
@@ -2994,6 +3074,9 @@ async function refreshStatus() {
     if (wasPresent !== null && wasPresent !== state.sdPresent && state.openPeer) {
       renderThread();
     }
+    // Track outbound staging caps so the attachment picker / resize
+    // modal / recorder all use the same per-device max-bytes ceiling.
+    state.outboundCaps = info && info.outbound_caps ? info.outbound_caps : null;
   } catch (e) {
     $('btn-status').setAttribute('data-state', 'unknown');
     $('btn-status').title = 'Status unknown: ' + (e.message || e);

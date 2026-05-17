@@ -1196,6 +1196,27 @@ summary:hover { color: var(--text); }
           <button class="secondary" disabled title="More transports coming in Phase 2">Switch transport…</button>
         </div>
         <div class="card" style="margin-top:14px">
+          <strong>Inbox retention</strong>
+          <div class="muted" style="margin-top:4px;margin-bottom:10px">Caps how many messages each identity keeps in RAM + on disk. Oldest are pruned when either limit is hit. Now that the device has a reliable wall clock, the TTL prunes anything older than the chosen window. Applies to every identity's inbox and outbox.</div>
+          <label>Message limit</label>
+          <select id="inbox-cap" style="margin-bottom:8px">
+            <option value="200">200 messages (default)</option>
+            <option value="500">500 messages</option>
+            <option value="1000">1000 messages</option>
+            <option value="5000">5000 messages</option>
+            <option value="0">Unlimited</option>
+          </select>
+          <label>Wall-clock TTL</label>
+          <select id="inbox-ttl">
+            <option value="0">Off — don't prune by age</option>
+            <option value="604800">Last 7 days</option>
+            <option value="2592000">Last 30 days</option>
+            <option value="7776000">Last 90 days</option>
+            <option value="31536000">Last year</option>
+          </select>
+          <div class="muted" id="inbox-config-status" style="margin-top:6px;font-size:11px"></div>
+        </div>
+        <div class="card" style="margin-top:14px">
           <strong>Contacts</strong>
           <div class="muted" style="margin-top:4px">Stored in this browser only — they don't leave the device or sync between browsers.</div>
           <div id="contacts-list" style="margin-top:8px"></div>
@@ -4261,7 +4282,7 @@ function selectSettingsTab(tabId) {
   if (tabId === 'time')         { populateTimeTab(); }
   if (tabId === 'identity')     populateIdentityTab();
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
-  if (tabId === 'ui')           { $('pref-enter-sends').checked = !!state.prefs.enterSends; renderContacts(); }
+  if (tabId === 'ui')           { $('pref-enter-sends').checked = !!state.prefs.enterSends; renderContacts(); populateInboxConfig(); }
 }
 
 async function populateWifiTab() {
@@ -4694,6 +4715,43 @@ $('btn-settings').addEventListener('click', () => openSettingsModal('identity', 
 $('pref-enter-sends').addEventListener('change', (e) => {
   savePrefs({ enterSends: !!e.target.checked });
 });
+
+// Inbox capacity + TTL — populated lazily when the UI tab opens and
+// saved on each change. Server applies + persists in one round-trip.
+async function populateInboxConfig() {
+  const status = $('inbox-config-status');
+  status.textContent = '';
+  try {
+    const cfg = await state.transport._req('/api/inbox_config');
+    // Snap to the nearest dropdown option; if the device has a
+    // value outside our presets, the dropdown stays on its closest
+    // option but we surface the raw number in the status line.
+    const capSel = $('inbox-cap');
+    const ttlSel = $('inbox-ttl');
+    capSel.value = String(cfg.ram_capacity ?? 200);
+    if (capSel.selectedIndex === -1) capSel.value = '200';
+    ttlSel.value = String(cfg.ttl_seconds ?? 0);
+    if (ttlSel.selectedIndex === -1) ttlSel.value = '0';
+  } catch (e) {
+    status.textContent = 'Could not load: ' + (e.message || e);
+  }
+}
+async function saveInboxConfig() {
+  const status = $('inbox-config-status');
+  const body = {
+    ram_capacity: parseInt($('inbox-cap').value, 10) || 0,
+    ttl_seconds:  parseInt($('inbox-ttl').value, 10) || 0,
+  };
+  try {
+    await state.transport._req('/api/inbox_config', { method: 'POST', body });
+    status.textContent = 'Saved.';
+    setTimeout(() => { status.textContent = ''; }, 2000);
+  } catch (e) {
+    status.textContent = 'Save failed: ' + (e.message || e);
+  }
+}
+$('inbox-cap').addEventListener('change', saveInboxConfig);
+$('inbox-ttl').addEventListener('change', saveInboxConfig);
 
 // Escape dismisses whichever overlay is open. Order matters when more
 // than one is somehow open — close the topmost / most-recently-opened

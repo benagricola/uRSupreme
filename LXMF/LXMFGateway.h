@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include "LXMFTypes.h"
+#include "InboxConfig.h"
 #include "LXMFMinimal.h"
 #include "RatchetStore.h"
 #include "LXMFInbox.h"
@@ -263,6 +264,24 @@ namespace LXMF {
       return n;
     }
 
+    // Apply the current InboxConfig to every active identity's
+    // inbox + outbox. Called by /api/inbox_config POST after the
+    // new config is persisted. (#129)
+    static void apply_inbox_config_to_all() {
+      const auto& cfg = InboxConfig::current();
+      for (auto& a : identities_storage()) {
+        if (!a.active) continue;
+        if (a.inbox) {
+          a.inbox->set_capacity(cfg.ram_capacity);
+          a.inbox->set_ttl_seconds(cfg.ttl_seconds);
+        }
+        if (a.outbox) {
+          a.outbox->set_capacity(cfg.ram_capacity);
+          a.outbox->set_ttl_seconds(cfg.ttl_seconds);
+        }
+      }
+    }
+
     // Used by AnnounceLog to drop echoes of our own identities.
     static bool is_own_destination(const RNS::Bytes& dest) {
       for (auto& a : identities_storage()) {
@@ -333,10 +352,18 @@ namespace LXMF {
 
     static void activate(LXMFIdentity& a) {
       a.active = true;
-      a.inbox  = std::unique_ptr<LXMFInbox>(new LXMFInbox(a.dir(), "inbox.jsonl"));
-      a.outbox = std::unique_ptr<LXMFInbox>(new LXMFInbox(a.dir(), "outbox.jsonl"));
+      // Inbox + outbox capacity/TTL come from the global config
+      // (#129). Default state when no config file exists keeps the
+      // historical 200-entry FIFO behaviour.
+      const auto& cfg = InboxConfig::current();
+      a.inbox  = std::unique_ptr<LXMFInbox>(new LXMFInbox(a.dir(), "inbox.jsonl",
+                                                         cfg.ram_capacity, cfg.ttl_seconds));
+      a.outbox = std::unique_ptr<LXMFInbox>(new LXMFInbox(a.dir(), "outbox.jsonl",
+                                                         cfg.ram_capacity, cfg.ttl_seconds));
       a.inbox->load();
       a.outbox->load();
+      a.inbox->prune_expired();
+      a.outbox->prune_expired();
 
       a.lxmf.init(a.identity, a.display_name.c_str());
       LXMFIdentity* p = &a;

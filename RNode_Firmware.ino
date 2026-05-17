@@ -1019,6 +1019,12 @@ void setup() {
 
 #if defined(HAS_LXMF_GATEWAY)
       HEAD("Initializing LXMF gateway...", RNS::LOG_TRACE);
+      // Inbox cap + TTL config (#129). Load before LXMFGateway::setup
+      // so identity activation picks up the user's settings rather
+      // than the compiled default. The TTL prune needs a wall-clock
+      // — wire TimeManager::now_epoch as the inbox clock source.
+      LXMF::LXMFInbox::set_now_epoch_provider(&Web::TimeManager::now_epoch);
+      LXMF::InboxConfig::load(filesystem);
       LXMF::LXMFGateway::setup();
       LXMF::AnnounceLog::setup();
       // Wire the microReticulum ratchet patches to our gateway-backed

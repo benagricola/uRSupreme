@@ -433,6 +433,9 @@ namespace Web {
       server.on("/api/system_status",        HTTP_GET,  handle_system_status);
       // Per-sensor enable + polling-interval overrides. (#131)
       server.on("/api/sensors/config",       HTTP_POST, handle_sensors_config_post);
+      // Global inbox capacity + wall-clock TTL pruning. (#129)
+      server.on("/api/inbox_config",         HTTP_GET,  handle_inbox_config_get);
+      server.on("/api/inbox_config",         HTTP_POST, handle_inbox_config_post);
       server.on(UriBraces("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
       server.on(UriBraces("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
       server.on(UriBraces("/api/identities/{}/send"),     HTTP_POST, handle_send);
@@ -1065,6 +1068,40 @@ namespace Web {
       }
 
       send_json(200, doc);
+    }
+
+    // GET /api/inbox_config — current capacity + TTL. ram_capacity is
+    // emitted as 0 for "unlimited" so the SPA dropdown can render it
+    // explicitly; the server-side sentinel is SIZE_MAX. (#129)
+    static void handle_inbox_config_get() {
+      if (require_auth().empty()) return;
+      const auto& cfg = LXMF::InboxConfig::current();
+      JsonDocument doc;
+      doc["ram_capacity"] = (cfg.ram_capacity >= 0xFFFFFFFEu)
+          ? (uint32_t)0 : (uint32_t)cfg.ram_capacity;
+      doc["ttl_seconds"]  = cfg.ttl_seconds;
+      send_json(200, doc);
+    }
+
+    // POST /api/inbox_config — body = {"ram_capacity":uint, "ttl_seconds":uint}.
+    // ram_capacity 0 means unlimited. ttl_seconds 0 means TTL off.
+    // Applies + persists across all active identity inboxes. (#129)
+    static void handle_inbox_config_post() {
+      if (require_auth().empty()) return;
+      JsonDocument body;
+      if (!read_body_json(body)) return;
+      const uint32_t cap = body["ram_capacity"] | (uint32_t)LXMF::LXMFInbox::DEFAULT_RAM_CAPACITY;
+      const uint32_t ttl = body["ttl_seconds"]  | (uint32_t)0;
+      // Sanity caps: 10 years TTL max, no ram_capacity ceiling here
+      // because 0/SIZE_MAX is the "unlimited" sentinel.
+      if (ttl > 10UL * 365UL * 86400UL) {
+        send_error_with_message(400, "ttl_too_large",
+          "TTL must be no more than 10 years.");
+        return;
+      }
+      LXMF::InboxConfig::set(filesystem, cap, ttl);
+      LXMF::LXMFGateway::apply_inbox_config_to_all();
+      handle_inbox_config_get();
     }
 
     // POST /api/sensors/config — body = {"sensor":"bme280|magnetometer|imu",

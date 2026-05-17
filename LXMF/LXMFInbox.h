@@ -32,17 +32,57 @@ namespace LXMF {
   public:
     // Per-identity per-mailbox cap. At ~300 B per JSONL line for a
     // typical chat-sized message, 200 entries = ~60 KB / identity /
-    // mailbox — comfortable on the LittleFS partition. Stopgap until a
-    // persistent wall-clock-anchored TTL replaces it.
+    // mailbox — comfortable on the LittleFS partition.
+    //
+    // Configurable globally via /lxmf/inbox_config.json (#129):
+    //   - ram_capacity: 200 (default) / 500 / 1000 / 5000 / UNLIMITED
+    //   - ttl_seconds:  0 (off)       / 86400×N for "last N days"
+    // Both checks run on each append() and at load(). Now that the
+    // device's wall clock is reliable (RTC + NTP + browser-sync), the
+    // TTL prune by LXMF `ts` works correctly.
     static constexpr size_t DEFAULT_RAM_CAPACITY = 200;
+    static constexpr size_t UNLIMITED_CAPACITY   = SIZE_MAX;
     static constexpr size_t MAX_LINE_BYTES       = 768;
 
     LXMFInbox(const std::string& identity_dir,
               const char* filename,
-              size_t ram_capacity = DEFAULT_RAM_CAPACITY)
+              size_t ram_capacity = DEFAULT_RAM_CAPACITY,
+              uint32_t ttl_seconds = 0)
       : _path(identity_dir + "/" + filename),
         _ram_capacity(ram_capacity),
+        _ttl_seconds(ttl_seconds),
         _next_seq(0) {}
+
+    // Runtime overrides. set_capacity rewrites the spool if it
+    // tightens the bound below the current ring size. set_ttl_seconds
+    // prunes anything older than `now - ttl` if `ttl > 0`.
+    void set_capacity(size_t cap) {
+      _ram_capacity = cap;
+      bool changed = false;
+      while (_ring.size() > _ram_capacity) { _ring.pop_front(); changed = true; }
+      if (changed) rewrite_spool();
+    }
+    void set_ttl_seconds(uint32_t ttl) {
+      _ttl_seconds = ttl;
+      prune_expired();
+    }
+    // Prune entries with ts older than (now_epoch - ttl). No-op when
+    // ttl is 0 (disabled) or the device clock is uncalibrated.
+    void prune_expired() {
+      if (_ttl_seconds == 0) return;
+      // Late binding so we don't pull TimeManager.h here — caller
+      // (LXMFGateway) sets the clock-source once after the inbox is
+      // created. We just compare ts values.
+      const double cutoff = _now_epoch() - (double)_ttl_seconds;
+      if (cutoff <= 0.0) return;   // clock not calibrated
+      size_t before = _ring.size();
+      _ring.erase(
+        std::remove_if(_ring.begin(), _ring.end(),
+                       [&](const MessageRecord& r) { return r.ts > 0.0 && r.ts < cutoff; }),
+        _ring.end());
+      if (_ring.size() != before) rewrite_spool();
+    }
+    static void set_now_epoch_provider(double (*fn)()) { _now_epoch_provider() = fn; }
 
     // Replay the on-disk JSONL into RAM. Idempotent.
     //
@@ -152,7 +192,15 @@ namespace LXMF {
       }
 
       _ring.push_back(rec);
+      // Capacity eviction. UNLIMITED_CAPACITY (SIZE_MAX) makes the
+      // comparison effectively always-false. Pruning the spool here
+      // is fine — it just trims oldest entries off the front of the
+      // ring; rewrite happens on the next state-mutating call.
       while (_ring.size() > _ram_capacity) _ring.pop_front();
+      // Wall-clock TTL eviction. Cheap when ttl_seconds==0 (no-op).
+      // The append flow is the natural place to run it — it bounds
+      // disk + RAM growth without an extra timer.
+      prune_expired();
       return true;
     }
 
@@ -292,9 +340,23 @@ namespace LXMF {
       }
     }
 
+    // Read-only accessors for /api/inbox_config to surface state.
+    size_t   ram_capacity() const { return _ram_capacity; }
+    uint32_t ttl_seconds()  const { return _ttl_seconds; }
+
   private:
+    static double (*&_now_epoch_provider())() {
+      static double (*fn)() = nullptr;
+      return fn;
+    }
+    static double _now_epoch() {
+      auto fn = _now_epoch_provider();
+      return fn ? fn() : 0.0;
+    }
+
     std::string                _path;
     size_t                     _ram_capacity;
+    uint32_t                   _ttl_seconds = 0;
     uint32_t                   _next_seq;
     std::deque<MessageRecord>  _ring;
   };

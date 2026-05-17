@@ -90,10 +90,11 @@ def test_paths_estimate(sx, lr):
     assert r.status_code == 200
     body = r.json()
     assert "kind" in body
-    # `kind` is a string indicating the routing strategy; exact set has
-    # drifted over time. Just assert it's one of the documented values.
-    assert body["kind"] in ("local", "unknown", "loopback", "remote",
-                            "direct", "path", "transport")
+    # Canonical kind values, per handle_path_estimate:
+    #   local   — destination matches an identity on this device
+    #   path    — known route via Transport
+    #   unknown — no path table entry
+    assert body["kind"] in ("local", "path", "unknown")
 
 
 def test_radio_get(sx):

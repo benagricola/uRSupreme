@@ -40,4 +40,6 @@ def test_outbox_endpoint_returns_messages_array(sx):
     r = s.get(f"{d.url}/api/identities/{d.identity}/outbox", timeout=10)
     assert r.status_code == 200
     body = r.json()
-    assert "messages" in body or "outbox" in body  # tolerate either key
+    assert "messages" in body
+    assert isinstance(body["messages"], list)
+    assert "next_since" in body

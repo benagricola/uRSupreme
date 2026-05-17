@@ -687,18 +687,28 @@ namespace Web {
       if (!read_body_json(body)) return;
       const char* acc_str = body["identity_id"] | "";
       const char* pw_str  = body["password"]   | "";
-      if (!*acc_str) { send_error(400, "missing_identity_id"); return; }
-      if (!*pw_str)  { send_error(400, "missing_password");   return; }
+      if (!*acc_str) {
+        send_error_with_message(400, "missing_identity_id",
+          "Identity ID is required.");
+        return;
+      }
+      if (!*pw_str) {
+        send_error_with_message(400, "missing_password",
+          "Password is required.");
+        return;
+      }
       LXMF::IdentityId iden_id = acc_str;
       if (!LXMF::LXMFGateway::identity_by_id(iden_id)) {
-        send_error(404, "unknown_identity");
+        send_error_with_message(404, "unknown_identity",
+          "No identity with that ID exists on this device.");
         return;
       }
       // Knowledge-factor only — physical-presence button gesture is
       // explicitly NOT a path to login because a stolen device could
       // otherwise be unlocked by anyone with hands on it.
       if (!LXMF::LXMFGateway::check_password(iden_id, pw_str, PasswordHash::verify)) {
-        send_error(401, "invalid_password");
+        send_error_with_message(401, "invalid_password",
+          "Incorrect password for that identity.");
         return;
       }
       std::string token = AuthTokens::issue(iden_id);

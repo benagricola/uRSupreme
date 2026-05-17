@@ -22,9 +22,9 @@ def test_login_wrong_password_401(devices):
     assert r.status_code == 401
     body = r.json()
     assert "error" in body
-    # TODO: server should also return a human-readable `message` field
-    # (per feedback_descriptive_error_messages). Not yet implemented
-    # for the auth path — track + add post-migration.
+    # Per `feedback_descriptive_error_messages`: every error response
+    # must carry a human-readable `message` alongside the slug.
+    assert "message" in body and len(body["message"]) > 0
 
 
 def test_login_missing_identity_400(devices):

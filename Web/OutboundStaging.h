@@ -68,23 +68,30 @@ namespace _detail {
     return nullptr;
   }
 
-  // Drop everything older than STAGING_TIMEOUT_MS and not finished
-  // uploading. Final state (written==total_bytes) is kept until
-  // explicit release(); LXMFMinimal owns the lifecycle once upload
-  // finishes.
+  // Drop stale buffers. Two cases:
+  //   * incomplete + STAGING_TIMEOUT_MS old:   browser disconnected mid-upload.
+  //   * completed + 5*STAGING_TIMEOUT_MS old:  /send was never called
+  //     (page closed, validation error the user gave up on, etc).
+  //     Completed buffers normally live only as long as the /send call
+  //     itself takes — the StagingReleaser in LXMFMinimal::send_message
+  //     drops them right after the wire bytes are built — so anything
+  //     that's still around minutes later is leaked.
   inline void gc(uint32_t now) {
     auto& v = buffers();
     for (auto it = v.begin(); it != v.end(); ) {
       const bool incomplete = it->written < it->total_bytes;
-      const bool stale      = (now - it->created_ms) > STAGING_TIMEOUT_MS;
-      if (incomplete && stale) {
+      const uint32_t age    = now - it->created_ms;
+      const bool stale      = incomplete ? (age > STAGING_TIMEOUT_MS)
+                                         : (age > 5 * STAGING_TIMEOUT_MS);
+      if (stale) {
         if (it->backend == Backend::Psram && it->psram_ptr) {
           heap_caps_free(it->psram_ptr);
         } else if (it->backend == Backend::Sd && !it->sd_path.isEmpty()) {
           if (Web::SDCard::present()) SD.remove(it->sd_path);
         }
-        WARNINGF("OutboundStaging: GC'd stale buffer id=%u (%u/%u bytes)",
-                 (unsigned)it->id, (unsigned)it->written, (unsigned)it->total_bytes);
+        WARNINGF("OutboundStaging: GC'd stale buffer id=%u (%u/%u bytes, %s)",
+                 (unsigned)it->id, (unsigned)it->written, (unsigned)it->total_bytes,
+                 incomplete ? "incomplete" : "abandoned");
         it = v.erase(it);
       } else {
         ++it;

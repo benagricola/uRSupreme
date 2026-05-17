@@ -1186,6 +1186,11 @@ summary:hover { color: var(--text); }
             <span>Press <kbd>Enter</kbd> to send (Shift+Enter for newline)</span>
           </label>
           <div class="muted" style="margin-top:4px">When off: Enter inserts a newline, Shift+Enter sends.</div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:14px 0 0">
+            <input type="checkbox" id="pref-auto-download-attachments" style="width:auto;min-height:auto">
+            <span>Automatically download attachments</span>
+          </label>
+          <div class="muted" style="margin-top:4px">When off (default): inbound images and audio show as click-to-load chips. Saves local bandwidth and avoids fetching anything you didn't ask for.</div>
         </div>
         <div class="card" style="margin-top:14px">
           <strong>Transport</strong>
@@ -1275,7 +1280,10 @@ const LS = {
   PREFS:    'urlxmf.prefs',
 };
 const DEFAULT_PREFS = {
-  enterSends: true,   // true: Enter sends, Shift+Enter newline. false: opposite.
+  enterSends: true,           // true: Enter sends, Shift+Enter newline. false: opposite.
+  autoDownloadAttachments: false,  // when off, inbound images/audio render
+                                   // as click-to-load chips instead of
+                                   // auto-fetching from the device.
 };
 function loadPrefs() {
   try { return Object.assign({}, DEFAULT_PREFS, JSON.parse(localStorage.getItem(LS.PREFS) || '{}')); }
@@ -1651,7 +1659,7 @@ class UReticulumHTTPTransport extends Transport {
   async uploadAttachment(identityId, bytes, filename, mime, onProgress) {
     const total = bytes.length;
     const url = '/api/identities/' + encodeURIComponent(identityId)
-              + '/outbound/upload?total=' + total;
+              + '/attachment/upload?total=' + total;
     const tok = this.tokenGetter();
     const form = new FormData();
     form.append('file', new Blob([bytes], { type: mime || 'application/octet-stream' }), filename || 'blob.bin');
@@ -1759,7 +1767,7 @@ class UReticulumHTTPTransport extends Transport {
   async fetchAttachment(identityId, filename) {
     const tok = this.tokenGetter();
     const url = '/api/identities/' + encodeURIComponent(identityId)
-              + '/attachments/' + encodeURIComponent(filename);
+              + '/attachment/download/' + encodeURIComponent(filename);
     const r = await fetch(url, { headers: tok ? { 'Authorization': 'Bearer ' + tok } : {} });
     if (!r.ok) {
       let body = {}; try { body = await r.json(); } catch { /* opaque */ }
@@ -2089,10 +2097,26 @@ function renderThread() {
               text: label + ' — SD card unavailable',
               title: 'This attachment was saved on the SD card. Re-insert the card and reboot the device to recover it.',
             }));
-          } else if (inbound && a.tag === 6) {
-            bubble.appendChild(renderInboundImage(a, label));
-          } else if (inbound && a.tag === 7) {
-            bubble.appendChild(renderInboundAudio(a, label));
+          } else if (inbound && (a.tag === 6 || a.tag === 7)) {
+            // Auto-render only if the user has opted into auto-downloads
+            // OR the blob is already cached from a manual click — once
+            // fetched, the inline preview persists across rerenders.
+            // Otherwise fall through to the click-to-download chip so
+            // attachments don't silently pull bytes from the device.
+            const alreadyCached = state.attachmentBlobs.has(a.filename);
+            if (state.prefs.autoDownloadAttachments || alreadyCached) {
+              bubble.appendChild(a.tag === 6
+                ? renderInboundImage(a, label)
+                : renderInboundAudio(a, label));
+            } else {
+              const chip = el('button', {
+                class: 'attachment-chip',
+                style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block',
+                text: label + ' — click to load',
+              });
+              chip.addEventListener('click', () => downloadAttachment(state.identityId, a, chip, bubble));
+              bubble.appendChild(chip);
+            }
           } else if (inbound) {
             const chip = el('button', {
               class: 'attachment-chip',
@@ -2324,10 +2348,9 @@ function renderInboundImage(meta, fallbackLabel) {
   return wrap;
 }
 
-// Fetch the attachment blob from the device. Images (tag 6) get an
-// inline preview appended to the bubble; everything else triggers a
-// browser Save-As. The chip stays clickable for re-download until a
-// successful fetch swaps it for the inline preview (image case).
+// Fetch the attachment blob from the device. Images (tag 6) and audio
+// (tag 7) get inline previews + cached so subsequent rerenders reuse
+// the blob URL; everything else triggers a browser Save-As.
 async function downloadAttachment(identityId, meta, chipEl, bubbleEl) {
   if (chipEl.dataset.busy) return;
   chipEl.dataset.busy = '1';
@@ -2335,20 +2358,34 @@ async function downloadAttachment(identityId, meta, chipEl, bubbleEl) {
   chipEl.textContent = originalText.replace(/ —.*$/, '') + ' — fetching…';
   try {
     const { blob } = await state.transport.fetchAttachment(identityId, meta.filename);
-    const url = URL.createObjectURL(blob);
     if (meta.tag === 6) {
-      // Image: replace the chip with an inline <img>.
+      const url = URL.createObjectURL(blob);
+      state.attachmentBlobs.set(meta.filename, url);
       const img = el('img', {
         src: url,
         style: 'margin-top:6px;max-width:240px;max-height:240px;border-radius:6px;display:block;cursor:zoom-in',
       });
       img.addEventListener('click', () => window.open(url, '_blank'));
       bubbleEl.replaceChild(img, chipEl);
+    } else if (meta.tag === 7) {
+      // Audio: sniff the codec so the browser <audio> element accepts
+      // it (some don't fall back on Content-Type alone), then cache.
+      const head = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+      const mime = sniffAudioMime(head);
+      const typed = new Blob([await blob.arrayBuffer()], { type: mime });
+      const url = URL.createObjectURL(typed);
+      state.attachmentBlobs.set(meta.filename, url);
+      const player = el('audio', {
+        src: url, controls: 'controls', preload: 'metadata',
+        style: 'max-width:240px;display:block;margin-top:6px',
+      });
+      bubbleEl.replaceChild(player, chipEl);
     } else {
-      // File / audio / unknown: trigger Save-As. Use the sender-supplied
+      // File / unknown: trigger Save-As. Use the sender-supplied
       // display_name (Sideband convention) as the suggested filename so
       // the user gets "report.pdf" rather than "<hash>_05_0.bin". Fall
       // back to the on-disk stem if no display_name (legacy peer).
+      const url = URL.createObjectURL(blob);
       const a = el('a', { href: url, download: meta.display_name || meta.filename });
       document.body.appendChild(a);
       a.click();
@@ -4365,7 +4402,7 @@ function selectSettingsTab(tabId) {
   if (tabId === 'time')         { populateTimeTab(); }
   if (tabId === 'identity')     populateIdentityTab();
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
-  if (tabId === 'ui')           { $('pref-enter-sends').checked = !!state.prefs.enterSends; renderContacts(); populateInboxConfig(); }
+  if (tabId === 'ui')           { $('pref-enter-sends').checked = !!state.prefs.enterSends; $('pref-auto-download-attachments').checked = !!state.prefs.autoDownloadAttachments; renderContacts(); populateInboxConfig(); }
 }
 
 async function populateWifiTab() {
@@ -4797,6 +4834,12 @@ $('id-announce-interval').addEventListener('change', async (e) => {
 $('btn-settings').addEventListener('click', () => openSettingsModal('identity', false));
 $('pref-enter-sends').addEventListener('change', (e) => {
   savePrefs({ enterSends: !!e.target.checked });
+});
+$('pref-auto-download-attachments').addEventListener('change', (e) => {
+  savePrefs({ autoDownloadAttachments: !!e.target.checked });
+  // Re-render the open thread so existing inline previews collapse
+  // back to chips (or vice versa) without waiting for an SSE event.
+  if (state.openPeer) renderThread();
 });
 
 // Inbox capacity + TTL — populated lazily when the UI tab opens and

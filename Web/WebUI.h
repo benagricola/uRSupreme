@@ -442,7 +442,7 @@ namespace Web {
       // handler". The body is multipart/form-data with one file field
       // and ?total=N&hash=... query params; the server allocates the
       // staging buffer on UPLOAD_FILE_START and appends per chunk.
-      server.on(UriBraces("/api/identities/{}/outbound/upload"),
+      server.on(UriBraces("/api/identities/{}/attachment/upload"),
                 HTTP_POST,
                 handle_outbound_upload_final,
                 handle_outbound_upload_chunk);
@@ -457,7 +457,7 @@ namespace Web {
       server.on(UriBraces("/api/identities/{}/state"),    HTTP_GET,  handle_state);
       server.on(UriBraces("/api/identities/{}/conversations/{}"),
                 HTTP_DELETE, handle_clear_conversation);
-      server.on(UriBraces("/api/identities/{}/attachments/{}"),
+      server.on(UriBraces("/api/identities/{}/attachment/download/{}"),
                 HTTP_GET, handle_attachment_get);
       // Paths
       server.on("/api/paths",         HTTP_GET,  handle_paths_list);
@@ -1706,7 +1706,7 @@ namespace Web {
       }
 
       // Attachments are referenced by `staging_id` only — bytes were
-      // uploaded ahead of time via /outbound/upload (#130). This keeps
+      // uploaded ahead of time via /attachment/upload (#130). This keeps
       // the JSON body tiny regardless of attachment size, and lets the
       // backing buffer live in PSRAM (or SD when present) rather than
       // RAM-doubling through base64.
@@ -1728,7 +1728,7 @@ namespace Web {
           uint32_t sid = (uint32_t)(a["staging_id"] | 0);
           if (sid == 0) {
             send_error_with_message(400, "missing_staging_id",
-              "Attachment is missing staging_id — upload bytes via /outbound/upload first.");
+              "Attachment is missing staging_id — upload bytes via /attachment/upload first.");
             return;
           }
           if (!Web::OutboundStaging::complete(sid)) {

@@ -34,12 +34,12 @@ namespace LXMF {
     // typical chat-sized message, 200 entries = ~60 KB / identity /
     // mailbox — comfortable on the LittleFS partition.
     //
-    // Configurable globally via /lxmf/inbox_config.json (#129):
+    // Configurable globally via /lxmf/inbox_config.json:
     //   - ram_capacity: 200 (default) / 500 / 1000 / 5000 / UNLIMITED
     //   - ttl_seconds:  0 (off)       / 86400×N for "last N days"
-    // Both checks run on each append() and at load(). Now that the
-    // device's wall clock is reliable (RTC + NTP + browser-sync), the
-    // TTL prune by LXMF `ts` works correctly.
+    // Both checks run on each append() and at load(). TTL pruning
+    // uses the LXMF `ts` field (sender wall-clock); requires a
+    // calibrated local clock — the prune is a no-op while uncalibrated.
     static constexpr size_t DEFAULT_RAM_CAPACITY = 200;
     static constexpr size_t UNLIMITED_CAPACITY   = SIZE_MAX;
     static constexpr size_t MAX_LINE_BYTES       = 768;

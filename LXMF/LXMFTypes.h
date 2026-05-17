@@ -63,7 +63,7 @@ namespace LXMF {
     // Where the bytes actually live. "flash" (default) = LittleFS via
     // the microStore filesystem; "sd" = T-Beam Supreme's microSD slot
     // via the Arduino SD library. The download endpoint dispatches
-    // on this value. (#122)
+    // on this value.
     std::string backend;
   };
 

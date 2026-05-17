@@ -5,7 +5,7 @@
 // replay their JSONL spools, ensuring on-boot prune of any over-cap
 // or expired entries). The /api/inbox_config endpoint POSTs an
 // updated config and immediately re-applies it across every active
-// identity's inbox and outbox. (#129)
+// identity's inbox and outbox.
 
 #pragma once
 

@@ -17,7 +17,7 @@
 // GPS reuses Web::TimeManager's GPS source config rather than this
 // store — its enable/interval are bound to the time source priority
 // list. Surfaced here read-only so the popover UI can show it
-// alongside the other sensors. (#131)
+// alongside the other sensors.
 
 #pragma once
 

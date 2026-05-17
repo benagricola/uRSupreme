@@ -113,7 +113,7 @@ namespace LXMF {
           a.last_announce_ms = now;
         }
       }
-      // (#107) Drive outbox-retry: pending_link_sends() is a shared
+      // Drive outbox-retry: pending_link_sends() is a shared
       // static across all LXMFMinimal instances, so one call covers
       // every identity. Entries whose next_retry_at_ms has elapsed get
       // a fresh Link and another attempt.
@@ -281,7 +281,7 @@ namespace LXMF {
 
     // Apply the current InboxConfig to every active identity's
     // inbox + outbox. Called by /api/inbox_config POST after the
-    // new config is persisted. (#129)
+    // new config is persisted.
     static void apply_inbox_config_to_all() {
       const auto& cfg = InboxConfig::current();
       for (auto& a : identities_storage()) {
@@ -370,7 +370,7 @@ namespace LXMF {
     static void activate(LXMFIdentity& a) {
       a.active = true;
       // Inbox + outbox capacity/TTL come from the global config
-      // (#129). Default state when no config file exists keeps the
+      //. Default state when no config file exists keeps the
       // historical 200-entry FIFO behaviour.
       const auto& cfg = InboxConfig::current();
       a.inbox  = std::unique_ptr<LXMFInbox>(new LXMFInbox(a.dir(), "inbox.jsonl",

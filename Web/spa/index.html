@@ -862,7 +862,7 @@ summary:hover { color: var(--text); }
     <div class="muted mono" id="status-wifi-ip"   style="font-size:11px"></div>
     <div class="muted mono" id="status-wifi-auth" style="font-size:11px"></div>
     <button class="secondary" id="btn-force-softap" hidden style="width:100%;margin-top:8px">Switch to softAP</button>
-    <div class="muted" id="status-wifi-hint" hidden style="font-size:11px;margin-top:6px">Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. EEPROM is untouched — a reboot will try this network again.</div>
+    <div class="muted" id="status-wifi-hint" hidden style="font-size:11px;margin-top:6px">Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again.</div>
   </div>
   <div class="popover-section">
     <div class="popover-row">
@@ -1208,7 +1208,7 @@ summary:hover { color: var(--text); }
             <div id="tp-name">uR device (HTTP)</div>
             <div class="muted" id="tp-endpoint" style="font-family:ui-monospace,monospace"></div>
           </div>
-          <button class="secondary" disabled title="More transports coming in Phase 2">Switch transport…</button>
+          <button class="secondary" disabled title="Only one transport is wired up so far">Switch transport…</button>
         </div>
         <div class="card" style="margin-top:14px">
           <strong>Inbox retention</strong>
@@ -3617,7 +3617,7 @@ $('btn-toggle-transport').addEventListener('click', async () => {
 $('btn-force-softap').addEventListener('click', async () => {
   const r = await showConfirm({
     title: 'Switch to softAP?',
-    body: 'You will be disconnected; reconnect to the device\'s bootstrap WiFi to continue. EEPROM is untouched — a reboot will retry this network.',
+    body: 'You will be disconnected; reconnect to the device\'s bootstrap WiFi to continue. The saved network is kept — a reboot will try it again.',
     okLabel: 'Switch to softAP',
     destructive: true,
     needsCode: true,

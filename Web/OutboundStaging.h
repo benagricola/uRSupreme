@@ -1,5 +1,5 @@
 // Outbound attachment staging — holds the raw bytes between the
-// chunked-HTTP upload and the LXMF Resource send. (#130)
+// chunked-HTTP upload and the LXMF Resource send.
 //
 // Two backends, chosen at allocate-time based on what's available:
 //

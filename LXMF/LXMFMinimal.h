@@ -145,7 +145,7 @@ namespace LXMF {
     // header length; caller writes the body bytes into the buffer
     // separately. Used for staging-backed attachments where the body
     // bytes are streamed into the encode buffer chunk by chunk
-    // rather than memcpy'd from a vector. (#130)
+    // rather than memcpy'd from a vector.
     inline size_t pack_bin_header(uint8_t* buf, size_t buflen, size_t dlen) {
       if (dlen <= 255) {
         if (buflen < 2) return 0;
@@ -337,7 +337,7 @@ namespace LXMF {
       // MessageRecord at send_message time. Stays stable across
       // retries — even when we open a *new* Link with a new hash, the
       // outbox still keys updates off this original value, so the SPA
-      // bubble survives the retry without going dark. (#107)
+      // bubble survives the retry without going dark.
       RNS::Bytes   record_hash;
       // Retry budget. retries_left counts down on each failure; when
       // it reaches zero the entry is erased and status stays Failed
@@ -360,7 +360,7 @@ namespace LXMF {
     //   attempt 2: retry 1 fails -> wait 60s -> retry 2
     //   attempt 3: retry 2 fails -> wait 90s -> retry 3
     // After DEFAULT_OUTBOX_RETRIES exhausts the entry is dropped and
-    // the user must manually retry from the SPA. (#107)
+    // the user must manually retry from the SPA.
     static constexpr uint8_t  DEFAULT_OUTBOX_RETRIES = 3;
     static constexpr uint32_t RETRY_BACKOFF_MS_STEP   = 30 * 1000;
 
@@ -783,7 +783,7 @@ namespace LXMF {
       ps.dest_hash   = dest_hash;
       ps.owner       = this;
       ps.status      = OutboxStatus::Queued;
-      // (#107) record_hash is the outbox key — stays stable across
+      // record_hash is the outbox key — stays stable across
       // retries so the SPA bubble doesn't lose track when we open a
       // new Link with a new link_hash on retry.
       ps.record_hash = link_hash;
@@ -811,7 +811,7 @@ namespace LXMF {
     void calibrate_time(double remote_ts) {
       // Hand the peer-supplied ts to TimeManager as a low-priority
       // RNS source; the manager will adopt it only if no
-      // higher-priority source has reported and the value is sane. (#111)
+      // higher-priority source has reported and the value is sane.
       if (Web::TimeManager::report_time(
             Web::TimeManager::Source::RNS, remote_ts)) {
         NOTICEF("LXMF: time calibrated from peer (epoch %.0f)", remote_ts);
@@ -903,7 +903,7 @@ namespace LXMF {
           m.erase(it);
         }
         else {
-          // Schedule retry (or give up if exhausted). (#107)
+          // Schedule retry (or give up if exhausted).
           _schedule_retry_or_fail(it, m, "in-link packet send threw");
         }
         // No manual link.teardown() — calling it from inside the
@@ -956,7 +956,7 @@ namespace LXMF {
       PendingLinkSend& ps = it->second;
       // Successful sends already concluded and erased themselves.
       // Getting here means an abnormal close — schedule a retry (or
-      // give up, depending on the budget). (#107)
+      // give up, depending on the budget).
       if (ps.status != OutboxStatus::Sent &&
           ps.status != OutboxStatus::Delivered) {
         _schedule_retry_or_fail(it, m, "link closed before send completed");
@@ -988,7 +988,7 @@ namespace LXMF {
             it = m.erase(it);
           }
           else {
-            // Resource failed — schedule retry or give up. (#107)
+            // Resource failed — schedule retry or give up.
             WARNINGF("LXMF: outbound resource FAILED for %s (status=%d)",
                      ps.dest_hash.toHex().c_str(), (int)st);
             _schedule_retry_or_fail(it, m, "resource transfer failed");
@@ -1010,7 +1010,7 @@ namespace LXMF {
     // give up (status=Failed, fire callback, erase). The caller passes
     // an iterator that's valid on entry; after this returns the
     // iterator is invalid in the give-up branch and points to the
-    // same entry in the schedule branch. (#107)
+    // same entry in the schedule branch.
     static void _schedule_retry_or_fail(typename std::map<RNS::Bytes, PendingLinkSend>::iterator it,
                                          std::map<RNS::Bytes, PendingLinkSend>& m,
                                          const char* reason) {
@@ -1020,7 +1020,7 @@ namespace LXMF {
         // callback so the SPA shows the bubble as failed. Do NOT erase
         // — the entry stays so a manual /retry from the SPA can revive
         // it (the wire bytes are still here). Bound the surviving
-        // entries via prune_stale_failed() so this isn't a leak. (#107)
+        // entries via prune_stale_failed() so this isn't a leak.
         ps.status        = OutboxStatus::Failed;
         ps.retry_pending = false;
         ps.resource_hash = RNS::Bytes{};
@@ -1049,7 +1049,7 @@ namespace LXMF {
     // up the MessageRecord's packet_hash (== PendingLinkSend.record_hash).
     // Resets retries_left to the full budget so the user gets a fresh
     // set of automatic attempts, and schedules the first one
-    // immediately. (#108)
+    // immediately.
     static bool manual_retry(const RNS::Bytes& record_hash) {
       auto& m = pending_link_sends();
       for (auto& kv : m) {
@@ -1077,7 +1077,7 @@ namespace LXMF {
     // For each entry with retry_pending && millis() >= next_retry_at_ms,
     // open a fresh Link with the same wire bytes + dest, re-key the
     // map under the new link_hash. The original record_hash stays so
-    // the outbox bubble survives. (#107)
+    // the outbox bubble survives.
     static void tick_retries() {
       auto& m = pending_link_sends();
       const uint64_t now = (uint64_t)millis();

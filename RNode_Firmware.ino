@@ -193,7 +193,7 @@ void on_log(const char* msg, RNS::LogLevel level) {
   // frames so a KISS decoder either displays them on its own pane or
   // silently discards them — but the radio byte stream stays clean.
   //
-  // Exception: the kiss_serial_output toggle (#97) is the user's
+  // Exception: the kiss_serial_output toggle is the user's
   // override for "I want a clean text monitor on USB, KISS host be
   // damned". When OFF, force the plain-text path regardless of
   // op_mode so `pio device monitor` actually shows diagnostics.
@@ -810,7 +810,7 @@ void setup() {
     filesystem.init();
 #endif
 
-    // (#112) Seed the wall clock from the on-board hardware RTC.
+    // Seed the wall clock from the on-board hardware RTC.
     // The PCF8563 on the T-Beam Supreme keeps time across reboots
     // and shutdowns via its coin-cell backup. If it has a valid
     // value we feed it to TimeManager so outbound LXMF timestamps
@@ -835,17 +835,17 @@ void setup() {
         }
       });
     }
-    // (#109) GPS — L76K on UART1, pins 8/9, EN on 7. Pumps NMEA into
+    // GPS — L76K on UART1, pins 8/9, EN on 7. Pumps NMEA into
     // the parser; valid RMC fixes call TimeManager::report_time
     // (Source::GPS) per the user-configured interval.
     {
       Web::Gps::Pins pins{ /*rx=*/9, /*tx=*/8, /*en=*/7, /*baud=*/9600 };
       Web::Gps::begin(Serial1, pins);
     }
-    // (#110) NTP — non-blocking SNTP against pool.ntp.org. Sync
+    // NTP — non-blocking SNTP against pool.ntp.org. Sync
     // happens when WiFi STA becomes ready; pump() handles adoption.
     Web::Ntp::begin();
-    // (#122) SD card — mount the microSD slot if a card is inserted.
+    // SD card — mount the microSD slot if a card is inserted.
     // The card's power rails (BLDO1 + BLDO2 on the AXP2101) are
     // disabled by default in Power.h. Bring them up here, and do a
     // full power-cycle (off → wait → on) matching LilyGo's factory
@@ -873,19 +873,19 @@ void setup() {
               (void*)PMU, PMU ? (int)PMU->getChipModel() : -1);
     }
     Web::SDCard::begin();
-    // (#120) Bring up the user/sensor I2C bus (Wire) at SDA=17 SCL=18
+    // Bring up the user/sensor I2C bus (Wire) at SDA=17 SCL=18
     // — this is where BME280 lives (and where future QMC6310
     // magnetometer + any other Wire-side sensors will sit). PMU /
     // RTC are on Wire1 (42/41), untouched by this.
     Wire.begin(17, 18);
     Web::Bme280::begin(Wire);
-    // (#120) QMC6310 magnetometer — also on Wire (0x1C or 0x3C).
+    // QMC6310 magnetometer — also on Wire (0x1C or 0x3C).
     Web::QmcMag::begin(Wire);
-    // (#120) QMI8658 IMU — on the HSPI bus shared with the SD slot.
+    // QMI8658 IMU — on the HSPI bus shared with the SD slot.
     // Its begin() reuses SDCard::ensure_shared_bus() so we don't
     // double-init the bus.
     Web::QmiImu::begin();
-    // (#131) Restore user-configured enable/interval overrides on
+    // Restore user-configured enable/interval overrides on
     // top of the driver defaults. No-op if /lxmf/sensors.json doesn't
     // exist yet (factory state).
     Web::SensorConfig::load(filesystem);
@@ -1019,7 +1019,7 @@ void setup() {
 
 #if defined(HAS_LXMF_GATEWAY)
       HEAD("Initializing LXMF gateway...", RNS::LOG_TRACE);
-      // Inbox cap + TTL config (#129). Load before LXMFGateway::setup
+      // Inbox cap + TTL config. Load before LXMFGateway::setup
       // so identity activation picks up the user's settings rather
       // than the compiled default. The TTL prune needs a wall-clock
       // — wire TimeManager::now_epoch as the inbox clock source.
@@ -2554,24 +2554,24 @@ void loop() {
   // ran SHA + decrypt + flash writes), reset the task watchdog so we
   // don't reboot just because one tick processed a lot. The lock is
   // released here so the web_task gets a window before we re-enter
-  // RNS work below. (#60)
+  // RNS work below.
   esp_task_wdt_reset();
 #endif
 
-  // (#109) Drain whatever NMEA the GPS module shoved at us this
+  // Drain whatever NMEA the GPS module shoved at us this
   // tick. Cheap if no bytes pending. No rns_lock needed — the GPS
   // parser only touches its own static state and TimeManager (whose
   // adopt path is reentrant-safe).
 #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
   Web::Gps::pump();
-  // (#110) NTP — cheap when no transition; checks SNTP sync status
+  // NTP — cheap when no transition; checks SNTP sync status
   // and forwards to TimeManager when a fresh epoch lands. Gated on
   // WiFi STA connection internally.
   Web::Ntp::pump();
-  // (#120) BME280 — periodic temp/humidity/pressure poll, gated by
+  // BME280 — periodic temp/humidity/pressure poll, gated by
   // the driver's own interval. No-op if the chip wasn't detected.
   Web::Bme280::pump();
-  // (#120) QMC6310 magnetometer + QMI8658 IMU — same pattern.
+  // QMC6310 magnetometer + QMI8658 IMU — same pattern.
   Web::QmcMag::pump();
   Web::QmiImu::pump();
 #endif
@@ -2668,7 +2668,7 @@ void loop() {
       // Sync the bootstrap-mode flag with the WiFi layer. Auto-fallback
       // and the user-driven /api/wifi/softap switch both flip
       // wr_runtime_softap in Remote.h; surface it to WebUI so the SPA
-      // shows the bootstrap UI for the duration. (#54)
+      // shows the bootstrap UI for the duration.
       if (wr_runtime_softap && !Web::WebUI::bootstrap_mode) {
         Web::WebUI::bootstrap_mode = true;
         NOTICE("WebUI: entered runtime softAP — bootstrap UI live");

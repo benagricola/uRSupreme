@@ -63,14 +63,14 @@ bool wifi_initialized = false;
 // boot. Used by the 30-second auto-softAP fallback so a device whose
 // STA network has gone away (changed SSID, router off, moved) doesn't
 // stay unreachable forever — once the timer expires we drop into
-// softAP so the user can recover via the bootstrap UI. (#54)
+// softAP so the user can recover via the bootstrap UI.
 uint32_t wr_sta_first_attempt_ms = 0;
 bool wr_sta_fallback_armed = false;
 // Set by the web handler when the user wants to switch out of STA
 // mode without rebooting. The main-loop wifi pump notices this on its
 // next tick and calls wifi_remote_init() in AP mode. RAM-only: a
 // reboot will go back to whatever EEPROM says, which is exactly what
-// you want for a "temporary softAP" toggle. (#54)
+// you want for a "temporary softAP" toggle.
 volatile bool wr_force_softap_pending = false;
 // True while we're in the runtime-fallback softAP (either because the
 // 30 s timer fired or because the web handler asked for it). Cleared
@@ -268,7 +268,7 @@ void wifi_remote_write(uint8_t byte) { if (connection) { connection.write(byte);
 // window after the first attempt, automatically fall back to softAP
 // so the user can recover. 30 s is long enough for a slow router
 // to come up but short enough not to leave a deployed device
-// silently unreachable. (#54)
+// silently unreachable.
 #define WR_STA_FALLBACK_MS 30000UL
 
 void wifi_update_status() {

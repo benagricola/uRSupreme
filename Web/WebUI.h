@@ -117,7 +117,7 @@ namespace Web {
       AuthTokens::load();
       BootCounter::init();  // emit the log line; current() is otherwise lazy
       // Restore time-source priority/enable/interval from
-      // /lxmf/time.json (#113).
+      // /lxmf/time.json.
       Web::TimeManager::load_config(filesystem);
       register_routes();
       static const char* collect[] = {"Authorization", "Content-Length", "X-Total-Length"};
@@ -426,19 +426,19 @@ namespace Web {
       server.on("/api/time",                 HTTP_GET,  handle_time_get);
       server.on("/api/time",                 HTTP_POST, handle_time_set);
       server.on("/api/time/sources",         HTTP_POST, handle_time_sources_set);
-      // GPS fix — last RMC sentence parsed. (#109)
+      // GPS fix — last RMC sentence parsed.
       server.on("/api/gps",                  HTTP_GET,  handle_gps_get);
-      // RTC diagnostics — raw chip state. (#112)
+      // RTC diagnostics — raw chip state.
       server.on("/api/rtc",                  HTTP_GET,  handle_rtc_get);
-      // Aggregated device status: storage + clock + sensors. (#120)
+      // Aggregated device status: storage + clock + sensors.
       server.on("/api/system_status",        HTTP_GET,  handle_system_status);
-      // Per-sensor enable + polling-interval overrides. (#131)
+      // Per-sensor enable + polling-interval overrides.
       server.on("/api/sensors/config",       HTTP_POST, handle_sensors_config_post);
-      // Global inbox capacity + wall-clock TTL pruning. (#129)
+      // Global inbox capacity + wall-clock TTL pruning.
       server.on("/api/inbox_config",         HTTP_GET,  handle_inbox_config_get);
       server.on("/api/inbox_config",         HTTP_POST, handle_inbox_config_post);
       // Streaming outbound attachment upload — PSRAM/SD-backed staging
-      // that the /send path consumes by id. (#130) Pattern is the
+      // that the /send path consumes by id. Pattern is the
       // standard WebServer "two-arg on(): final handler + upload chunk
       // handler". The body is multipart/form-data with one file field
       // and ?total=N&hash=... query params; the server allocates the
@@ -451,7 +451,7 @@ namespace Web {
       server.on(UriBraces("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
       server.on(UriBraces("/api/identities/{}/send"),     HTTP_POST, handle_send);
       // POST /api/identities/{id}/outbox/{seq}/retry — manually re-queue
-      // a Failed outbox entry. Resets the auto-retry budget. (#108)
+      // a Failed outbox entry. Resets the auto-retry budget.
       server.on(UriBraces("/api/identities/{}/outbox/{}/retry"),
                 HTTP_POST, handle_outbox_retry);
       server.on(UriBraces("/api/identities/{}/events"),   HTTP_GET,  handle_events);
@@ -513,7 +513,7 @@ namespace Web {
                               && millis() < id_code().expires_ms;
       // Time-manager state — surfaced so the SPA can prompt for a
       // browser-sync when the device clock is uncalibrated or wildly
-      // off the browser's wall clock. (#111)
+      // off the browser's wall clock.
       JsonObject t = doc["time"].to<JsonObject>();
       t["calibrated"] = Web::TimeManager::is_calibrated();
       t["source"]     = Web::TimeManager::source_name(Web::TimeManager::current_source());
@@ -593,7 +593,7 @@ namespace Web {
       // WiFi state. Lets the SPA show the current mode (STA / softAP)
       // in the connection popover, and decide whether to expose the
       // "switch to softAP" button — that button has no point when
-      // already in AP mode. (#54)
+      // already in AP mode.
       JsonObject wifi = doc["wifi"].to<JsonObject>();
       wifi["mode"]          = (wifi_mode == WR_WIFI_AP) ? "ap"
                             : (wifi_mode == WR_WIFI_STA) ? "sta" : "off";
@@ -656,7 +656,7 @@ namespace Web {
 
       // Same outbound caps surface as /api/system_status, here too so
       // the attachment picker / recorder don't need an extra round trip
-      // before staging a file. (#130)
+      // before staging a file.
       {
         const auto caps = Web::OutboundStaging::current_caps();
         JsonObject oc = doc["outbound_caps"].to<JsonObject>();
@@ -864,7 +864,7 @@ namespace Web {
     // GET /api/time — returns the current calibrated time, the source
     // that set it, and the source-priority/enable config. Open to any
     // authenticated session (the time itself is also exposed via
-    // /api/info → clock.now_ms, so this just adds source detail). (#113)
+    // /api/info → clock.now_ms, so this just adds source detail).
     static void handle_time_get() {
       if (require_auth().empty()) return;
       JsonDocument doc;
@@ -889,7 +889,7 @@ namespace Web {
     // POST /api/time {unix_ms} — adopt a browser-supplied time. Subject
     // to the Browser source's enabled+priority config; if a higher-
     // priority source has already set the time, the report is
-    // recorded but not adopted, and the response indicates that. (#111)
+    // recorded but not adopted, and the response indicates that.
     static void handle_time_set() {
       if (require_auth().empty()) return;
       JsonDocument body;
@@ -923,7 +923,7 @@ namespace Web {
     // POST /api/time/sources {sources: {gps: {enabled, priority}, …}}
     // — update which time sources are enabled and their priority
     // ordering. Persisted to EEPROM. Sources not mentioned in the body
-    // keep their existing config. (#113)
+    // keep their existing config.
     static void handle_time_sources_set() {
       if (require_auth().empty()) return;
       JsonDocument body;
@@ -952,7 +952,7 @@ namespace Web {
 
     // GET /api/rtc — diagnostic snapshot of the on-board PCF8563.
     // Live I2C read; surfaces VL flag + raw regs so we can confirm
-    // the hardware is wired and persisting. (#112)
+    // the hardware is wired and persisting.
     static void handle_rtc_get() {
       if (require_auth().empty()) return;
       JsonDocument doc;
@@ -986,7 +986,7 @@ namespace Web {
         fl["total_bytes"] = (uint32_t)total;
         fl["free_bytes"]  = (uint32_t)avail;
         fl["used_bytes"]  = (uint32_t)((total > avail) ? (total - avail) : 0);
-        // SD card — real state from the SDCard driver. (#122)
+        // SD card — real state from the SDCard driver.
         JsonObject sd = st["sd"].to<JsonObject>();
         sd["present"] = Web::SDCard::present();
         sd["status"]  = Web::SDCard::last_status();
@@ -1097,7 +1097,7 @@ namespace Web {
       // ---- outbound staging caps ----
       // The SPA uses these to clamp image-resize options, file picker
       // size limits, and recorder duration to whatever the device's
-      // chosen backend can actually accept. (#130)
+      // chosen backend can actually accept.
       {
         const auto caps = Web::OutboundStaging::current_caps();
         JsonObject oc = doc["outbound_caps"].to<JsonObject>();
@@ -1112,7 +1112,7 @@ namespace Web {
 
     // GET /api/inbox_config — current capacity + TTL. ram_capacity is
     // emitted as 0 for "unlimited" so the SPA dropdown can render it
-    // explicitly; the server-side sentinel is SIZE_MAX. (#129)
+    // explicitly; the server-side sentinel is SIZE_MAX.
     static void handle_inbox_config_get() {
       if (require_auth().empty()) return;
       const auto& cfg = LXMF::InboxConfig::current();
@@ -1125,7 +1125,7 @@ namespace Web {
 
     // POST /api/inbox_config — body = {"ram_capacity":uint, "ttl_seconds":uint}.
     // ram_capacity 0 means unlimited. ttl_seconds 0 means TTL off.
-    // Applies + persists across all active identity inboxes. (#129)
+    // Applies + persists across all active identity inboxes.
     static void handle_inbox_config_post() {
       if (require_auth().empty()) return;
       JsonDocument body;
@@ -1148,7 +1148,7 @@ namespace Web {
     // "enabled":bool, "interval_s":uint}. Applies the override to the
     // running driver and persists to /lxmf/sensors.json so it survives
     // reboot. GPS isn't routed through here — its enable/interval are
-    // bound to the time-source priority list (see /api/time/sources). (#131)
+    // bound to the time-source priority list (see /api/time/sources).
     static void handle_sensors_config_post() {
       if (require_auth().empty()) return;
       JsonDocument body;
@@ -1181,7 +1181,7 @@ namespace Web {
 
     // GET /api/gps — last RMC fix. Returns valid flag, position,
     // speed/heading, UTC, and how recent the fix was. Auth-gated so
-    // attackers on the LAN can't passively scrape location. (#109)
+    // attackers on the LAN can't passively scrape location.
     static void handle_gps_get() {
       if (require_auth().empty()) return;
       JsonDocument doc;
@@ -1474,7 +1474,7 @@ namespace Web {
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a) { send_error(404, "unknown_identity"); return; }
       const std::string full = a->dir() + "/attachments/" + fname;
-      // Backend dispatch (#122). Try SD first if a card is mounted —
+      // Backend dispatch. Try SD first if a card is mounted —
       // big attachments live there; small/pre-SD ones on LittleFS. If
       // neither has the file, return 404.
       const bool on_sd    = Web::SDCard::present() && Web::SDCard::exists(full.c_str());
@@ -1679,7 +1679,7 @@ namespace Web {
     // a Failed outbox entry whose auto-retry budget was exhausted. The
     // outbox seq -> MessageRecord -> packet_hash (== PendingLinkSend
     // record_hash) lookup gives us the entry; LXMFMinimal::manual_retry
-    // resets the budget and schedules an immediate retry. (#108)
+    // resets the budget and schedules an immediate retry.
     static void handle_outbox_retry() {
       LXMF::IdentityId caller = require_auth();
       if (caller.empty()) return;
@@ -1750,7 +1750,7 @@ namespace Web {
       }
 
       // Attachments are referenced by `staging_id` only — bytes were
-      // uploaded ahead of time via /attachment/upload (#130). This keeps
+      // uploaded ahead of time via /attachment/upload. This keeps
       // the JSON body tiny regardless of attachment size, and lets the
       // backing buffer live in PSRAM (or SD when present) rather than
       // RAM-doubling through base64.

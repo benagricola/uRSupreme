@@ -71,25 +71,15 @@ def test_upload_invalid_total_header_400(sx):
 
 def test_upload_too_large_400(sx):
     """Asking for 64 MiB (above ABSOLUTE_MAX_BYTES=32 MiB) must be
-    refused at the header-parse stage. The synchronous WebServer
-    won't actually drain the body before responding; depending on
-    timing we may see either a clean 400 or a connection reset (the
-    device closes the socket once the chunk handler rejects).
-    Either is acceptable behaviour pre-migration; post-migration to
-    ESPAsyncWebServer we expect a clean 400."""
+    refused at the header-parse stage with a clean 400."""
     s, d = sx
     blob = _tiny_jpeg()
-    try:
-        r = s.post(
-            f"{d.url}/api/identities/{d.identity}/attachment/upload",
-            headers={"X-Total-Length": str(64 * 1024 * 1024)},
-            files={"file": ("big.jpg", blob, "image/jpeg")},
-            timeout=20,
-        )
-    except requests.exceptions.ConnectionError:
-        # Connection reset by peer — server rejected mid-upload.
-        # Counts as a pass: the upload was refused.
-        return
+    r = s.post(
+        f"{d.url}/api/identities/{d.identity}/attachment/upload",
+        headers={"X-Total-Length": str(64 * 1024 * 1024)},
+        files={"file": ("big.jpg", blob, "image/jpeg")},
+        timeout=20,
+    )
     assert r.status_code == 400
     assert "ceiling" in r.text.lower() or "abs" in r.text.lower()
 

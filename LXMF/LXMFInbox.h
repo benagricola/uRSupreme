@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <functional>
 #include <string>
 #include <stdint.h>
 
@@ -75,11 +76,15 @@ namespace LXMF {
       // created. We just compare ts values.
       const double cutoff = _now_epoch() - (double)_ttl_seconds;
       if (cutoff <= 0.0) return;   // clock not calibrated
-      size_t before = _ring.size();
-      _ring.erase(
-        std::remove_if(_ring.begin(), _ring.end(),
-                       [&](const MessageRecord& r) { return r.ts > 0.0 && r.ts < cutoff; }),
-        _ring.end());
+      const size_t before = _ring.size();
+      for (auto it = _ring.begin(); it != _ring.end(); ) {
+        if (it->ts > 0.0 && it->ts < cutoff) {
+          if (_on_remove) _on_remove(*it);
+          it = _ring.erase(it);
+        } else {
+          ++it;
+        }
+      }
       if (_ring.size() != before) rewrite_spool();
     }
     static void set_now_epoch_provider(double (*fn)()) { _now_epoch_provider() = fn; }
@@ -196,7 +201,10 @@ namespace LXMF {
       // comparison effectively always-false. Pruning the spool here
       // is fine — it just trims oldest entries off the front of the
       // ring; rewrite happens on the next state-mutating call.
-      while (_ring.size() > _ram_capacity) _ring.pop_front();
+      while (_ring.size() > _ram_capacity) {
+        if (_on_remove) _on_remove(_ring.front());
+        _ring.pop_front();
+      }
       // Wall-clock TTL eviction. Cheap when ttl_seconds==0 (no-op).
       // The append flow is the natural place to run it — it bounds
       // disk + RAM growth without an extra timer.
@@ -245,12 +253,16 @@ namespace LXMF {
     // Remove every record whose peer_hash matches. Rewrites the spool to
     // shrink the JSONL file. Used by the per-conversation clear endpoint.
     size_t purge_peer(const RNS::Bytes& peer_hash) {
-      size_t before = _ring.size();
-      _ring.erase(
-        std::remove_if(_ring.begin(), _ring.end(),
-                       [&](const MessageRecord& r) { return r.peer_hash == peer_hash; }),
-        _ring.end());
-      size_t removed = before - _ring.size();
+      const size_t before = _ring.size();
+      for (auto it = _ring.begin(); it != _ring.end(); ) {
+        if (it->peer_hash == peer_hash) {
+          if (_on_remove) _on_remove(*it);
+          it = _ring.erase(it);
+        } else {
+          ++it;
+        }
+      }
+      const size_t removed = before - _ring.size();
       if (removed > 0) rewrite_spool();
       return removed;
     }
@@ -277,6 +289,15 @@ namespace LXMF {
 
     uint32_t next_seq() const { return _next_seq; }
     size_t   size()     const { return _ring.size(); }
+
+    // Fired for every record about to be evicted (capacity, TTL, or
+    // peer-purge). Used by LXMFGateway to delete the on-disk attachment
+    // files that hang off the record — without this, the JSONL line goes
+    // away but `/lxmf/identities/<id>/attachments/<filename>` stays
+    // forever and flash fills up.
+    void set_on_remove(std::function<void(const MessageRecord&)> fn) {
+      _on_remove = std::move(fn);
+    }
 
   private:
     void parse_line(const char* p, size_t n) {
@@ -378,6 +399,7 @@ namespace LXMF {
     uint32_t                   _ttl_seconds = 0;
     uint32_t                   _next_seq;
     std::deque<MessageRecord>  _ring;
+    std::function<void(const MessageRecord&)> _on_remove;
   };
 
 } // namespace LXMF

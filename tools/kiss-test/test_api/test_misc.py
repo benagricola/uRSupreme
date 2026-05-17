@@ -65,17 +65,11 @@ def test_sensors_config_post_roundtrip(sx):
 
 
 def test_paths_lookup_unknown(sx):
-    """Looking up an all-zero (unknown) destination. Synchronous
-    WebServer may close the socket rather than return a clean 404 —
-    accept ConnectionError as evidence of refusal. Post-migration to
-    ESPAsyncWebServer, expect 200 with empty result or 404."""
-    import requests
+    """Looking up an all-zero (unknown) destination returns either 200
+    with empty result or 404."""
     s, d = sx
-    try:
-        r = s.post(f"{d.url}/api/paths/lookup",
-                   json={"to": "0" * 32}, timeout=15)
-    except requests.exceptions.ConnectionError:
-        return  # treated as "no path / refused", which is the intent
+    r = s.post(f"{d.url}/api/paths/lookup",
+               json={"to": "0" * 32}, timeout=15)
     assert r.status_code in (200, 404)
 
 

@@ -23,6 +23,7 @@
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include "TimeManager.h"
+#include "WebSocket.h"
 #include "Gps.h"
 #include "RtcPCF8563.h"
 #include "SDCard.h"
@@ -388,7 +389,11 @@ namespace Web {
     // exposes the captures via request->pathArg(N). Paths without `{}`
     // get the matcher's default Exact behaviour for free.
     static AsyncURIMatcher uri(const String& path) {
-      if (path.indexOf("{}") < 0) return AsyncURIMatcher(path);
+      // Plain string paths must match exactly. The library's default
+      // matcher (Type::BackwardCompatible) treats a registered path as
+      // a prefix — e.g. POST /api/identities would also match
+      // /api/identities/<id>/settings and steal that route. Force exact.
+      if (path.indexOf("{}") < 0) return AsyncURIMatcher::exact(path);
       String pattern = "^";
       for (size_t i = 0; i < path.length(); ++i) {
         const char c = path[i];
@@ -417,7 +422,33 @@ namespace Web {
       server.addHandler(h);
     }
 
+    // Custom handler for our short-poll-dressed-as-SSE endpoint. The stock
+    // AsyncCallbackWebHandler::canHandle requires isHTTP(), which is false
+    // when the client sends `Accept: text/event-stream` (browsers' built-in
+    // EventSource always does). That would drop the request through to the
+    // 404 catch-all. This handler accepts both HTTP and SSE request types.
+    class SseShortPollHandler : public AsyncWebHandler {
+      AsyncURIMatcher _uri;
+      std::function<void(AsyncWebServerRequest*)> _cb;
+    public:
+      SseShortPollHandler(AsyncURIMatcher u, std::function<void(AsyncWebServerRequest*)> cb)
+          : _uri(std::move(u)), _cb(std::move(cb)) {}
+      bool canHandle(AsyncWebServerRequest* req) const override {
+        if (req->method() != HTTP_GET) return false;
+        if (!req->isHTTP() && !req->isSSE()) return false;
+        return _uri.matches(req);
+      }
+      void handleRequest(AsyncWebServerRequest* req) override { _cb(req); }
+    };
+
     static void register_routes() {
+      // WebSocket event channel — replaces the SSE short-poll on
+      // /api/identities/{}/events. The SSE endpoint is kept registered
+      // below for transitional compatibility; the SPA prefers WS.
+      Web::WS::bind_validator(&AuthTokens::validate);
+      Web::WS::server().onEvent(Web::WS::on_event);
+      Web::WS::server().handleHandshake(Web::WS::on_handshake);
+      server.addHandler(&Web::WS::server());
       // SPA — single embedded HTML file, served gzipped at / and /index.html
       server.on("/",              HTTP_GET, handle_spa);
       server.on("/index.html",    HTTP_GET, handle_spa);
@@ -474,7 +505,7 @@ namespace Web {
       // a Failed outbox entry. Resets the auto-retry budget.
       server.on(uri("/api/identities/{}/outbox/{}/retry"),
                 HTTP_POST, handle_outbox_retry);
-      server.on(uri("/api/identities/{}/events"),   HTTP_GET,  handle_events);
+      server.addHandler(new SseShortPollHandler(uri("/api/identities/{}/events"), handle_events));
       server.on(uri("/api/identities/{}/state"),    HTTP_GET,  handle_state);
       server.on(uri("/api/identities/{}/conversations/{}"),
                 HTTP_DELETE, handle_clear_conversation);
@@ -483,9 +514,12 @@ namespace Web {
       server.on("/api/storage/migrate_flash_to_sd",
                 HTTP_POST, handle_migrate_flash_to_sd);
       // Paths
-      server.on("/api/paths",         HTTP_GET,  handle_paths_list);
+      // `uri()` forces an exact match. Without it the plain-string form
+      // is Type::BackwardCompatible, which is a prefix — and that would
+      // make /api/paths swallow /api/paths/estimate.
+      server.on(uri("/api/paths"),          HTTP_GET,  handle_paths_list);
       on_json_post("/api/paths/lookup",  handle_path_lookup);
-      server.on("/api/paths/estimate",HTTP_GET,  handle_path_estimate);
+      server.on(uri("/api/paths/estimate"), HTTP_GET,  handle_path_estimate);
       // WiFi config — gated by bearer token OR identity_code in body.
       // Reboots on save.
       server.on("/api/wifi/scan",     HTTP_GET,  handle_wifi_scan);
@@ -2630,6 +2664,11 @@ namespace Web {
     r.push_back({WebUI::next_progress_seq(), identity_id, peer_hash, link_hash,
                  incoming, bytes_done, bytes_total, finished});
     while (r.size() > 16) r.pop_front();
+    // Push immediately to any connected WebSocket client scoped to this
+    // identity. The SSE ring above is kept so a freshly-reconnecting
+    // SPA still gets a catch-up replay.
+    Web::WS::publish_progress(identity_id, peer_hash, link_hash,
+                              incoming, bytes_done, bytes_total, finished);
   }
 
 }

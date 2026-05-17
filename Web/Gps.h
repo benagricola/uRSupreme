@@ -81,10 +81,18 @@ namespace _detail {
   inline size_t&         line_len_ref() { static size_t v = 0; return v; }
   // Last time we reported a time to TimeManager (millis()). 0 = never.
   inline uint32_t&       last_report_ms_ref() { static uint32_t v = 0; return v; }
-  // Power-mode state.
+  // Power-mode state. `pulse_last_rep_snapshot` is the value of
+  // last_report_ms_ref() at the moment the current pulse started —
+  // we use it to detect "did a fresh report happen *during this
+  // pulse*" without confusing the retry-backoff path (which writes
+  // an old timestamp into last_report_ms_ref() to schedule the next
+  // pulse). Without this, the retry-backoff math made `last_rep`
+  // numerically larger than `pulse_started_ms`, which fooled the
+  // acquire-detection branch into firing back-to-back pulses.
   inline bool&           hw_powered_ref()     { static bool v = false; return v; }
   inline PulseState&     pulse_state_ref()    { static PulseState v = PulseState::Idle; return v; }
   inline uint32_t&       pulse_started_ms_ref(){ static uint32_t v = 0; return v; }
+  inline uint32_t&       pulse_last_rep_snapshot() { static uint32_t v = 0; return v; }
 
   // XOR-checksum the chars between '$' and '*' exclusive. The
   // sentence may or may not include the leading '$'.
@@ -302,8 +310,9 @@ inline void pump() {
     if (_detail::pulse_state_ref() == PulseState::Idle) {
       if (due) {
         power_on();
-        _detail::pulse_state_ref()      = PulseState::Acquiring;
-        _detail::pulse_started_ms_ref() = now;
+        _detail::pulse_state_ref()         = PulseState::Acquiring;
+        _detail::pulse_started_ms_ref()    = now;
+        _detail::pulse_last_rep_snapshot() = last_rep;   // pin pre-pulse value
         NOTICEF("GPS: pulse start (interval=%lus, last=%lums ago)",
                 (unsigned long)cfg.interval_s,
                 (unsigned long)(first_time ? 0 : (now - last_rep)));
@@ -312,8 +321,13 @@ inline void pump() {
         if (_detail::hw_powered_ref()) power_off();
       }
     } else /* Acquiring */ {
-      const bool acquired = (last_rep >= _detail::pulse_started_ms_ref())
-                         && (last_rep != 0);
+      // A fresh report happened *during this pulse* iff handle_line
+      // bumped last_report_ms_ref above its pre-pulse snapshot. This
+      // avoids the trap where retry-backoff sets last_rep to a value
+      // numerically larger than pulse_started_ms — which would otherwise
+      // make the previous `last_rep >= pulse_started_ms` check fire
+      // immediately and ping-pong the pulse state.
+      const bool acquired = (last_rep != _detail::pulse_last_rep_snapshot());
       const bool timed_out = (now - _detail::pulse_started_ms_ref())
                               > PULSE_ACQUIRE_TIMEOUT_MS;
       if (acquired) {

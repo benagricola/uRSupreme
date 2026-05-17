@@ -27,6 +27,7 @@ extern microStore::FileSystem filesystem;
 // direction — so we can't pull it in here). Linker resolves the inline
 // definition once any TU that included WebUI.h has been seen.
 namespace RNS { class Bytes; }
+namespace LXMF { struct MessageRecord; }
 namespace Web {
   void publish_lxmf_progress(const LXMF::IdentityId& identity_id,
                              const RNS::Bytes& peer_hash,
@@ -35,6 +36,13 @@ namespace Web {
                              uint32_t bytes_done,
                              uint32_t bytes_total,
                              bool finished);
+  namespace WS {
+    void publish_incoming(const LXMF::IdentityId& identity_id,
+                          const LXMF::MessageRecord& m);
+    void publish_outbox_status(const LXMF::IdentityId& identity_id,
+                               const RNS::Bytes& link_hash,
+                               const char* status_name);
+  }
 }
 
 namespace LXMF {
@@ -207,6 +215,28 @@ namespace LXMF {
       LXMFIdentity* a = identity_by_id_mut(iden_id);
       if (!a) return false;
       a->lxmf.shutdown();
+      // Drop the on-disk attachment files before the JSONL spool. Walk
+      // every loaded record and unlink each AttachmentMeta's backing
+      // file — without this, the spool goes away but
+      // <dir>/attachments/<filename> stays forever.
+      auto unlink_atts = [&](const LXMFInbox* box) {
+        if (!box) return;
+        for (const auto& rec : box->recent(SIZE_MAX)) {
+          for (const auto& att : rec.attachments) {
+            if (att.filename.empty()) continue;
+            const std::string full = a->dir() + "/attachments/" + att.filename;
+            if (att.backend == "sd") {
+              if (Web::SDCard::present() && Web::SDCard::exists(full.c_str())) {
+                SD.remove(full.c_str());
+              }
+            } else {
+              if (filesystem.exists(full.c_str())) filesystem.remove(full.c_str());
+            }
+          }
+        }
+      };
+      unlink_atts(a->inbox.get());
+      unlink_atts(a->outbox.get());
       // Best-effort file removal.
       filesystem.remove(a->identity_path().c_str());
       filesystem.remove(a->meta_path().c_str());
@@ -377,6 +407,27 @@ namespace LXMF {
                                                          cfg.ram_capacity, cfg.ttl_seconds));
       a.outbox = std::unique_ptr<LXMFInbox>(new LXMFInbox(a.dir(), "outbox.jsonl",
                                                          cfg.ram_capacity, cfg.ttl_seconds));
+      // Delete the on-disk attachment bytes when their owning record is
+      // evicted from the inbox/outbox ring (TTL prune, capacity eviction,
+      // or /api/.../conversations DELETE). Otherwise the JSONL line goes
+      // away but the file under <dir>/attachments/<filename> stays
+      // forever and flash fills up.
+      const std::string adir = a.dir();
+      auto on_remove = [adir](const MessageRecord& rec) {
+        for (const auto& att : rec.attachments) {
+          if (att.filename.empty()) continue;
+          const std::string full = adir + "/attachments/" + att.filename;
+          if (att.backend == "sd") {
+            if (Web::SDCard::present() && Web::SDCard::exists(full.c_str())) {
+              SD.remove(full.c_str());
+            }
+          } else {
+            if (filesystem.exists(full.c_str())) filesystem.remove(full.c_str());
+          }
+        }
+      };
+      a.inbox->set_on_remove(on_remove);
+      a.outbox->set_on_remove(on_remove);
       a.inbox->load();
       a.outbox->load();
       a.inbox->prune_expired();
@@ -389,6 +440,9 @@ namespace LXMF {
         MessageRecord local = rec;  // copy so we can mutate seq
         local.seq = 0;
         p->inbox->append(local);
+        // Push to any WS client subscribed to this identity. SSE
+        // pollers still pick up the same record via inbox->since().
+        Web::WS::publish_incoming(p->id, local);
       });
       // Outbound lifecycle: link-mode sends start as Queued in the outbox
       // (see LXMFMinimal::send_message), and transition to Sent / Delivered
@@ -398,6 +452,10 @@ namespace LXMF {
           [p](const RNS::Bytes& link_hash, OutboxStatus status) {
             if (!p->active || !p->outbox) return;
             p->outbox->update_status(link_hash, status);
+            // Push a typed status frame to any WS subscriber — gives
+            // the SPA's outbox row a direct trigger to flip the pill.
+            Web::WS::publish_outbox_status(p->id, link_hash,
+                                           outbox_status_name(status));
             // Terminal transitions (Sent / Delivered / Failed) should
             // also flush a final progress event so the SPA can flip the
             // in-flight bubble into its static form.

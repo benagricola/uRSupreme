@@ -64,28 +64,14 @@ def test_sse_connects_and_returns_200(sx):
 
 def test_sse_emits_at_least_one_event_on_connect(sx):
     """Within a few seconds of opening the stream, at least one event
-    should arrive — typically a heartbeat / initial-state event.
-
-    On the synchronous WebServer a freshly-opened SSE stream
-    sometimes gets reset before emitting anything (handled in
-    _read_events). Post-migration to ESPAsyncWebServer's
-    AsyncEventSource this should always succeed cleanly."""
+    should arrive — the handler always emits a heartbeat when there is
+    no real event to drain, so a fresh connect can never be empty."""
     s, d = sx
-    try:
-        r = _open_sse(s, f"{d.url}/api/identities/{d.identity}/events", timeout=8)
-    except requests.exceptions.ConnectionError:
-        return  # sync-WebServer quirk; covered by #143
+    r = _open_sse(s, f"{d.url}/api/identities/{d.identity}/events", timeout=8)
     try:
         events = _read_events(r, max_seconds=4.0)
     finally:
-        try: r.close()
-        except Exception: pass
-    if not events:
-        # No events AND no reset → either the device was quiet or the
-        # sync WebServer dropped the stream silently. Accept as a
-        # pre-migration quirk; the migration's correctness gate will
-        # require events to actually arrive.
-        return
+        r.close()
     assert events
 
 

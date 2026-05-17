@@ -119,7 +119,7 @@ namespace Web {
       // /lxmf/time.json (#113).
       Web::TimeManager::load_config(filesystem);
       register_routes();
-      static const char* collect[] = {"Authorization", "Content-Length"};
+      static const char* collect[] = {"Authorization", "Content-Length", "X-Total-Length"};
       server.collectHeaders(collect, sizeof(collect)/sizeof(collect[0]));
       server.begin();
       NOTICE("WebUI: listening on port 80");
@@ -1290,17 +1290,23 @@ namespace Web {
         case UPLOAD_FILE_START: {
           staging_id = 0;
           err        = nullptr;
-          // total size is passed as a query param so we can allocate
-          // the staging buffer in one shot. Multipart itself doesn't
-          // carry the total upfront. Parse via strtoull to avoid the
-          // (size_t)(long long) wrap a 32-bit cast would silently do
-          // on a >4 GB value — for the bound check we want the raw
-          // 64-bit number, then we reject before narrowing.
-          const char* total_str = server.arg("total").c_str();
+          // Total size is passed as the X-Total-Length header so we can
+          // allocate the staging buffer up front. We can't use a query
+          // param here — the ESP32 WebServer's multipart parser wipes
+          // URL args before UPLOAD_FILE_START fires, so server.arg("total")
+          // comes back empty. Headers survive the same code path because
+          // they're parsed earlier and collectHeaders() pinned the field
+          // we need. Parse via strtoull so a >4 GiB value can't silently
+          // truncate to size_t before the bound check below.
+          if (!server.hasHeader("X-Total-Length")) {
+            err = "Missing X-Total-Length header.";
+            return;
+          }
+          const String hdr_total = server.header("X-Total-Length");
           char* end = nullptr;
-          const unsigned long long total64 = strtoull(total_str, &end, 10);
-          if (!total_str || total_str[0] == '\0' || end == total_str || total64 == 0) {
-            err = "Missing or invalid `total` query parameter.";
+          const unsigned long long total64 = strtoull(hdr_total.c_str(), &end, 10);
+          if (hdr_total.length() == 0 || end == hdr_total.c_str() || total64 == 0) {
+            err = "Invalid X-Total-Length header.";
             return;
           }
           if (total64 > (unsigned long long)Web::OutboundStaging::ABSOLUTE_MAX_BYTES) {

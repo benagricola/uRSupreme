@@ -1659,7 +1659,7 @@ class UReticulumHTTPTransport extends Transport {
   async uploadAttachment(identityId, bytes, filename, mime, onProgress) {
     const total = bytes.length;
     const url = '/api/identities/' + encodeURIComponent(identityId)
-              + '/attachment/upload?total=' + total;
+              + '/attachment/upload';
     const tok = this.tokenGetter();
     const form = new FormData();
     form.append('file', new Blob([bytes], { type: mime || 'application/octet-stream' }), filename || 'blob.bin');
@@ -1667,6 +1667,10 @@ class UReticulumHTTPTransport extends Transport {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', url);
       if (tok) xhr.setRequestHeader('Authorization', 'Bearer ' + tok);
+      // Server allocates the staging buffer upfront from this header
+      // (URL query params are wiped by the multipart parser before
+      // the chunk handler fires).
+      xhr.setRequestHeader('X-Total-Length', String(total));
       if (xhr.upload && onProgress) {
         xhr.upload.onprogress = (ev) => {
           if (ev.lengthComputable) onProgress(ev.loaded, ev.total);

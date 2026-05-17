@@ -92,7 +92,7 @@ struct SourceConfig {
 
 inline SourceConfig default_config(Source s) {
   switch (s) {
-    case Source::GPS:     return { true,  0, 60   };  // 60s between GPS time reports
+    case Source::GPS:     return { true,  0, 3600 };  // hourly GPS time reports
     case Source::NTP:     return { true,  1, 3600 };  // hourly NTP refresh
     case Source::Browser: return { true,  2, 0    };  // event-driven
     case Source::RNS:     return { true,  3, 0    };  // event-driven

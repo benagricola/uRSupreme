@@ -3910,6 +3910,9 @@ function selectSettingsTab(tabId) {
   const panels = document.querySelectorAll('#modal-settings .tab-panel');
   tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabId));
   panels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabId));
+  // Stop the time-tab ticker if we're leaving it; populateTimeTab
+  // restarts it when we re-enter.
+  if (tabId !== 'time') stopTimeTicker();
   // Lazy-populate per-tab data so the modal opens snappily.
   if (tabId === 'connectivity') { populateRadioTab(); populateWifiTab(); populateDiagTab(); }
   if (tabId === 'time')         { populateTimeTab(); }
@@ -3947,14 +3950,40 @@ const TIME_SOURCE_LABELS = {
 // sources hide the field).
 const TIME_SOURCE_HAS_INTERVAL = { gps: true, ntp: true, browser: false, rns: false };
 
+// Live-ticking clock state. Anchor = the moment we last got an
+// authoritative reading from the device, captured as (deviceUnixMs,
+// browserPerformanceNow). A 1 s interval extrapolates the current
+// time from the anchor without further polls.
+const timeTicker = { anchor: null, timer: null };
+
+function tickTimeClock() {
+  const a = timeTicker.anchor;
+  if (!a) return;
+  const cur = $('tm-current');
+  if (!cur) return;
+  const nowMs = a.deviceUnixMs + (performance.now() - a.localNowMs);
+  cur.textContent = new Date(nowMs).toLocaleString();
+}
+
+function startTimeTicker() {
+  if (timeTicker.timer) return;
+  timeTicker.timer = setInterval(tickTimeClock, 1000);
+}
+
+function stopTimeTicker() {
+  if (timeTicker.timer) { clearInterval(timeTicker.timer); timeTicker.timer = null; }
+}
+
 async function populateTimeTab() {
   try {
     const t = await state.transport._req('/api/time');
     renderTimeStatus(t);
     renderTimeSources(t.sources || {});
+    startTimeTicker();
   } catch (e) {
     $('tm-current').textContent = 'unavailable';
     $('tm-source').textContent = e.message || 'failed to fetch';
+    stopTimeTicker();
   }
 }
 
@@ -3962,10 +3991,15 @@ function renderTimeStatus(t) {
   const cur = $('tm-current');
   const src = $('tm-source');
   if (t && t.calibrated && t.unix_ms) {
+    timeTicker.anchor = {
+      deviceUnixMs: Number(t.unix_ms),
+      localNowMs:   performance.now(),
+    };
     const d = new Date(Number(t.unix_ms));
     cur.textContent = d.toLocaleString();
     src.textContent = 'from ' + (t.source || 'unknown');
   } else {
+    timeTicker.anchor = null;
     cur.textContent = 'uncalibrated';
     src.textContent = 'no source has reported yet';
   }
@@ -3992,13 +4026,40 @@ function renderTimeSources(sources) {
   }
 }
 
+// Interval-dropdown presets. 0 = "at boot": driver reports once and
+// never repolls. Otherwise = seconds between repolls. We snap the
+// loaded value to the nearest preset so non-standard configs from
+// older firmware degrade sensibly.
+const INTERVAL_PRESETS = [
+  { value: 0,       label: 'At boot' },
+  { value: 3600,    label: 'Every hour' },
+  { value: 86400,   label: 'Every day' },
+  { value: 604800,  label: 'Every week' },
+];
+function snapToPreset(secs) {
+  if (secs == null) return 0;
+  // Snap to whichever preset's log distance is smallest.
+  let best = INTERVAL_PRESETS[0], bestDist = Infinity;
+  for (const p of INTERVAL_PRESETS) {
+    const a = Math.max(secs, 1), b = Math.max(p.value, 1);
+    const d = Math.abs(Math.log(a) - Math.log(b));
+    if (d < bestDist) { best = p; bestDist = d; }
+  }
+  return best.value;
+}
+
 function buildTimeSourceRow(key, cfg) {
   const [label, desc] = TIME_SOURCE_LABELS[key];
+  const hasInterval = !!TIME_SOURCE_HAS_INTERVAL[key];
   const row = el('div', {
     class: 'tm-source-row',
     'data-source': key,
     draggable: 'true',
-    style: 'display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px;border:1px solid var(--bg-elev-2);border-radius:6px;background:var(--bg-elev);cursor:grab;user-select:none',
+    style: 'margin-bottom:6px;border:1px solid var(--bg-elev-2);border-radius:6px;background:var(--bg-elev);user-select:none;overflow:hidden',
+  });
+  // -------- collapsed header (always visible) --------
+  const header = el('div', {
+    style: 'display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:grab',
   });
   const handle = el('div', {
     style: 'opacity:0.5;font-size:14px;line-height:1;width:14px;text-align:center;flex:0 0 auto',
@@ -4010,27 +4071,68 @@ function buildTimeSourceRow(key, cfg) {
   });
   enable.checked = !!cfg.enabled;
   enable.dataset.role = 'enable';
-  const text = el('div', { style: 'flex:1;min-width:0' },
-    el('div', { style: 'font-size:13px' }, el('strong', { text: label })),
-    el('div', { class: 'muted', style: 'font-size:11px', text: desc }),
-  );
-  // Per-source interval input (only for sources that poll).
+  // Clicking the checkbox shouldn't also toggle the expander.
+  enable.addEventListener('click', (ev) => ev.stopPropagation());
+  const labelEl = el('div', { style: 'flex:1;min-width:0;font-size:13px' },
+    el('strong', { text: label }));
+  const chev = el('span', {
+    style: 'opacity:0.55;font-size:11px;flex:0 0 auto;transition:transform .12s',
+    text: '▾',
+  });
+  header.appendChild(handle);
+  header.appendChild(enable);
+  header.appendChild(labelEl);
+  header.appendChild(chev);
+
+  // -------- expanded body (description + interval) --------
+  const body = el('div', {
+    style: 'display:none;padding:0 10px 10px 38px;font-size:12px',
+  });
+  body.appendChild(el('div', { class: 'muted', style: 'margin-bottom:6px', text: desc }));
   let interval = null;
-  if (TIME_SOURCE_HAS_INTERVAL[key]) {
-    interval = el('input', {
-      type:  'number',
-      min:   '0',
-      max:   '86400',
-      style: 'width:70px;text-align:center;flex:0 0 auto',
-      title: 'Refresh interval (seconds). 0 = driver default.',
+  if (hasInterval) {
+    const wrap = el('div', { style: 'display:flex;align-items:center;gap:8px' });
+    wrap.appendChild(el('label', {
+      style: 'font-size:12px;color:var(--text);flex:0 0 auto', text: 'Refresh:' }));
+    interval = el('select', {
+      style: 'flex:1;max-width:160px',
+      title: 'How often this source should report a new time.',
     });
-    interval.value = (cfg.interval_s != null) ? String(cfg.interval_s) : '0';
     interval.dataset.role = 'interval';
+    const snapped = snapToPreset(cfg.interval_s);
+    for (const p of INTERVAL_PRESETS) {
+      const opt = el('option', { value: String(p.value), text: p.label });
+      if (p.value === snapped) opt.selected = true;
+      interval.appendChild(opt);
+    }
+    wrap.appendChild(interval);
+    body.appendChild(wrap);
   }
-  row.appendChild(handle);
-  row.appendChild(enable);
-  row.appendChild(text);
-  if (interval) row.appendChild(interval);
+
+  // Toggle expansion. Click on header (except checkbox) toggles. We
+  // also need to NOT trigger expansion when the user is starting a
+  // drag — track mousedown→mousemove to distinguish drag from click.
+  let mouseDownX = 0, mouseDownY = 0, draggedDuringPress = false;
+  header.addEventListener('mousedown', (ev) => {
+    if (ev.target === enable) return;
+    mouseDownX = ev.clientX; mouseDownY = ev.clientY;
+    draggedDuringPress = false;
+  });
+  header.addEventListener('mousemove', (ev) => {
+    if (Math.hypot(ev.clientX - mouseDownX, ev.clientY - mouseDownY) > 6) {
+      draggedDuringPress = true;
+    }
+  });
+  header.addEventListener('click', (ev) => {
+    if (ev.target === enable) return;
+    if (draggedDuringPress) return;
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : 'block';
+    chev.style.transform = open ? '' : 'rotate(180deg)';
+  });
+
+  row.appendChild(header);
+  row.appendChild(body);
   attachTimeSourceDnD(row);
   return row;
 }
@@ -4092,7 +4194,7 @@ $('btn-tm-save').addEventListener('click', async (ev) => {
   rows.forEach((row, idx) => {
     const key  = row.dataset.source;
     const en   = row.querySelector('input[data-role="enable"]');
-    const iv   = row.querySelector('input[data-role="interval"]');
+    const iv   = row.querySelector('[data-role="interval"]');
     const cfg = {
       enabled:  !!(en && en.checked),
       priority: idx,
@@ -4199,6 +4301,7 @@ async function openSettingsModal(initialTab, firstRun) {
 function closeSettingsModal() {
   if ($('modal-settings').dataset.firstRun === '1') return;  // locked
   $('modal-settings').hidden = true;
+  stopTimeTicker();
 }
 
 // Tab-bar click → switch panel.

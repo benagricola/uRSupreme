@@ -175,13 +175,15 @@ namespace _detail {
     f.fix_received_ms = millis();
 
     // Time reporting — respect the user's GPS interval.
+    // interval_s = 0  → "at boot" only: report once, never repoll
+    // interval_s > 0  → seconds between repolls
     if (f.unix_epoch > 0.0) {
       const auto& cfg = Web::TimeManager::get_config(Web::TimeManager::Source::GPS);
-      const uint32_t interval_ms =
-          (cfg.interval_s > 0 ? cfg.interval_s : 60) * 1000UL;
       const uint32_t now = millis();
-      if (last_report_ms_ref() == 0
-          || (now - last_report_ms_ref()) >= interval_ms) {
+      const bool first_time = (last_report_ms_ref() == 0);
+      const bool may_repoll = (cfg.interval_s > 0)
+          && ((now - last_report_ms_ref()) >= cfg.interval_s * 1000UL);
+      if (first_time || may_repoll) {
         if (Web::TimeManager::report_time(
               Web::TimeManager::Source::GPS, f.unix_epoch)) {
           last_report_ms_ref() = now;

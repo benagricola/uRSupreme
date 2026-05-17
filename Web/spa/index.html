@@ -1288,6 +1288,10 @@ const state = {
   recorderChunks: [],               // Blob chunks accumulated during record
   recorderStartMs: 0,
   recorderStopReason: '',           // 'save' | 'cancel'
+  sdPresent: null,                  // null = unknown (no probe yet), bool once
+                                    // /api/system_status responds. Attachment
+                                    // chips with backend=="sd" surface a warn
+                                    // pill when this flips false.
   reconnectStart: 0,
   skipBootstrap: false,             // set true by "skip" button on view-bootstrap so subsequent
                                     // routing doesn't bounce back into bootstrap mode
@@ -2008,7 +2012,18 @@ function renderThread() {
           // auto-load inline (cached per filename across rerenders);
           // everything else is click-to-download.
           const inbound = !!m.in && /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename);
-          if (inbound && a.tag === 6) {
+          // SD-backed attachment when card has been removed → blob is
+          // unreachable until the user re-inserts and reboots. Show a
+          // dead chip with a clear warning rather than let the user
+          // click into a 404.
+          const sdUnreachable = inbound && a.backend === 'sd' && state.sdPresent === false;
+          if (sdUnreachable) {
+            bubble.appendChild(el('div', {
+              style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,180,90,0.15);font-size:11px;color:inherit',
+              text: label + ' — SD card unavailable',
+              title: 'This attachment was saved on the SD card. Re-insert the card and reboot the device to recover it.',
+            }));
+          } else if (inbound && a.tag === 6) {
             bubble.appendChild(renderInboundImage(a, label));
           } else if (inbound && a.tag === 7) {
             bubble.appendChild(renderInboundAudio(a, label));
@@ -2942,6 +2957,16 @@ async function refreshStatus() {
     state.lastInfo = info;
     applyStatusToButton(info);
     if (!$('popover-status').hidden) renderStatusPopover();
+    // Track SD-card presence so attachment chips can flag the bytes
+    // as unreachable when the card is gone (#125). Re-render the open
+    // thread if the flag changed since last poll, since the chip
+    // appearance depends on it.
+    const wasPresent = state.sdPresent;
+    state.sdPresent  = !!(info && info.storage && info.storage.sd
+                       && info.storage.sd.present);
+    if (wasPresent !== null && wasPresent !== state.sdPresent && state.openPeer) {
+      renderThread();
+    }
   } catch (e) {
     $('btn-status').setAttribute('data-state', 'unknown');
     $('btn-status').title = 'Status unknown: ' + (e.message || e);

@@ -39,6 +39,7 @@
 #include "Web/Bme280.h"
 #include "Web/QmcMag.h"
 #include "Web/QmiImu.h"
+#include "Web/BatteryTelemetry.h"
 #include "Web/SensorConfig.h"
 #endif
 
@@ -2574,6 +2575,9 @@ void loop() {
   // QMC6310 magnetometer + QMI8658 IMU — same pattern.
   Web::QmcMag::pump();
   Web::QmiImu::pump();
+  // Battery: voltage + state + sliding-window slope. Cheap — only
+  // hits the PMU once per SAMPLE_PERIOD_MS, otherwise no-op.
+  Web::BatteryTelemetry::tick();
 #endif
 
   if (radio_online) {

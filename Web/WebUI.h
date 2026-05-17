@@ -31,6 +31,7 @@
 #include "SensorConfig.h"
 #include "OutboundStaging.h"
 #include "StorageMigration.h"
+#include "BatteryTelemetry.h"
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
@@ -352,6 +353,37 @@ namespace Web {
     // Extract bearer-token identity from the Authorization header. Falls
     // back to a `token` query-string param so EventSource (which can't set
     // headers) can authenticate. Sends 401 and returns empty on failure.
+    // /api/info gets the lightweight battery summary — what the topbar
+    // icon needs to render its glyph (percent + charge state).
+    static void emit_battery_summary(JsonDocument& doc) {
+      const auto b = Web::BatteryTelemetry::current();
+      if (!b.pmu_present) return;
+      JsonObject bo = doc["battery"].to<JsonObject>();
+      bo["percent"] = b.percent;
+      bo["state"]   = Web::BatteryTelemetry::state_name(b.state);
+    }
+
+    // /api/system_status gets the detailed battery telemetry — voltage,
+    // dV/dt slope, USB rail state. Slope is the load-bearing power-
+    // optimisation A/B-test metric: a proxy for current draw on AXP2101
+    // (which has no direct battery-current accessor); a more-negative
+    // value during discharge means a heavier drain. AXP192 boards also
+    // get discharge_ma.
+    static void emit_battery_detail(JsonDocument& doc) {
+      const auto b = Web::BatteryTelemetry::current();
+      if (!b.pmu_present) return;
+      JsonObject bo = doc["battery"].to<JsonObject>();
+      bo["voltage_v"]    = b.voltage_v;
+      bo["vbus_present"] = b.vbus_present;
+      if (b.vbus_present)     bo["vbus_voltage_v"] = b.vbus_voltage_v;
+      if (b.has_pmu_temp)     bo["pmu_temp_c"]     = b.pmu_temp_c;
+      if (b.has_discharge_ma) bo["discharge_ma"]   = b.discharge_ma;
+      if (b.has_slope) {
+        bo["slope_mv_per_min"] = b.slope_mv_per_min;
+        bo["slope_window_ms"]  = (uint32_t)b.slope_window_ms;
+      }
+    }
+
     static LXMF::IdentityId require_auth() {
       std::string token;
       String h = server.header("Authorization");
@@ -631,41 +663,12 @@ namespace Web {
         // anyone seeing the bootstrap network on their phone.
         wifi["auth"]        = "open";
       }
-      // Storage usage. LittleFS partition is the only persistent
-      // store today; the SD card slot is wired up on the T-Beam
-      // hardware but HAS_SDCARD is off in the current build so
-      // those bytes are 0. Surfaced as raw bytes; SPA formats.
-      JsonObject storage = doc["storage"].to<JsonObject>();
-      {
-        size_t total = filesystem.storageSize();
-        size_t avail = filesystem.storageAvailable();
-        JsonObject flash = storage["flash"].to<JsonObject>();
-        flash["total_bytes"] = (uint32_t)total;
-        flash["free_bytes"]  = (uint32_t)avail;
-        flash["used_bytes"]  = (uint32_t)((total > avail) ? (total - avail) : 0);
-      }
-      {
-        JsonObject sd = storage["sd"].to<JsonObject>();
-        sd["present"] = Web::SDCard::present();
-        if (Web::SDCard::present()) {
-          sd["card_type"]   = Web::SDCard::card_type_name();
-          sd["total_bytes"] = (uint64_t)Web::SDCard::total_bytes();
-          sd["used_bytes"]  = (uint64_t)Web::SDCard::used_bytes();
-        }
-      }
-
-      // Same outbound caps surface as /api/system_status, here too so
-      // the attachment picker / recorder don't need an extra round trip
-      // before staging a file.
-      {
-        const auto caps = Web::OutboundStaging::current_caps();
-        JsonObject oc = doc["outbound_caps"].to<JsonObject>();
-        oc["max_bytes"]        = (uint32_t)caps.max_bytes;
-        oc["backend"]          = caps.chosen_backend == Web::OutboundStaging::Backend::Sd ? "sd" : "psram";
-        oc["psram_free_bytes"] = (uint32_t)caps.psram_free;
-        oc["sd_present"]       = caps.sd_present;
-        if (caps.sd_present) oc["sd_free_bytes"] = (uint32_t)caps.sd_free;
-      }
+      // /api/info is the lightweight always-polled endpoint covering
+      // radio + transport + WiFi + a battery summary (percent+state
+      // for the topbar icon). Storage / sensors / outbound caps and
+      // the detailed battery block (voltage/slope/vbus) live on
+      // /api/system_status. Each datum has exactly one home.
+      emit_battery_summary(doc);
 
       JsonObject transport = doc["transport"].to<JsonObject>();
       transport["enabled"]      = RNS::Reticulum::transport_enabled();
@@ -1106,6 +1109,8 @@ namespace Web {
         oc["psram_free_bytes"] = (uint32_t)caps.psram_free;
         if (caps.sd_present) oc["sd_free_bytes"] = (uint32_t)caps.sd_free;
       }
+
+      emit_battery_detail(doc);
 
       send_json(200, doc);
     }

@@ -772,6 +772,15 @@ summary:hover { color: var(--text); }
       <!-- antenna -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M7.76 7.76a6 6 0 0 0 0 8.48"/><path d="M16.24 7.76a6 6 0 0 1 0 8.48"/><circle cx="12" cy="12" r="2"/></svg>
     </button>
+    <button class="icon" id="btn-power" title="Battery + power" hidden>
+      <!-- battery glyph; SVG mutates with percent + charge state via JS -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="7" width="18" height="10" rx="1.5"/>
+        <line x1="22" y1="11" x2="22" y2="13"/>
+        <rect id="btn-power-fill" x="4" y="9" width="0" height="6" fill="currentColor" stroke="none"/>
+        <path id="btn-power-bolt" d="M11 9.5 L8.5 13 L11 13 L10 16 L13 12.5 L10.5 12.5 Z" fill="currentColor" stroke="none" hidden/>
+      </svg>
+    </button>
     <button class="icon" id="btn-system" title="System status">
       <!-- chip / cpu -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
@@ -871,6 +880,26 @@ summary:hover { color: var(--text); }
     </div>
     <button class="secondary" id="btn-toggle-transport" style="width:100%;margin-top:8px">…</button>
     <div class="muted" style="font-size:11px;margin-top:6px">Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots.</div>
+  </div>
+</div>
+
+<!-- Anchored below #btn-power. Hosts the detailed battery telemetry
+     plus future per-knob power-management toggles. The topbar battery
+     icon shows just percent + state; full detail lives here. -->
+<div id="popover-power" class="popover" hidden>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">Battery</div>
+      <div id="pw-battery-line"></div>
+    </div>
+    <div class="mono" id="pw-battery-values" style="font-size:13px;margin-top:6px"></div>
+    <div class="muted mono" id="pw-battery-slope" style="font-size:11px"></div>
+  </div>
+  <div class="popover-section" id="pw-tuning-section" hidden>
+    <div class="popover-row">
+      <div class="popover-label">Power tuning</div>
+    </div>
+    <div class="muted" style="font-size:11px;margin-top:6px">Knobs will appear here as power-saving features land.</div>
   </div>
 </div>
 
@@ -3114,24 +3143,25 @@ async function refreshStatus() {
     const info = await state.transport.getInfo();
     state.lastInfo = info;
     applyStatusToButton(info);
+    applyBatteryToButton(info);
     if (!$('popover-status').hidden) renderStatusPopover();
-    // Track SD-card presence so attachment chips can flag the bytes
-    // as unreachable when the card is gone (#125). Re-render the open
-    // thread if the flag changed since last poll, since the chip
-    // appearance depends on it.
-    const wasPresent = state.sdPresent;
-    state.sdPresent  = !!(info && info.storage && info.storage.sd
-                       && info.storage.sd.present);
-    if (wasPresent !== null && wasPresent !== state.sdPresent && state.openPeer) {
-      renderThread();
-    }
-    // Track outbound staging caps so the attachment picker / resize
-    // modal / recorder all use the same per-device max-bytes ceiling.
-    state.outboundCaps = info && info.outbound_caps ? info.outbound_caps : null;
   } catch (e) {
     $('btn-status').setAttribute('data-state', 'unknown');
     $('btn-status').title = 'Status unknown: ' + (e.message || e);
   }
+  // Separately fetch system_status — owner of storage / outbound_caps /
+  // battery / sensors. Quieter cadence than /api/info since the data
+  // moves more slowly. Failure here doesn't degrade the top-bar dot.
+  try {
+    const sys = await state.transport._req('/api/system_status');
+    state.lastSystemStatus = sys;
+    const wasPresent = state.sdPresent;
+    state.sdPresent   = !!(sys && sys.storage && sys.storage.sd && sys.storage.sd.present);
+    state.outboundCaps = sys && sys.outbound_caps ? sys.outbound_caps : null;
+    if (wasPresent !== null && wasPresent !== state.sdPresent && state.openPeer) {
+      renderThread();
+    }
+  } catch (_) { /* leave previous state in place */ }
 }
 function applyStatusToButton(info) {
   const btn = $('btn-status');
@@ -3142,6 +3172,23 @@ function applyStatusToButton(info) {
                              btn.title = 'Radio online · ' + (r.frequency/1e6).toFixed(3) + ' MHz'; return; }
   btn.setAttribute('data-state', 'offline');
   btn.title = 'Radio configured but offline';
+}
+// Battery icon in the topbar. Hidden when the device hasn't reported
+// a battery block at all (older firmware / non-PMU boards). The fill
+// rectangle's width is scaled to the percent value; a bolt overlay
+// shows when charging.
+function applyBatteryToButton(info) {
+  const btn  = $('btn-power');
+  const b    = info && info.battery;
+  if (!b || b.state === 'absent') { btn.hidden = true; return; }
+  btn.hidden = false;
+  const fill = $('btn-power-fill');
+  const bolt = $('btn-power-bolt');
+  const pct  = Math.max(0, Math.min(100, Number(b.percent) || 0));
+  // Inner rectangle is x=4..18 (width 14). Map pct to width.
+  fill.setAttribute('width', String((pct / 100) * 14));
+  bolt.hidden = b.state !== 'charging';
+  btn.title = 'Battery ' + pct + '% · ' + b.state;
 }
 function renderStatusPopover() {
   const info = state.lastInfo || {};
@@ -3480,6 +3527,84 @@ $('btn-system').addEventListener('click', () => {
     return;
   }
   openSystemPopover();
+});
+
+// Power popover — anchored to #btn-power. Pulls fresh battery detail
+// from /api/system_status on open and on a slow ticker while it's
+// visible. The lightweight summary (percent / state) lives on info.
+function renderPowerPopover(sys) {
+  const b = (sys && sys.battery) || {};
+  const sum = (state.lastInfo && state.lastInfo.battery) || {};
+  const line = $('pw-battery-line'); line.innerHTML = '';
+  const sclass =
+    sum.state === 'charging'    ? 'pill ok'   :
+    sum.state === 'charged'     ? 'pill ok'   :
+    sum.state === 'discharging' && typeof sum.percent === 'number' && sum.percent < 15 ? 'pill bad' :
+    sum.state === 'discharging' && typeof sum.percent === 'number' && sum.percent < 30 ? 'pill warn' :
+    'pill';
+  const label = sum.state === 'charging' ? 'Charging'
+              : sum.state === 'charged'  ? 'Full'
+              : sum.state === 'discharging' ? 'Discharging'
+              : 'Unknown';
+  line.appendChild(el('span', { class: sclass }, label));
+  const parts = [];
+  if (typeof b.voltage_v === 'number') parts.push(b.voltage_v.toFixed(2) + ' V');
+  if (typeof sum.percent === 'number' && sum.percent >= 0) parts.push(sum.percent + '%');
+  if (b.vbus_present) parts.push('USB ' + (b.vbus_voltage_v || 0).toFixed(2) + ' V');
+  $('pw-battery-values').textContent = parts.join(' · ');
+  const slope = [];
+  if (typeof b.slope_mv_per_min === 'number') {
+    const sign = b.slope_mv_per_min < 0 ? '' : '+';
+    const win  = Math.round((b.slope_window_ms || 0) / 60000);
+    slope.push('Slope ' + sign + b.slope_mv_per_min.toFixed(1) + ' mV/min (' + win + ' min)');
+  }
+  if (typeof b.discharge_ma === 'number') slope.push('Draw ' + b.discharge_ma.toFixed(0) + ' mA');
+  if (typeof b.pmu_temp_c   === 'number') slope.push('PMU ' + b.pmu_temp_c.toFixed(1) + ' °C');
+  $('pw-battery-slope').textContent = slope.join(' · ');
+}
+let _pwTicker = null;
+async function openPowerPopover() {
+  try {
+    const sys = await state.transport._req('/api/system_status');
+    state.lastSystemStatus = sys;
+    renderPowerPopover(sys);
+  } catch (e) {
+    toast('Power status: ' + (e.message || e), 'error');
+    return;
+  }
+  $('popover-status').hidden = true;
+  $('popover-system').hidden = true;
+  $('popover-power').hidden  = false;
+  if (!_pwTicker) {
+    _pwTicker = setInterval(async () => {
+      if ($('popover-power').hidden) return;
+      try {
+        const sys = await state.transport._req('/api/system_status');
+        state.lastSystemStatus = sys;
+        renderPowerPopover(sys);
+      } catch (_) {}
+    }, 5000);
+  }
+  setTimeout(() => {
+    const dismiss = (ev) => {
+      if (!$('popover-power').contains(ev.target)
+          && ev.target !== $('btn-power')
+          && !$('btn-power').contains(ev.target)) {
+        $('popover-power').hidden = true;
+        if (_pwTicker) { clearInterval(_pwTicker); _pwTicker = null; }
+        document.removeEventListener('click', dismiss);
+      }
+    };
+    document.addEventListener('click', dismiss);
+  }, 0);
+}
+$('btn-power').addEventListener('click', () => {
+  if (!$('popover-power').hidden) {
+    $('popover-power').hidden = true;
+    if (_pwTicker) { clearInterval(_pwTicker); _pwTicker = null; }
+    return;
+  }
+  openPowerPopover();
 });
 $('sys-storage-migrate').addEventListener('click', async () => {
   const ok = await showConfirm({

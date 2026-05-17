@@ -641,6 +641,10 @@ bool init_pmu() {
     PMU->disableTSPinMeasure();
     PMU->enableVbusVoltageMeasure();
     PMU->enableBattVoltageMeasure();
+    // Internal die thermometer — useful for spotting heat during
+    // charge. The 18650 cell has no thermistor wired to the PMU on
+    // these boards, so this reads the AXP2101's own die temperature.
+    ((XPowersAXP2101*)PMU)->enableTemperatureMeasure();
 
 
     return true; 

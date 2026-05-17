@@ -2232,16 +2232,27 @@ async function downloadAttachment(identityId, meta, chipEl, bubbleEl) {
   }
 }
 
-// Ordering key for messages: (boot_epoch, received_ms). millis() resets
-// on every device reboot, so received_ms alone is NOT monotonic across
-// reboots — boot_epoch (incremented on each boot, persisted on-device)
-// is what makes the tuple globally monotonic. ts is for display only.
+// Ordering key for messages: LXMF ts (sender wall-clock) primary,
+// (boot_epoch, received_ms) tiebreak.
+//
+// Why ts first: now that the device's RTC is reliable, the LXMF
+// timestamp on each message is a real UTC wall-clock value from the
+// sender. That matches how the user thinks about chat order
+// ("messages I sent at 10:01 come before the reply at 10:02"),
+// across reboots and across peer clock skew within a conversation.
+//
+// Why tiebreak on (boot_epoch, received_ms): two messages can share
+// a ts (1 s resolution, or sender's clock drifting backwards). The
+// receive-side tuple is monotonic within a boot, and boot_epoch
+// disambiguates across reboots — so the tiebreak orders by the
+// order WE received them, which preserves causal sense for the
+// receiver's view.
 function msgCmp(a, b) {
+  const ta = a.ts || 0, tb = b.ts || 0;
+  if (ta !== tb) return ta - tb;
   const ba = a.boot_epoch || 0, bb = b.boot_epoch || 0;
   if (ba !== bb) return ba - bb;
-  const ra = a.received_ms || 0, rb = b.received_ms || 0;
-  if (ra !== rb) return ra - rb;
-  return (a.ts || 0) - (b.ts || 0);
+  return (a.received_ms || 0) - (b.received_ms || 0);
 }
 
 function upsertMessage(m) {

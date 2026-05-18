@@ -1156,6 +1156,33 @@ namespace LXMF {
       link.set_resource_strategy(RNS::Type::Link::ACCEPT_ALL);
       link.set_packet_callback(_static_inbound_link_packet);
       link.set_resource_concluded_callback(_static_inbound_resource_concluded);
+      link.set_resource_progress_callback(_static_inbound_resource_progress);
+    }
+
+    // Progress trampoline for inbound Resources — fires as parts arrive.
+    // Resolves the owning LXMFMinimal by the link's destination hash.
+    // peer_hash is left empty: the Reticulum responder side has no way
+    // to know who opened an anonymous inbound link until the LXMF wire
+    // payload is decrypted at message_complete (LXMF doesn't send
+    // LINKIDENTIFY). The SPA keys in-flight progress by link_hash and
+    // correlates to the conversation when message_complete carries the
+    // source_hash. transfer_size on the Resource is the authoritative
+    // byte total; get_progress() returns received/parts as a fraction.
+    static void _static_inbound_resource_progress(const RNS::Resource& res) {
+      const RNS::Link& link = res.link();
+      if (!link) return;
+      const RNS::Bytes our_dest_hash = link.destination().hash();
+      auto& reg = registry();
+      auto it = reg.find(our_dest_hash);
+      if (it == reg.end() || it->second == nullptr) return;
+      if (!it->second->_on_progress) return;
+      const float    frac  = res.get_progress();
+      const uint32_t total = (uint32_t)res.size();
+      const uint32_t done  = (uint32_t)(frac * (float)total);
+      try {
+        it->second->_on_progress(RNS::Bytes(), link.hash(),
+                                  /*incoming=*/true, done, total);
+      } catch (...) {}
     }
 
     static void _static_inbound_link_packet(const RNS::Bytes& plaintext,

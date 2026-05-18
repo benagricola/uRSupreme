@@ -1165,14 +1165,14 @@ namespace Web {
         }
       }
 
-      // ---- clock ----
+      // ---- clock (RTC-chip diagnostic only) ----
+      // The wall-clock + source + calibrated flag come over WS now —
+      // the `hello` frame carries them on connect and `time_update`
+      // pushes on every source change. What stays here is purely the
+      // hardware-RTC chip's introspection (VL flag, raw epoch readback)
+      // because nothing else surfaces that.
       {
-        JsonObject c = doc["clock"].to<JsonObject>();
-        c["calibrated"] = Web::TimeManager::is_calibrated();
-        c["unix_ms"]    = (uint64_t)(Web::TimeManager::now_epoch() * 1000.0);
-        c["source"]     = Web::TimeManager::source_name(Web::TimeManager::current_source());
-        // RTC chip diagnostic. Lets the SPA show "PCF8563 ✓ / VL set / absent".
-        JsonObject rtc = c["rtc"].to<JsonObject>();
+        JsonObject rtc = doc["rtc"].to<JsonObject>();
         const auto rs = Web::RtcPCF8563::debug_snapshot();
         rtc["available"] = Web::RtcPCF8563::available();
         rtc["vl_set"]    = rs.vl_set;
@@ -1196,7 +1196,8 @@ namespace Web {
         const auto caps = Web::OutboundStaging::current_caps();
         JsonObject oc = doc["outbound_caps"].to<JsonObject>();
         oc["max_bytes"]        = (uint32_t)caps.max_bytes;
-        oc["backend"]          = caps.chosen_backend == Web::OutboundStaging::Backend::Sd ? "sd" : "psram";
+        oc["backend"]          = Web::OutboundStaging::backend_name(caps.chosen_backend);
+        oc["flash_free_bytes"] = (uint32_t)caps.flash_free;
         oc["psram_free_bytes"] = (uint32_t)caps.psram_free;
         oc["sd_present"]       = caps.sd_present;
         if (caps.sd_present) oc["sd_free_bytes"] = (uint32_t)caps.sd_free;
@@ -1491,8 +1492,8 @@ namespace Web {
       JsonDocument doc;
       doc["staging_id"] = id;
       doc["total_bytes"] = (uint32_t)Web::OutboundStaging::total_bytes(id);
-      doc["backend"]     = Web::OutboundStaging::backend_of(id) == Web::OutboundStaging::Backend::Sd
-                            ? "sd" : "psram";
+      doc["backend"]     = Web::OutboundStaging::backend_name(
+                              Web::OutboundStaging::backend_of(id));
       send_json(req, 200, doc);
     }
 
@@ -2046,16 +2047,11 @@ namespace Web {
         o["age_ms"]        = millis() - rec.received_ms;
       }
 
-      // Display-time anchor: SPA snapshots (Date.now_browser, now_ms)
-      // at fetch time and computes wall-clock for any record via
-      //   wall = anchor_browser - (now_ms - received_ms)
-      // Only meaningful for records with boot_epoch == current_boot
-      // (millis() resets across boots) — for older boots the SPA
-      // should fall back to "previously" / no relative time.
-      JsonObject clock = doc["clock"].to<JsonObject>();
-      clock["now_ms"]            = millis();
-      clock["current_boot_epoch"] = Web::BootCounter::current();
-
+      // Display-time clock anchor is delivered via the WS `hello` frame
+      // (see Web::WS::set_hello_extras in WebUI::start). No need to ship
+      // it on every /state fetch — the SPA only ever sets state.clockAnchor
+      // once per WS session, and `hello` lands before the SPA mounts the
+      // conversation list.
       send_json(req, 200, doc);
     }
 

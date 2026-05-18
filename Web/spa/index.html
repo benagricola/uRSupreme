@@ -3402,23 +3402,27 @@ function renderSystemPopover(s) {
   const flashUsed = fl.used_bytes || 0;
   $('sys-storage-migrate').hidden = !(sd.present && flashUsed > 0);
 
-  // Clock.
-  const c = s.clock || {};
+  // Clock. Read from the WS-pinned anchor (set in dispatchEvent on
+  // hello) — /api/system_status no longer carries it. The anchor is
+  // stable for the WS session; the ticker below advances the
+  // displayed time without re-fetching.
+  const a = state.clockAnchor || {};
   const cLine = $('sys-clock-line'); cLine.innerHTML = '';
-  cLine.appendChild(el('span', { class: c.calibrated ? 'pill ok' : 'pill warn' },
-    c.calibrated ? 'Calibrated' : 'Uncalibrated'));
-  if (c.unix_ms) {
+  cLine.appendChild(el('span', { class: a.calibrated ? 'pill ok' : 'pill warn' },
+    a.calibrated ? 'Calibrated' : 'Uncalibrated'));
+  if (a.deviceUnixMs) {
     sysPopover.clockAnchor = {
-      deviceUnixMs: Number(c.unix_ms),
-      localNowMs:   performance.now(),
+      deviceUnixMs: a.deviceUnixMs,
+      localNowMs:   a.localPerfMs || performance.now(),
     };
-    $('sys-clock-now').textContent = new Date(Number(c.unix_ms)).toLocaleString();
+    $('sys-clock-now').textContent = new Date(a.deviceUnixMs).toLocaleString();
   } else {
     sysPopover.clockAnchor = null;
     $('sys-clock-now').textContent = '—';
   }
-  $('sys-clock-source').textContent = 'Source: ' + (c.source || 'unknown');
-  const rtc = c.rtc || {};
+  $('sys-clock-source').textContent = 'Source: ' + (a.source || 'unknown');
+  // RTC chip diagnostic moved to /api/system_status root under `rtc`.
+  const rtc = s.rtc || {};
   $('sys-clock-rtc').textContent = !rtc.available
     ? 'RTC chip: not detected'
     : (rtc.vl_set ? 'RTC chip: present (voltage-low — time invalid)'
@@ -3893,8 +3897,26 @@ function dispatchEvent(ev) {
     return;
   }
   if (ev.type === 'hello') {
-    // Server-side handshake confirmation. Nothing to do — refreshState
-    // already ran on first open.
+    // Snapshot the device clock anchor for relative-time displays.
+    // Carries millis() + boot epoch (for received_ms anchoring) plus
+    // unix_ms + calibrated flag (for the live clock pill). Pinning
+    // both anchors once per WS session is the cheapest correct option:
+    // localWallMs / localPerfMs come from the same wall-clock moment.
+    const c = ev.clock || {};
+    if (typeof c.now_ms === 'number') {
+      state.clockAnchor = {
+        deviceNowMs:      c.now_ms,
+        deviceUnixMs:     Number(c.unix_ms || 0),
+        calibrated:       !!c.calibrated,
+        source:           c.source || 'none',
+        currentBootEpoch: c.current_boot_epoch || 0,
+        localWallMs:      Date.now(),
+        localPerfMs:      performance.now(),
+      };
+    }
+    if (ev.sensors) {
+      state.sensors = ev.sensors;
+    }
     return;
   }
   if (ev.type === 'pong') return;
@@ -3951,14 +3973,16 @@ function dispatchEvent(ev) {
       renderThread();
     }
   } else if (ev.type === 'time_update') {
-    // Wall-clock source changed. Update clock anchor so relative-time
-    // labels stay accurate, then repaint the time pill if it's open.
-    if (typeof ev.unix_ms === 'number') {
-      state.timeSource = ev.source;
-      state.timeCalibrated = !!ev.calibrated;
+    // Source adopted a fresh epoch — re-pin the clock anchor against
+    // the current browser wall-clock moment so the popover ticker and
+    // any new received_ms calculation use the post-sync mapping.
+    if (typeof ev.unix_ms === 'number' && state.clockAnchor) {
+      state.clockAnchor.deviceUnixMs = Number(ev.unix_ms);
+      state.clockAnchor.calibrated   = !!ev.calibrated;
+      state.clockAnchor.source       = ev.source || state.clockAnchor.source;
+      state.clockAnchor.localWallMs  = Date.now();
+      state.clockAnchor.localPerfMs  = performance.now();
     }
-    // The system popover (if open) shows the live clock; tickSystemClock
-    // already runs every second, so it will pick this up on its next tick.
   } else if (ev.type === 'message_progress' || ev.type === 'message_complete') {
     if (!state.transfers) state.transfers = new Map();
     const key = ev.link_hash;
@@ -3998,20 +4022,11 @@ async function refreshState() {
       p.seenAt = Date.now() - (p.age_ms || 0);
       state.paths.set(p.dest, p);
     }
-    // Snapshot the device's millis() against the browser's wall clock so
-    // relative-time display ("5m ago") works without the device knowing
-    // wall-clock time. For any record received in the same boot session
-    // (boot_epoch === currentBootEpoch) the browser computes:
-    //   wallMs = localWallMs - (deviceNowMs - msg.received_ms)
-    // Records from prior boots have no usable received_ms anchor — show
-    // them as "earlier" / no relative time.
-    if (r.clock && typeof r.clock.now_ms === 'number') {
-      state.clockAnchor = {
-        deviceNowMs:      r.clock.now_ms,
-        localWallMs:      Date.now(),
-        currentBootEpoch: r.clock.current_boot_epoch || 0,
-      };
-    }
+    // The clock anchor is set from the WS `hello` frame (see
+    // dispatchEvent). /state no longer carries `clock` — the WS path
+    // is canonical now. If a refresh fires before the WS opens, the
+    // anchor stays null and relative-time labels fall back to
+    // "earlier" until the first hello arrives.
     state.conversations.clear();
     for (const c of (r.conversations || [])) {
       const conv = {

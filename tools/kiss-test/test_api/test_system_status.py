@@ -12,7 +12,9 @@ def test_system_status_top_level(sx):
     r = s.get(f"{d.url}/api/system_status", timeout=15)
     assert r.status_code == 200
     body = r.json()
-    assert_has_keys(body, ["storage", "clock", "sensors", "outbound_caps"])
+    # `clock` no longer lives here — the WS hello frame is canonical
+    # for the wall-clock anchor. `rtc` stays for the chip diagnostic.
+    assert_has_keys(body, ["storage", "rtc", "sensors", "outbound_caps"])
 
 
 def test_system_status_does_not_duplicate_info(sx):
@@ -74,12 +76,33 @@ def test_sensors_block(sx):
     assert_type(g["powered"], bool, "sensors.gps.powered")
 
 
-def test_clock_block(sx):
+def test_rtc_block(sx):
+    """RTC chip diagnostic moved out from under `clock`. Wall-clock
+    state itself is delivered via the WS `hello` frame — see test_ws."""
     s, d = sx
     body = s.get(f"{d.url}/api/system_status", timeout=15).json()
-    c = body["clock"]
-    assert "calibrated" in c
-    assert "unix_ms" in c
-    assert "source" in c
-    if c["calibrated"]:
-        assert c["unix_ms"] > 1_700_000_000_000  # post-2023
+    r = body["rtc"]
+    assert "available" in r
+    if r["available"]:
+        assert "vl_set" in r
+        assert "unix_ms" in r
+
+
+def test_ws_hello_carries_clock(sx, tokens):
+    """The WS hello frame is now the canonical wall-clock anchor source.
+    Must include now_ms, unix_ms, calibrated, source, current_boot_epoch."""
+    import json as _json
+    import websocket as _ws
+    _, d = sx
+    base = d.url.replace("http://", "ws://")
+    sock = _ws.create_connection(
+        f"{base}/api/ws?token={tokens['sx']}&identity_id={d.identity}",
+        timeout=5)
+    try:
+        hello = _json.loads(sock.recv())
+    finally:
+        sock.close()
+    assert hello["type"] == "hello"
+    c = hello.get("clock") or {}
+    for k in ("now_ms", "unix_ms", "calibrated", "source", "current_boot_epoch"):
+        assert k in c, f"hello.clock missing {k!r} — got {list(c.keys())}"

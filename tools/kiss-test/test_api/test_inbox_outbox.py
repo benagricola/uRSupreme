@@ -7,8 +7,7 @@ def test_state_shape(sx):
     r = s.get(f"{d.url}/api/identities/{d.identity}/state", timeout=10)
     assert r.status_code == 200
     body = r.json()
-    assert_has_keys(body, ["identity", "conversations", "announces",
-                           "paths", "clock"])
+    assert_has_keys(body, ["identity", "conversations", "announces", "paths"])
 
 
 def test_conversations_messages_shape(sx):

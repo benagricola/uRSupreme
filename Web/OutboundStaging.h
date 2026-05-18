@@ -34,7 +34,10 @@
 #include <Arduino.h>
 #include <esp_heap_caps.h>
 #include <SD.h>
+#include <microStore/FileSystem.h>
 #include "SDCard.h"
+
+extern microStore::FileSystem filesystem;
 
 namespace Web {
 namespace OutboundStaging {
@@ -46,6 +49,17 @@ inline constexpr size_t   PSRAM_CAP_BYTES   = 4 * 1024 * 1024;
 // SD soft cap. Files this big over LoRa take hours; cap is more
 // about "don't accidentally fill the user's SD card" than ESP32 RAM.
 inline constexpr size_t   SD_CAP_BYTES      = 32 * 1024 * 1024;
+// LittleFS staging cap. The partition is 4.4 MB total; we share it
+// with inbox JSONL, attachments, identity meta, etc. Cap at 2 MB to
+// leave half the partition free for everything else even when the
+// user uploads the largest legal attachment.
+inline constexpr size_t   FLASH_CAP_BYTES   = 2 * 1024 * 1024;
+// Pick Flash over PSRAM when the requested size is at least this big
+// AND no SD is present. Below it we keep using PSRAM — small uploads
+// are fast there and don't put pressure on flash wear. The threshold
+// is chosen so a "snapshot photo" sized attachment (≤256 KB) stays in
+// RAM; anything larger goes through the disk path.
+inline constexpr size_t   FLASH_OVER_PSRAM_BYTES = 256 * 1024;
 // Hard ceiling enforced regardless of what the dynamic caps say. Even
 // if current_caps() ever reports a giant max_bytes, we will not honour
 // it. Defends against pathological client-supplied `total` values and
@@ -55,7 +69,7 @@ inline constexpr size_t   ABSOLUTE_MAX_BYTES = 32 * 1024 * 1024;
 // upload and then disconnect; reclaim within a minute.
 inline constexpr uint32_t STAGING_TIMEOUT_MS = 60000;
 
-enum class Backend : uint8_t { Psram, Sd };
+enum class Backend : uint8_t { Psram, Sd, Flash };
 
 struct Buffer {
   uint32_t   id          = 0;
@@ -65,8 +79,8 @@ struct Buffer {
   uint32_t   created_ms  = 0;
   // PSRAM backend
   uint8_t*   psram_ptr   = nullptr;
-  // SD backend
-  String     sd_path;
+  // SD or Flash backend (path semantics differ; underlying FS doesn't)
+  String     disk_path;
 };
 
 namespace _detail {
@@ -96,8 +110,10 @@ namespace _detail {
       if (stale) {
         if (it->backend == Backend::Psram && it->psram_ptr) {
           heap_caps_free(it->psram_ptr);
-        } else if (it->backend == Backend::Sd && !it->sd_path.isEmpty()) {
-          if (Web::SDCard::present()) SD.remove(it->sd_path);
+        } else if (it->backend == Backend::Sd && !it->disk_path.isEmpty()) {
+          if (Web::SDCard::present()) SD.remove(it->disk_path);
+        } else if (it->backend == Backend::Flash && !it->disk_path.isEmpty()) {
+          if (filesystem.exists(it->disk_path.c_str())) filesystem.remove(it->disk_path.c_str());
         }
         WARNINGF("OutboundStaging: GC'd stale buffer id=%u (%u/%u bytes, %s)",
                  (unsigned)it->id, (unsigned)it->written, (unsigned)it->total_bytes,
@@ -112,11 +128,16 @@ namespace _detail {
 
 // Reported via /api/system_status so the SPA can gate its picker
 // options + recorder duration to whatever the device can actually
-// accept. Picks the larger of the two available backends.
+// accept. Backend selection priority (largest cap wins):
+//   1. SD    if mounted   — multi-GB headroom, no PSRAM impact
+//   2. Flash if no SD     — LittleFS partition, 2 MB cap, ~30x slower
+//                           writes than PSRAM but never OOMs
+//   3. PSRAM always available — fastest, used for sub-256KB uploads
 struct Caps {
   size_t  max_bytes;
   Backend chosen_backend;
   size_t  psram_free;
+  size_t  flash_free;
   size_t  sd_free;
   bool    sd_present;
 };
@@ -124,19 +145,37 @@ inline Caps current_caps() {
   Caps c{};
   c.sd_present = Web::SDCard::present();
   c.psram_free = (size_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  // LittleFS free space — the same numbers /api/system_status surfaces
+  // under storage.flash. Cap the staging slice so we never starve
+  // inbox JSONL + identity meta + attachment receive path.
+  {
+    const size_t total = (size_t)filesystem.storageSize();
+    const size_t avail = (size_t)filesystem.storageAvailable();
+    (void)total;
+    c.flash_free = avail;
+  }
   if (c.sd_present) {
     const uint64_t total = Web::SDCard::total_bytes();
     const uint64_t used  = Web::SDCard::used_bytes();
     c.sd_free = (total > used) ? (size_t)(total - used) : 0;
   }
-  // PSRAM-backed cap: min(PSRAM_CAP_BYTES, psram_free with margin).
   const size_t psram_max = (c.psram_free > 512 * 1024)
       ? std::min(PSRAM_CAP_BYTES, c.psram_free - 512 * 1024) : 0;
   const size_t sd_max = c.sd_present
       ? std::min(SD_CAP_BYTES, c.sd_free) : 0;
-  if (sd_max > psram_max) {
+  // Flash gets a 256 KB margin so a staging upload can't fill the
+  // partition right up against the inbox / identity files.
+  const size_t flash_max = (c.flash_free > 256 * 1024)
+      ? std::min(FLASH_CAP_BYTES, c.flash_free - 256 * 1024) : 0;
+  // SD wins outright when available. Else pick whichever of PSRAM or
+  // Flash is larger — but the call site (allocate) may still route a
+  // small upload through PSRAM even when Flash has a bigger cap.
+  if (sd_max > 0 && sd_max >= psram_max && sd_max >= flash_max) {
     c.max_bytes      = sd_max;
     c.chosen_backend = Backend::Sd;
+  } else if (flash_max > psram_max) {
+    c.max_bytes      = flash_max;
+    c.chosen_backend = Backend::Flash;
   } else {
     c.max_bytes      = psram_max;
     c.chosen_backend = Backend::Psram;
@@ -145,6 +184,14 @@ inline Caps current_caps() {
   // matter what the underlying backend says is free.
   if (c.max_bytes > ABSOLUTE_MAX_BYTES) c.max_bytes = ABSOLUTE_MAX_BYTES;
   return c;
+}
+
+inline const char* backend_name(Backend b) {
+  switch (b) {
+    case Backend::Sd:    return "sd";
+    case Backend::Flash: return "flash";
+    default:             return "psram";
+  }
 }
 
 // Allocate a new staging buffer. Returns 0 on failure (over cap,
@@ -169,25 +216,37 @@ inline uint32_t allocate(size_t total_bytes) {
   b.id          = _detail::next_id()++;
   b.total_bytes = total_bytes;
   b.created_ms  = millis();
-  b.backend     = c.chosen_backend;
+  // Backend selection refinement: even when current_caps() picked
+  // Flash as the largest available, route small uploads (<256 KB)
+  // through PSRAM. RAM is faster and we don't want to wear flash on
+  // every audio recording / thumbnail attach.
+  b.backend = c.chosen_backend;
+  if (b.backend == Backend::Flash && total_bytes < FLASH_OVER_PSRAM_BYTES) {
+    // Only route through PSRAM if it actually fits — otherwise stick
+    // with the disk path even for a small file. The current_caps
+    // psram_max already includes its margin.
+    const size_t psram_avail = (c.psram_free > 512 * 1024)
+        ? std::min(PSRAM_CAP_BYTES, c.psram_free - 512 * 1024) : 0;
+    if (psram_avail >= total_bytes) b.backend = Backend::Psram;
+  }
   if (b.backend == Backend::Psram) {
     b.psram_ptr = (uint8_t*)heap_caps_malloc(total_bytes, MALLOC_CAP_SPIRAM);
     if (!b.psram_ptr) {
       ERRORF("OutboundStaging: PSRAM alloc of %u bytes failed", (unsigned)total_bytes);
       return 0;
     }
-  } else {
-    b.sd_path = String("/lxmf/staging/") + b.id + ".bin";
-    // mkdir parents — single-level only on Arduino SD.
+  } else if (b.backend == Backend::Sd) {
+    b.disk_path = String("/lxmf/staging/") + b.id + ".bin";
     if (!SD.exists("/lxmf")) SD.mkdir("/lxmf");
     if (!SD.exists("/lxmf/staging")) SD.mkdir("/lxmf/staging");
-    // Truncate any pre-existing file at this path before writes.
-    if (SD.exists(b.sd_path)) SD.remove(b.sd_path);
+    if (SD.exists(b.disk_path)) SD.remove(b.disk_path);
+  } else {  // Flash
+    b.disk_path = String("/lxmf/staging/") + b.id + ".bin";
+    if (filesystem.exists(b.disk_path.c_str())) filesystem.remove(b.disk_path.c_str());
   }
   _detail::buffers().push_back(b);
   NOTICEF("OutboundStaging: allocated id=%u backend=%s size=%u",
-          (unsigned)b.id,
-          b.backend == Backend::Psram ? "psram" : "sd",
+          (unsigned)b.id, backend_name(b.backend),
           (unsigned)total_bytes);
   return b.id;
 }
@@ -204,10 +263,17 @@ inline bool append(uint32_t id, const uint8_t* data, size_t len) {
   if (b->backend == Backend::Psram) {
     if (!b->psram_ptr) return false;
     memcpy(b->psram_ptr + b->written, data, len);
-  } else {
-    File f = SD.open(b->sd_path, FILE_APPEND);
+  } else if (b->backend == Backend::Sd) {
+    File f = SD.open(b->disk_path, FILE_APPEND);
     if (!f) return false;
     size_t w = f.write(data, len);
+    f.close();
+    if (w != len) return false;
+  } else {  // Flash
+    microStore::File f = filesystem.open(b->disk_path.c_str(),
+                                         microStore::File::ModeAppend, true);
+    if (!f) return false;
+    const size_t w = f.write(data, len);
     f.close();
     if (w != len) return false;
   }
@@ -242,12 +308,22 @@ inline size_t read(uint32_t id, size_t offset, size_t len, uint8_t* dst) {
     memcpy(dst, b->psram_ptr + offset, avail);
     return avail;
   }
-  File f = SD.open(b->sd_path, FILE_READ);
+  if (b->backend == Backend::Sd) {
+    File f = SD.open(b->disk_path, FILE_READ);
+    if (!f) return 0;
+    if (!f.seek(offset)) { f.close(); return 0; }
+    const int got = f.read(dst, avail);
+    f.close();
+    return got > 0 ? (size_t)got : 0;
+  }
+  // Flash
+  microStore::File f = filesystem.open(b->disk_path.c_str(),
+                                       microStore::File::ModeRead);
   if (!f) return 0;
-  if (!f.seek(offset)) { f.close(); return 0; }
-  const int got = f.read(dst, avail);
+  if (f.seek((uint32_t)offset, microStore::SeekModeSet) < 0) { f.close(); return 0; }
+  const size_t got = f.read(dst, avail);
   f.close();
-  return got > 0 ? (size_t)got : 0;
+  return got;
 }
 
 inline void release(uint32_t id) {
@@ -256,8 +332,10 @@ inline void release(uint32_t id) {
     if (it->id != id) continue;
     if (it->backend == Backend::Psram && it->psram_ptr) {
       heap_caps_free(it->psram_ptr);
-    } else if (it->backend == Backend::Sd && !it->sd_path.isEmpty()) {
-      if (Web::SDCard::present()) SD.remove(it->sd_path);
+    } else if (it->backend == Backend::Sd && !it->disk_path.isEmpty()) {
+      if (Web::SDCard::present()) SD.remove(it->disk_path);
+    } else if (it->backend == Backend::Flash && !it->disk_path.isEmpty()) {
+      if (filesystem.exists(it->disk_path.c_str())) filesystem.remove(it->disk_path.c_str());
     }
     NOTICEF("OutboundStaging: released id=%u", (unsigned)id);
     v.erase(it);

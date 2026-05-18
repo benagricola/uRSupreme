@@ -70,18 +70,30 @@ def test_upload_invalid_total_header_400(sx):
 
 
 def test_upload_too_large_400(sx):
-    """Asking for 64 MiB (above ABSOLUTE_MAX_BYTES=32 MiB) must be
-    refused at the header-parse stage with a clean 400."""
+    """Asking above the user-configured send cap must be refused at
+    the header-parse stage with a clean 400. We set the cap low for
+    the duration of the test then restore it."""
     s, d = sx
-    blob = _tiny_jpeg()
-    r = s.post(
-        f"{d.url}/api/identities/{d.identity}/attachment/upload",
-        headers={"X-Total-Length": str(64 * 1024 * 1024)},
-        files={"file": ("big.jpg", blob, "image/jpeg")},
-        timeout=20,
-    )
-    assert r.status_code == 400
-    assert "ceiling" in r.text.lower() or "abs" in r.text.lower()
+    before = s.get(f"{d.url}/api/storage/config", timeout=15).json()
+    try:
+        s.post(f"{d.url}/api/storage/config",
+               json={"user_max_send_bytes": 256 * 1024,
+                     "user_max_receive_bytes": before["user_max_receive_bytes"]},
+               timeout=15).raise_for_status()
+        blob = _tiny_jpeg()
+        r = s.post(
+            f"{d.url}/api/identities/{d.identity}/attachment/upload",
+            headers={"X-Total-Length": str(2 * 1024 * 1024)},
+            files={"file": ("big.jpg", blob, "image/jpeg")},
+            timeout=20,
+        )
+        assert r.status_code == 400
+        assert "send cap" in r.text.lower() or "exceeds" in r.text.lower()
+    finally:
+        s.post(f"{d.url}/api/storage/config",
+               json={"user_max_send_bytes":    before["user_max_send_bytes"],
+                     "user_max_receive_bytes": before["user_max_receive_bytes"]},
+               timeout=15)
 
 
 # ---- send + receive --------------------------------------------------

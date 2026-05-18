@@ -895,6 +895,13 @@ void setup() {
         SD.mkdir("/sd/lxmf_resource_tmp");
       }
     }
+    // Install the receive-cap resolver so microReticulum's
+    // Link::RESOURCE_ADV gate (and Resource::_build_outgoing's
+    // post-encrypt check) honour the user-configured cap clamped to
+    // current backing-store free space.
+    RNS::set_resource_max_incoming_resolver([]() -> size_t {
+      return Web::Storage::effective_max_receive();
+    });
     // Bring up the user/sensor I2C bus (Wire) at SDA=17 SCL=18
     // — this is where BME280 lives (and where future QMC6310
     // magnetometer + any other Wire-side sensors will sit). PMU /
@@ -1047,6 +1054,7 @@ void setup() {
       // — wire TimeManager::now_epoch as the inbox clock source.
       LXMF::LXMFInbox::set_now_epoch_provider(&Web::TimeManager::now_epoch);
       LXMF::InboxConfig::load(filesystem);
+      Web::Storage::load(filesystem);
       LXMF::LXMFGateway::setup();
       LXMF::AnnounceLog::setup();
       // Wire the microReticulum ratchet patches to our gateway-backed

@@ -32,6 +32,7 @@
 #include "QmiImu.h"
 #include "SensorConfig.h"
 #include "OutboundStaging.h"
+#include "StorageConfig.h"
 #include "StorageMigration.h"
 #include "BatteryTelemetry.h"
 
@@ -532,6 +533,9 @@ namespace Web {
       // Global inbox capacity + wall-clock TTL pruning.
       server.on("/api/inbox_config",         HTTP_GET,  handle_inbox_config_get);
       on_json_post("/api/inbox_config",         handle_inbox_config_post);
+      // Per-direction transfer caps (max_send / max_receive bytes).
+      server.on("/api/storage/config",       HTTP_GET,  handle_storage_config_get);
+      on_json_post("/api/storage/config",       handle_storage_config_post);
       // Streaming outbound attachment upload — PSRAM/SD-backed staging
       // that the /send path consumes by id. The body is multipart/
       // form-data with one file field; the X-Total-Length header tells
@@ -1174,7 +1178,7 @@ namespace Web {
       fill_sensor_block(sensors, "environment");
       fill_sensor_block(sensors, "magnetometer");
       fill_sensor_block(sensors, "imu");
-      // ---- outbound staging caps ----
+      // ---- outbound staging caps + storage config ----
       {
         const auto caps = Web::OutboundStaging::current_caps();
         JsonObject oc = root["outbound_caps"].to<JsonObject>();
@@ -1184,6 +1188,15 @@ namespace Web {
         oc["psram_free_bytes"] = (uint32_t)caps.psram_free;
         oc["sd_present"]       = caps.sd_present;
         if (caps.sd_present) oc["sd_free_bytes"] = (uint32_t)caps.sd_free;
+      }
+      // ---- user-facing storage config ----
+      {
+        const auto& sc = Web::Storage::current();
+        JsonObject st = root["storage"].to<JsonObject>();
+        st["user_max_send_bytes"]      = (uint32_t)std::min<size_t>(sc.user_max_send_bytes,    0xFFFFFFFFu);
+        st["user_max_receive_bytes"]   = (uint32_t)std::min<size_t>(sc.user_max_receive_bytes, 0xFFFFFFFFu);
+        st["effective_max_send_bytes"] = (uint32_t)std::min<size_t>(Web::Storage::effective_max_send(),    0xFFFFFFFFu);
+        st["effective_max_recv_bytes"] = (uint32_t)std::min<size_t>(Web::Storage::effective_max_receive(), 0xFFFFFFFFu);
       }
       // ---- battery (detailed) ----
       {
@@ -1237,6 +1250,37 @@ namespace Web {
       LXMF::InboxConfig::set(filesystem, cap, ttl);
       LXMF::LXMFGateway::apply_inbox_config_to_all();
       handle_inbox_config_get(req);
+    }
+
+    // GET /api/storage/config — current user-facing transfer caps
+    // alongside the effective (clamped-to-backing-store) values the
+    // SPA should bind its sliders' upper bound to.
+    static void handle_storage_config_get(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      const auto& cfg = Web::Storage::current();
+      JsonDocument doc;
+      doc["user_max_send_bytes"]      = (uint32_t)std::min<size_t>(cfg.user_max_send_bytes,    0xFFFFFFFFu);
+      doc["user_max_receive_bytes"]   = (uint32_t)std::min<size_t>(cfg.user_max_receive_bytes, 0xFFFFFFFFu);
+      doc["effective_max_send_bytes"] = (uint32_t)std::min<size_t>(Web::Storage::effective_max_send(),    0xFFFFFFFFu);
+      doc["effective_max_recv_bytes"] = (uint32_t)std::min<size_t>(Web::Storage::effective_max_receive(), 0xFFFFFFFFu);
+      doc["sd_present"]               = Web::SDCard::present();
+      send_json(req, 200, doc);
+    }
+
+    // POST /api/storage/config — body = {"user_max_send_bytes":uint,
+    // "user_max_receive_bytes":uint}. 0 means "restore default". The
+    // saved value is the user preference; the effective value (what
+    // actually gates transfers) is clamped to backing-store free
+    // space + the RNS protocol ceiling at enforcement time.
+    static void handle_storage_config_post(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      const auto& current = Web::Storage::current();
+      const uint32_t snd = body["user_max_send_bytes"]    | (uint32_t)current.user_max_send_bytes;
+      const uint32_t rcv = body["user_max_receive_bytes"] | (uint32_t)current.user_max_receive_bytes;
+      Web::Storage::set(filesystem, (size_t)snd, (size_t)rcv);
+      handle_storage_config_get(req);
     }
 
     // POST /api/sensors/config — body = {"sensor":"environment|magnetometer|imu",
@@ -1406,8 +1450,9 @@ namespace Web {
           err = "Invalid X-Total-Length header.";
           return;
         }
-        if (total64 > (unsigned long long)Web::OutboundStaging::ABSOLUTE_MAX_BYTES) {
-          err = "Requested upload size exceeds the device's absolute ceiling.";
+        const size_t eff_max = Web::Storage::effective_max_send();
+        if (total64 > (unsigned long long)eff_max) {
+          err = "Requested upload size exceeds the configured send cap.";
           return;
         }
         const size_t total = (size_t)total64;

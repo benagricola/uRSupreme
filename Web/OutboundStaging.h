@@ -45,26 +45,13 @@ namespace OutboundStaging {
 // PSRAM allocation cap. Leaves ~4 MB headroom after RNS containers
 // (~2 MB typical) + ArduinoJson docs (~0.5 MB transient). Tuned for
 // the Supreme's 8 MB part; can grow later if profiling shows room.
+// Backend selection criterion, not a user-facing cap.
 inline constexpr size_t   PSRAM_CAP_BYTES   = 4 * 1024 * 1024;
-// SD soft cap. Files this big over LoRa take hours; cap is more
-// about "don't accidentally fill the user's SD card" than ESP32 RAM.
-inline constexpr size_t   SD_CAP_BYTES      = 32 * 1024 * 1024;
 // LittleFS staging cap. The partition is 4.4 MB total; we share it
 // with inbox JSONL, attachments, identity meta, etc. Cap at 2 MB to
-// leave half the partition free for everything else even when the
-// user uploads the largest legal attachment.
+// leave half the partition free for everything else. Backend
+// selection criterion, not a user-facing cap.
 inline constexpr size_t   FLASH_CAP_BYTES   = 2 * 1024 * 1024;
-// Pick Flash over PSRAM when the requested size is at least this big
-// AND no SD is present. Below it we keep using PSRAM — small uploads
-// are fast there and don't put pressure on flash wear. The threshold
-// is chosen so a "snapshot photo" sized attachment (≤256 KB) stays in
-// RAM; anything larger goes through the disk path.
-inline constexpr size_t   FLASH_OVER_PSRAM_BYTES = 256 * 1024;
-// Hard ceiling enforced regardless of what the dynamic caps say. Even
-// if current_caps() ever reports a giant max_bytes, we will not honour
-// it. Defends against pathological client-supplied `total` values and
-// any future drift in how the caps are computed.
-inline constexpr size_t   ABSOLUTE_MAX_BYTES = 32 * 1024 * 1024;
 // Garbage-collect untouched buffers older than this. Browser may
 // upload and then disconnect; reclaim within a minute.
 inline constexpr uint32_t STAGING_TIMEOUT_MS = 60000;
@@ -126,13 +113,18 @@ namespace _detail {
   }
 }
 
-// Reported via /api/system_status so the SPA can gate its picker
+// Reported via WS system_update so the SPA can gate its picker
 // options + recorder duration to whatever the device can actually
-// accept. Backend selection priority (largest cap wins):
-//   1. SD    if mounted   — multi-GB headroom, no PSRAM impact
-//   2. Flash if no SD     — LittleFS partition, 2 MB cap, ~30x slower
-//                           writes than PSRAM but never OOMs
-//   3. PSRAM always available — fastest, used for sub-256KB uploads
+// accept. Backend selection priority follows the storage-hierarchy
+// rule (SD → PSRAM → Flash):
+//   1. SD    if mounted — multi-GB headroom, replaceable wear medium
+//   2. PSRAM if request fits — fastest, no flash wear
+//   3. Flash last resort   — LittleFS partition, internal flash wear
+// `max_bytes` is the largest single allocation the largest available
+// backend can hold; `chosen_backend` indicates which backend that is
+// for SPA display. The actual per-request backend pick happens in
+// allocate() and may differ (a small upload routes to PSRAM even
+// when SD is mounted).
 struct Caps {
   size_t  max_bytes;
   Backend chosen_backend;
@@ -140,18 +132,16 @@ struct Caps {
   size_t  flash_free;
   size_t  sd_free;
   bool    sd_present;
+  size_t  psram_max;
+  size_t  flash_max;
+  size_t  sd_max;
 };
 inline Caps current_caps() {
   Caps c{};
   c.sd_present = Web::SDCard::present();
   c.psram_free = (size_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-  // LittleFS free space — the same numbers /api/system_status surfaces
-  // under storage.flash. Cap the staging slice so we never starve
-  // inbox JSONL + identity meta + attachment receive path.
   {
-    const size_t total = (size_t)filesystem.storageSize();
     const size_t avail = (size_t)filesystem.storageAvailable();
-    (void)total;
     c.flash_free = avail;
   }
   if (c.sd_present) {
@@ -159,30 +149,24 @@ inline Caps current_caps() {
     const uint64_t used  = Web::SDCard::used_bytes();
     c.sd_free = (total > used) ? (size_t)(total - used) : 0;
   }
-  const size_t psram_max = (c.psram_free > 512 * 1024)
+  c.psram_max = (c.psram_free > 512 * 1024)
       ? std::min(PSRAM_CAP_BYTES, c.psram_free - 512 * 1024) : 0;
-  const size_t sd_max = c.sd_present
-      ? std::min(SD_CAP_BYTES, c.sd_free) : 0;
-  // Flash gets a 256 KB margin so a staging upload can't fill the
-  // partition right up against the inbox / identity files.
-  const size_t flash_max = (c.flash_free > 256 * 1024)
+  c.sd_max    = c.sd_present ? c.sd_free : 0;
+  c.flash_max = (c.flash_free > 256 * 1024)
       ? std::min(FLASH_CAP_BYTES, c.flash_free - 256 * 1024) : 0;
-  // SD wins outright when available. Else pick whichever of PSRAM or
-  // Flash is larger — but the call site (allocate) may still route a
-  // small upload through PSRAM even when Flash has a bigger cap.
-  if (sd_max > 0 && sd_max >= psram_max && sd_max >= flash_max) {
-    c.max_bytes      = sd_max;
+  // SD → PSRAM → Flash. Pick the largest-headroom backend in that
+  // priority order for the displayed default; allocate() refines
+  // per-request.
+  if (c.sd_max > 0) {
+    c.max_bytes      = c.sd_max;
     c.chosen_backend = Backend::Sd;
-  } else if (flash_max > psram_max) {
-    c.max_bytes      = flash_max;
-    c.chosen_backend = Backend::Flash;
-  } else {
-    c.max_bytes      = psram_max;
+  } else if (c.psram_max > 0) {
+    c.max_bytes      = c.psram_max;
     c.chosen_backend = Backend::Psram;
+  } else {
+    c.max_bytes      = c.flash_max;
+    c.chosen_backend = Backend::Flash;
   }
-  // Defense-in-depth: never report more than the absolute ceiling, no
-  // matter what the underlying backend says is free.
-  if (c.max_bytes > ABSOLUTE_MAX_BYTES) c.max_bytes = ABSOLUTE_MAX_BYTES;
   return c;
 }
 
@@ -195,17 +179,13 @@ inline const char* backend_name(Backend b) {
 }
 
 // Allocate a new staging buffer. Returns 0 on failure (over cap,
-// PSRAM exhausted, SD write-fail). The size check rejects the request
-// before any allocation happens, so a malicious or buggy client can't
-// trigger a PSRAM exhaustion / SD fill through a wildly inflated
-// `total` parameter.
+// PSRAM exhausted, SD write-fail). The user-facing transfer cap
+// (Web::Storage::effective_max_send) is enforced by the caller
+// before this point; allocate() only enforces backing-store
+// reality.
 inline uint32_t allocate(size_t total_bytes) {
   _detail::gc(millis());
-  if (total_bytes == 0 || total_bytes > ABSOLUTE_MAX_BYTES) {
-    WARNINGF("OutboundStaging: refusing alloc — %u bytes outside absolute bounds (0, %u]",
-             (unsigned)total_bytes, (unsigned)ABSOLUTE_MAX_BYTES);
-    return 0;
-  }
+  if (total_bytes == 0) return 0;
   const Caps c = current_caps();
   if (total_bytes > c.max_bytes) {
     WARNINGF("OutboundStaging: refusing alloc — %u bytes > dynamic cap %u",
@@ -216,18 +196,21 @@ inline uint32_t allocate(size_t total_bytes) {
   b.id          = _detail::next_id()++;
   b.total_bytes = total_bytes;
   b.created_ms  = millis();
-  // Backend selection refinement: even when current_caps() picked
-  // Flash as the largest available, route small uploads (<256 KB)
-  // through PSRAM. RAM is faster and we don't want to wear flash on
-  // every audio recording / thumbnail attach.
-  b.backend = c.chosen_backend;
-  if (b.backend == Backend::Flash && total_bytes < FLASH_OVER_PSRAM_BYTES) {
-    // Only route through PSRAM if it actually fits — otherwise stick
-    // with the disk path even for a small file. The current_caps
-    // psram_max already includes its margin.
-    const size_t psram_avail = (c.psram_free > 512 * 1024)
-        ? std::min(PSRAM_CAP_BYTES, c.psram_free - 512 * 1024) : 0;
-    if (psram_avail >= total_bytes) b.backend = Backend::Psram;
+  // Storage hierarchy: SD → PSRAM → Flash. SD wins whenever
+  // mounted and large enough; else PSRAM if the request fits;
+  // else Flash. Internal flash is last resort because its write
+  // cycles wear the device — SD wear is replaceable for £5.
+  if (c.sd_max >= total_bytes) {
+    b.backend = Backend::Sd;
+  } else if (c.psram_max >= total_bytes) {
+    b.backend = Backend::Psram;
+  } else if (c.flash_max >= total_bytes) {
+    b.backend = Backend::Flash;
+  } else {
+    WARNINGF("OutboundStaging: no backend fits %u bytes (sd=%u psram=%u flash=%u)",
+             (unsigned)total_bytes, (unsigned)c.sd_max,
+             (unsigned)c.psram_max, (unsigned)c.flash_max);
+    return 0;
   }
   if (b.backend == Backend::Psram) {
     b.psram_ptr = (uint8_t*)heap_caps_malloc(total_bytes, MALLOC_CAP_SPIRAM);

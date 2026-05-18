@@ -179,6 +179,12 @@ namespace Web {
           release_rns_lock();
         }
       }
+      // Deferred-reboot check — endpoints that change EEPROM (radio,
+      // wifi, factory reset, etc.) schedule the reboot for ~5 s
+      // after responding so the SPA can show "Saved, rebooting…"
+      // rather than getting a TCP-drop error mid-flight.
+      check_scheduled_reboot();
+
       // SD ejection edge — verify_or_disable in the SD write paths
       // flips a flag when a card stops responding mid-session. Drain
       // it here so the SPA's Settings sliders + toast respond
@@ -282,6 +288,47 @@ namespace Web {
       reticulum.persist_data();
       delay(flush_ms);
       ESP.restart();
+    }
+
+    // Defer the reboot a few seconds so the calling handler's HTTP
+    // response goes back cleanly and the SPA can show "saved,
+    // rebooting in Ns" instead of getting a connection-drop error
+    // mid-flight. The check fires from WebUI::loop on the same task
+    // that serves requests, so by the time it runs the response is
+    // long since flushed. Idempotent — second call with a smaller
+    // delay wins, second call with the same/larger delay is a no-op.
+    static inline uint32_t _scheduled_reboot_at_ms = 0;
+    static void schedule_reboot(uint32_t delay_ms = 5000) {
+      const uint32_t target = millis() + delay_ms;
+      if (_scheduled_reboot_at_ms == 0 || target < _scheduled_reboot_at_ms) {
+        _scheduled_reboot_at_ms = target;
+      }
+    }
+    static uint32_t scheduled_reboot_ms_remaining() {
+      if (_scheduled_reboot_at_ms == 0) return 0;
+      const uint32_t now = millis();
+      return (now >= _scheduled_reboot_at_ms) ? 0
+           : (_scheduled_reboot_at_ms - now);
+    }
+    static void check_scheduled_reboot() {
+      if (_scheduled_reboot_at_ms == 0) return;
+      if (millis() < _scheduled_reboot_at_ms) return;
+      // Time's up — flush + reboot. Use persist_and_restart's
+      // existing semantics so any pending RNS state lands on disk.
+      persist_and_restart(100);
+    }
+
+    // Send a 200 JSON response that carries a reboot_in_ms hint, then
+    // arm the deferred reboot. Lets the SPA show a countdown card
+    // instead of getting a TCP-drop error mid-flight. The actual
+    // reboot fires from WebUI::loop, well after the response has been
+    // flushed.
+    static void respond_and_reboot(AsyncWebServerRequest* req,
+                                   JsonDocument& doc,
+                                   uint32_t delay_ms = 5000) {
+      doc["reboot_in_ms"] = delay_ms;
+      send_json(req, 200, doc);
+      schedule_reboot(delay_ms);
     }
 
     // AsyncWebServer drives requests from AsyncTCP's own task — no
@@ -1384,8 +1431,7 @@ namespace Web {
       JsonDocument doc;
       doc["status"]  = "wiped";
       doc["restart"] = true;
-      send_json(req, 200, doc);
-      persist_and_restart();
+      respond_and_reboot(req, doc);
     }
 
     // DELETE /api/identities/{id}/conversations/{peer_hex}
@@ -2174,10 +2220,8 @@ namespace Web {
       JsonDocument doc;
       doc["status"]  = "saved";
       doc["restart"] = true;
-      send_json(req, 200, doc);
-
-      // Reboot so STA mode applies cleanly.
-      persist_and_restart();
+      // Deferred reboot so the response flushes cleanly.
+      respond_and_reboot(req, doc);
     }
 
     // GET /api/wifi/saved — list the WiFi networks the device has
@@ -2253,8 +2297,7 @@ namespace Web {
       JsonDocument doc;
       doc["status"]  = "forgotten";
       doc["restart"] = true;
-      send_json(req, 200, doc);
-      persist_and_restart();
+      respond_and_reboot(req, doc);
     }
 
     // POST /api/wifi/softap — switch the live WiFi stack from STA to
@@ -2389,8 +2432,7 @@ namespace Web {
       JsonDocument doc;
       doc["status"]  = "saved";
       doc["restart"] = true;
-      send_json(req, 200, doc);
-      persist_and_restart();
+      respond_and_reboot(req, doc);
     }
 
     static void handle_radio_reset(AsyncWebServerRequest* req, JsonVariant& body) {
@@ -2400,8 +2442,7 @@ namespace Web {
       JsonDocument doc;
       doc["status"]  = "cleared";
       doc["restart"] = true;
-      send_json(req, 200, doc);
-      persist_and_restart();
+      respond_and_reboot(req, doc);
     }
 
     // POST /api/radio/airtime — set short / long airtime duty-cycle caps

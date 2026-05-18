@@ -56,6 +56,19 @@ button, input, textarea, select {
 button { background: var(--accent-2); border-color: var(--accent-3); cursor: pointer; }
 button:hover { background: var(--accent-3); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.is-busy::before {
+  content: '';
+  display: inline-block;
+  width: 12px; height: 12px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin 0.7s linear infinite;
+  margin-right: 8px;
+  vertical-align: -2px;
+}
+button.is-busy { opacity: 1; cursor: progress; }
+@keyframes btn-spin { to { transform: rotate(360deg); } }
 button.secondary { background: var(--bg-elev-2); border-color: var(--border); }
 button.secondary:hover { background: var(--bg-hover); }
 button.ghost { background: transparent; border-color: transparent; padding: 6px 8px; }
@@ -1427,6 +1440,54 @@ function relTime(tsSec) {
 function shortHex(h) { return h ? (h.length > 8 ? h.slice(0,8) + '…' : h) : ''; }
 function nameFor(peerHex) {
   return state.contacts[peerHex] || shortHex(peerHex);
+}
+
+// ============================== BUSY ==============================
+// Generic async-button wrapper. Any click handler whose action waits
+// on the device — POST, multi-step setup, anything that takes more
+// than ~100 ms to surface a visible result — should run through this.
+// Pattern:
+//
+//   $('btn-foo').addEventListener('click', () => withBusy($('btn-foo'),
+//     async () => {
+//       await state.transport.doThing();
+//       toast('Done', 'success');
+//     },
+//     { label: 'Saving…', alsoDisable: ['#in-foo', '#btn-cancel'] }
+//   ));
+//
+// During the async fn the button gets a spinner glyph, its label is
+// optionally swapped, and it is disabled along with any peer inputs
+// in `alsoDisable`. Re-entry is suppressed via a busy data attribute
+// so double-clicks during the in-flight request are no-ops. The
+// finally block restores everything — safe even if the async fn
+// triggers a view transition or full-page replacement (the original
+// button is just detached at that point and the restoration is a
+// no-op on dead nodes).
+//
+// Errors propagate to the caller; the wrapper only owns the visual
+// state. Catch + toast inside the async fn (or above the call) as
+// usual.
+async function withBusy(btn, asyncFn, opts = {}) {
+  if (!btn || btn.dataset.busy) return;
+  btn.dataset.busy = '1';
+  const originalText = btn.textContent;
+  if (opts.label) btn.textContent = opts.label;
+  btn.classList.add('is-busy');
+  btn.disabled = true;
+  const peers = (opts.alsoDisable || [])
+    .map(sel => (typeof sel === 'string') ? document.querySelector(sel) : sel)
+    .filter(Boolean);
+  for (const el of peers) el.disabled = true;
+  try {
+    return await asyncFn();
+  } finally {
+    btn.disabled = false;
+    for (const el of peers) el.disabled = false;
+    btn.textContent = originalText;
+    btn.classList.remove('is-busy');
+    delete btn.dataset.busy;
+  }
 }
 
 // ============================== TOAST ==============================
@@ -3730,26 +3791,21 @@ $('sys-storage-migrate').addEventListener('click', async () => {
     okLabel: 'Move',
   });
   if (!ok) return;
-  const btn  = $('sys-storage-migrate');
-  const out  = $('sys-storage-migrate-result');
-  btn.disabled = true;
-  btn.textContent = 'Moving…';
-  out.textContent = '';
-  try {
-    const r = await state.transport._req('/api/storage/migrate_flash_to_sd', { method: 'POST' });
-    const parts = [];
-    if (r.moved)   parts.push(r.moved + ' moved (' + formatBytes(r.bytes || 0) + ')');
-    if (r.skipped) parts.push(r.skipped + ' already on SD');
-    if (r.failed)  parts.push(r.failed + ' failed');
-    const summary = parts.length ? parts.join(' · ') : 'No flash attachments to migrate';
-    toast(summary, r.failed ? 'warn' : 'info');
-    if (state.system) renderSystemPopover(state.system);
-  } catch (e) {
-    toast('Migration failed: ' + (e.message || e), 'warn');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Move flash attachments to SD card';
-  }
+  $('sys-storage-migrate-result').textContent = '';
+  await withBusy($('sys-storage-migrate'), async () => {
+    try {
+      const r = await state.transport._req('/api/storage/migrate_flash_to_sd', { method: 'POST' });
+      const parts = [];
+      if (r.moved)   parts.push(r.moved + ' moved (' + formatBytes(r.bytes || 0) + ')');
+      if (r.skipped) parts.push(r.skipped + ' already on SD');
+      if (r.failed)  parts.push(r.failed + ' failed');
+      const summary = parts.length ? parts.join(' · ') : 'No flash attachments to migrate';
+      toast(summary, r.failed ? 'warn' : 'info');
+      if (state.system) renderSystemPopover(state.system);
+    } catch (e) {
+      toast('Migration failed: ' + (e.message || e), 'warn');
+    }
+  }, { label: 'Moving…' });
 });
 
 // ============================== SYSTEM POPOVER — sensor config ==============================
@@ -3848,19 +3904,16 @@ function updateSensorConfigUI(s) {
     attachSensorConfigToggle(section);
   }
 }
-$('btn-toggle-transport').addEventListener('click', async () => {
+$('btn-toggle-transport').addEventListener('click', () => withBusy($('btn-toggle-transport'), async () => {
   const cur = !!(state.lastInfo && state.lastInfo.transport && state.lastInfo.transport.enabled);
-  $('btn-toggle-transport').disabled = true;
   try {
     await state.transport.setTransportEnabled(!cur);
     toast(cur ? 'Transport disabled' : 'Transport enabled', 'success');
     await refreshStatus();
   } catch (e) {
     toast('Toggle failed: ' + (e.message || e), 'error');
-  } finally {
-    $('btn-toggle-transport').disabled = false;
   }
-});
+}));
 $('btn-force-softap').addEventListener('click', async () => {
   const r = await showConfirm({
     title: 'Switch to softAP?',
@@ -3870,18 +3923,15 @@ $('btn-force-softap').addEventListener('click', async () => {
     needsCode: true,
   });
   if (!r) return;
-  $('btn-force-softap').disabled = true;
-  try {
-    await state.transport._req('/api/wifi/softap', { method: 'POST', body: { identity_code: r.code } });
-    toast('Device switching to softAP — reconnect to the bootstrap network.', 'info');
-    // No reload — the browser is about to lose its TCP connection
-    // anyway when the AP comes up on the new SSID. Hide the popover.
-    $('popover-status').hidden = true;
-  } catch (e) {
-    toast('softAP switch failed: ' + (e.message || e), 'error');
-  } finally {
-    $('btn-force-softap').disabled = false;
-  }
+  await withBusy($('btn-force-softap'), async () => {
+    try {
+      await state.transport._req('/api/wifi/softap', { method: 'POST', body: { identity_code: r.code } });
+      toast('Device switching to softAP — reconnect to the bootstrap network.', 'info');
+      $('popover-status').hidden = true;
+    } catch (e) {
+      toast('softAP switch failed: ' + (e.message || e), 'error');
+    }
+  }, { label: 'Switching…' });
 });
 // Slow background refresh — once a minute is enough for an indicator
 // that mainly changes after a reboot or a deliberate toggle.
@@ -4288,56 +4338,18 @@ async function bsRescan() {
   } catch (e) { sel.innerHTML = '<option value="">(scan failed)</option>'; }
 }
 $('bs-rescan').addEventListener('click', bsRescan);
-$('bs-save').addEventListener('click', async () => {
+$('bs-save').addEventListener('click', () => withBusy($('bs-save'), async () => {
   const ssid = $('bs-ssid').value || '';
   if (!ssid) { toast('Pick a network first', 'warn'); return; }
   const code = ($('bs-code').value || '').trim();
   if (!code) { toast('Enter the identity code from the device OLED', 'warn'); return; }
-  // The wifiConfigure POST writes EEPROM + initiates the reboot —
-  // the device drops the TCP connection before responding, so the
-  // request can take 1-3 s to fail/return. Show immediate feedback
-  // so the user doesn't double-click or wonder if their press
-  // registered. Same pattern as btn-login-go.
-  const btn  = $('bs-save');
-  const ssidSel = $('bs-ssid');
-  const psk  = $('bs-psk');
-  const codeIn = $('bs-code');
-  const rescan = $('bs-rescan');
-  const skip = $('bs-skip');
-  if (btn.dataset.busy) return;
-  btn.dataset.busy = '1';
-  const originalText = btn.textContent;
-  btn.textContent = 'Saving WiFi…';
-  btn.disabled = true;
-  ssidSel.disabled = true;
-  psk.disabled = true;
-  codeIn.disabled = true;
-  rescan.disabled = true;
-  skip.disabled = true;
   try {
-    await state.transport.wifiConfigure(ssid, psk.value, code);
+    await state.transport.wifiConfigure(ssid, $('bs-psk').value, code);
     waitForDeviceAndReload('Saving WiFi & rebooting…');
   } catch (e) {
-    // No HTTP status = the TCP connection went away mid-request,
-    // which is the expected shape when the device accepts the
-    // config and immediately reboots. Surface it as a reboot, not
-    // a failure. Only surface a real toast for server-side
-    // rejections (auth, validation, etc).
-    if (!e.status) {
-      waitForDeviceAndReload('Saving WiFi & rebooting…');
-      return;
-    }
     toast('Save failed: ' + (e.message || e), 'error');
-    btn.disabled = false;
-    ssidSel.disabled = false;
-    psk.disabled = false;
-    codeIn.disabled = false;
-    rescan.disabled = false;
-    skip.disabled = false;
-    btn.textContent = originalText;
-    delete btn.dataset.busy;
   }
-});
+}, { label: 'Saving WiFi…', alsoDisable: ['#bs-ssid', '#bs-psk', '#bs-code', '#bs-rescan', '#bs-skip'] }));
 // Skip — let the user proceed into the chat UI without configuring a home
 // WiFi network. Useful for standalone / off-grid operation from the softAP
 // itself. Routes the same way as a normal boot (identity picker if no
@@ -4367,28 +4379,34 @@ $('btn-factory-reset').addEventListener('click', async () => {
     destructive: true,
   });
   if (!ok) return;
-  try {
-    await state.transport.factoryReset($('fr-code').value);
-    waitForDeviceAndReload('Factory-resetting & rebooting…');
-  } catch (e) { toast('Reset failed: ' + (e.message || e), 'error'); }
+  await withBusy($('btn-factory-reset'), async () => {
+    try {
+      await state.transport.factoryReset($('fr-code').value);
+      waitForDeviceAndReload('Factory-resetting & rebooting…');
+    } catch (e) {
+      toast('Reset failed: ' + (e.message || e), 'error');
+    }
+  }, { label: 'Resetting…', alsoDisable: ['#fr-code', '#btn-show-create'] });
 });
 
 // ============================== CREATE WIRING ==============================
 $('btn-create-cancel').addEventListener('click', enterIdentityPicker);
-$('btn-create-go').addEventListener('click', async () => {
+$('btn-create-go').addEventListener('click', () => {
   if ($('cr-pw1').value !== $('cr-pw2').value) { toast('Passwords do not match', 'warn'); return; }
   if ($('cr-pw1').value.length < 8) { toast('Password must be at least 8 chars', 'warn'); return; }
-  try {
-    const r = await state.transport.createIdentity($('cr-name').value, $('cr-pw1').value, $('cr-code').value);
-    state.token = r.token;
-    state.identityId = r.id;
-    localStorage.setItem(LS.TOKEN, r.token);
-    localStorage.setItem(LS.IDENTITY, r.id);
-    state.identities = ((await state.transport.getInfo()).identities) || [];
-    state.self = state.identities.find(x => x.id === r.id) || { id: r.id, address: r.address, display_name: $('cr-name').value };
-    await refreshState();
-    enterApp();
-  } catch (e) { toast('Create failed: ' + (e.message || e), 'error'); }
+  return withBusy($('btn-create-go'), async () => {
+    try {
+      const r = await state.transport.createIdentity($('cr-name').value, $('cr-pw1').value, $('cr-code').value);
+      state.token = r.token;
+      state.identityId = r.id;
+      localStorage.setItem(LS.TOKEN, r.token);
+      localStorage.setItem(LS.IDENTITY, r.id);
+      state.identities = ((await state.transport.getInfo()).identities) || [];
+      state.self = state.identities.find(x => x.id === r.id) || { id: r.id, address: r.address, display_name: $('cr-name').value };
+      await refreshState();
+      enterApp();
+    } catch (e) { toast('Create failed: ' + (e.message || e), 'error'); }
+  }, { label: 'Creating…', alsoDisable: ['#btn-create-cancel', '#cr-name', '#cr-pw1', '#cr-pw2', '#cr-code'] });
 });
 
 // ============================== LOGIN WIRING ==============================
@@ -4397,23 +4415,9 @@ $('btn-login-back').addEventListener('click', enterIdentityPicker);
 $('login-pw').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); $('btn-login-go').click(); }
 });
-$('btn-login-go').addEventListener('click', async () => {
-  // Login involves a round trip to the device (auth + announce-on-login
-  // packet send) which can take 1-2 s. Lock the form and show a
-  // progress label so the user doesn't double-click or wonder if
-  // their press registered.
-  const btn = $('btn-login-go');
-  const pw  = $('login-pw');
-  const back = $('btn-login-back');
-  if (btn.dataset.busy) return;  // ignore re-entry while a login is in flight
-  btn.dataset.busy = '1';
-  const originalText = btn.textContent;
-  btn.textContent = 'Logging in…';
-  btn.disabled = true;
-  pw.disabled = true;
-  back.disabled = true;
+$('btn-login-go').addEventListener('click', () => withBusy($('btn-login-go'), async () => {
   try {
-    const r = await state.transport.login(state.identityId, pw.value);
+    const r = await state.transport.login(state.identityId, $('login-pw').value);
     state.token = r.token;
     state.identityId = r.identityId;
     localStorage.setItem(LS.TOKEN, r.token);
@@ -4424,14 +4428,8 @@ $('btn-login-go').addEventListener('click', async () => {
   } catch (e) {
     if (e.status === 401) toast('Wrong password', 'error');
     else toast('Login failed: ' + (e.message || e), 'error');
-  } finally {
-    btn.disabled = false;
-    pw.disabled = false;
-    back.disabled = false;
-    btn.textContent = originalText;
-    delete btn.dataset.busy;
   }
-});
+}, { label: 'Logging in…', alsoDisable: ['#login-pw', '#btn-login-back'] }));
 
 // ============================== APP WIRING ==============================
 $('btn-new-conv').addEventListener('click', () => {
@@ -4549,19 +4547,21 @@ $('btn-clear-conv').addEventListener('click', async () => {
     destructive: true,
   });
   if (!ok) return;
-  try {
-    await state.transport.clearConversation(state.identityId, peer);
-    state.conversations.delete(peer);
-    state.openPeer = null;
-    renderConversations();
-    renderThread();
-    toast('Conversation cleared', 'ok');
-  } catch (e) {
-    toast('Clear failed: ' + (e.message || e), 'error');
-  }
+  await withBusy($('btn-clear-conv'), async () => {
+    try {
+      await state.transport.clearConversation(state.identityId, peer);
+      state.conversations.delete(peer);
+      state.openPeer = null;
+      renderConversations();
+      renderThread();
+      toast('Conversation cleared', 'ok');
+    } catch (e) {
+      toast('Clear failed: ' + (e.message || e), 'error');
+    }
+  }, { label: 'Clearing…' });
 });
 $('btn-announce-top').addEventListener('click', forceAnnounce);
-$('btn-radio-save').addEventListener('click', async () => {
+$('btn-radio-save').addEventListener('click', () => withBusy($('btn-radio-save'), async () => {
   try {
     // Single save path — /api/radio now persists airtime caps alongside
     // the band params so a region preset's regulatory limits survive a
@@ -4577,8 +4577,10 @@ $('btn-radio-save').addEventListener('click', async () => {
       longterm_airtime_limit_pct: Number($('rd-airtime-lt').value),
     });
     waitForDeviceAndReload('Saving radio config & rebooting…');
-  } catch (e) { toast('Save failed: ' + (e.message || e), 'error'); }
-});
+  } catch (e) {
+    toast('Save failed: ' + (e.message || e), 'error');
+  }
+}, { label: 'Saving radio…' }));
 // Connectivity tab: accordion exclusivity — close every other section
 // when one opens, so the tab never grows taller than the modal.
 for (const det of document.querySelectorAll('#modal-settings .cn-section')) {
@@ -4596,7 +4598,7 @@ for (const det of document.querySelectorAll('#modal-settings .cn-section')) {
 $('btn-wifi-add').addEventListener('click', openAddWifiModal);
 $('cn-wifi-cancel').addEventListener('click', () => { $('modal-wifi-add').hidden = true; });
 $('cn-wifi-scan').addEventListener('click', scanIntoWifiModal);
-$('cn-wifi-save').addEventListener('click', async () => {
+$('cn-wifi-save').addEventListener('click', () => withBusy($('cn-wifi-save'), async () => {
   const ssid = $('cn-wifi-ssid').value;
   if (!ssid) { toast('Pick a network first.', 'error'); return; }
   const psk  = $('cn-wifi-psk').value;
@@ -4609,7 +4611,7 @@ $('cn-wifi-save').addEventListener('click', async () => {
   } catch (e) {
     toast('WiFi save failed: ' + (e.message || e), 'error');
   }
-});
+}, { label: 'Saving WiFi…', alsoDisable: ['#cn-wifi-ssid', '#cn-wifi-psk', '#cn-wifi-code', '#cn-wifi-scan', '#cn-wifi-cancel'] }));
 
 async function openAddWifiModal() {
   fillIdCodeHints();
@@ -5093,9 +5095,7 @@ function attachTimeSourceDnD(row) {
   });
 }
 
-$('btn-tm-browser-sync').addEventListener('click', async (ev) => {
-  ev.target.disabled = true;
-  ev.target.textContent = 'Syncing…';
+$('btn-tm-browser-sync').addEventListener('click', () => withBusy($('btn-tm-browser-sync'), async () => {
   try {
     const r = await state.transport._req('/api/time',
       { method: 'POST', body: { unix_ms: Date.now() } });
@@ -5109,14 +5109,10 @@ $('btn-tm-browser-sync').addEventListener('click', async (ev) => {
     renderTimeStatus(r);
   } catch (e) {
     toast('Sync failed: ' + (e.message || e), 'error');
-  } finally {
-    ev.target.disabled = false;
-    ev.target.textContent = 'Sync to browser time';
   }
-});
+}, { label: 'Syncing…' }));
 
-$('btn-tm-save').addEventListener('click', async (ev) => {
-  ev.target.disabled = true;
+$('btn-tm-save').addEventListener('click', () => withBusy($('btn-tm-save'), async () => {
   // Walk the rows in their current DOM order — that's the user's
   // preferred priority sequence. Index = priority (0 = highest).
   const body = { sources: {} };
@@ -5140,10 +5136,8 @@ $('btn-tm-save').addEventListener('click', async (ev) => {
     renderTimeSources(r.sources || {});
   } catch (e) {
     toast('Save failed: ' + (e.message || e), 'error');
-  } finally {
-    ev.target.disabled = false;
   }
-});
+}, { label: 'Saving…' }));
 
 $('cn-kiss-out').addEventListener('change', async (ev) => {
   const enabled = ev.target.checked;
@@ -5455,12 +5449,14 @@ $('btn-delete-self').addEventListener('click', async () => {
     destructive: true,
   });
   if (!ok) return;
-  try {
-    await state.transport.deleteIdentity(state.identityId);
-    state.token = null; state.identityId = null;
-    localStorage.removeItem(LS.TOKEN); localStorage.removeItem(LS.IDENTITY);
-    location.reload();
-  } catch (e) { toast('Delete failed: ' + (e.message || e), 'error'); }
+  await withBusy($('btn-delete-self'), async () => {
+    try {
+      await state.transport.deleteIdentity(state.identityId);
+      state.token = null; state.identityId = null;
+      localStorage.removeItem(LS.TOKEN); localStorage.removeItem(LS.IDENTITY);
+      location.reload();
+    } catch (e) { toast('Delete failed: ' + (e.message || e), 'error'); }
+  }, { label: 'Deleting…' });
 });
 
 $('btn-fr2').addEventListener('click', async () => {
@@ -5471,19 +5467,23 @@ $('btn-fr2').addEventListener('click', async () => {
     destructive: true,
   });
   if (!ok) return;
-  try {
-    await state.transport.factoryReset($('fr2-code').value);
-    waitForDeviceAndReload('Factory-resetting & rebooting…');
-  } catch (e) { toast('Reset failed: ' + (e.message || e), 'error'); }
+  await withBusy($('btn-fr2'), async () => {
+    try {
+      await state.transport.factoryReset($('fr2-code').value);
+      waitForDeviceAndReload('Factory-resetting & rebooting…');
+    } catch (e) {
+      toast('Reset failed: ' + (e.message || e), 'error');
+    }
+  }, { label: 'Resetting…', alsoDisable: ['#fr2-code'] });
 });
 
-$('btn-logout').addEventListener('click', async () => {
+$('btn-logout').addEventListener('click', () => withBusy($('btn-logout'), async () => {
   try { await state.transport.logout(); } catch {}
   state.token = null;
   localStorage.removeItem(LS.TOKEN);
   if (_unsubscribe) { _unsubscribe(); _unsubscribe = null; }
   location.reload();
-});
+}));
 
 // ============================== IDENTITY CODE MODAL ==============================
 function openIdCodeModal() {

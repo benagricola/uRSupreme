@@ -23,7 +23,12 @@ namespace InboxConfig {
 inline constexpr const char* CONFIG_PATH = "/lxmf/inbox_config.json";
 
 struct Config {
-  size_t   ram_capacity = LXMFInbox::DEFAULT_RAM_CAPACITY;   // SIZE_MAX = unlimited
+  // Default is unlimited: with body-spill landing on disk, in-RAM
+  // records are only ~200 B each (metadata + inline-short-body), so
+  // 10k records cost ~2 MiB of PSRAM — fine. Age-based TTL is the
+  // intended eviction policy. The constant is still exposed for
+  // niche cases where someone explicitly wants a count cap.
+  size_t   ram_capacity = LXMFInbox::UNLIMITED_CAPACITY;     // SIZE_MAX = unlimited
   uint32_t ttl_seconds  = 0;                                  // 0 = TTL off
 };
 

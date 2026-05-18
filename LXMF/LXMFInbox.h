@@ -44,6 +44,23 @@ namespace LXMF {
     static constexpr size_t DEFAULT_RAM_CAPACITY = 200;
     static constexpr size_t UNLIMITED_CAPACITY   = SIZE_MAX;
     static constexpr size_t MAX_LINE_BYTES       = 4096;
+    // Bodies whose wire size needed Link+Resource transport (i.e. >319
+    // bytes encoded; the LXMF in-link PACKET limit) spill to a per-
+    // message file rather than embedding inline in the JSONL line.
+    // Same threshold drives the outbound streaming refactor. Below it,
+    // bodies fit single-packet OPPORTUNISTIC / in-link DATA, stay
+    // inline in the JSONL for cheap single-disk-read lookup.
+    static constexpr size_t BODY_SPILL_THRESHOLD = 319;
+
+    // Body-storage callbacks. The path is the absolute filesystem path
+    // the inbox wants to use (e.g. "/lxmf/<id>/inbox/<seq>.body"); the
+    // caller's writer/reader implementation handles SD-first then-flash
+    // routing the same way the attachment layer does — same path string
+    // is tried against SD via the SDCard helpers, falls back to flash
+    // via microStore::filesystem.
+    using BodyWriter = std::function<bool(const std::string& path, const std::string& content)>;
+    using BodyReader = std::function<bool(const std::string& path, std::string& out_content)>;
+    using BodyRemover = std::function<void(const std::string& path)>;
 
     LXMFInbox(const std::string& identity_dir,
               const char* filename,
@@ -52,7 +69,26 @@ namespace LXMF {
       : _path(identity_dir + "/" + filename),
         _ram_capacity(ram_capacity),
         _ttl_seconds(ttl_seconds),
-        _next_seq(0) {}
+        _next_seq(0)
+    {
+      // mailbox_stem = filename without ".jsonl" extension (used for
+      // body-spill subdir: <identity_dir>/<mailbox_stem>/<seq>.body).
+      std::string f = filename;
+      const size_t dot = f.find_last_of('.');
+      _mailbox_stem = (dot != std::string::npos) ? f.substr(0, dot) : f;
+      _body_dir = identity_dir + "/" + _mailbox_stem;
+    }
+
+    void set_body_storage(BodyWriter w, BodyReader r, BodyRemover d) {
+      _body_writer  = std::move(w);
+      _body_reader  = std::move(r);
+      _body_remover = std::move(d);
+    }
+    // Absolute path for the body file of a given seq. The writer/reader
+    // callbacks see this path and pick the backend (SD-first then flash).
+    std::string body_path_for(uint32_t seq) const {
+      return _body_dir + "/" + std::to_string(seq) + ".body";
+    }
 
     // Runtime overrides. set_capacity rewrites the spool if it
     // tightens the bound below the current ring size. set_ttl_seconds
@@ -154,7 +190,21 @@ namespace LXMF {
       doc["recv_ms"] = rec.received_ms;
       doc["peer"]    = rec.peer_hash.toHex();
       doc["title"]   = rec.title;
-      doc["body"]    = rec.content;
+      // Body-spill: anything > BODY_SPILL_THRESHOLD (319 bytes — the
+      // transport-derived watershed for Link+Resource sends) goes to a
+      // per-message file rather than embedding inline in the JSONL line.
+      // Falls back to inline if the writer isn't configured or the disk
+      // write fails — the JSONL line might then be oversize and rejected
+      // by the serialization check below, but that surfaces clearly
+      // rather than silently truncating.
+      bool spilled = false;
+      if (rec.content.size() > BODY_SPILL_THRESHOLD && _body_writer) {
+        if (_body_writer(body_path_for(rec.seq), rec.content)) {
+          doc["body_disk"] = true;
+          spilled = true;
+        }
+      }
+      if (!spilled) doc["body"] = rec.content;
       doc["in"]      = rec.incoming;
       doc["sig"]     = rec.signature_ok;
       doc["status"]  = outbox_status_name(rec.status);
@@ -311,7 +361,24 @@ namespace LXMF {
       std::string peer_hex = doc["peer"]    | "";
       rec.peer_hash.assignHex(peer_hex.c_str());
       rec.title    = (const char*)(doc["title"] | "");
-      rec.content  = (const char*)(doc["body"]  | "");
+      // body_disk: load from spill file when set; falls back to inline
+      // body for legacy records that pre-date the spill mechanism.
+      if (doc["body_disk"] | false) {
+        if (_body_reader) {
+          std::string body;
+          if (_body_reader(body_path_for(rec.seq), body)) {
+            rec.content = body;
+          } else {
+            WARNINGF("LXMFInbox: body_disk=true but body file missing for seq=%u",
+                     (unsigned)rec.seq);
+            rec.content = "";
+          }
+        } else {
+          rec.content = "";
+        }
+      } else {
+        rec.content = (const char*)(doc["body"]  | "");
+      }
       rec.incoming = (bool)(doc["in"]  | false);
       rec.signature_ok = (bool)(doc["sig"] | false);
       const char* status_str = doc["status"] | "delivered";
@@ -354,7 +421,18 @@ namespace LXMF {
         doc["recv_ms"] = copy.received_ms;
         doc["peer"]    = copy.peer_hash.toHex();
         doc["title"]   = copy.title;
-        doc["body"]    = copy.content;
+        // Match append()'s spill rule: bodies above the threshold keep
+        // their on-disk spill file (already written at original append
+        // time; re-spill defensively in case the file was lost). Smaller
+        // bodies inline.
+        bool spilled = false;
+        if (copy.content.size() > BODY_SPILL_THRESHOLD && _body_writer) {
+          if (_body_writer(body_path_for(copy.seq), copy.content)) {
+            doc["body_disk"] = true;
+            spilled = true;
+          }
+        }
+        if (!spilled) doc["body"] = copy.content;
         doc["in"]      = copy.incoming;
         doc["sig"]     = copy.signature_ok;
         doc["status"]  = outbox_status_name(copy.status);
@@ -395,11 +473,16 @@ namespace LXMF {
     }
 
     std::string                _path;
+    std::string                _mailbox_stem;  // "inbox" or "outbox"
+    std::string                _body_dir;      // <identity_dir>/<mailbox_stem>
     size_t                     _ram_capacity;
     uint32_t                   _ttl_seconds = 0;
     uint32_t                   _next_seq;
     std::deque<MessageRecord>  _ring;
     std::function<void(const MessageRecord&)> _on_remove;
+    BodyWriter                 _body_writer;
+    BodyReader                 _body_reader;
+    BodyRemover                _body_remover;
   };
 
 } // namespace LXMF

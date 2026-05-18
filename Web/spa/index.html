@@ -1242,11 +1242,11 @@ summary:hover { color: var(--text); }
           <div class="muted" style="margin-top:4px;margin-bottom:10px">Caps how many messages each identity keeps. Oldest are pruned when either limit is hit. Applies to every identity's inbox and outbox.</div>
           <label>Message limit</label>
           <select id="inbox-cap" style="margin-bottom:8px">
-            <option value="200">200 messages (default)</option>
+            <option value="0">Unlimited (default)</option>
+            <option value="200">200 messages</option>
             <option value="500">500 messages</option>
             <option value="1000">1000 messages</option>
             <option value="5000">5000 messages</option>
-            <option value="0">Unlimited</option>
           </select>
           <label>Wall-clock TTL</label>
           <select id="inbox-ttl">
@@ -5269,8 +5269,8 @@ async function populateInboxConfig() {
     // option but we surface the raw number in the status line.
     const capSel = $('inbox-cap');
     const ttlSel = $('inbox-ttl');
-    capSel.value = String(cfg.ram_capacity ?? 200);
-    if (capSel.selectedIndex === -1) capSel.value = '200';
+    capSel.value = String(cfg.ram_capacity ?? 0);
+    if (capSel.selectedIndex === -1) capSel.value = '0';
     ttlSel.value = String(cfg.ttl_seconds ?? 0);
     if (ttlSel.selectedIndex === -1) ttlSel.value = '0';
   } catch (e) {

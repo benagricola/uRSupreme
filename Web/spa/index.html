@@ -3383,6 +3383,27 @@ $('btn-status').addEventListener('click', async () => {
 // 1 s ticker keeps the displayed clock live while the popover is open.
 const sysPopover = { ticker: null, clockAnchor: null };
 
+// Project device millis() forward from the WS-pinned clock anchor.
+// Returns null when the anchor hasn't been set yet (pre-hello). Used
+// by ageLine() so popover labels can tick up live between WS pushes.
+function deviceMillisNow() {
+  const a = state.clockAnchor;
+  if (!a || typeof a.deviceNowMs !== 'number') return null;
+  return a.deviceNowMs + (performance.now() - (a.localPerfMs || 0));
+}
+
+// "Last read Xs ago (MODEL)" from a raw device-millis snapshot.
+// Re-running this each tick advances the seconds count without a
+// refetch. taken_ms == -1 or missing => "never received."
+function ageLine(taken_ms, model, warming) {
+  if (warming) return 'Waiting for first read… (' + model + ')';
+  if (typeof taken_ms !== 'number' || taken_ms < 0) return '';
+  const now = deviceMillisNow();
+  if (now === null) return '';
+  const age_s = Math.max(0, Math.round((now - taken_ms) / 1000));
+  return 'Last read ' + age_s + 's ago (' + model + ')';
+}
+
 function renderSystemPopover(s) {
   // Storage.
   const fl = (s.storage && s.storage.flash) || {};
@@ -3482,27 +3503,6 @@ function renderSystemPopover(s) {
     return 'live';
   }
 
-  // "Last read 24s ago (Model)" — consistent age-line format. Empty
-  // string for sensors that haven't produced a reading yet.
-  // Compute "device millis now" from the WS-pinned clock anchor.
-  // Returns null when the anchor hasn't been set yet (pre-hello).
-  function deviceMillisNow() {
-    const a = state.clockAnchor;
-    if (!a || typeof a.deviceNowMs !== 'number') return null;
-    return a.deviceNowMs + (performance.now() - (a.localPerfMs || 0));
-  }
-  // Render "Last read Xs ago (MODEL)" from a raw device-millis
-  // snapshot. Re-running this each tick gives a live-counting label
-  // without a refetch. taken_ms == -1 (or missing) means "never."
-  function ageLine(taken_ms, model, warming) {
-    if (warming) return 'Waiting for first read… (' + model + ')';
-    if (typeof taken_ms !== 'number' || taken_ms < 0) return '';
-    const now = deviceMillisNow();
-    if (now === null) return '';
-    const age_s = Math.max(0, Math.round((now - taken_ms) / 1000));
-    return 'Last read ' + age_s + 's ago (' + model + ')';
-  }
-
   // Atmospheric — generic key (driver-independent). Bench device has
   // a BME280 wired; the SPA doesn't care which chip is installed.
   const env = (s.sensors && s.sensors.environment) || {};
@@ -3560,36 +3560,41 @@ function renderSystemPopover(s) {
 }
 
 function tickSystemClock() {
-  // Live clock display from the system popover's pinned anchor.
+  // 1 Hz pulse that advances every "Last read Xs ago" label and the
+  // live device-clock display against the WS-pinned clock anchor.
+  // Does NOT rebuild sensor-config rows (dropdowns) — those keep
+  // their focus / state between paints because we only update
+  // textContent on the age + clock elements.
+  if ($('popover-system').hidden) return;
+  // Device clock.
   const a = sysPopover.clockAnchor;
   if (a) {
     const nowMs = a.deviceUnixMs + (performance.now() - a.localNowMs);
-    const el = $('sys-clock-now');
-    if (el) el.textContent = new Date(nowMs).toLocaleString();
+    const elc = $('sys-clock-now');
+    if (elc) elc.textContent = new Date(nowMs).toLocaleString();
   }
-  // Live-tick "Last read Xs ago" lines for every sensor section. We
-  // hand the same taken_ms back to ageLine() — it'll compute the age
-  // from state.clockAnchor + the browser's perf.now, so the number
-  // advances every second without a refetch.
-  const s = state.system && state.system.sensors;
-  if (s) {
-    const g = s.gps || {};
-    if (g.available) {
-      const gWarming = typeof g.last_byte_ms !== 'number' || g.last_byte_ms < 0;
-      $('sys-gps-age').textContent = ageLine(g.last_byte_ms, g.model || 'GPS', gWarming);
-    }
-    const env = s.environment || {};
-    if (env.available) {
-      $('sys-env-age').textContent = ageLine(env.taken_ms, env.model || 'environment', !env.valid);
-    }
-    const mg = s.magnetometer || {};
-    if (mg.available) {
-      $('sys-mag-age').textContent = ageLine(mg.taken_ms, mg.model || 'magnetometer', !mg.valid);
-    }
-    const im = s.imu || {};
-    if (im.available) {
-      $('sys-imu-age').textContent = ageLine(im.taken_ms, im.model || 'imu', !im.valid);
-    }
+  // Per-sensor age labels. Same ageLine helper renderSystemPopover
+  // uses on initial open — now at module scope so this can call it.
+  const s = (state.system && state.system.sensors) || {};
+  const g = s.gps || {};
+  if (g.available) {
+    const warming = typeof g.last_byte_ms !== 'number' || g.last_byte_ms < 0;
+    $('sys-gps-age').textContent = ageLine(g.last_byte_ms, g.model || 'GPS', warming);
+  }
+  const env = s.environment || {};
+  if (env.available) {
+    $('sys-env-age').textContent = ageLine(env.taken_ms,
+        env.model || 'environment', env.enabled && !env.valid);
+  }
+  const mg = s.magnetometer || {};
+  if (mg.available) {
+    $('sys-mag-age').textContent = ageLine(mg.taken_ms,
+        mg.model || 'magnetometer', mg.enabled && !mg.valid);
+  }
+  const im = s.imu || {};
+  if (im.available) {
+    $('sys-imu-age').textContent = ageLine(im.taken_ms,
+        im.model || 'imu', im.enabled && !im.valid);
   }
 }
 

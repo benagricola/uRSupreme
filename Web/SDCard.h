@@ -38,6 +38,20 @@ namespace _detail {
   // probe fails so the user can tell "no card in slot" from
   // "card present, mount failed" from "wrong filesystem", etc.
   inline String& last_status_ref()  { static String v = "not_probed"; return v; }
+  // Edge flag flipped by verify_or_disable on an ejection trip.
+  // WebUI::loop drains this and fires the storage_changed WS event
+  // — keeps the SD-aware code free of the WebSocket dependency.
+  inline bool&    eject_flag_ref()  { static bool v = false; return v; }
+}
+
+// Take + clear the eject-edge flag. Returns true exactly once after
+// an ejection has been detected by verify_or_disable; the WebUI
+// drains this in its periodic loop to fire storage_changed.
+inline bool take_eject_edge() {
+  bool& f = _detail::eject_flag_ref();
+  if (!f) return false;
+  f = false;
+  return true;
 }
 
 // Idempotent shared-bus init. The SD card and the QMI8658 IMU both
@@ -135,29 +149,29 @@ inline const RailState& rail_state() { return _detail::rail_state_ref(); }
 
 inline bool      present()      { return _detail::present_ref(); }
 
-// Hot-detect helper. Returns true if presence changed since the last
-// call. When currently mounted, issues a cheap cardType + totalBytes
-// probe to catch ejection; on detection, tears down the mount so
-// subsequent SD.exists/SD.open don't drive a dead bus. Insertion is
-// NOT auto-detected — SD.begin() on an empty slot stalls the SPI bus
-// for ~500 ms per call, which would block the main loop (including
-// the WebUI listener startup) on devices with no card. User reboots
-// after inserting a card, same as before. A future explicit
-// "Re-probe SD" SPA action can drive insertion detection on demand.
-inline bool poll_presence() {
+// Verify the card is still responsive. Called from write/open
+// failure paths — if the underlying SD op fails AND a free-space
+// query also fails, the card has been ejected; we tear down the
+// mount and return true so the caller knows to fall back to flash.
+// On a healthy card this is one SDMMC query (1-10 ms). On no-card
+// boards it short-circuits on present_ref() and costs nothing.
+//
+// No periodic polling: SD presence is only re-evaluated when an
+// operation actually fails. Plugging a card requires a reboot
+// (same as the rest of the firmware). This avoids the per-tick
+// SDMMC query cost that was starving the AsyncWebServer listener
+// startup on boot.
+inline bool verify_or_disable() {
 #if defined(BOARD_MODEL) && (BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1)
-  if (!_detail::present_ref()) return false;
-  const uint8_t ct = SD.cardType();
-  if (ct == CARD_NONE || SD.totalBytes() == 0) {
-    NOTICEF("SDCard: ejection detected (cardType=%u total=%llu)",
-            (unsigned)ct, (unsigned long long)SD.totalBytes());
-    SD.end();
-    _detail::present_ref()   = false;
-    _detail::card_type_ref() = CARD_NONE;
-    _detail::last_status_ref() = "ejected";
-    return true;
-  }
-  return false;
+  if (!_detail::present_ref()) return true;
+  if (SD.totalBytes() > 0) return false;
+  NOTICE("SDCard: ejection detected on write failure — disabling");
+  SD.end();
+  _detail::present_ref()    = false;
+  _detail::card_type_ref()  = CARD_NONE;
+  _detail::last_status_ref() = "ejected";
+  _detail::eject_flag_ref()  = true;
+  return true;
 #else
   return false;
 #endif
@@ -189,16 +203,20 @@ inline bool ensure_parent_dirs(const char* path) {
 
 // Write `data` to `path` atomically-ish. Returns bytes written, or
 // 0 on failure. Mirrors microStore::FileSystem::writeFile semantics.
+// Failure paths run verify_or_disable() so an ejected card is
+// detected lazily and the caller can fall back to flash.
 inline size_t write_file(const char* path, const uint8_t* data, size_t len) {
   if (!_detail::present_ref()) return 0;
-  if (!ensure_parent_dirs(path)) return 0;
+  if (!ensure_parent_dirs(path)) { verify_or_disable(); return 0; }
   File f = SD.open(path, FILE_WRITE);
   if (!f) {
     WARNINGF("SDCard: open(WRITE) failed: %s", path);
+    verify_or_disable();
     return 0;
   }
   size_t wrote = f.write(data, len);
   f.close();
+  if (wrote != len) verify_or_disable();
   return wrote;
 }
 

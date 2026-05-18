@@ -179,19 +179,15 @@ namespace Web {
           release_rns_lock();
         }
       }
-      // Skip all WS-publish work when nobody's listening — WebUI::loop
-      // runs at ~50 Hz on the main task (shared with reticulum.loop and
-      // the radio modem), so any allocation here is hot-path cost.
-      // SD ejection check — cheap (cardType read on a mounted card,
-      // returns immediately if not mounted). On state change, fire a
-      // dedicated storage_changed WS event so the SPA's Settings UI
-      // sliders + toast respond without waiting for the next 30-second
-      // system_update tick. Runs regardless of WS subscriber count so
-      // the cached present-state stays current for the next API call.
-      if (Web::SDCard::poll_presence()) {
+      // SD ejection edge — verify_or_disable in the SD write paths
+      // flips a flag when a card stops responding mid-session. Drain
+      // it here so the SPA's Settings sliders + toast respond
+      // immediately, without paying any cost on the steady-state
+      // happy path.
+      if (Web::SDCard::take_eject_edge()) {
         const auto& sc = Web::Storage::current();
         Web::WS::publish_storage(
-            Web::SDCard::present(),
+            false,
             (uint32_t)std::min<size_t>(sc.user_max_send_bytes,    0xFFFFFFFFu),
             (uint32_t)std::min<size_t>(sc.user_max_receive_bytes, 0xFFFFFFFFu),
             (uint32_t)std::min<size_t>(Web::Storage::effective_max_send(),    0xFFFFFFFFu),

@@ -248,10 +248,10 @@ inline bool append(uint32_t id, const uint8_t* data, size_t len) {
     memcpy(b->psram_ptr + b->written, data, len);
   } else if (b->backend == Backend::Sd) {
     File f = SD.open(b->disk_path, FILE_APPEND);
-    if (!f) return false;
+    if (!f) { Web::SDCard::verify_or_disable(); return false; }
     size_t w = f.write(data, len);
     f.close();
-    if (w != len) return false;
+    if (w != len) { Web::SDCard::verify_or_disable(); return false; }
   } else {  // Flash
     microStore::File f = filesystem.open(b->disk_path.c_str(),
                                          microStore::File::ModeAppend, true);

@@ -4293,10 +4293,41 @@ $('bs-save').addEventListener('click', async () => {
   if (!ssid) { toast('Pick a network first', 'warn'); return; }
   const code = ($('bs-code').value || '').trim();
   if (!code) { toast('Enter the identity code from the device OLED', 'warn'); return; }
+  // The wifiConfigure POST writes EEPROM + initiates the reboot —
+  // the device drops the TCP connection before responding, so the
+  // request can take 1-3 s to fail/return. Show immediate feedback
+  // so the user doesn't double-click or wonder if their press
+  // registered. Same pattern as btn-login-go.
+  const btn  = $('bs-save');
+  const ssidSel = $('bs-ssid');
+  const psk  = $('bs-psk');
+  const codeIn = $('bs-code');
+  const rescan = $('bs-rescan');
+  const skip = $('bs-skip');
+  if (btn.dataset.busy) return;
+  btn.dataset.busy = '1';
+  const originalText = btn.textContent;
+  btn.textContent = 'Saving WiFi…';
+  btn.disabled = true;
+  ssidSel.disabled = true;
+  psk.disabled = true;
+  codeIn.disabled = true;
+  rescan.disabled = true;
+  skip.disabled = true;
   try {
-    await state.transport.wifiConfigure(ssid, $('bs-psk').value, code);
+    await state.transport.wifiConfigure(ssid, psk.value, code);
     waitForDeviceAndReload('Saving WiFi & rebooting…');
-  } catch (e) { toast('Save failed: ' + (e.message || e), 'error'); }
+  } catch (e) {
+    toast('Save failed: ' + (e.message || e), 'error');
+    btn.disabled = false;
+    ssidSel.disabled = false;
+    psk.disabled = false;
+    codeIn.disabled = false;
+    rescan.disabled = false;
+    skip.disabled = false;
+    btn.textContent = originalText;
+    delete btn.dataset.busy;
+  }
 });
 // Skip — let the user proceed into the chat UI without configuring a home
 // WiFi network. Useful for standalone / off-grid operation from the softAP

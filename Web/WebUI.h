@@ -178,37 +178,44 @@ namespace Web {
           release_rns_lock();
         }
       }
-      // Sensor change publish. The four drivers (gps, environment, mag, imu)
-      // each cache (reading, taken_ms). When taken_ms moves we know
-      // the underlying pump() landed a fresh sample and we ship it to
-      // every WS client. No polling on the SPA side.
-      publish_sensor_if_changed("gps",          _last_pub_gps_ms);
-      publish_sensor_if_changed("environment",  _last_pub_bme_ms);
-      publish_sensor_if_changed("magnetometer", _last_pub_mag_ms);
-      publish_sensor_if_changed("imu",          _last_pub_imu_ms);
-      // Full system snapshot push every 30 s — battery decay, storage
-      // usage drift, outbound_caps shifts on SD insert/eject. Cheap
-      // (one client typically; ~1 KB payload). Hello carries the
-      // initial state so the SPA has live data from frame zero.
-      if (now - _last_system_push > 30000) {
-        _last_system_push = now;
-        Web::WS::publish_system([](JsonObject root) { fill_system_block(root); });
+      // Skip all WS-publish work when nobody's listening — WebUI::loop
+      // runs at ~50 Hz on the main task (shared with reticulum.loop and
+      // the radio modem), so any allocation here is hot-path cost.
+      if (Web::WS::any_subscribers()) {
+        // Sensor change publish. taken_ms is read via a cheap accessor
+        // (no JSON allocation on the no-op path); only an actual change
+        // triggers the build-and-broadcast.
+        publish_sensor_if_changed("gps",          _last_pub_gps_ms);
+        publish_sensor_if_changed("environment",  _last_pub_bme_ms);
+        publish_sensor_if_changed("magnetometer", _last_pub_mag_ms);
+        publish_sensor_if_changed("imu",          _last_pub_imu_ms);
+        // Full system snapshot every 30 s — battery decay, storage
+        // usage drift, outbound_caps shifts on SD insert/eject. Cheap
+        // (one client typical; ~1 KB payload). Hello carries the
+        // initial snapshot so the SPA has live data from frame zero.
+        if (now - _last_system_push > 30000) {
+          _last_system_push = now;
+          Web::WS::publish_system([](JsonObject root) { fill_system_block(root); });
+        }
       }
     }
 
+    // Read the taken_ms of a sensor's most recent reading WITHOUT
+    // building any JSON. Hot path — runs every WebUI::loop iteration
+    // (~50 Hz), so we must not allocate. Returns 0 for kinds whose
+    // last reading hasn't lit up yet.
+    static uint32_t sensor_taken_ms(const char* kind) {
+      if (strcmp(kind, "gps")          == 0) return Web::Gps::last_fix().fix_received_ms;
+      if (strcmp(kind, "environment")  == 0) return Web::Bme280::last_reading().taken_ms;
+      if (strcmp(kind, "magnetometer") == 0) return Web::QmcMag::last_reading().taken_ms;
+      if (strcmp(kind, "imu")          == 0) return Web::QmiImu::last_reading().taken_ms;
+      return 0;
+    }
     static void publish_sensor_if_changed(const char* kind, uint32_t& last_pub_ms) {
-      // Build the block into a probe JsonDocument first, then send. The
-      // taken_ms returned by fill_sensor_block is the dedupe key —
-      // we only broadcast when it advances.
-      JsonDocument probe;
-      JsonObject root = probe.to<JsonObject>();
-      const uint32_t taken = fill_sensor_block(root, kind);
-      if (taken == 0 || taken == last_pub_ms) return;
+      const uint32_t taken = sensor_taken_ms(kind);
+      if (taken == 0 || taken == last_pub_ms) return;  // no allocation on the no-op path
       last_pub_ms = taken;
       Web::WS::publish_sensor(kind, [kind](JsonObject v) {
-        // Refill into the WS payload — cheap, the underlying reads
-        // are cached, and it keeps the JSON shape consistent across
-        // hello / sensor_update / system_status.
         JsonDocument tmp;
         JsonObject root = tmp.to<JsonObject>();
         fill_sensor_block(root, kind);

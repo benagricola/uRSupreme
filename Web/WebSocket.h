@@ -61,6 +61,15 @@ namespace WS {
     return nullptr;
   }
 
+  // True when at least one authed client is connected. Lets publishers
+  // skip work entirely when no SPA is listening — building JSON for a
+  // broadcast-to-zero is wasted main-loop time, and matters because
+  // WebUI::loop runs at ~50 Hz on the same task as reticulum.loop().
+  inline bool any_subscribers() {
+    for (const auto& c : clients()) if (c.authed) return true;
+    return false;
+  }
+
   // Forward to AuthTokens::validate without pulling its header here.
   // The implementation is wired in WebUI.h's register_routes(); see
   // bind_validator() below.

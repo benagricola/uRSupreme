@@ -1344,6 +1344,10 @@ const state = {
   announces: new Map(),             // dest_hex → record
   paths: new Map(),
   transfers: new Map(),   // link_hash → { peer, incoming, bytes_done, bytes_total }
+  // System snapshot (storage / sensors / battery / outbound_caps / rtc).
+  // Populated from the WS `hello` frame and refreshed by `system_update`
+  // events every ~30s. Read-only state for popovers + the topbar icons.
+  system: null,
   contacts: JSON.parse(localStorage.getItem(LS.CONTACTS) || '{}'),
   prefs: loadPrefs(),
   pendingIdCode: false,
@@ -3201,19 +3205,17 @@ async function refreshStatus() {
     $('btn-status').setAttribute('data-state', 'unknown');
     $('btn-status').title = 'Status unknown: ' + (e.message || e);
   }
-  // Separately fetch system_status — owner of storage / outbound_caps /
-  // battery / sensors. Quieter cadence than /api/info since the data
-  // moves more slowly. Failure here doesn't degrade the top-bar dot.
-  try {
-    const sys = await state.transport._req('/api/system_status');
-    state.lastSystemStatus = sys;
-    const wasPresent = state.sdPresent;
-    state.sdPresent   = !!(sys && sys.storage && sys.storage.sd && sys.storage.sd.present);
-    state.outboundCaps = sys && sys.outbound_caps ? sys.outbound_caps : null;
-    if (wasPresent !== null && wasPresent !== state.sdPresent && state.openPeer) {
-      renderThread();
-    }
-  } catch (_) { /* leave previous state in place */ }
+  // System snapshot (storage / outbound_caps / battery / sensors) is
+  // now WS-pushed. Read straight from the cache populated by the
+  // `hello` + `system_update` frames in dispatchEvent.
+  const sys = state.system || {};
+  state.lastSystemStatus = sys;
+  const wasPresent = state.sdPresent;
+  state.sdPresent   = !!(sys.storage && sys.storage.sd && sys.storage.sd.present);
+  state.outboundCaps = sys.outbound_caps || null;
+  if (wasPresent !== null && wasPresent !== state.sdPresent && state.openPeer) {
+    renderThread();
+  }
 }
 function applyStatusToButton(info) {
   const btn = $('btn-status');
@@ -3562,13 +3564,14 @@ function stopSystemTicker() {
 }
 
 async function openSystemPopover() {
-  try {
-    const s = await state.transport._req('/api/system_status');
-    renderSystemPopover(s);
-  } catch (e) {
-    toast('System status: ' + (e.message || e), 'error');
+  // System snapshot is WS-pushed — render from cache. If the WS hasn't
+  // delivered the first frame yet (rare; hello fires immediately on
+  // auth), defer until it has.
+  if (!state.system) {
+    toast('System snapshot still loading…', 'info');
     return;
   }
+  renderSystemPopover(state.system);
   // Close the other popover (same anchor position).
   $('popover-status').hidden = true;
   $('popover-system').hidden = false;
@@ -3629,25 +3632,21 @@ function renderPowerPopover(sys) {
 }
 let _pwTicker = null;
 async function openPowerPopover() {
-  try {
-    const sys = await state.transport._req('/api/system_status');
-    state.lastSystemStatus = sys;
-    renderPowerPopover(sys);
-  } catch (e) {
-    toast('Power status: ' + (e.message || e), 'error');
+  if (!state.system) {
+    toast('System snapshot still loading…', 'info');
     return;
   }
+  renderPowerPopover(state.system);
   $('popover-status').hidden = true;
   $('popover-system').hidden = true;
   $('popover-power').hidden  = false;
   if (!_pwTicker) {
-    _pwTicker = setInterval(async () => {
+    // Repaint from the cached snapshot on a short ticker. The WS
+    // `system_update` keeps the cache fresh every 30 s; this just
+    // re-renders so any in-place transitions feel smooth.
+    _pwTicker = setInterval(() => {
       if ($('popover-power').hidden) return;
-      try {
-        const sys = await state.transport._req('/api/system_status');
-        state.lastSystemStatus = sys;
-        renderPowerPopover(sys);
-      } catch (_) {}
+      if (state.system) renderPowerPopover(state.system);
     }, 5000);
   }
   setTimeout(() => {
@@ -3688,9 +3687,10 @@ $('sys-storage-migrate').addEventListener('click', async () => {
     out.textContent = 'Moved ' + r.moved + ' file(s) · ' + formatBytes(r.bytes || 0)
                     + (r.skipped ? ' · ' + r.skipped + ' already on SD' : '')
                     + (r.failed  ? ' · ' + r.failed + ' failed' : '');
-    // Refresh the storage line so flash-used drops to reflect the new state.
-    const fresh = await state.transport._req('/api/system_status');
-    renderSystemPopover(fresh);
+    // The next periodic system_update will refresh the cache; render
+    // from whatever's there now (might be slightly stale until the
+    // 30 s push lands).
+    if (state.system) renderSystemPopover(state.system);
   } catch (e) {
     out.textContent = 'Migration failed: ' + (e.message || e);
   } finally {
@@ -3745,11 +3745,15 @@ function buildSensorConfigRow(section, key, sensor) {
     const body = { sensor: key, enabled: cb.checked, interval_s: parseInt(sel.value, 10) };
     try {
       await state.transport._req('/api/sensors/config', { method: 'POST', body });
-      // Pull a fresh /api/system_status and repaint so the change is
-      // visible immediately — without it the user has to close and
-      // re-open the popover before the new state shows up.
-      const fresh = await state.transport._req('/api/system_status');
-      renderSystemPopover(fresh);
+      // The next periodic system_update (≤30 s) will refresh the
+      // sensor block in state.system. Patch the cached snapshot
+      // optimistically now so the popover reflects the toggle
+      // immediately without waiting.
+      if (state.system && state.system.sensors && state.system.sensors[key]) {
+        state.system.sensors[key].enabled     = cb.checked;
+        state.system.sensors[key].interval_ms = parseInt(sel.value, 10) * 1000;
+        renderSystemPopover(state.system);
+      }
     } catch (e) {
       toast('Sensor config save failed: ' + (e.message || e), 'error');
     }
@@ -3914,8 +3918,45 @@ function dispatchEvent(ev) {
         localPerfMs:      performance.now(),
       };
     }
-    if (ev.sensors) {
-      state.sensors = ev.sensors;
+    // Hello carries the full system snapshot (storage / sensors /
+    // battery / outbound_caps / rtc). Cache it so popovers can render
+    // immediately without a /api/system_status fetch.
+    state.system = {
+      storage:       ev.storage       || {},
+      sensors:       ev.sensors       || {},
+      battery:       ev.battery       || null,
+      outbound_caps: ev.outbound_caps || {},
+      rtc:           ev.rtc           || {},
+    };
+    if (typeof renderTopbarBattery === 'function') renderTopbarBattery();
+    return;
+  }
+  if (ev.type === 'system_update') {
+    // Periodic system refresh — replace cached snapshot wholesale. The
+    // payload mirrors the hello shape, just nested under .payload.
+    const p = ev.payload || {};
+    state.system = {
+      storage:       p.storage       || {},
+      sensors:       p.sensors       || {},
+      battery:       p.battery       || null,
+      outbound_caps: p.outbound_caps || {},
+      rtc:           p.rtc           || {},
+    };
+    // Repaint open popovers + the topbar battery icon in place.
+    if (typeof renderSystemPopover === 'function'
+        && document.getElementById('sys-popover')
+        && !document.getElementById('sys-popover').hidden) {
+      renderSystemPopover(state.system);
+    }
+    if (typeof renderTopbarBattery === 'function') renderTopbarBattery();
+    return;
+  }
+  if (ev.type === 'sensor_update') {
+    // Patch the cached sensor block in place so the periodic
+    // system_update doesn't drop fine-grained state in between pushes.
+    if (state.system && ev.kind && ev.value) {
+      state.system.sensors = state.system.sensors || {};
+      state.system.sensors[ev.kind] = ev.value;
     }
     return;
   }

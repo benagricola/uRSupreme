@@ -145,11 +145,11 @@ namespace Web {
       // wait for the next periodic push, no fallback /api/system_status
       // round-trip.
       Web::WS::set_hello_extras([](JsonObject hello) {
-        JsonObject sensors = hello["sensors"].to<JsonObject>();
-        fill_sensor_block(sensors, "gps");
-        fill_sensor_block(sensors, "environment");
-        fill_sensor_block(sensors, "magnetometer");
-        fill_sensor_block(sensors, "imu");
+        // Sensors + storage + battery + outbound_caps + rtc — the full
+        // system snapshot fill_system_block also emits in system_update
+        // events. The SPA replaces its cached snapshot wholesale on
+        // both hello and system_update, so the shapes must match.
+        fill_system_block(hello);
         JsonObject clock = hello["clock"].to<JsonObject>();
         clock["now_ms"]            = millis();
         clock["current_boot_epoch"] = Web::BootCounter::current();
@@ -183,9 +183,17 @@ namespace Web {
       // the underlying pump() landed a fresh sample and we ship it to
       // every WS client. No polling on the SPA side.
       publish_sensor_if_changed("gps",          _last_pub_gps_ms);
-      publish_sensor_if_changed("environment",       _last_pub_bme_ms);
+      publish_sensor_if_changed("environment",  _last_pub_bme_ms);
       publish_sensor_if_changed("magnetometer", _last_pub_mag_ms);
       publish_sensor_if_changed("imu",          _last_pub_imu_ms);
+      // Full system snapshot push every 30 s — battery decay, storage
+      // usage drift, outbound_caps shifts on SD insert/eject. Cheap
+      // (one client typically; ~1 KB payload). Hello carries the
+      // initial state so the SPA has live data from frame zero.
+      if (now - _last_system_push > 30000) {
+        _last_system_push = now;
+        Web::WS::publish_system([](JsonObject root) { fill_system_block(root); });
+      }
     }
 
     static void publish_sensor_if_changed(const char* kind, uint32_t& last_pub_ms) {
@@ -389,26 +397,10 @@ namespace Web {
       bo["state"]   = Web::BatteryTelemetry::state_name(b.state);
     }
 
-    // /api/system_status gets the detailed battery telemetry — voltage,
-    // dV/dt slope, USB rail state. Slope is the load-bearing power-
-    // optimisation A/B-test metric: a proxy for current draw on AXP2101
-    // (which has no direct battery-current accessor); a more-negative
-    // value during discharge means a heavier drain. AXP192 boards also
-    // get discharge_ma.
-    static void emit_battery_detail(JsonDocument& doc) {
-      const auto b = Web::BatteryTelemetry::current();
-      if (!b.pmu_present) return;
-      JsonObject bo = doc["battery"].to<JsonObject>();
-      bo["voltage_v"]    = b.voltage_v;
-      bo["vbus_present"] = b.vbus_present;
-      if (b.vbus_present)     bo["vbus_voltage_v"] = b.vbus_voltage_v;
-      if (b.has_pmu_temp)     bo["pmu_temp_c"]     = b.pmu_temp_c;
-      if (b.has_discharge_ma) bo["discharge_ma"]   = b.discharge_ma;
-      if (b.has_slope) {
-        bo["slope_mv_per_min"] = b.slope_mv_per_min;
-        bo["slope_window_ms"]  = (uint32_t)b.slope_window_ms;
-      }
-    }
+    // Detailed battery telemetry (voltage, slope, USB rail, PMU temp,
+    // discharge current) is built by fill_system_block and shipped
+    // over WS — the `hello` snapshot + 30 s `system_update` cadence
+    // is enough for human-eye monitoring of slow-changing power state.
 
     static LXMF::IdentityId require_auth(AsyncWebServerRequest* req) {
       std::string token;
@@ -526,7 +518,8 @@ namespace Web {
       // RTC diagnostics — raw chip state.
       server.on("/api/rtc",                  HTTP_GET,  handle_rtc_get);
       // Aggregated device status: storage + clock + sensors.
-      server.on("/api/system_status",        HTTP_GET,  handle_system_status);
+      // /api/system_status retired — `system_update` WS events carry
+      // the same payload, with the initial snapshot in the `hello` frame.
       // Per-sensor enable + polling-interval overrides.
       on_json_post("/api/sensors/config",       handle_sensors_config_post);
       // Global inbox capacity + wall-clock TTL pruning.
@@ -1126,28 +1119,21 @@ namespace Web {
       return 0;
     }
 
-    // GET /api/system_status — aggregator for the device-status popover.
-    // Combines storage, clock, RTC chip state, and per-sensor live
-    // readings into one call so the SPA can populate the whole popover
-    // in a single round-trip. Auth-gated for the same reason GPS is —
-    // device location and sensor data are sensitive on a shared LAN.
-    static void handle_system_status(AsyncWebServerRequest* req) {
-      RnsLockGuard _g;
-      if (require_auth(req).empty()) return;
-      JsonDocument doc;
-
+    // Build the system-status payload (storage / rtc / sensors /
+    // outbound_caps / battery) into `root`. Single source of truth
+    // shared between the WS `hello` frame and the periodic
+    // `system_update` event. /api/system_status used to call this too
+    // but the REST endpoint is retired — WS delivery is canonical.
+    static void fill_system_block(JsonObject root) {
       // ---- storage ----
       {
-        JsonObject st = doc["storage"].to<JsonObject>();
-        // Flash (LittleFS) — total/used/free (bytes). Mirrors the
-        // microStore API that /api/info uses.
+        JsonObject st = root["storage"].to<JsonObject>();
         const size_t total = filesystem.storageSize();
         const size_t avail = filesystem.storageAvailable();
         JsonObject fl = st["flash"].to<JsonObject>();
         fl["total_bytes"] = (uint32_t)total;
         fl["free_bytes"]  = (uint32_t)avail;
         fl["used_bytes"]  = (uint32_t)((total > avail) ? (total - avail) : 0);
-        // SD card — real state from the SDCard driver.
         JsonObject sd = st["sd"].to<JsonObject>();
         sd["present"] = Web::SDCard::present();
         sd["status"]  = Web::SDCard::last_status();
@@ -1156,7 +1142,6 @@ namespace Web {
           sd["total_bytes"] = (uint64_t)Web::SDCard::total_bytes();
           sd["used_bytes"]  = (uint64_t)Web::SDCard::used_bytes();
         }
-        // Captured-at-boot rail state, for diagnostic purposes.
         const auto rs = Web::SDCard::rail_state();
         if (rs.captured) {
           JsonObject rails = sd["rails"].to<JsonObject>();
@@ -1166,37 +1151,24 @@ namespace Web {
           rails["bldo2_mV"] = rs.bldo2_mV;
         }
       }
-
-      // ---- clock (RTC-chip diagnostic only) ----
-      // The wall-clock + source + calibrated flag come over WS now —
-      // the `hello` frame carries them on connect and `time_update`
-      // pushes on every source change. What stays here is purely the
-      // hardware-RTC chip's introspection (VL flag, raw epoch readback)
-      // because nothing else surfaces that.
+      // ---- rtc (hardware chip diagnostic) ----
       {
-        JsonObject rtc = doc["rtc"].to<JsonObject>();
+        JsonObject rtc = root["rtc"].to<JsonObject>();
         const auto rs = Web::RtcPCF8563::debug_snapshot();
         rtc["available"] = Web::RtcPCF8563::available();
         rtc["vl_set"]    = rs.vl_set;
         rtc["unix_ms"]   = (uint64_t)(rs.epoch * 1000.0);
       }
-
       // ---- sensors ----
-      // Each entry is keyed by sensor name. SPA iterates and renders
-      // a section per present sensor.
-      JsonObject sensors = doc["sensors"].to<JsonObject>();
+      JsonObject sensors = root["sensors"].to<JsonObject>();
       fill_sensor_block(sensors, "gps");
       fill_sensor_block(sensors, "environment");
       fill_sensor_block(sensors, "magnetometer");
       fill_sensor_block(sensors, "imu");
-
       // ---- outbound staging caps ----
-      // The SPA uses these to clamp image-resize options, file picker
-      // size limits, and recorder duration to whatever the device's
-      // chosen backend can actually accept.
       {
         const auto caps = Web::OutboundStaging::current_caps();
-        JsonObject oc = doc["outbound_caps"].to<JsonObject>();
+        JsonObject oc = root["outbound_caps"].to<JsonObject>();
         oc["max_bytes"]        = (uint32_t)caps.max_bytes;
         oc["backend"]          = Web::OutboundStaging::backend_name(caps.chosen_backend);
         oc["flash_free_bytes"] = (uint32_t)caps.flash_free;
@@ -1204,10 +1176,24 @@ namespace Web {
         oc["sd_present"]       = caps.sd_present;
         if (caps.sd_present) oc["sd_free_bytes"] = (uint32_t)caps.sd_free;
       }
-
-      emit_battery_detail(doc);
-
-      send_json(req, 200, doc);
+      // ---- battery (detailed) ----
+      {
+        const auto b = Web::BatteryTelemetry::current();
+        if (b.pmu_present) {
+          JsonObject bo = root["battery"].to<JsonObject>();
+          bo["percent"]      = b.percent;
+          bo["state"]        = Web::BatteryTelemetry::state_name(b.state);
+          bo["voltage_v"]    = b.voltage_v;
+          bo["vbus_present"] = b.vbus_present;
+          if (b.vbus_present)     bo["vbus_voltage_v"] = b.vbus_voltage_v;
+          if (b.has_pmu_temp)     bo["pmu_temp_c"]     = b.pmu_temp_c;
+          if (b.has_discharge_ma) bo["discharge_ma"]   = b.discharge_ma;
+          if (b.has_slope) {
+            bo["slope_mv_per_min"] = b.slope_mv_per_min;
+            bo["slope_window_ms"]  = (uint32_t)b.slope_window_ms;
+          }
+        }
+      }
     }
 
     // GET /api/inbox_config — current capacity + TTL. ram_capacity is
@@ -2529,6 +2515,7 @@ namespace Web {
     static inline uint32_t _last_pub_bme_ms = 0;
     static inline uint32_t _last_pub_mag_ms = 0;
     static inline uint32_t _last_pub_imu_ms = 0;
+    static inline uint32_t _last_system_push = 0;
   };
 
   // Free function the LXMF gateway calls to publish a Resource-transfer

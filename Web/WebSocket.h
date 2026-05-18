@@ -194,6 +194,19 @@ namespace WS {
     broadcast(doc);
   }
 
+  // Generic system-block update — battery telemetry, storage usage,
+  // outbound staging caps. The shape mirrors what /api/system_status
+  // used to carry; the SPA replaces its cached block wholesale on
+  // each event. Periodic (every 30 s from WebUI::loop) so the
+  // popover stays live without polling.
+  inline void publish_system(const std::function<void(JsonObject)>& fill) {
+    JsonDocument doc;
+    doc["type"] = "system_update";
+    JsonObject root = doc["payload"].to<JsonObject>();
+    fill(root);
+    broadcast(doc);
+  }
+
   // Identity-code edge event (button-press triggered).
   inline void publish_identity_code_available() {
     JsonDocument doc;

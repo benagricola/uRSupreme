@@ -1,15 +1,29 @@
 """Endpoints not covered by the per-area files but still important
 for the WebServer migration baseline.
 """
+import json
 import pytest
+import websocket
 
 
-def test_storage_migrate_sd_absent_returns_409(sx):
+def _ws_hello(d, token: str) -> dict:
+    """Fetch the WS hello frame — single round-trip for the system
+    snapshot the SPA renders pre-popover."""
+    base = d.url.replace("http://", "ws://")
+    sock = websocket.create_connection(
+        f"{base}/api/ws?token={token}&identity_id={d.identity}", timeout=5)
+    try:
+        return json.loads(sock.recv())
+    finally:
+        sock.close()
+
+
+def test_storage_migrate_sd_absent_returns_409(sx, tokens):
     """When no SD card is present, the migration endpoint must refuse
     with a structured error — not a 500."""
     s, d = sx
-    sys_status = s.get(f"{d.url}/api/system_status", timeout=15).json()
-    if sys_status["storage"]["sd"]["present"]:
+    h = _ws_hello(d, tokens["sx"])
+    if h["storage"]["sd"]["present"]:
         pytest.skip("SD card is inserted on the bench device — skip the absent-path test")
     r = s.post(f"{d.url}/api/storage/migrate_flash_to_sd", timeout=10)
     assert r.status_code == 409
@@ -45,11 +59,11 @@ def test_inbox_config_post_roundtrip(sx):
            timeout=15)
 
 
-def test_sensors_config_post_roundtrip(sx):
+def test_sensors_config_post_roundtrip(sx, tokens):
     """Toggle the environment sensor enable on/off + back."""
     s, d = sx
-    sys_status = s.get(f"{d.url}/api/system_status", timeout=15).json()
-    env = sys_status.get("sensors", {}).get("environment")
+    h = _ws_hello(d, tokens["sx"])
+    env = h.get("sensors", {}).get("environment")
     if not env or not env.get("available"):
         pytest.skip("environment sensor not available on this board")
     initial = env.get("enabled", True)

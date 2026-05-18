@@ -161,17 +161,27 @@ namespace WS {
     broadcast(doc);
   }
 
-  // Sensor update — fires from the per-sensor polling task whenever a
-  // value changes. Shape mirrors the GET /api/system_status sensors
-  // block (kind, value, unit, age_ms) so the SPA can patch in place.
+  // Sensor update — broadcast a fresh reading for one sensor kind.
+  // The `fill` callback shapes the JSON exactly as the
+  // /api/system_status sensors[kind] block, so the SPA can patch
+  // its cached snapshot in place from this event.
   inline void publish_sensor(const char* kind,
-                             const JsonVariantConst& value_block) {
+                             const std::function<void(JsonObject)>& fill) {
     JsonDocument doc;
-    doc["type"]   = "sensor_update";
-    doc["kind"]   = kind;
-    doc["value"]  = value_block;
+    doc["type"] = "sensor_update";
+    doc["kind"] = kind;
+    JsonObject v = doc["value"].to<JsonObject>();
+    fill(v);
     broadcast(doc);
   }
+
+  // Hook fired once per connected client right after auth succeeds,
+  // before the `hello` frame is sent. Lets WebUI inject a fresh
+  // snapshot of all sensors / clock / etc into the hello payload so
+  // the SPA has live state from the very first frame.
+  using HelloExtras = std::function<void(JsonObject /*hello*/)>;
+  inline HelloExtras& hello_extras() { static HelloExtras fn; return fn; }
+  inline void set_hello_extras(HelloExtras fn) { hello_extras() = std::move(fn); }
 
   // Time-source update — fires when the active clock source changes
   // (GPS lock acquired, NTP sync completed, browser-set, RTC seed).
@@ -259,10 +269,16 @@ namespace WS {
       }
       // Hello frame — gives the SPA the device time + identity it's
       // subscribed for, so it can drop any stale "connected as..." UI.
+      // If WebUI installed an extras hook, let it inject a current
+      // sensor / clock snapshot so the SPA has live data from frame
+      // one rather than waiting for the first periodic push.
       JsonDocument hello;
       hello["type"]        = "hello";
       hello["identity_id"] = st.identity_id;
       hello["now_ms"]      = (uint32_t)millis();
+      if (hello_extras()) {
+        hello_extras()(hello.as<JsonObject>());
+      }
       String s; serializeJson(hello, s);
       client->text(s);
     }

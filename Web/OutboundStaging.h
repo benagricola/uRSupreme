@@ -1,14 +1,19 @@
 // Outbound attachment staging — holds the raw bytes between the
 // chunked-HTTP upload and the LXMF Resource send.
 //
-// Two backends, chosen at allocate-time based on what's available:
+// Three backends, chosen at allocate-time based on what's available:
 //
 //   * SdBuffer    — file at /sd/lxmf/staging/<id>.bin. Preferred when a
 //                   card is mounted: zero RAM cost, multi-GB headroom,
 //                   no impact on PSRAM availability for RNS state.
-//   * PsramBuffer — ps_malloc'd buffer in PSRAM. Fallback when no SD is
-//                   present. Capped at ~4 MB to leave runtime headroom
-//                   for path tables, identity store, etc.
+//   * FlashBuffer — file at /lxmf/staging/<id>.bin on LittleFS. Used
+//                   when no SD is mounted and the requested size is
+//                   larger than a comfortable PSRAM fraction, so the
+//                   upload doesn't tip RNS containers into PSRAM
+//                   exhaustion. Slower than PSRAM but slow + working
+//                   beats fast + OOMing.
+//   * PsramBuffer — ps_malloc'd buffer in PSRAM. Fastest, used when
+//                   the upload comfortably fits.
 //
 // Lifecycle:
 //   1. allocate(total_size) — picks backend, reserves space, returns
@@ -16,7 +21,7 @@
 //   2. append(id, chunk_data, chunk_len) — multiple calls until total.
 //   3. read(id, offset, len, dst) — used by LXMFMinimal during the
 //      Resource hashmap computation + per-chunk send.
-//   4. release(id) — drops the buffer, frees PSRAM / removes SD file.
+//   4. release(id) — drops the buffer, frees PSRAM / removes file.
 //
 // IDs are simple monotonic counters scoped to this boot — a buffer
 // not released by send-completion / failure / browser-disconnect is

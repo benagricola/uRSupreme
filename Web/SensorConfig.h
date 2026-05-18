@@ -8,7 +8,7 @@
 //
 // Schema (JSON):
 //   {
-//     "bme280":       {"enabled": true,  "interval_s": 60},
+//     "environment":       {"enabled": true,  "interval_s": 60},
 //     "magnetometer": {"enabled": true,  "interval_s": 60},
 //     "imu":          {"enabled": false, "interval_s": 60},
 //     "gps":          {"enabled": true,  "interval_s": 3600}
@@ -56,7 +56,7 @@ inline void load(microStore::FileSystem& fs) {
       set_iv_ms(o["interval_s"].as<uint32_t>() * 1000UL);
     }
   };
-  apply("bme280",       Web::Bme280::set_enabled,  Web::Bme280::set_interval_ms);
+  apply("environment",       Web::Bme280::set_enabled,  Web::Bme280::set_interval_ms);
   apply("magnetometer", Web::QmcMag::set_enabled,  Web::QmcMag::set_interval_ms);
   apply("imu",          Web::QmiImu::set_enabled,  Web::QmiImu::set_interval_ms);
 }
@@ -68,7 +68,7 @@ inline void persist(microStore::FileSystem& fs) {
     o["enabled"]    = en;
     o["interval_s"] = iv_ms / 1000UL;
   };
-  write("bme280",       Web::Bme280::enabled(),  Web::Bme280::interval_ms());
+  write("environment",       Web::Bme280::enabled(),  Web::Bme280::interval_ms());
   write("magnetometer", Web::QmcMag::enabled(),  Web::QmcMag::interval_ms());
   write("imu",          Web::QmiImu::enabled(),  Web::QmiImu::interval_ms());
   String out;
@@ -79,12 +79,12 @@ inline void persist(microStore::FileSystem& fs) {
 }
 
 // Apply a single { enabled, interval_s } update to one sensor and
-// persist the new full config. Key is one of "bme280" / "magnetometer"
+// persist the new full config. Key is one of "environment" / "magnetometer"
 // / "imu". Returns true if applied.
 inline bool update_one(microStore::FileSystem& fs, const char* key,
                        bool enabled, uint32_t interval_s) {
   const uint32_t iv_ms = interval_s * 1000UL;
-  if (strcmp(key, "bme280") == 0) {
+  if (strcmp(key, "environment") == 0) {
     Web::Bme280::set_enabled(enabled);
     Web::Bme280::set_interval_ms(iv_ms);
   } else if (strcmp(key, "magnetometer") == 0) {

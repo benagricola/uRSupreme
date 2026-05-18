@@ -937,14 +937,14 @@ summary:hover { color: var(--text); }
     <div class="muted mono" id="sys-gps-speed"  style="font-size:11px"></div>
     <div class="muted mono" id="sys-gps-age"    style="font-size:11px"></div>
   </div>
-  <div class="popover-section" id="sys-section-bme" data-sensor="bme280" hidden>
+  <div class="popover-section" id="sys-section-env" data-sensor="environment" hidden>
     <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Atmospheric</div>
-      <div id="sys-bme-line"></div>
+      <div id="sys-env-line"></div>
       <span class="muted" data-role="chev" style="font-size:11px;opacity:0.55;transition:transform .12s">▾</span>
     </div>
-    <div class="mono" id="sys-bme-values"  style="font-size:11px;margin-top:6px"></div>
-    <div class="muted mono" id="sys-bme-age"  style="font-size:11px"></div>
+    <div class="mono" id="sys-env-values"  style="font-size:11px;margin-top:6px"></div>
+    <div class="muted mono" id="sys-env-age"  style="font-size:11px"></div>
     <div class="sensor-config" data-role="config" hidden style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bg-elev-2);display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
   </div>
   <div class="popover-section" id="sys-section-mag" data-sensor="magnetometer" hidden>
@@ -2632,11 +2632,19 @@ async function sendMessage() {
       if (a.staging_id) continue;
       a.uploading = true;
       a.uploaded_bytes = 0;
+      a.uploaded_total = 0;
       renderAttachTray();
       try {
         const r = await state.transport.uploadAttachment(
           state.identityId, a.bytes, a.filename, a.mime,
-          (loaded, _total) => { a.uploaded_bytes = loaded; renderAttachTray(); });
+          (loaded, total) => {
+            // total = multipart-encoded body size (slightly larger than
+            // a.bytes.length thanks to the form-data boundary). Storing
+            // both lets renderAttachTray show an honest 0-100 percent.
+            a.uploaded_bytes = loaded;
+            a.uploaded_total = total || a.uploaded_total;
+            renderAttachTray();
+          });
         a.staging_id     = r.staging_id;
         a.staging_backend = r.backend;
       } finally {
@@ -3127,9 +3135,14 @@ function renderAttachTray() {
     // before it starts), we fall back to the ETA estimate.
     let etaText = '';
     if (a.uploading) {
-      const pct = a.bytes.length > 0
-                ? Math.round(100 * (a.uploaded_bytes || 0) / a.bytes.length)
-                : 0;
+      // Use the multipart-encoded total (a.uploaded_total) for the
+      // denominator — dividing by a.bytes.length would over-count to
+      // 101-102 % because the multipart form-data wrapper adds bytes.
+      // Clamp to [0, 100] as a defence against any edge cases.
+      const denom = a.uploaded_total || a.bytes.length;
+      const pct = denom > 0
+        ? Math.max(0, Math.min(100, Math.round(100 * (a.uploaded_bytes || 0) / denom)))
+        : 0;
       etaText = 'uploading ' + pct + '%';
     } else if (a.staging_id) {
       etaText = 'uploaded';
@@ -3471,20 +3484,21 @@ function renderSystemPopover(s) {
     return 'Last read ' + Math.round(age_ms / 1000) + 's ago (' + model + ')';
   }
 
-  // Atmospheric — BME280.
-  const b = (s.sensors && s.sensors.bme280) || {};
-  $('sys-section-bme').hidden = !b.available;
-  if (b.available) {
-    const bState = renderSensorState($('sys-bme-line'), b.enabled, b.valid);
-    if (bState === 'live') {
-      $('sys-bme-values').textContent =
-        b.temp_c.toFixed(1) + ' °C · ' +
-        b.humidity_pct.toFixed(0) + ' %RH · ' +
-        (b.pressure_pa / 100).toFixed(1) + ' hPa';
+  // Atmospheric — generic key (driver-independent). Bench device has
+  // a BME280 wired; the SPA doesn't care which chip is installed.
+  const env = (s.sensors && s.sensors.environment) || {};
+  $('sys-section-env').hidden = !env.available;
+  if (env.available) {
+    const envState = renderSensorState($('sys-env-line'), env.enabled, env.valid);
+    if (envState === 'live') {
+      $('sys-env-values').textContent =
+        env.temp_c.toFixed(1) + ' °C · ' +
+        env.humidity_pct.toFixed(0) + ' %RH · ' +
+        (env.pressure_pa / 100).toFixed(1) + ' hPa';
     } else {
-      $('sys-bme-values').textContent = '';
+      $('sys-env-values').textContent = '';
     }
-    $('sys-bme-age').textContent = ageLine(b.age_ms, 'BME280', bState === 'warming');
+    $('sys-env-age').textContent = ageLine(env.age_ms, 'environment', envState === 'warming');
   }
 
   // Compass — QMC6310 magnetometer.
@@ -3761,7 +3775,7 @@ function attachSensorConfigToggle(section) {
 // dropdown selection if the device-side value changed.
 function updateSensorConfigUI(s) {
   const map = {
-    bme280:       'sys-section-bme',
+    environment:  'sys-section-env',
     magnetometer: 'sys-section-mag',
     imu:          'sys-section-imu',
   };

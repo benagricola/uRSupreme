@@ -46,21 +46,21 @@ def test_inbox_config_post_roundtrip(sx):
 
 
 def test_sensors_config_post_roundtrip(sx):
-    """Toggle BME280 enable on/off + back."""
+    """Toggle the environment sensor enable on/off + back."""
     s, d = sx
     sys_status = s.get(f"{d.url}/api/system_status", timeout=15).json()
-    bme = sys_status.get("sensors", {}).get("bme280")
-    if not bme or not bme.get("available"):
-        pytest.skip("BME280 not available on this board")
-    initial = bme.get("enabled", True)
-    interval = max(1, int(bme.get("interval_ms", 60000) / 1000))
+    env = sys_status.get("sensors", {}).get("environment")
+    if not env or not env.get("available"):
+        pytest.skip("environment sensor not available on this board")
+    initial = env.get("enabled", True)
+    interval = max(1, int(env.get("interval_ms", 60000) / 1000))
     r = s.post(f"{d.url}/api/sensors/config",
-               json={"sensor": "bme280", "enabled": not initial,
+               json={"sensor": "environment", "enabled": not initial,
                      "interval_s": interval}, timeout=15)
     assert r.status_code == 200
     # Restore.
     s.post(f"{d.url}/api/sensors/config",
-           json={"sensor": "bme280", "enabled": initial,
+           json={"sensor": "environment", "enabled": initial,
                  "interval_s": interval}, timeout=15)
 
 

@@ -140,6 +140,23 @@ namespace Web {
           Web::WS::publish_time(Web::TimeManager::source_name(src),
                                 unix_ms, /*calibrated=*/true);
         });
+      // Stuff a fresh sensor + clock snapshot into every `hello` frame
+      // so a freshly-connected SPA has live data immediately — no
+      // wait for the next periodic push, no fallback /api/system_status
+      // round-trip.
+      Web::WS::set_hello_extras([](JsonObject hello) {
+        JsonObject sensors = hello["sensors"].to<JsonObject>();
+        fill_sensor_block(sensors, "gps");
+        fill_sensor_block(sensors, "environment");
+        fill_sensor_block(sensors, "magnetometer");
+        fill_sensor_block(sensors, "imu");
+        JsonObject clock = hello["clock"].to<JsonObject>();
+        clock["now_ms"]            = millis();
+        clock["current_boot_epoch"] = Web::BootCounter::current();
+        clock["unix_ms"]            = (uint64_t)(Web::TimeManager::now_epoch() * 1000.0);
+        clock["calibrated"]         = Web::TimeManager::is_calibrated();
+        clock["source"]             = Web::TimeManager::source_name(Web::TimeManager::current_source());
+      });
       NOTICE("WebUI: listening on port 80");
     }
 
@@ -161,6 +178,34 @@ namespace Web {
           release_rns_lock();
         }
       }
+      // Sensor change publish. The four drivers (gps, environment, mag, imu)
+      // each cache (reading, taken_ms). When taken_ms moves we know
+      // the underlying pump() landed a fresh sample and we ship it to
+      // every WS client. No polling on the SPA side.
+      publish_sensor_if_changed("gps",          _last_pub_gps_ms);
+      publish_sensor_if_changed("environment",       _last_pub_bme_ms);
+      publish_sensor_if_changed("magnetometer", _last_pub_mag_ms);
+      publish_sensor_if_changed("imu",          _last_pub_imu_ms);
+    }
+
+    static void publish_sensor_if_changed(const char* kind, uint32_t& last_pub_ms) {
+      // Build the block into a probe JsonDocument first, then send. The
+      // taken_ms returned by fill_sensor_block is the dedupe key —
+      // we only broadcast when it advances.
+      JsonDocument probe;
+      JsonObject root = probe.to<JsonObject>();
+      const uint32_t taken = fill_sensor_block(root, kind);
+      if (taken == 0 || taken == last_pub_ms) return;
+      last_pub_ms = taken;
+      Web::WS::publish_sensor(kind, [kind](JsonObject v) {
+        // Refill into the WS payload — cheap, the underlying reads
+        // are cached, and it keeps the JSON shape consistent across
+        // hello / sensor_update / system_status.
+        JsonDocument tmp;
+        JsonObject root = tmp.to<JsonObject>();
+        fill_sensor_block(root, kind);
+        for (JsonPair kv : root[kind].as<JsonObject>()) v[kv.key()] = kv.value();
+      });
     }
 
     // RNS state mutex. Shared between the WebServer task (which calls
@@ -999,6 +1044,86 @@ namespace Web {
       send_json(req, 200, doc);
     }
 
+    // Build a single sensor's status block into `parent[kind]`. Same
+    // shape as the /api/system_status sensor section so the SPA can
+    // patch entries in place from a WS `sensor_update` event or read
+    // them in bulk from the REST snapshot. Returns the timestamp of
+    // the most recent reading (0 if no valid reading yet) so callers
+    // can dedupe.
+    static uint32_t fill_sensor_block(JsonObject parent, const char* kind) {
+      JsonObject o = parent[kind].to<JsonObject>();
+      if (strcmp(kind, "gps") == 0) {
+        const Web::Gps::Fix f = Web::Gps::last_fix();
+        o["available"]    = Web::Gps::has_serial();
+        o["valid"]        = f.valid;
+        o["latitude"]     = f.latitude_deg;
+        o["longitude"]    = f.longitude_deg;
+        o["speed_knots"]  = f.speed_knots;
+        o["heading"]      = f.heading_deg;
+        o["unix_ms"]      = (uint64_t)(f.unix_epoch * 1000.0);
+        o["fix_age_ms"]   = f.fix_received_ms == 0 ? -1
+                              : (long)(millis() - f.fix_received_ms);
+        o["last_byte_ms"] = f.last_byte_ms == 0 ? -1
+                              : (long)(millis() - f.last_byte_ms);
+        o["powered"]      = Web::Gps::is_powered();
+        switch (Web::Gps::pulse_state()) {
+          case Web::Gps::PulseState::Acquiring: o["pulse_state"] = "acquiring"; break;
+          default:                              o["pulse_state"] = "idle";      break;
+        }
+        return f.fix_received_ms;
+      }
+      if (strcmp(kind, "environment") == 0) {
+        const Web::Bme280::Reading r = Web::Bme280::last_reading();
+        o["available"]   = Web::Bme280::present();
+        o["enabled"]     = Web::Bme280::enabled();
+        o["interval_ms"] = (uint32_t)Web::Bme280::interval_ms();
+        o["valid"]       = r.valid;
+        if (r.valid) {
+          o["temp_c"]       = r.temp_c;
+          o["humidity_pct"] = r.humidity_pct;
+          o["pressure_pa"]  = r.pressure_pa;
+          o["age_ms"]       = (long)(millis() - r.taken_ms);
+        }
+        if (Web::Bme280::present()) o["address"] = Web::Bme280::address();
+        return r.taken_ms;
+      }
+      if (strcmp(kind, "magnetometer") == 0) {
+        const Web::QmcMag::Reading r = Web::QmcMag::last_reading();
+        o["available"]   = Web::QmcMag::present();
+        o["enabled"]     = Web::QmcMag::enabled();
+        o["interval_ms"] = (uint32_t)Web::QmcMag::interval_ms();
+        o["valid"]       = r.valid;
+        if (r.valid) {
+          o["heading_deg"] = r.heading_deg;
+          o["x_uT"]        = r.x_uT;
+          o["y_uT"]        = r.y_uT;
+          o["z_uT"]        = r.z_uT;
+          o["age_ms"]      = (long)(millis() - r.taken_ms);
+        }
+        if (Web::QmcMag::present()) o["address"] = Web::QmcMag::address();
+        return r.taken_ms;
+      }
+      if (strcmp(kind, "imu") == 0) {
+        const Web::QmiImu::Reading r = Web::QmiImu::last_reading();
+        o["available"]   = Web::QmiImu::present();
+        o["enabled"]     = Web::QmiImu::enabled();
+        o["interval_ms"] = (uint32_t)Web::QmiImu::interval_ms();
+        o["valid"]       = r.valid;
+        if (r.valid) {
+          o["accel_x_g"]  = r.accel_x_g;
+          o["accel_y_g"]  = r.accel_y_g;
+          o["accel_z_g"]  = r.accel_z_g;
+          o["gyro_x_dps"] = r.gyro_x_dps;
+          o["gyro_y_dps"] = r.gyro_y_dps;
+          o["gyro_z_dps"] = r.gyro_z_dps;
+          o["temp_c"]     = r.temp_c;
+          o["age_ms"]     = (long)(millis() - r.taken_ms);
+        }
+        return r.taken_ms;
+      }
+      return 0;
+    }
+
     // GET /api/system_status — aggregator for the device-status popover.
     // Combines storage, clock, RTC chip state, and per-sensor live
     // readings into one call so the SPA can populate the whole popover
@@ -1056,85 +1181,12 @@ namespace Web {
 
       // ---- sensors ----
       // Each entry is keyed by sensor name. SPA iterates and renders
-      // a section per present sensor. Add new sensor blocks here as
-      // their drivers land (BME280, IMU, magnetometer — #120 followup).
+      // a section per present sensor.
       JsonObject sensors = doc["sensors"].to<JsonObject>();
-      {
-        JsonObject g = sensors["gps"].to<JsonObject>();
-        const Web::Gps::Fix f = Web::Gps::last_fix();
-        g["available"]    = Web::Gps::has_serial();
-        g["valid"]        = f.valid;
-        g["latitude"]     = f.latitude_deg;
-        g["longitude"]    = f.longitude_deg;
-        g["speed_knots"]  = f.speed_knots;
-        g["heading"]      = f.heading_deg;
-        g["unix_ms"]      = (uint64_t)(f.unix_epoch * 1000.0);
-        g["fix_age_ms"]   = f.fix_received_ms == 0 ? -1
-                              : (long)(millis() - f.fix_received_ms);
-        g["last_byte_ms"] = f.last_byte_ms == 0 ? -1
-                              : (long)(millis() - f.last_byte_ms);
-        // Power-cycle state. The L76K runs in pulsed mode when the
-        // GPS time-source interval is long enough; the SPA uses this
-        // to render "Sleeping" vs "Acquiring" instead of "No fix".
-        g["powered"] = Web::Gps::is_powered();
-        switch (Web::Gps::pulse_state()) {
-          case Web::Gps::PulseState::Acquiring: g["pulse_state"] = "acquiring"; break;
-          default:                              g["pulse_state"] = "idle";      break;
-        }
-      }
-      {
-        JsonObject b = sensors["bme280"].to<JsonObject>();
-        const Web::Bme280::Reading r = Web::Bme280::last_reading();
-        b["available"]    = Web::Bme280::present();
-        b["enabled"]      = Web::Bme280::enabled();
-        b["interval_ms"]  = (uint32_t)Web::Bme280::interval_ms();
-        b["valid"]        = r.valid;
-        if (r.valid) {
-          b["temp_c"]        = r.temp_c;
-          b["humidity_pct"]  = r.humidity_pct;
-          b["pressure_pa"]   = r.pressure_pa;
-          b["age_ms"]        = (long)(millis() - r.taken_ms);
-        }
-        if (Web::Bme280::present()) {
-          b["address"] = Web::Bme280::address();
-        }
-      }
-      {
-        JsonObject m = sensors["magnetometer"].to<JsonObject>();
-        const Web::QmcMag::Reading r = Web::QmcMag::last_reading();
-        m["available"]   = Web::QmcMag::present();
-        m["enabled"]     = Web::QmcMag::enabled();
-        m["interval_ms"] = (uint32_t)Web::QmcMag::interval_ms();
-        m["valid"]       = r.valid;
-        if (r.valid) {
-          m["heading_deg"] = r.heading_deg;
-          m["x_uT"]        = r.x_uT;
-          m["y_uT"]        = r.y_uT;
-          m["z_uT"]        = r.z_uT;
-          m["age_ms"]      = (long)(millis() - r.taken_ms);
-        }
-        if (Web::QmcMag::present()) {
-          m["address"] = Web::QmcMag::address();
-        }
-      }
-      {
-        JsonObject i = sensors["imu"].to<JsonObject>();
-        const Web::QmiImu::Reading r = Web::QmiImu::last_reading();
-        i["available"]   = Web::QmiImu::present();
-        i["enabled"]     = Web::QmiImu::enabled();
-        i["interval_ms"] = (uint32_t)Web::QmiImu::interval_ms();
-        i["valid"]       = r.valid;
-        if (r.valid) {
-          i["accel_x_g"]  = r.accel_x_g;
-          i["accel_y_g"]  = r.accel_y_g;
-          i["accel_z_g"]  = r.accel_z_g;
-          i["gyro_x_dps"] = r.gyro_x_dps;
-          i["gyro_y_dps"] = r.gyro_y_dps;
-          i["gyro_z_dps"] = r.gyro_z_dps;
-          i["temp_c"]     = r.temp_c;
-          i["age_ms"]     = (long)(millis() - r.taken_ms);
-        }
-      }
+      fill_sensor_block(sensors, "gps");
+      fill_sensor_block(sensors, "environment");
+      fill_sensor_block(sensors, "magnetometer");
+      fill_sensor_block(sensors, "imu");
 
       // ---- outbound staging caps ----
       // The SPA uses these to clamp image-resize options, file picker
@@ -1189,7 +1241,7 @@ namespace Web {
       handle_inbox_config_get(req);
     }
 
-    // POST /api/sensors/config — body = {"sensor":"bme280|magnetometer|imu",
+    // POST /api/sensors/config — body = {"sensor":"environment|magnetometer|imu",
     // "enabled":bool, "interval_s":uint}. Applies the override to the
     // running driver and persists to /lxmf/sensors.json so it survives
     // reboot. GPS isn't routed through here — its enable/interval are
@@ -1202,7 +1254,7 @@ namespace Web {
       const uint32_t iv_s   = (uint32_t)(body["interval_s"] | 60);
       if (!*key) {
         send_error_with_message(req, 400, "missing_sensor",
-          "Body must include `sensor` (one of bme280, magnetometer, imu).");
+          "Body must include `sensor` (one of environment, magnetometer, imu).");
         return;
       }
       if (iv_s > 7 * 24 * 3600UL) {
@@ -2471,6 +2523,14 @@ namespace Web {
   private:
     static inline bool     _started = false;
     static inline uint32_t _last_sweep = 0;
+    // Per-sensor `taken_ms` snapshots, used by publish_sensor_if_changed
+    // to dedupe WS broadcasts. Reading a sensor twice per second when
+    // it hasn't pumped is fine — the underlying Bme280::last_reading
+    // etc are cached; we just don't want to flood the WS channel.
+    static inline uint32_t _last_pub_gps_ms = 0;
+    static inline uint32_t _last_pub_bme_ms = 0;
+    static inline uint32_t _last_pub_mag_ms = 0;
+    static inline uint32_t _last_pub_imu_ms = 0;
   };
 
   // Free function the LXMF gateway calls to publish a Resource-transfer

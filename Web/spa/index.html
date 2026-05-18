@@ -939,7 +939,7 @@ summary:hover { color: var(--text); }
   </div>
   <div class="popover-section" id="sys-section-env" data-sensor="environment" hidden>
     <div class="popover-row" style="cursor:pointer" data-role="header">
-      <div class="popover-label">Atmospheric</div>
+      <div class="popover-label">Environment</div>
       <div id="sys-env-line"></div>
       <span class="muted" data-role="chev" style="font-size:11px;opacity:0.55;transition:transform .12s">▾</span>
     </div>
@@ -3460,7 +3460,7 @@ function renderSystemPopover(s) {
     // We use last_byte_ms (when the module last sent us NMEA) rather
     // than fix_age_ms — the module is talking long before a fix lands.
     const gWarming = typeof g.last_byte_ms !== 'number' || g.last_byte_ms < 0;
-    $('sys-gps-age').textContent = ageLine(g.last_byte_ms, 'L76K', gWarming);
+    $('sys-gps-age').textContent = ageLine(g.last_byte_ms, g.model || 'GPS', gWarming);
   }
 
   // Generic three-state pill renderer for simple sensor sections.
@@ -3502,7 +3502,7 @@ function renderSystemPopover(s) {
     } else {
       $('sys-env-values').textContent = '';
     }
-    $('sys-env-age').textContent = ageLine(env.age_ms, 'environment', envState === 'warming');
+    $('sys-env-age').textContent = ageLine(env.age_ms, env.model || 'environment', envState === 'warming');
   }
 
   // Compass — QMC6310 magnetometer.
@@ -3517,7 +3517,7 @@ function renderSystemPopover(s) {
     } else {
       $('sys-mag-values').textContent = '';
     }
-    $('sys-mag-age').textContent = ageLine(mg.age_ms, 'QMC6310', mState === 'warming');
+    $('sys-mag-age').textContent = ageLine(mg.age_ms, mg.model || 'magnetometer', mState === 'warming');
   }
 
   // Motion — QMI8658 IMU.
@@ -3535,7 +3535,7 @@ function renderSystemPopover(s) {
       $('sys-imu-accel').textContent = '';
       $('sys-imu-gyro').textContent = '';
     }
-    $('sys-imu-age').textContent = ageLine(im.age_ms, 'QMI8658', iState === 'warming');
+    $('sys-imu-age').textContent = ageLine(im.age_ms, im.model || 'imu', iState === 'warming');
   }
 
   // Build / refresh the per-sensor enable+interval config rows
@@ -3700,7 +3700,7 @@ $('sys-storage-migrate').addEventListener('click', async () => {
 });
 
 // ============================== SYSTEM POPOVER — sensor config ==============================
-// Each sensor section (Atmospheric / Compass / Motion) has a click-
+// Each sensor section (Environment / Compass / Motion) has a click-
 // to-expand row revealing an enable checkbox + interval dropdown.
 // Save fires immediately on change — small enough payload that the
 // user expects instant feedback. GPS is read-only here; its

@@ -89,6 +89,7 @@ inline void pump() {
   _detail::last_ref() = r;
 }
 
+inline const char* model_name() { return "QMC6310"; }
 inline bool      present()       { return _detail::present_ref(); }
 inline uint8_t   address()       { return _detail::addr_ref(); }
 inline Reading   last_reading()  { return _detail::last_ref(); }

@@ -609,13 +609,9 @@ namespace Web {
       doc["bootstrap"]  = bootstrap_mode;
       doc["identity_code_pending"] = !id_code().hex6.empty() && !id_code().consumed
                               && millis() < id_code().expires_ms;
-      // Time-manager state — surfaced so the SPA can prompt for a
-      // browser-sync when the device clock is uncalibrated or wildly
-      // off the browser's wall clock.
-      JsonObject t = doc["time"].to<JsonObject>();
-      t["calibrated"] = Web::TimeManager::is_calibrated();
-      t["source"]     = Web::TimeManager::source_name(Web::TimeManager::current_source());
-      t["unix_ms"]    = (uint64_t)(Web::TimeManager::now_epoch() * 1000.0);
+      // Time state lives on the WS `hello` frame now — the login
+      // screen doesn't show it, and post-login the SPA only consumes
+      // the WS-pinned clock anchor. Removed from /api/info.
       JsonArray accts = doc["identities"].to<JsonArray>();
       for (const auto* a : LXMF::LXMFGateway::active_identities()) {
         JsonObject obj = accts.add<JsonObject>();
@@ -1054,6 +1050,7 @@ namespace Web {
       JsonObject o = parent[kind].to<JsonObject>();
       if (strcmp(kind, "gps") == 0) {
         const Web::Gps::Fix f = Web::Gps::last_fix();
+        o["model"]        = Web::Gps::model_name();
         o["available"]    = Web::Gps::has_serial();
         o["valid"]        = f.valid;
         o["latitude"]     = f.latitude_deg;
@@ -1074,6 +1071,9 @@ namespace Web {
       }
       if (strcmp(kind, "environment") == 0) {
         const Web::Bme280::Reading r = Web::Bme280::last_reading();
+        // Driver supplies the chip name — so swapping for a BMP280 /
+        // BME680 variant in the future is a one-line driver change.
+        o["model"]       = Web::Bme280::model_name();
         o["available"]   = Web::Bme280::present();
         o["enabled"]     = Web::Bme280::enabled();
         o["interval_ms"] = (uint32_t)Web::Bme280::interval_ms();
@@ -1089,6 +1089,7 @@ namespace Web {
       }
       if (strcmp(kind, "magnetometer") == 0) {
         const Web::QmcMag::Reading r = Web::QmcMag::last_reading();
+        o["model"]       = Web::QmcMag::model_name();
         o["available"]   = Web::QmcMag::present();
         o["enabled"]     = Web::QmcMag::enabled();
         o["interval_ms"] = (uint32_t)Web::QmcMag::interval_ms();
@@ -1105,6 +1106,7 @@ namespace Web {
       }
       if (strcmp(kind, "imu") == 0) {
         const Web::QmiImu::Reading r = Web::QmiImu::last_reading();
+        o["model"]       = Web::QmiImu::model_name();
         o["available"]   = Web::QmiImu::present();
         o["enabled"]     = Web::QmiImu::enabled();
         o["interval_ms"] = (uint32_t)Web::QmiImu::interval_ms();

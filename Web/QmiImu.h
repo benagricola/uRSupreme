@@ -124,6 +124,7 @@ inline void pump() {
   _detail::last_ref() = r;
 }
 
+inline const char* model_name() { return "QMI8658"; }
 inline bool      present()       { return _detail::present_ref(); }
 inline Reading   last_reading()  { return _detail::last_ref(); }
 inline uint32_t  interval_ms()   { return _detail::interval_ms_ref(); }

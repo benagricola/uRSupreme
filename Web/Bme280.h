@@ -91,6 +91,11 @@ inline void pump() {
   _detail::last_ref() = r;
 }
 
+// Chip identity surfaced as a string so the SPA can display "Last read
+// 12s ago (BME280)" without hard-coding the driver name. The Adafruit
+// BME280 driver doesn't distinguish BMP/BME variants reliably; assume
+// BME280 for now and swap when we add support for a different chip.
+inline const char* model_name() { return "BME280"; }
 inline bool      present()       { return _detail::present_ref(); }
 inline uint8_t   address()       { return _detail::addr_ref(); }
 inline Reading   last_reading()  { return _detail::last_ref(); }

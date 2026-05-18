@@ -383,5 +383,10 @@ inline Fix last_fix() { return _detail::fix_ref(); }
 
 inline bool has_serial() { return _detail::serial_ref() != nullptr; }
 
+// Chip identity. T-Beam Supreme ships with the L76K module; if a
+// different module shows up on a future board, swap this string (or
+// add a hardware probe).
+inline const char* model_name() { return "L76K"; }
+
 }  // namespace Gps
 }  // namespace Web

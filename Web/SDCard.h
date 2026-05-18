@@ -136,49 +136,28 @@ inline const RailState& rail_state() { return _detail::rail_state_ref(); }
 inline bool      present()      { return _detail::present_ref(); }
 
 // Hot-detect helper. Returns true if presence changed since the last
-// call. When currently mounted, issues a cheap I/O probe (cardType +
-// totalBytes) to confirm the card is still there; on failure tears
-// down the mount so subsequent SD.exists/SD.open don't drive a dead
-// bus. When currently absent, attempts SD.begin() to pick up a card
-// inserted at runtime. Cost: cardType is cached (cheap); SD.begin
-// on an empty slot takes ~50 ms; SD.begin on a freshly-inserted card
-// can stall ~500 ms, so the main-loop caller polls at ~2 Hz max.
+// call. When currently mounted, issues a cheap cardType + totalBytes
+// probe to catch ejection; on detection, tears down the mount so
+// subsequent SD.exists/SD.open don't drive a dead bus. Insertion is
+// NOT auto-detected — SD.begin() on an empty slot stalls the SPI bus
+// for ~500 ms per call, which would block the main loop (including
+// the WebUI listener startup) on devices with no card. User reboots
+// after inserting a card, same as before. A future explicit
+// "Re-probe SD" SPA action can drive insertion detection on demand.
 inline bool poll_presence() {
 #if defined(BOARD_MODEL) && (BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1)
-  const bool was_present = _detail::present_ref();
-  if (was_present) {
-    // Ejection check: a removed SDHC's cardType drops to CARD_NONE
-    // once the kernel notices the missing pull-ups on the data lines.
-    // Force a read to catch the case where the type stays cached but
-    // I/O fails.
-    const uint8_t ct = SD.cardType();
-    if (ct == CARD_NONE || SD.totalBytes() == 0) {
-      NOTICEF("SDCard: ejection detected (cardType=%u total=%llu)",
-              (unsigned)ct, (unsigned long long)SD.totalBytes());
-      SD.end();
-      _detail::present_ref()   = false;
-      _detail::card_type_ref() = CARD_NONE;
-      _detail::last_status_ref() = "ejected";
-      return true;
-    }
-    return false;
-  }
-  // Currently absent — try to mount.
-  SPIClass* bus = ensure_shared_bus();
-  if (!bus) return false;
-  if (!SD.begin(SD_CS, *bus)) return false;
+  if (!_detail::present_ref()) return false;
   const uint8_t ct = SD.cardType();
-  if (ct == CARD_NONE) {
+  if (ct == CARD_NONE || SD.totalBytes() == 0) {
+    NOTICEF("SDCard: ejection detected (cardType=%u total=%llu)",
+            (unsigned)ct, (unsigned long long)SD.totalBytes());
     SD.end();
-    return false;
+    _detail::present_ref()   = false;
+    _detail::card_type_ref() = CARD_NONE;
+    _detail::last_status_ref() = "ejected";
+    return true;
   }
-  _detail::card_type_ref() = ct;
-  _detail::present_ref()   = true;
-  _detail::last_status_ref() = "mounted";
-  NOTICEF("SDCard: insertion detected, total=%llu used=%llu",
-          (unsigned long long)SD.totalBytes(),
-          (unsigned long long)SD.usedBytes());
-  return true;
+  return false;
 #else
   return false;
 #endif

@@ -2546,28 +2546,6 @@ void work_while_waiting() { loop(); }
 void loop() {
 
 #if defined(HAS_LXMF_GATEWAY)
-  // SD-presence hot-detect — ~2 Hz. On state transition (insert OR
-  // eject), publish a storage_changed WS event so the SPA Settings
-  // UI can re-bind its slider upper bounds + toast the user. The
-  // saved user_max_* preference is preserved across the transition;
-  // only the effective cap moves.
-  {
-    static uint32_t last_sd_poll_ms = 0;
-    const uint32_t now_ms = millis();
-    if (now_ms - last_sd_poll_ms >= 500) {
-      last_sd_poll_ms = now_ms;
-      if (Web::SDCard::poll_presence()) {
-        const auto& sc = Web::Storage::current();
-        Web::WS::publish_storage(
-            Web::SDCard::present(),
-            (uint32_t)std::min<size_t>(sc.user_max_send_bytes,    0xFFFFFFFFu),
-            (uint32_t)std::min<size_t>(sc.user_max_receive_bytes, 0xFFFFFFFFu),
-            (uint32_t)std::min<size_t>(Web::Storage::effective_max_send(),    0xFFFFFFFFu),
-            (uint32_t)std::min<size_t>(Web::Storage::effective_max_receive(), 0xFFFFFFFFu));
-      }
-    }
-  }
-
   // Flush any pending BLE-in burst counter after a 50ms idle gap so short
   // bursts (a single 227-byte LXMF message) surface as their own log line.
   if (ble_in_burst_bytes > 0 && (millis() - ble_in_last_byte_ms) > 50) {

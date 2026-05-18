@@ -43,7 +43,7 @@ namespace LXMF {
     // calibrated local clock — the prune is a no-op while uncalibrated.
     static constexpr size_t DEFAULT_RAM_CAPACITY = 200;
     static constexpr size_t UNLIMITED_CAPACITY   = SIZE_MAX;
-    static constexpr size_t MAX_LINE_BYTES       = 768;
+    static constexpr size_t MAX_LINE_BYTES       = 4096;
 
     LXMFInbox(const std::string& identity_dir,
               const char* filename,
@@ -176,9 +176,9 @@ namespace LXMF {
         }
       }
 
-      char line[MAX_LINE_BYTES];
-      size_t n = serializeJson(doc, line, sizeof(line) - 1);
-      if (n == 0 || n >= sizeof(line) - 1) {
+      auto line = std::make_unique<char[]>(MAX_LINE_BYTES);
+      size_t n = serializeJson(doc, line.get(), MAX_LINE_BYTES - 1);
+      if (n == 0 || n >= MAX_LINE_BYTES - 1) {
         ERROR("LXMFInbox: append serialization failed or oversize");
         return false;
       }
@@ -189,7 +189,7 @@ namespace LXMF {
         ERRORF("LXMFInbox: cannot open %s for append", _path.c_str());
         return false;
       }
-      size_t written = f.write(reinterpret_cast<const uint8_t*>(line), n + 1);
+      size_t written = f.write(reinterpret_cast<const uint8_t*>(line.get()), n + 1);
       f.close();
       if (written != n + 1) {
         ERRORF("LXMFInbox: short write to %s (%u of %u)", _path.c_str(), (unsigned)written, (unsigned)(n + 1));
@@ -369,13 +369,13 @@ namespace LXMF {
             if (!a.mime.empty()) o["m"] = a.mime;
           }
         }
-        char line[MAX_LINE_BYTES];
-        size_t n = serializeJson(doc, line, sizeof(line) - 1);
-        if (n == 0 || n >= sizeof(line) - 1) continue;
+        auto line = std::make_unique<char[]>(MAX_LINE_BYTES);
+        size_t n = serializeJson(doc, line.get(), MAX_LINE_BYTES - 1);
+        if (n == 0 || n >= MAX_LINE_BYTES - 1) continue;
         line[n] = '\n';
         microStore::File f = filesystem.open(_path.c_str(), microStore::File::ModeAppend, true);
         if (!f) return;
-        f.write(reinterpret_cast<const uint8_t*>(line), n + 1);
+        f.write(reinterpret_cast<const uint8_t*>(line.get()), n + 1);
         f.close();
       }
     }

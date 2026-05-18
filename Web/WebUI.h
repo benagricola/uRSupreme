@@ -1058,10 +1058,12 @@ namespace Web {
         o["speed_knots"]  = f.speed_knots;
         o["heading"]      = f.heading_deg;
         o["unix_ms"]      = (uint64_t)(f.unix_epoch * 1000.0);
-        o["fix_age_ms"]   = f.fix_received_ms == 0 ? -1
-                              : (long)(millis() - f.fix_received_ms);
-        o["last_byte_ms"] = f.last_byte_ms == 0 ? -1
-                              : (long)(millis() - f.last_byte_ms);
+        // Raw device-millis snapshots, NOT "X seconds ago" deltas. The
+        // SPA subtracts these from its clock anchor every render tick
+        // so "Last fix 12 s ago" labels tick up live without a refetch.
+        // -1 sentinel = "never received."
+        o["fix_received_ms"] = f.fix_received_ms == 0 ? -1 : (long)f.fix_received_ms;
+        o["last_byte_ms"]    = f.last_byte_ms    == 0 ? -1 : (long)f.last_byte_ms;
         o["powered"]      = Web::Gps::is_powered();
         switch (Web::Gps::pulse_state()) {
           case Web::Gps::PulseState::Acquiring: o["pulse_state"] = "acquiring"; break;
@@ -1082,7 +1084,7 @@ namespace Web {
           o["temp_c"]       = r.temp_c;
           o["humidity_pct"] = r.humidity_pct;
           o["pressure_pa"]  = r.pressure_pa;
-          o["age_ms"]       = (long)(millis() - r.taken_ms);
+          o["taken_ms"]     = (uint32_t)r.taken_ms;
         }
         if (Web::Bme280::present()) o["address"] = Web::Bme280::address();
         return r.taken_ms;
@@ -1099,7 +1101,7 @@ namespace Web {
           o["x_uT"]        = r.x_uT;
           o["y_uT"]        = r.y_uT;
           o["z_uT"]        = r.z_uT;
-          o["age_ms"]      = (long)(millis() - r.taken_ms);
+          o["taken_ms"]    = (uint32_t)r.taken_ms;
         }
         if (Web::QmcMag::present()) o["address"] = Web::QmcMag::address();
         return r.taken_ms;
@@ -1119,7 +1121,7 @@ namespace Web {
           o["gyro_y_dps"] = r.gyro_y_dps;
           o["gyro_z_dps"] = r.gyro_z_dps;
           o["temp_c"]     = r.temp_c;
-          o["age_ms"]     = (long)(millis() - r.taken_ms);
+          o["taken_ms"]   = (uint32_t)r.taken_ms;
         }
         return r.taken_ms;
       }

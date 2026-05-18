@@ -103,7 +103,10 @@ def test_hello_sensors_block(sx, tokens):
     sensors = h["sensors"]
     assert "gps" in sensors
     g = sensors["gps"]
-    assert_has_keys(g, ["available", "valid", "fix_age_ms", "last_byte_ms",
+    # GPS now emits raw device-millis snapshots (fix_received_ms,
+    # last_byte_ms) instead of server-computed ages. SPA subtracts
+    # from its clock anchor for live ticking.
+    assert_has_keys(g, ["available", "valid", "fix_received_ms", "last_byte_ms",
                         "powered", "pulse_state", "model"])
     assert g["pulse_state"] in ("idle", "acquiring")
     assert_type(g["powered"], bool, "sensors.gps.powered")

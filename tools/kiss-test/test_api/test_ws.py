@@ -74,14 +74,21 @@ def test_ws_ping_pong(sx, tokens):
     _, d = sx
     ws = _connect(d, tokens["sx"], timeout=5)
     try:
-        # Discard the hello frame.
-        ws.recv()
+        ws.recv()  # hello
         ws.send('{"type":"ping"}')
-        ws.settimeout(3)
-        reply = json.loads(ws.recv())
+        # Drain whatever the server pushes (sensor_update, system_update,
+        # etc.) until the pong response lands. Cap at 20 frames to avoid
+        # an infinite loop on a broken implementation.
+        ws.settimeout(5)
+        pong = None
+        for _ in range(20):
+            frame = json.loads(ws.recv())
+            if frame.get("type") == "pong":
+                pong = frame
+                break
+        assert pong is not None, "no pong reply within 20 frames"
     finally:
         ws.close()
-    assert reply.get("type") == "pong"
 
 
 def test_ws_announce_seen_after_peer_announce(sx, lr, tokens):

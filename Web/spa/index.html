@@ -3459,8 +3459,8 @@ function renderSystemPopover(s) {
         'Speed ' + g.speed_knots.toFixed(1) + ' kn · heading ' + g.heading.toFixed(0) + '°';
     }
     // "Last read Xs ago (L76K)" matches the other sensor sections.
-    // We use last_byte_ms (when the module last sent us NMEA) rather
-    // than fix_age_ms — the module is talking long before a fix lands.
+    // Last NMEA byte (raw device millis). Use it rather than
+    // fix_received_ms — the module is talking long before a fix lands.
     const gWarming = typeof g.last_byte_ms !== 'number' || g.last_byte_ms < 0;
     $('sys-gps-age').textContent = ageLine(g.last_byte_ms, g.model || 'GPS', gWarming);
   }
@@ -3484,10 +3484,23 @@ function renderSystemPopover(s) {
 
   // "Last read 24s ago (Model)" — consistent age-line format. Empty
   // string for sensors that haven't produced a reading yet.
-  function ageLine(age_ms, model, warming) {
+  // Compute "device millis now" from the WS-pinned clock anchor.
+  // Returns null when the anchor hasn't been set yet (pre-hello).
+  function deviceMillisNow() {
+    const a = state.clockAnchor;
+    if (!a || typeof a.deviceNowMs !== 'number') return null;
+    return a.deviceNowMs + (performance.now() - (a.localPerfMs || 0));
+  }
+  // Render "Last read Xs ago (MODEL)" from a raw device-millis
+  // snapshot. Re-running this each tick gives a live-counting label
+  // without a refetch. taken_ms == -1 (or missing) means "never."
+  function ageLine(taken_ms, model, warming) {
     if (warming) return 'Waiting for first read… (' + model + ')';
-    if (typeof age_ms !== 'number' || age_ms < 0) return '';
-    return 'Last read ' + Math.round(age_ms / 1000) + 's ago (' + model + ')';
+    if (typeof taken_ms !== 'number' || taken_ms < 0) return '';
+    const now = deviceMillisNow();
+    if (now === null) return '';
+    const age_s = Math.max(0, Math.round((now - taken_ms) / 1000));
+    return 'Last read ' + age_s + 's ago (' + model + ')';
   }
 
   // Atmospheric — generic key (driver-independent). Bench device has
@@ -3504,7 +3517,7 @@ function renderSystemPopover(s) {
     } else {
       $('sys-env-values').textContent = '';
     }
-    $('sys-env-age').textContent = ageLine(env.age_ms, env.model || 'environment', envState === 'warming');
+    $('sys-env-age').textContent = ageLine(env.taken_ms, env.model || 'environment', envState === 'warming');
   }
 
   // Compass — QMC6310 magnetometer.
@@ -3519,7 +3532,7 @@ function renderSystemPopover(s) {
     } else {
       $('sys-mag-values').textContent = '';
     }
-    $('sys-mag-age').textContent = ageLine(mg.age_ms, mg.model || 'magnetometer', mState === 'warming');
+    $('sys-mag-age').textContent = ageLine(mg.taken_ms, mg.model || 'magnetometer', mState === 'warming');
   }
 
   // Motion — QMI8658 IMU.
@@ -3537,7 +3550,7 @@ function renderSystemPopover(s) {
       $('sys-imu-accel').textContent = '';
       $('sys-imu-gyro').textContent = '';
     }
-    $('sys-imu-age').textContent = ageLine(im.age_ms, im.model || 'imu', iState === 'warming');
+    $('sys-imu-age').textContent = ageLine(im.taken_ms, im.model || 'imu', iState === 'warming');
   }
 
   // Build / refresh the per-sensor enable+interval config rows
@@ -3547,11 +3560,37 @@ function renderSystemPopover(s) {
 }
 
 function tickSystemClock() {
+  // Live clock display from the system popover's pinned anchor.
   const a = sysPopover.clockAnchor;
-  if (!a) return;
-  const nowMs = a.deviceUnixMs + (performance.now() - a.localNowMs);
-  const el = $('sys-clock-now');
-  if (el) el.textContent = new Date(nowMs).toLocaleString();
+  if (a) {
+    const nowMs = a.deviceUnixMs + (performance.now() - a.localNowMs);
+    const el = $('sys-clock-now');
+    if (el) el.textContent = new Date(nowMs).toLocaleString();
+  }
+  // Live-tick "Last read Xs ago" lines for every sensor section. We
+  // hand the same taken_ms back to ageLine() — it'll compute the age
+  // from state.clockAnchor + the browser's perf.now, so the number
+  // advances every second without a refetch.
+  const s = state.system && state.system.sensors;
+  if (s) {
+    const g = s.gps || {};
+    if (g.available) {
+      const gWarming = typeof g.last_byte_ms !== 'number' || g.last_byte_ms < 0;
+      $('sys-gps-age').textContent = ageLine(g.last_byte_ms, g.model || 'GPS', gWarming);
+    }
+    const env = s.environment || {};
+    if (env.available) {
+      $('sys-env-age').textContent = ageLine(env.taken_ms, env.model || 'environment', !env.valid);
+    }
+    const mg = s.magnetometer || {};
+    if (mg.available) {
+      $('sys-mag-age').textContent = ageLine(mg.taken_ms, mg.model || 'magnetometer', !mg.valid);
+    }
+    const im = s.imu || {};
+    if (im.available) {
+      $('sys-imu-age').textContent = ageLine(im.taken_ms, im.model || 'imu', !im.valid);
+    }
+  }
 }
 
 function startSystemTicker() {

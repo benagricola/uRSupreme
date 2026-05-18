@@ -1251,9 +1251,14 @@ namespace Web {
         if (caps.sd_present) oc["sd_free_bytes"] = (uint32_t)caps.sd_free;
       }
       // ---- user-facing storage config ----
+      // Append to the already-populated `storage` object built at line
+      // 1204 — using .to<JsonObject>() here overwrites the .flash /
+      // .sd sub-objects (regression that made the SPA think the SD
+      // card was absent). .as<JsonObject>() returns the existing
+      // object so the new fields land alongside the legacy ones.
       {
         const auto& sc = Web::Storage::current();
-        JsonObject st = root["storage"].to<JsonObject>();
+        JsonObject st = root["storage"].as<JsonObject>();
         st["user_max_send_bytes"]      = (uint32_t)std::min<size_t>(sc.user_max_send_bytes,    0xFFFFFFFFu);
         st["user_max_receive_bytes"]   = (uint32_t)std::min<size_t>(sc.user_max_receive_bytes, 0xFFFFFFFFu);
         st["effective_max_send_bytes"] = (uint32_t)std::min<size_t>(Web::Storage::effective_max_send(),    0xFFFFFFFFu);

@@ -36,9 +36,11 @@
 #include <Packet.h>
 #include <Link.h>
 #include <Resource.h>
+#include <ResourceBuffer.h>   // for RNS::resource_tmp_path()
 #include <Transport.h>
 #include <Bytes.h>
 #include <Log.h>
+#include <Utilities/OS.h>     // for OS::open_file / OS::remove_file
 
 #include "LXMFTypes.h"
 #include "../Web/BootCounter.h"
@@ -320,7 +322,16 @@ namespace LXMF {
     // notified via the delivery callback so the MessageRecord status
     // can advance.
     struct PendingLinkSend {
+      // The LXMF wire payload (msgpack header + content + attachments).
+      // For sends > LXMF_LINK_PACKET_MAX the wire is spilled to a file
+      // under the resource-tmp dir so it doesn't dwell in PSRAM for
+      // the (potentially minutes-long) link-establishment + retry
+      // window. `wire_path` is set in that case; `wire` stays empty
+      // and is filled on demand at link-established time. Small (<=
+      // LXMF_LINK_PACKET_MAX) sends keep the wire in `wire` directly
+      // since the disk round-trip would dwarf the in-RAM cost.
       RNS::Bytes   wire;
+      std::string  wire_path;
       // NONE-construct the Link member so default-insertion into the
       // pending_link_sends map (via map[key] = value, which first
       // default-constructs then move-assigns) doesn't crash. The default
@@ -777,7 +788,26 @@ namespace LXMF {
                      _static_outbound_link_closed);
       RNS::Bytes link_hash = link.hash();
       PendingLinkSend ps;
-      ps.wire        = wire;
+      // Spill large wires to disk so PSRAM is freed for the duration
+      // of the link-establishment + transfer window (which can run
+      // into minutes on airtime-throttled links). Small wires (<=
+      // LXMF_LINK_PACKET_MAX) stay in PSRAM since they go out as a
+      // single packet on link-established and the file round-trip
+      // would dwarf the in-RAM cost.
+      if (wire.size() > LXMF_LINK_PACKET_MAX) {
+        ps.wire_path = _spill_wire_to_disk(wire, link_hash);
+        if (ps.wire_path.empty()) {
+          // Fall back to keeping the wire in PSRAM.
+          WARNING("LXMF: wire spill failed; keeping in PSRAM");
+          ps.wire = wire;
+        } else {
+          ps.total_bytes = (uint32_t)wire.size();
+          DEBUGF("LXMF: spilled %u-byte wire to %s",
+                 (unsigned)wire.size(), ps.wire_path.c_str());
+        }
+      } else {
+        ps.wire = wire;
+      }
       ps.link        = link;
       ps.started_ms  = (uint64_t)millis();
       ps.dest_hash   = dest_hash;
@@ -832,6 +862,91 @@ namespace LXMF {
       return p;
     }
 
+    // Write the wire bytes to a temp file under the SD-aware resource
+    // tmp dir and return the chosen path on success, empty string on
+    // failure. Used to spill large outbound payloads off PSRAM during
+    // the link-establishment dwell (typically seconds, up to minutes
+    // on retry). Caller is responsible for unlinking the file when
+    // the PendingLinkSend goes away.
+    static std::string _spill_wire_to_disk(const RNS::Bytes& wire,
+                                           const RNS::Bytes& link_hash) {
+      char path[256];
+      snprintf(path, sizeof(path), "%s/outbound_%s_%lu.bin",
+               RNS::resource_tmp_path(),
+               link_hash.toHex().substr(0, 8).c_str(),
+               (unsigned long)millis());
+      try {
+        microStore::File f = RNS::Utilities::OS::open_file(
+            path, microStore::File::ModeReadWrite);
+        if (!f) {
+          ERRORF("LXMF: wire spill open '%s' failed", path);
+          return {};
+        }
+        const size_t wrote = f.write(wire.data(), wire.size());
+        f.flush();
+        f.close();
+        if (wrote != wire.size()) {
+          ERRORF("LXMF: wire spill short %zu/%zu", wrote, wire.size());
+          RNS::Utilities::OS::remove_file(path);
+          return {};
+        }
+        return std::string(path);
+      }
+      catch (const std::exception& e) {
+        ERRORF("LXMF: wire spill threw: %s", e.what());
+        return {};
+      }
+    }
+
+    // Inverse: load a previously spilled wire file back into a Bytes.
+    // Returns the bytes on success, empty on failure. Used at link-
+    // established time so the Resource constructor gets the same
+    // payload that send_message built.
+    static RNS::Bytes _load_wire_from_disk(const std::string& path,
+                                           size_t expected_size) {
+      try {
+        microStore::File f = RNS::Utilities::OS::open_file(
+            path.c_str(), microStore::File::ModeRead);
+        if (!f) {
+          ERRORF("LXMF: wire load open '%s' failed", path.c_str());
+          return {};
+        }
+        RNS::Bytes out;
+        uint8_t* dst = out.writable(expected_size);
+        if (dst == nullptr) {
+          ERRORF("LXMF: wire load alloc %zu bytes failed", expected_size);
+          return {};
+        }
+        const size_t got = f.read(dst, expected_size);
+        f.close();
+        if (got != expected_size) {
+          ERRORF("LXMF: wire load short %zu/%zu", got, expected_size);
+          return {};
+        }
+        return out;
+      }
+      catch (const std::exception& e) {
+        ERRORF("LXMF: wire load threw: %s", e.what());
+        return {};
+      }
+    }
+
+    // Idempotent cleanup of the on-disk wire file. Called when a
+    // PendingLinkSend is being erased from the map.
+    static void _release_wire_file(PendingLinkSend& ps) {
+      if (ps.wire_path.empty()) return;
+      try {
+        if (RNS::Utilities::OS::file_exists(ps.wire_path.c_str())) {
+          RNS::Utilities::OS::remove_file(ps.wire_path.c_str());
+        }
+      }
+      catch (const std::exception& e) {
+        WARNINGF("LXMF: wire unlink '%s' threw: %s",
+                 ps.wire_path.c_str(), e.what());
+      }
+      ps.wire_path.clear();
+    }
+
     // Static trampoline: looks up the LXMFMinimal* by the packet's
     // destination hash and dispatches to that instance.
     static void _static_packet_callback(const RNS::Bytes& data, const RNS::Packet& packet) {
@@ -881,14 +996,33 @@ namespace LXMF {
         return;
       }
       PendingLinkSend& ps = it->second;
-      NOTICEF("LXMF: outbound link established to %s (%u-byte payload)",
-              ps.dest_hash.toHex().c_str(), (unsigned)ps.wire.size());
 
-      if (ps.wire.size() <= LXMF_LINK_PACKET_MAX) {
+      // Materialise the wire — either it's already in PSRAM (small
+      // send) or we spilled it to disk in send_message and need to
+      // read it back for the Resource constructor.
+      RNS::Bytes wire_for_send;
+      const RNS::Bytes* wire_ptr = nullptr;
+      if (!ps.wire_path.empty()) {
+        wire_for_send = _load_wire_from_disk(ps.wire_path, ps.total_bytes);
+        if (!wire_for_send.size()) {
+          ERRORF("LXMF: failed to reload spilled wire for %s",
+                 ps.dest_hash.toHex().c_str());
+          _schedule_retry_or_fail(it, m, "wire reload failed");
+          return;
+        }
+        wire_ptr = &wire_for_send;
+      } else {
+        wire_ptr = &ps.wire;
+      }
+      const size_t wire_len = wire_ptr->size();
+      NOTICEF("LXMF: outbound link established to %s (%u-byte payload)",
+              ps.dest_hash.toHex().c_str(), (unsigned)wire_len);
+
+      if (wire_len <= LXMF_LINK_PACKET_MAX) {
         // Single in-link DATA packet path.
         bool sent_ok = false;
         try {
-          RNS::Packet pkt(link, ps.wire);
+          RNS::Packet pkt(link, *wire_ptr);
           pkt.send();
           sent_ok = true;
         }
@@ -900,6 +1034,7 @@ namespace LXMF {
           if (ps.owner && ps.owner->_on_outbox_status) {
             try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
           }
+          _release_wire_file(ps);
           m.erase(it);
         }
         else {
@@ -912,14 +1047,23 @@ namespace LXMF {
         // The link's own state machine will close after timeout.
       }
       else {
-        // Resource transfer.
-        RNS::Resource res(ps.wire, link,
+        // Resource transfer. The Resource constructor encrypts the
+        // wire and (for sizes > RAM_BUFFER_THRESHOLD) spills the
+        // ciphertext to its own temp file under the resource-tmp dir,
+        // so wire_for_send / ps.wire can be released after this.
+        RNS::Resource res(*wire_ptr, link,
                           /*advertise=*/true, /*auto_compress=*/false,
                           _static_outbound_resource_concluded,
                           _static_outbound_resource_progress,
                           /*timeout=*/0.0);
         ps.resource_hash = res.hash();
-        ps.total_bytes   = (uint32_t)ps.wire.size();
+        if (ps.total_bytes == 0) ps.total_bytes = (uint32_t)wire_len;
+        // Release the in-RAM wire copy now that the Resource owns the
+        // ciphertext (on disk if it spilled). The on-disk wire file
+        // stays around — see _release_wire_file in the concluded /
+        // closed / cancel paths — so a retry can rebuild the Resource
+        // from the same payload without re-msgpacking.
+        ps.wire = RNS::Bytes();
         DEBUGF("LXMF: outbound resource advertised %s",
                ps.resource_hash.toHex().c_str());
       }
@@ -963,6 +1107,7 @@ namespace LXMF {
       }
       else {
         // Normal post-Sent close on an in-link packet path. Erase.
+        _release_wire_file(ps);
         m.erase(it);
       }
     }
@@ -985,6 +1130,7 @@ namespace LXMF {
             // gateway's outbox-status callback already publishes
             // message_complete (finished=true) which the SPA treats as
             // the canonical end-of-transfer signal.
+            _release_wire_file(ps);
             it = m.erase(it);
           }
           else {
@@ -1104,6 +1250,7 @@ namespace LXMF {
           if (ps.owner && ps.owner->_on_outbox_status) {
             try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
           }
+          _release_wire_file(ps);
           continue;
         }
         try {
@@ -1131,6 +1278,7 @@ namespace LXMF {
           if (ps.owner && ps.owner->_on_outbox_status) {
             try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
           }
+          _release_wire_file(ps);
         }
       }
     }
@@ -1154,7 +1302,7 @@ namespace LXMF {
       auto& m = pending_link_sends();
       const uint64_t now = (uint64_t)millis();
       for (auto it = m.begin(); it != m.end(); ) {
-        const PendingLinkSend& ps = it->second;
+        PendingLinkSend& ps = it->second;
         const bool stale = ps.started_ms > 0 &&
                            (now - ps.started_ms) > PENDING_SEND_ORPHAN_MS;
         const bool terminal = (ps.status == OutboxStatus::Delivered) ||
@@ -1174,6 +1322,7 @@ namespace LXMF {
               ps.owner->_on_outbox_status(ps.record_hash, OutboxStatus::Failed);
             } catch (...) {}
           }
+          _release_wire_file(ps);
           it = m.erase(it);
         } else {
           ++it;

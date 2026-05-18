@@ -4318,6 +4318,15 @@ $('bs-save').addEventListener('click', async () => {
     await state.transport.wifiConfigure(ssid, psk.value, code);
     waitForDeviceAndReload('Saving WiFi & rebooting…');
   } catch (e) {
+    // No HTTP status = the TCP connection went away mid-request,
+    // which is the expected shape when the device accepts the
+    // config and immediately reboots. Surface it as a reboot, not
+    // a failure. Only surface a real toast for server-side
+    // rejections (auth, validation, etc).
+    if (!e.status) {
+      waitForDeviceAndReload('Saving WiFi & rebooting…');
+      return;
+    }
     toast('Save failed: ' + (e.message || e), 'error');
     btn.disabled = false;
     ssidSel.disabled = false;

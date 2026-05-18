@@ -182,6 +182,24 @@ namespace Web {
       // Skip all WS-publish work when nobody's listening — WebUI::loop
       // runs at ~50 Hz on the main task (shared with reticulum.loop and
       // the radio modem), so any allocation here is hot-path cost.
+      // SD ejection check — cheap (cardType read on a mounted card,
+      // returns immediately if not mounted). On state change, fire a
+      // dedicated storage_changed WS event so the SPA's Settings UI
+      // sliders + toast respond without waiting for the next 30-second
+      // system_update tick. Runs regardless of WS subscriber count so
+      // the cached present-state stays current for the next API call.
+      if (Web::SDCard::poll_presence()) {
+        const auto& sc = Web::Storage::current();
+        Web::WS::publish_storage(
+            Web::SDCard::present(),
+            (uint32_t)std::min<size_t>(sc.user_max_send_bytes,    0xFFFFFFFFu),
+            (uint32_t)std::min<size_t>(sc.user_max_receive_bytes, 0xFFFFFFFFu),
+            (uint32_t)std::min<size_t>(Web::Storage::effective_max_send(),    0xFFFFFFFFu),
+            (uint32_t)std::min<size_t>(Web::Storage::effective_max_receive(), 0xFFFFFFFFu));
+      }
+      // Skip all WS-publish work when nobody's listening — WebUI::loop
+      // runs at ~50 Hz on the main task (shared with reticulum.loop and
+      // the radio modem), so any allocation here is hot-path cost.
       if (Web::WS::any_subscribers()) {
         // Sensor change publish. taken_ms is read via a cheap accessor
         // (no JSON allocation on the no-op path); only an actual change

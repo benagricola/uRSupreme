@@ -124,8 +124,12 @@ namespace LXMF {
       // Drive outbox-retry: pending_link_sends() is a shared
       // static across all LXMFMinimal instances, so one call covers
       // every identity. Entries whose next_retry_at_ms has elapsed get
-      // a fresh Link and another attempt.
+      // a fresh Link and another attempt. The orphan sweep runs in
+      // the same tick — catches any PendingLinkSend whose lifecycle
+      // callback never fired (radio cut out mid-transfer, async event
+      // loop dropped a frame, etc.) so the map can't grow unbounded.
       LXMFMinimal::tick_retries();
+      LXMFMinimal::sweep_orphaned_pending();
     }
 
     // Update the auto-announce interval for a single identity and

@@ -1134,6 +1134,53 @@ namespace LXMF {
         }
       }
     }
+
+    // Defensive sweep for orphaned outbound entries. Every normal send
+    // lifecycle (Sent / Delivered / Failed / Closed / retry-exhausted)
+    // erases its PendingLinkSend, but the chain has several hops
+    // (Resource::concluded → outbound_resource_concluded → erase, or
+    // Link::closed_callback → outbound_link_closed → erase, etc.). If
+    // any callback is dropped — radio dies mid-transfer, async-server
+    // event loop falls behind, etc. — the entry could leak. Catch
+    // anything > PENDING_SEND_ORPHAN_MS old that's neither in flight
+    // (Queued/Sent waiting for a callback that's reasonably timely)
+    // nor scheduled for retry. Conservative threshold so big-payload
+    // transfers don't get accidentally killed.
+    //
+    // Called from tick_retries() so it shares the same periodic cadence
+    // as the existing retry-scheduler — no new timer needed.
+    static constexpr uint64_t PENDING_SEND_ORPHAN_MS = 30ULL * 60ULL * 1000ULL; // 30 min
+    static void sweep_orphaned_pending() {
+      auto& m = pending_link_sends();
+      const uint64_t now = (uint64_t)millis();
+      for (auto it = m.begin(); it != m.end(); ) {
+        const PendingLinkSend& ps = it->second;
+        const bool stale = ps.started_ms > 0 &&
+                           (now - ps.started_ms) > PENDING_SEND_ORPHAN_MS;
+        const bool terminal = (ps.status == OutboxStatus::Delivered) ||
+                              (ps.status == OutboxStatus::Failed);
+        if (stale && !ps.retry_pending && !terminal) {
+          WARNINGF("LXMF: sweeping orphaned pending_link_send for %s "
+                   "(record %s, age %lus, status=%s) — no callback ever "
+                   "completed the send",
+                   ps.dest_hash.toHex().c_str(),
+                   ps.record_hash.toHex().c_str(),
+                   (unsigned long)((now - ps.started_ms) / 1000),
+                   outbox_status_name(ps.status));
+          // Mark Failed so the SPA bubble shows the right state. Then
+          // erase so the entry doesn't sit around forever.
+          if (ps.owner && ps.owner->_on_outbox_status) {
+            try {
+              ps.owner->_on_outbox_status(ps.record_hash, OutboxStatus::Failed);
+            } catch (...) {}
+          }
+          it = m.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
+
   private:
 
     static void _static_inbound_link_established(RNS::Link& link) {

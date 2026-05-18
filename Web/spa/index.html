@@ -1259,6 +1259,17 @@ summary:hover { color: var(--text); }
           <div class="muted" id="inbox-config-status" style="margin-top:6px;font-size:11px"></div>
         </div>
         <div class="card" style="margin-top:14px">
+          <strong>Transfer limits</strong>
+          <div class="muted" style="margin-top:4px;margin-bottom:10px">Maximum outbound message size you can send, and maximum inbound size accepted from peers. The slider's upper bound tracks your device's available storage live — values above your current free space are disabled. Pull / re-insert the SD card to see the range change.</div>
+          <label>Max send</label>
+          <input type="range" id="storage-max-send" min="65536" step="65536" style="margin-bottom:4px">
+          <div class="muted" id="storage-max-send-label" style="margin-bottom:10px;font-size:11px"></div>
+          <label>Max receive</label>
+          <input type="range" id="storage-max-recv" min="65536" step="65536" style="margin-bottom:4px">
+          <div class="muted" id="storage-max-recv-label" style="margin-bottom:6px;font-size:11px"></div>
+          <div class="muted" id="storage-config-status" style="margin-top:6px;font-size:11px"></div>
+        </div>
+        <div class="card" style="margin-top:14px">
           <strong>Contacts</strong>
           <div class="muted" style="margin-top:4px">Stored in this browser only — they don't leave the device or sync between browsers.</div>
           <div id="contacts-list" style="margin-top:8px"></div>
@@ -4002,6 +4013,28 @@ function dispatchEvent(ev) {
     }
     return;
   }
+  if (ev.type === 'storage_changed') {
+    // SD insert/eject transition. Refresh cached storage block, retune
+    // the Settings sliders if they're visible, and toast the user.
+    if (state.system) {
+      state.system.storage = {
+        user_max_send_bytes:      ev.user_max_send_bytes,
+        user_max_receive_bytes:   ev.user_max_receive_bytes,
+        effective_max_send_bytes: ev.effective_max_send_bytes,
+        effective_max_recv_bytes: ev.effective_max_recv_bytes,
+      };
+    }
+    if (typeof refreshStorageSliders === 'function') refreshStorageSliders();
+    if (typeof toast === 'function') {
+      const mib = (n) => Math.round((n || 0) / (1024 * 1024));
+      if (ev.sd_present) {
+        toast(`SD detected — up to ${mib(ev.effective_max_recv_bytes)} MiB receive`, 'info');
+      } else {
+        toast(`SD removed — caps clamped to ${mib(ev.effective_max_recv_bytes)} MiB receive`, 'warn');
+      }
+    }
+    return;
+  }
   if (ev.type === 'pong') return;
   if (ev.type === 'incoming') {
     const m = ev.msg || {};
@@ -4775,7 +4808,7 @@ function selectSettingsTab(tabId) {
   if (tabId === 'time')         { populateTimeTab(); }
   if (tabId === 'identity')     populateIdentityTab();
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
-  if (tabId === 'ui')           { $('pref-enter-sends').checked = !!state.prefs.enterSends; $('pref-auto-download-attachments').checked = !!state.prefs.autoDownloadAttachments; renderContacts(); populateInboxConfig(); }
+  if (tabId === 'ui')           { $('pref-enter-sends').checked = !!state.prefs.enterSends; $('pref-auto-download-attachments').checked = !!state.prefs.autoDownloadAttachments; renderContacts(); populateInboxConfig(); populateStorageConfig(); }
 }
 
 async function populateWifiTab() {
@@ -5260,6 +5293,86 @@ async function saveInboxConfig() {
 }
 $('inbox-cap').addEventListener('change', saveInboxConfig);
 $('inbox-ttl').addEventListener('change', saveInboxConfig);
+
+// Storage transfer caps — two sliders bound to the device's current
+// effective_max_* (clamped to backing-store free space + protocol
+// ceiling). The slider's max is the largest cap the device can
+// currently accept; the value is the user's saved preference.
+async function populateStorageConfig() {
+  const status = $('storage-config-status');
+  if (status) status.textContent = '';
+  try {
+    const cfg = await state.transport._req('/api/storage/config');
+    const sendInp  = $('storage-max-send');
+    const recvInp  = $('storage-max-recv');
+    const sendLbl  = $('storage-max-send-label');
+    const recvLbl  = $('storage-max-recv-label');
+    const fmt = (n) => {
+      const mb = (n || 0) / (1024 * 1024);
+      return mb >= 100 ? `${Math.round(mb)} MiB`
+           : mb >= 1   ? `${mb.toFixed(1)} MiB`
+                       : `${Math.round((n || 0) / 1024)} KiB`;
+    };
+    sendInp.max   = Math.max(cfg.effective_max_send_bytes || 0, 65536);
+    sendInp.value = Math.min(cfg.user_max_send_bytes || 0, sendInp.max);
+    sendLbl.textContent = `${fmt(sendInp.value)} (device caps at ${fmt(cfg.effective_max_send_bytes)})`;
+    recvInp.max   = Math.max(cfg.effective_max_recv_bytes || 0, 65536);
+    recvInp.value = Math.min(cfg.user_max_receive_bytes || 0, recvInp.max);
+    recvLbl.textContent = `${fmt(recvInp.value)} (device caps at ${fmt(cfg.effective_max_recv_bytes)})`;
+    state._storageConfig = cfg;
+  } catch (e) {
+    if (status) status.textContent = 'Could not load: ' + (e.message || e);
+  }
+}
+async function saveStorageConfig() {
+  const status = $('storage-config-status');
+  const body = {
+    user_max_send_bytes:    parseInt($('storage-max-send').value, 10) || 0,
+    user_max_receive_bytes: parseInt($('storage-max-recv').value, 10) || 0,
+  };
+  try {
+    const cfg = await state.transport._req('/api/storage/config', { method: 'POST', body });
+    state._storageConfig = cfg;
+    if (status) {
+      status.textContent = 'Saved.';
+      setTimeout(() => { status.textContent = ''; }, 2000);
+    }
+    refreshStorageSliders();
+  } catch (e) {
+    if (status) status.textContent = 'Save failed: ' + (e.message || e);
+  }
+}
+function refreshStorageSliders() {
+  const cfg = state._storageConfig;
+  if (!cfg) return;
+  const fmt = (n) => {
+    const mb = (n || 0) / (1024 * 1024);
+    return mb >= 100 ? `${Math.round(mb)} MiB`
+         : mb >= 1   ? `${mb.toFixed(1)} MiB`
+                     : `${Math.round((n || 0) / 1024)} KiB`;
+  };
+  const sendInp = $('storage-max-send');
+  const recvInp = $('storage-max-recv');
+  if (!sendInp || !recvInp) return;
+  sendInp.max   = Math.max(cfg.effective_max_send_bytes || 0, 65536);
+  if (Number(sendInp.value) > Number(sendInp.max)) sendInp.value = sendInp.max;
+  $('storage-max-send-label').textContent = `${fmt(sendInp.value)} (device caps at ${fmt(cfg.effective_max_send_bytes)})`;
+  recvInp.max   = Math.max(cfg.effective_max_recv_bytes || 0, 65536);
+  if (Number(recvInp.value) > Number(recvInp.max)) recvInp.value = recvInp.max;
+  $('storage-max-recv-label').textContent = `${fmt(recvInp.value)} (device caps at ${fmt(cfg.effective_max_recv_bytes)})`;
+}
+$('storage-max-send').addEventListener('input', () => {
+  const cfg = state._storageConfig || {};
+  const fmt = (n) => (n || 0) >= 1024 * 1024 ? `${((n||0)/(1024*1024)).toFixed(1)} MiB` : `${Math.round((n||0)/1024)} KiB`;
+  $('storage-max-send-label').textContent = `${fmt($('storage-max-send').value)} (device caps at ${fmt(cfg.effective_max_send_bytes)})`;
+});
+$('storage-max-send').addEventListener('change', saveStorageConfig);
+$('storage-max-recv').addEventListener('input', () => {
+  const cfg = state._storageConfig || {};
+  const fmt = (n) => (n || 0) >= 1024 * 1024 ? `${((n||0)/(1024*1024)).toFixed(1)} MiB` : `${Math.round((n||0)/1024)} KiB`;
+  $('storage-max-recv-label').textContent = `${fmt($('storage-max-recv').value)} (device caps at ${fmt(cfg.effective_max_recv_bytes)})`;
+});
+$('storage-max-recv').addEventListener('change', saveStorageConfig);
 
 // Escape dismisses whichever overlay is open. Order matters when more
 // than one is somehow open — close the topmost / most-recently-opened

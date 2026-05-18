@@ -216,6 +216,25 @@ namespace WS {
     broadcast(doc);
   }
 
+  // SD-presence transition. Edge-triggered from the main-loop poll
+  // when sd_present flips. Carries the user-configured and the
+  // currently-effective send/receive caps so the SPA can re-render
+  // its Settings slider bounds + toast the user that the cap moved.
+  inline void publish_storage(bool sd_present,
+                              uint32_t user_max_send,
+                              uint32_t user_max_receive,
+                              uint32_t effective_max_send,
+                              uint32_t effective_max_receive) {
+    JsonDocument doc;
+    doc["type"]                      = "storage_changed";
+    doc["sd_present"]                = sd_present;
+    doc["user_max_send_bytes"]       = user_max_send;
+    doc["user_max_receive_bytes"]    = user_max_receive;
+    doc["effective_max_send_bytes"]  = effective_max_send;
+    doc["effective_max_recv_bytes"]  = effective_max_receive;
+    broadcast(doc);
+  }
+
   // Identity-code edge event (button-press triggered).
   inline void publish_identity_code_available() {
     JsonDocument doc;

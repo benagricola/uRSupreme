@@ -36,6 +36,7 @@
 #include "Web/Gps.h"
 #include "Web/Ntp.h"
 #include "Web/SDCard.h"
+#include <ResourceBuffer.h>  // for RNS::set_resource_tmp_path_resolver
 #include "Web/Bme280.h"
 #include "Web/QmcMag.h"
 #include "Web/QmiImu.h"
@@ -874,6 +875,26 @@ void setup() {
               (void*)PMU, PMU ? (int)PMU->getChipModel() : -1);
     }
     Web::SDCard::begin();
+    // Install the SD-aware Resource-temp-path resolver. microReticulum
+    // calls this each time a FlashResourceBuffer opens, so mid-session
+    // SD insert/eject is honoured on the next transfer. The resolver
+    // is a stateless lambda → bare function pointer.
+    RNS::set_resource_tmp_path_resolver([]() -> const char* {
+      return Web::SDCard::present()
+          ? "/sd/lxmf_resource_tmp"
+          : "/lxmf_resource_tmp";
+    });
+    // Pre-create both candidate directories so OS::create_directory
+    // (which only knows microStore filesystem) doesn't have to deal
+    // with the SD-rooted path at allocation time.
+    if (!filesystem.isDirectory("/lxmf_resource_tmp")) {
+      filesystem.mkdir("/lxmf_resource_tmp");
+    }
+    if (Web::SDCard::present()) {
+      if (!Web::SDCard::exists("/sd/lxmf_resource_tmp")) {
+        SD.mkdir("/sd/lxmf_resource_tmp");
+      }
+    }
     // Bring up the user/sensor I2C bus (Wire) at SDA=17 SCL=18
     // — this is where BME280 lives (and where future QMC6310
     // magnetometer + any other Wire-side sensors will sit). PMU /

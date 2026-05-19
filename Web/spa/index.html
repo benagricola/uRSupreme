@@ -1109,6 +1109,23 @@ summary:hover { color: var(--text); }
   </div>
 </div>
 
+<!-- ===================== IMAGE VIEWER MODAL ===================== -->
+<!-- Full-screen image preview opened by clicking any inline-rendered
+     image attachment in a chat bubble. Tap the image to toggle between
+     fit-to-viewport and natural size (pan via scroll when zoomed).
+     Tap the backdrop or hit Escape to close. -->
+<div id="modal-image" class="modal-bg" hidden style="z-index:280;background:rgba(0,0,0,0.92)">
+  <div id="mi-wrap" style="width:100vw;height:100vh;overflow:auto;display:flex;align-items:center;justify-content:center;cursor:zoom-out">
+    <img id="mi-img" alt="" style="max-width:100vw;max-height:100vh;display:block;cursor:zoom-in;touch-action:pinch-zoom">
+  </div>
+  <button id="mi-close" class="icon" title="Close" style="position:absolute;top:env(safe-area-inset-top,8px);right:8px;background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.2)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
+  </button>
+  <a id="mi-save" download class="icon" title="Save" style="position:absolute;top:env(safe-area-inset-top,8px);right:60px;background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.2);display:inline-flex;align-items:center;justify-content:center;text-decoration:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+  </a>
+</div>
+
 <!-- ===================== CONVERSATION RETENTION MODAL ===================== -->
 <!-- Per-conversation TTL override. Three choices:
        - Use default (inherits the identity-wide ttl_seconds)
@@ -2595,6 +2612,66 @@ function renderInboundAudio(meta, fallbackLabel) {
 // actual <img> is swapped in once the fetch resolves. Subsequent
 // renderThread passes reuse the cached object URL so SSE rerenders
 // don't refetch.
+// Full-screen image viewer. Pulls the same blob URL the inline
+// preview was rendered from (no second fetch). Tap the image to
+// toggle between fit-to-viewport and natural size; pan with the
+// container's scroll when zoomed. Tap the backdrop or hit Escape
+// to close.
+function openImageModal(url, meta) {
+  const modal = $('modal-image');
+  const img   = $('mi-img');
+  const wrap  = $('mi-wrap');
+  const save  = $('mi-save');
+  const close = $('mi-close');
+  img.src = url;
+  // Reset to fit-mode each open.
+  img.style.maxWidth = '100vw';
+  img.style.maxHeight = '100vh';
+  img.style.width = '';
+  img.style.height = '';
+  img.style.cursor = 'zoom-in';
+  // Pick a sensible save-as filename: sender's display_name when
+  // present, otherwise the canonical hash filename.
+  const dl = (meta && meta.display_name) || (meta && meta.filename) || 'image';
+  save.setAttribute('download', dl);
+  save.href = url;
+  modal.hidden = false;
+
+  let zoomed = false;
+  const toggleZoom = (e) => {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    zoomed = !zoomed;
+    if (zoomed) {
+      img.style.maxWidth = 'none';
+      img.style.maxHeight = 'none';
+      img.style.cursor = 'zoom-out';
+    } else {
+      img.style.maxWidth = '100vw';
+      img.style.maxHeight = '100vh';
+      img.style.cursor = 'zoom-in';
+    }
+  };
+  const onBackdrop = (e) => {
+    // Click on the scroll wrap (but not the image itself) closes.
+    if (e.target === wrap || e.target === modal) cleanup();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
+  const cleanup = () => {
+    modal.hidden = true;
+    img.removeEventListener('click', toggleZoom);
+    wrap.removeEventListener('click', onBackdrop);
+    modal.removeEventListener('click', onBackdrop);
+    close.removeEventListener('click', cleanup);
+    document.removeEventListener('keydown', onKey);
+    img.src = '';   // release reference; the cached blob URL stays in state.attachmentBlobs
+  };
+  img.addEventListener('click', toggleZoom);
+  wrap.addEventListener('click', onBackdrop);
+  modal.addEventListener('click', onBackdrop);
+  close.addEventListener('click', cleanup);
+  document.addEventListener('keydown', onKey);
+}
+
 function renderInboundImage(meta, fallbackLabel) {
   const wrap = el('div', { style: 'margin-top:6px' });
   const cached = state.attachmentBlobs.get(meta.filename);
@@ -2603,7 +2680,7 @@ function renderInboundImage(meta, fallbackLabel) {
       src: url,
       style: 'max-width:240px;max-height:240px;border-radius:6px;display:block;cursor:zoom-in',
     });
-    img.addEventListener('click', () => window.open(url, '_blank'));
+    img.addEventListener('click', () => openImageModal(url, meta));
     return img;
   };
   // Already-loaded image: reuse cached object URL.

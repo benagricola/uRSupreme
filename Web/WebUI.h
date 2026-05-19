@@ -1828,43 +1828,98 @@ namespace Web {
         send_error(req, 404, "attachment_not_found");
         return;
       }
+      // Read the whole file into a PSRAM-backed buffer up front, then
+      // stream from RAM. Prior incremental-stream approach kept the
+      // file handle open across the chunked-response producer lambda's
+      // many invocations, which competed with the radio task's
+      // inbound-Resource ciphertext-spill for the FATFS volume mutex.
+      // A slow chunk delayed AsyncTCP's worker enough to time the
+      // TCP connection out; tear-down racing the in-flight lambda
+      // wedged the webserver. Reading once, before handing the buffer
+      // to AsyncTCP, confines all SD/FS contention to a single bounded
+      // window inside this handler. The buffer lives on the heap
+      // (PSRAM-preferred via the existing ContainerAllocator) and is
+      // owned by the response lambda's StreamState.
+      //
+      // Memory bound: attachments are gated by the user's
+      // max_receive_bytes config (#122), so the buffer size is
+      // already bounded by something the user controls. PSRAM
+      // headroom on the S3 board is ~7 MiB; typical image attachments
+      // are well under 1 MiB.
       size_t total = 0;
-      File         sd_f;
-      microStore::File flash_f;
-      if (on_sd) {
-        sd_f = Storage::SDCard::open_read(full.c_str());
-        if (!sd_f) { send_error(req, 500, "attachment_open_failed"); return; }
-        total = sd_f.size();
-      } else {
-        flash_f = filesystem.open(full.c_str(), microStore::File::ModeRead);
-        if (!flash_f) { send_error(req, 500, "attachment_open_failed"); return; }
-        total = flash_f.size();
+      {
+        if (on_sd) {
+          File f = Storage::SDCard::open_read(full.c_str());
+          if (!f) { send_error(req, 500, "attachment_open_failed"); return; }
+          total = f.size();
+          f.close();
+        } else {
+          microStore::File f = filesystem.open(full.c_str(), microStore::File::ModeRead);
+          if (!f) { send_error(req, 500, "attachment_open_failed"); return; }
+          total = f.size();
+          f.close();
+        }
       }
-      // Stream chunked so we don't need the whole blob in RAM. AsyncTCP
-      // invokes the producer lambda each time it has buffer space; we
-      // produce up to `maxLen` bytes from whichever backend the file
-      // lives on. The lambda captures the file handle by value into a
-      // heap-allocated struct so it survives across producer calls.
+      // Allocate the read buffer. heap_caps_malloc with MALLOC_CAP_SPIRAM
+      // is the explicit PSRAM tier — if PSRAM is exhausted the call
+      // falls back to internal RAM, which is fine for small attachments.
+      uint8_t* buf = (uint8_t*)heap_caps_malloc(total ? total : 1,
+                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (!buf) buf = (uint8_t*)heap_caps_malloc(total ? total : 1, MALLOC_CAP_8BIT);
+      if (!buf) {
+        send_error_with_message(req, 503, "out_of_memory",
+          "Not enough memory to load the attachment right now. Try again in a moment.");
+        return;
+      }
+      size_t read = 0;
+      if (on_sd) {
+        File f = Storage::SDCard::open_read(full.c_str());
+        if (!f) {
+          heap_caps_free(buf);
+          send_error(req, 500, "attachment_open_failed");
+          return;
+        }
+        read = (size_t)f.read(buf, total);
+        f.close();
+      } else {
+        microStore::File f = filesystem.open(full.c_str(), microStore::File::ModeRead);
+        if (!f) {
+          heap_caps_free(buf);
+          send_error(req, 500, "attachment_open_failed");
+          return;
+        }
+        read = (size_t)f.read(buf, total);
+        f.close();
+      }
+      if (read != total) {
+        heap_caps_free(buf);
+        send_error_with_message(req, 500, "attachment_read_short",
+          "Attachment read returned fewer bytes than the file claims to be.");
+        return;
+      }
+      // StreamState owns the buffer. Sent with a known content length
+      // so the response is not chunked — AsyncTCP can size the TX
+      // window appropriately and the client gets a proper
+      // Content-Length header for progress bars.
       struct StreamState {
-        bool on_sd;
-        File sd_f;
-        microStore::File flash_f;
+        uint8_t* buf;
+        size_t   total;
+        size_t   sent;
       };
-      auto* st = new StreamState{ on_sd, sd_f, flash_f };
-      AsyncWebServerResponse* resp = req->beginChunkedResponse(
-          "application/octet-stream",
-          [st](uint8_t* buffer, size_t maxLen, size_t /*index*/) -> size_t {
-            const size_t want = maxLen;
-            const size_t got = st->on_sd
-                ? (size_t)st->sd_f.read(buffer, want)
-                : (size_t)st->flash_f.read(buffer, want);
-            if (got == 0) {
-              // EOF — close handles and signal stream end.
-              if (st->on_sd) st->sd_f.close();
-              else           st->flash_f.close();
+      auto* st = new StreamState{ buf, total, 0 };
+      AsyncWebServerResponse* resp = req->beginResponse(
+          "application/octet-stream", total,
+          [st](uint8_t* dst, size_t maxLen, size_t /*index*/) -> size_t {
+            const size_t remaining = st->total - st->sent;
+            const size_t chunk     = remaining < maxLen ? remaining : maxLen;
+            if (chunk == 0) {
+              heap_caps_free(st->buf);
               delete st;
+              return 0;
             }
-            return got;
+            memcpy(dst, st->buf + st->sent, chunk);
+            st->sent += chunk;
+            return chunk;
           });
       resp->addHeader("Content-Disposition",
                       String("attachment; filename=\"") + fname.c_str() + "\"");

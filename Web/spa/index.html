@@ -150,11 +150,40 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   background: var(--bg-elev);
   z-index: 5;
   min-width: 0;
+  position: relative;
 }
 #topbar #self-info { min-width: 0; line-height: 1.15; }
 #topbar #self-info .name { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 #topbar #self-info .addr { font-size: 10px; color: var(--text-dim); font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
 #topbar .spacer { flex: 1; min-width: 16px; }
+
+/* Top-bar progress strip. A 3 px sliver flush with the topbar's
+   bottom border, shown whenever there's an active long-running
+   background task (file transfer, large send, attachment upload,
+   migration). Renders one of two modes:
+     - determinate: a fill scaled to the aggregate percent
+     - indeterminate: a sliding bar (anything without a known total) */
+#topbar-progress {
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 3px;
+  pointer-events: none; overflow: hidden;
+  background: transparent;
+}
+#topbar-progress.is-active { background: rgba(255,255,255,0.05); }
+#topbar-progress .bar {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: 0%;
+  background: var(--accent);
+  transition: width 200ms ease-out;
+}
+#topbar-progress.is-indeterminate .bar {
+  width: 30%;
+  animation: topbar-progress-slide 1.4s linear infinite;
+  transition: none;
+}
+@keyframes topbar-progress-slide {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(370%); }
+}
 
 /* Announce icon: small coloured dot in the bottom-right, same pattern
    as #btn-status. Three states:
@@ -815,6 +844,7 @@ summary:hover { color: var(--text); }
       <!-- logout: door + arrow -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
     </button>
+    <div id="topbar-progress" aria-hidden="true"><div class="bar"></div></div>
   </header>
   <aside id="pane-list">
     <header id="list-header">
@@ -1531,6 +1561,14 @@ async function withBusy(btn, asyncFn, opts = {}) {
     .map(sel => (typeof sel === 'string') ? document.querySelector(sel) : sel)
     .filter(Boolean);
   for (const el of peers) el.disabled = true;
+  // Top-bar progress strip — opt-in via opts.bgTaskLabel so we only
+  // signal genuine long-running tasks (reboot, factory reset, big
+  // saves), not every <100 ms click.
+  let bgId = null;
+  if (opts.bgTaskLabel) {
+    bgId = 'busy:' + (btn.id || Math.random().toString(36).slice(2));
+    startBgTask(bgId, { label: opts.bgTaskLabel });
+  }
   try {
     return await asyncFn();
   } finally {
@@ -1539,6 +1577,79 @@ async function withBusy(btn, asyncFn, opts = {}) {
     btn.textContent = originalText;
     btn.classList.remove('is-busy');
     delete btn.dataset.busy;
+    if (bgId) endBgTask(bgId);
+  }
+}
+
+// ====================== TOP-BAR PROGRESS STRIP ======================
+// Single thin progress bar at the bottom edge of #topbar that lights
+// up while a long-running background task is in flight. Three kinds
+// of input feed it:
+//   - In-flight transfers (state.transfers Map, populated by
+//     message_progress / message_complete WS events).
+//   - bgTasks registry (this module) — anything calling startBgTask
+//     / endBgTask, used by withBusy when opts.bgTaskLabel is set
+//     and by long-running explicit operations (upload progress,
+//     factory reset, etc.).
+// The bar is determinate when every active source carries a
+// {done, total} pair, indeterminate otherwise (e.g. a single
+// "reboot pending" task without a meaningful percent).
+const bgTasks = new Map();
+function startBgTask(id, opts = {}) {
+  bgTasks.set(id, {
+    label:        opts.label || id,
+    done:         (typeof opts.done  === 'number') ? opts.done  : 0,
+    total:        (typeof opts.total === 'number') ? opts.total : 0,
+  });
+  renderTopbarProgress();
+}
+function updateBgTask(id, opts = {}) {
+  const t = bgTasks.get(id);
+  if (!t) return;
+  if (typeof opts.label === 'string') t.label = opts.label;
+  if (typeof opts.done  === 'number') t.done  = opts.done;
+  if (typeof opts.total === 'number') t.total = opts.total;
+  renderTopbarProgress();
+}
+function endBgTask(id) {
+  if (bgTasks.delete(id)) renderTopbarProgress();
+}
+// Render aggregate progress across transfers + bgTasks. If everything
+// active has a known total, render a determinate fill. Otherwise
+// indeterminate (the sliding 30% strip). When nothing is active,
+// hide.
+function renderTopbarProgress() {
+  const strip = $('topbar-progress');
+  if (!strip) return;
+  const bar = strip.querySelector('.bar');
+  let total = 0, done = 0, any = false, anyUnknown = false;
+  if (state.transfers && state.transfers.size > 0) {
+    for (const t of state.transfers.values()) {
+      any = true;
+      if (typeof t.bytes_total === 'number' && t.bytes_total > 0) {
+        total += t.bytes_total; done += Math.min(t.bytes_done || 0, t.bytes_total);
+      } else { anyUnknown = true; }
+    }
+  }
+  for (const t of bgTasks.values()) {
+    any = true;
+    if (t.total > 0) { total += t.total; done += Math.min(t.done, t.total); }
+    else             { anyUnknown = true; }
+  }
+  if (!any) {
+    strip.classList.remove('is-active', 'is-indeterminate');
+    bar.style.width = '0%';
+    return;
+  }
+  strip.classList.add('is-active');
+  if (anyUnknown || total === 0) {
+    strip.classList.add('is-indeterminate');
+    // Width controlled by the CSS keyframe; leave style untouched.
+    bar.style.width = '';
+  } else {
+    strip.classList.remove('is-indeterminate');
+    const pct = Math.max(2, Math.min(100, Math.round((done / total) * 100)));
+    bar.style.width = pct + '%';
   }
 }
 
@@ -4266,6 +4377,7 @@ function dispatchEvent(ev) {
     }
     renderConversations();
     if (peer && state.openPeer === peer) renderThread();
+    renderTopbarProgress();
   }
 }
 

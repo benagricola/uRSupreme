@@ -961,9 +961,13 @@ summary:hover { color: var(--text); }
       <div class="popover-label" id="status-radio-label">RADIO</div>
       <div id="status-radio-line"></div>
     </div>
-    <!-- Radio config = primary fact for the section. Packet counters
-         and airtime are secondary, rendered as sublines. -->
-    <div class="popover-value" id="status-radio-cfg"></div>
+    <!-- Radio config = primary fact for the section, split across two
+         lines so each one stays readable on narrow phones:
+           cfg-1 = frequency + bandwidth
+           cfg-2 = SF + CR + TX power
+         Packet counters / rate / airtime are secondary sublines. -->
+    <div class="popover-value" id="status-radio-cfg-1"></div>
+    <div class="popover-value" id="status-radio-cfg-2"></div>
     <div class="popover-subline" id="status-radio-stats"></div>
     <div class="popover-subline" id="status-radio-rate"></div>
     <div class="popover-subline" id="status-radio-airtime"></div>
@@ -1028,11 +1032,12 @@ summary:hover { color: var(--text); }
       <div class="popover-label">Clock</div>
       <div id="sys-clock-line"></div>
     </div>
-    <!-- Wall-clock time = primary fact; calibration age + RTC chip
-         state are sublines. -->
+    <!-- Wall-clock time = primary fact; calibration age + source =
+         the only subline. RTC chip presence is implied by "Last
+         calibrated … (RTC)" appearing on cold boot — no point taking
+         a whole line to state the obvious. -->
     <div class="popover-value" id="sys-clock-now"></div>
     <div class="popover-subline" id="sys-clock-source"></div>
-    <div class="popover-subline" id="sys-clock-rtc"></div>
   </div>
   <div class="popover-section" id="sys-section-gps" data-sensor="gps" hidden>
     <div class="popover-row" style="cursor:pointer" data-role="header">
@@ -3640,14 +3645,13 @@ function renderStatusPopover() {
     radioLine.appendChild(el('span', { class: 'pill bad' }, 'Offline'));
   }
   if (r.have_conf) {
-    // Radio config = primary fact for the section. Render the full
-    // band + SF + CR + power summary on one line; the popover-value
-    // class wraps long lines automatically on narrow screens.
-    $('status-radio-cfg').textContent =
-      (r.frequency/1e6).toFixed(3) + ' MHz · BW ' + (r.bandwidth/1000) + ' kHz · '
-      + 'SF' + r.spreading_factor + ' · CR4/' + r.coding_rate + ' · ' + r.tx_power + ' dBm';
+    $('status-radio-cfg-1').textContent =
+      (r.frequency/1e6).toFixed(3) + ' MHz · BW ' + (r.bandwidth/1000) + ' kHz';
+    $('status-radio-cfg-2').textContent =
+      'SF' + r.spreading_factor + ' · CR4/' + r.coding_rate + ' · ' + r.tx_power + ' dBm';
   } else {
-    $('status-radio-cfg').textContent = 'No radio config saved yet.';
+    $('status-radio-cfg-1').textContent = 'No radio config saved yet.';
+    $('status-radio-cfg-2').textContent = '';
   }
   const s = r.stats || {};
   // Airtime: current usage / regulatory cap, short-term and
@@ -3857,13 +3861,6 @@ function renderSystemPopover(s) {
       $('sys-clock-source').textContent = 'Source: ' + src;
     }
   }
-  // RTC chip diagnostic moved to /api/system_status root under `rtc`.
-  const rtc = s.rtc || {};
-  $('sys-clock-rtc').textContent = !rtc.available
-    ? 'RTC chip: not detected'
-    : (rtc.vl_set ? 'RTC chip: present (voltage-low — time invalid)'
-                  : 'RTC chip: present, ticking');
-
   // Position — GPS. Hide the whole section when no module is wired
   // (e.g. non-Supreme boards). Sections with available=false stay
   // out of the popover entirely rather than showing an "Absent" pill.
@@ -3871,28 +3868,40 @@ function renderSystemPopover(s) {
   $('sys-section-gps').hidden = !g.available;
   if (g.available) {
     const gLine = $('sys-gps-line'); gLine.innerHTML = '';
-    // Pill priority: Fix > Acquiring > Sleeping > No fix.
-    let pillClass = 'pill warn', pillText = 'No fix';
-    if (g.valid)                            { pillClass = 'pill ok';   pillText = 'Fix';       }
-    else if (g.pulse_state === 'acquiring') { pillClass = 'pill warn'; pillText = 'Acquiring'; }
-    else if (g.powered === false)           { pillClass = 'pill';      pillText = 'Sleeping';  }
+    // Pill describes the *current querying state*, not the fix
+    // state of the displayed primary line:
+    //   Live      = the most recent attempt got a valid fix
+    //   Sleeping  = chip is off between pulsed polls
+    //   Acquiring = chip is on and hunting (no current valid fix)
+    let pillClass, pillText;
+    if (g.valid)                  { pillClass = 'pill ok';   pillText = 'Live'; }
+    else if (g.powered === false) { pillClass = 'pill';      pillText = 'Sleeping'; }
+    else                          { pillClass = 'pill warn'; pillText = 'Acquiring'; }
     gLine.appendChild(el('span', { class: pillClass }, pillText));
-    // Primary line: "lat, lon" when we have a fix, otherwise the
-    // top-level state word so the section never goes empty. Mirrors
-    // the "main value + status pill" hierarchy used by every other
-    // section (Clock = wall-clock string + Calibrated pill; Battery
-    // = 84% + Charging pill; etc.).
-    if (g.valid) {
+    // Primary line: cached lat/lon as soon as we've *ever* had a
+    // valid fix. The RMC parser only updates unix_epoch on valid='A'
+    // sentences, so a non-zero unix_ms means "at least one good fix
+    // has landed in this boot's history" — useful as the proxy here
+    // since cached lat/lon stays put across subsequent V sentences.
+    // When we've never had a fix, the primary reads "No fix" so the
+    // section never goes blank.
+    const haveEverFix = (typeof g.unix_ms === 'number' && g.unix_ms > 0);
+    if (haveEverFix) {
       $('sys-gps-pos').textContent =
         g.latitude.toFixed(5) + ', ' + g.longitude.toFixed(5);
-      $('sys-gps-speed').textContent =
-        g.speed_knots.toFixed(1) + ' kn · heading ' + g.heading.toFixed(0) + '°';
+      // Subline 1: when that fix happened (GPS-emitted UTC, formatted
+      // to the user's locale). Distinct from the wall-clock "Last
+      // read" subline below — this is the timestamp the satellites
+      // signed off on, the other is when our UART last saw bytes.
       $('sys-gps-speed').hidden = false;
+      $('sys-gps-speed').textContent =
+        'GPS fix ' + new Date(g.unix_ms).toLocaleString();
     } else {
-      $('sys-gps-pos').textContent = pillText;
+      $('sys-gps-pos').textContent = 'No fix';
       $('sys-gps-speed').hidden = true;
     }
-    // "Last read Xs ago (MODEL)" — always shown; reads the last
+    // Subline 2: "Last read Xs ago (MODEL)" — independent of fix
+    // state. Reads the last
     // NMEA byte (raw device millis). When the chip has never spoken
     // yet (cold boot, before first power-on) ageLine returns
     // empty, so the section just shows the primary line.

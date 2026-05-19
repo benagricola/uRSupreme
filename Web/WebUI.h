@@ -1744,12 +1744,36 @@ namespace Web {
     }
 
     static void handle_attachment_get(AsyncWebServerRequest* req) {
-      RnsLockGuard _g;
-      LXMF::IdentityId caller = require_auth(req);
-      if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
-      std::string fname = std::string(req->pathArg(1).c_str());
+      // Auth + identity lookup needs the RNS lock because require_auth
+      // walks the token table that LXMFGateway also mutates. EVERYTHING
+      // ELSE in this handler — file open, size(), the streaming
+      // producer — runs OUTSIDE the lock so a concurrent inbound
+      // Resource transfer (which holds the lock heavily for its own
+      // packet/link/resource state) can't block attachment downloads.
+      //
+      // Before this scoping: holding RnsLockGuard for the whole
+      // setup caused the SX webserver to wedge entirely when a
+      // background Resource transfer was inbound — the radio task
+      // owned the lock continuously, the HTTP handler queued behind
+      // it on `SD.open() + sd_f.size()`, and AsyncTCP backed up to
+      // the point of being unrecoverable without a reboot.
+      std::string requested;
+      std::string fname;
+      std::string identity_dir;
+      {
+        RnsLockGuard _g;
+        LXMF::IdentityId caller = require_auth(req);
+        if (caller.empty()) return;
+        requested = std::string(req->pathArg(0).c_str());
+        if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+        fname = std::string(req->pathArg(1).c_str());
+        const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
+        if (!a) { send_error(req, 404, "unknown_identity"); return; }
+        identity_dir = a->dir();
+      }
+      // Out of the lock from here on. Validation + I/O on the locals
+      // captured above — no further state lookups against the RNS
+      // gateway are needed.
       // [ATTDBG] Log the raw filename (full hex dump) so we can pin-point
       // any URL-decode quirks or stray whitespace.
       {
@@ -1794,9 +1818,7 @@ namespace Web {
           "Attachment filename must match <msg_hex>_<tag>_<idx>.bin.");
         return;
       }
-      const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
-      if (!a) { send_error(req, 404, "unknown_identity"); return; }
-      const std::string full = a->dir() + "/attachments/" + fname;
+      const std::string full = identity_dir + "/attachments/" + fname;
       // Backend dispatch. Try SD first if a card is mounted —
       // big attachments live there; small/pre-SD ones on LittleFS. If
       // neither has the file, return 404.

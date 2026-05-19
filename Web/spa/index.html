@@ -2358,6 +2358,37 @@ function _renderConversationsBody(wrap) {
     return arrow + formatBytes(t.bytes_done) + ' / ' + formatBytes(t.bytes_total) + ' (' + pct + '%)';
   }
 
+  // Synthetic rows for inbound transfers whose sender is not yet known
+  // (Reticulum hasn't decrypted the LXMF payload, so we have a
+  // link_hash but no peer hash). These belong at the very top of the
+  // list — they're the most immediate "something is happening" signal.
+  // Once message_complete fires the entry is cleared and the real
+  // conversation row picks up the new message via the `incoming` event.
+  const pendingInbound = (state.transfers && state.transfers.size > 0)
+    ? [...state.transfers.values()].filter(t => t.incoming && !t.peer)
+    : [];
+  if (pendingInbound.length > 0) {
+    wrap.appendChild(el('div', { class: 'list-section' }, 'Incoming'));
+    for (const t of pendingInbound) {
+      const sub = transferSubText(t);
+      // Generic identicon — peer is unknown, so seed from the bytes
+      // already received (any deterministic string works; a constant
+      // means every concurrent inbound looks the same, which is fine
+      // since they're typically resolved before stacking up).
+      const peerKey = 'inbound:' + (t.bytes_total || 0);
+      const idc = identiconEl(peerKey, 44);
+      const middle = el('div', { class: 'middle' },
+        el('div', { class: 'name', text: 'Incoming attachment' }),
+        el('div', { class: 'last', text: sub }),
+      );
+      const row = el('div', { class: 'conv-row', 'data-peer': '' },
+        idc, middle,
+        el('div', { class: 'meta' }, el('div', { class: 'when', text: 'now' })),
+      );
+      wrap.appendChild(row);
+    }
+  }
+
   if (convs.length > 0) {
     wrap.appendChild(el('div', { class: 'list-section' }, 'Chats'));
     for (const c of convs) {
@@ -4542,9 +4573,18 @@ function dispatchEvent(ev) {
     const peer = ev.peer || (existing && existing.peer) || null;
     if (ev.finished) {
       state.transfers.delete(key);
-    } else if (peer) {
+    } else {
+      // Inbound Resource progress arrives with peer="" — the Reticulum
+      // responder side doesn't know who initiated the link until the
+      // LXMF wire payload finishes decrypting on resource-complete
+      // (LXMF doesn't send LINKIDENTIFY). Store the entry anyway with
+      // peer=null so the top-bar progress strip + a synthetic
+      // "Incoming attachment…" row in the conv list can reflect what's
+      // happening; the real conversation row picks it up once the
+      // `incoming` event arrives with the source_hash and this entry
+      // is cleared by message_complete.
       state.transfers.set(key, {
-        peer,
+        peer,                       // may be null for inbound pre-decrypt
         incoming: !!ev.incoming,
         bytes_done: ev.bytes_done || 0,
         bytes_total: ev.bytes_total || 0,

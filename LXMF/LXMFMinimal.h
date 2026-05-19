@@ -1396,16 +1396,28 @@ namespace LXMF {
     }
 
     static void _static_inbound_resource_concluded(const RNS::Resource& res) {
-      if (res.status() != RNS::Type::Resource::COMPLETE) {
-        WARNINGF("LXMF: inbound resource FAILED/CORRUPT (status=%d)",
-                 (int)res.status());
-        return;
-      }
       const RNS::Link& link = res.link();
       const RNS::Bytes our_dest_hash = link.destination().hash();
       auto& reg = registry();
       auto it = reg.find(our_dest_hash);
       if (it == reg.end() || it->second == nullptr) return;
+      // Fire a terminal progress event so the SPA can clear the
+      // synthetic "Incoming attachment" row from the conv list.
+      // peer is still unknown at this point — the SPA keys the
+      // clear off link_hash. Done before delivery so the conv
+      // list updates ahead of the new-message insertion.
+      if (it->second->_on_progress) {
+        const uint32_t total = (uint32_t)res.size();
+        try {
+          it->second->_on_progress(RNS::Bytes(), link.hash(),
+                                    /*incoming=*/true, total, total);
+        } catch (...) {}
+      }
+      if (res.status() != RNS::Type::Resource::COMPLETE) {
+        WARNINGF("LXMF: inbound resource FAILED/CORRUPT (status=%d)",
+                 (int)res.status());
+        return;
+      }
       const RNS::Bytes& plaintext = res.plaintext();
       NOTICEF("LXMF: inbound RESOURCE COMPLETE on %s (%u bytes)",
               our_dest_hash.toHex().c_str(), (unsigned)plaintext.size());

@@ -80,7 +80,14 @@ inline void persist(microStore::FileSystem& fs) {
 
 // Apply a single { enabled, interval_s } update to one sensor and
 // persist the new full config. Key is one of "environment" / "magnetometer"
-// / "imu". Returns true if applied.
+// / "imu" / "gps". Returns true if applied.
+//
+// GPS bridges through to TimeManager: GPS lives in the sensor
+// popover (it *is* a sensor — fix age, position, etc.) but its
+// time-side enable / poll interval are owned by TimeManager's GPS
+// source config. Persisting the GPS update therefore writes through
+// to /lxmf/time.json, not /lxmf/sensors.json. The SPA's view is the
+// same; the storage just lands in the right backing file.
 inline bool update_one(microStore::FileSystem& fs, const char* key,
                        bool enabled, uint32_t interval_s) {
   const uint32_t iv_ms = interval_s * 1000UL;
@@ -93,6 +100,14 @@ inline bool update_one(microStore::FileSystem& fs, const char* key,
   } else if (strcmp(key, "imu") == 0) {
     Web::QmiImu::set_enabled(enabled);
     Web::QmiImu::set_interval_ms(iv_ms);
+  } else if (strcmp(key, "gps") == 0) {
+    Web::TimeManager::SourceConfig c =
+        Web::TimeManager::get_config(Web::TimeManager::Source::GPS);
+    c.enabled    = enabled;
+    c.interval_s = interval_s;
+    Web::TimeManager::set_config(Web::TimeManager::Source::GPS, c);
+    Web::TimeManager::persist_config(fs);
+    return true;
   } else {
     return false;
   }

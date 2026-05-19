@@ -1141,6 +1141,16 @@ namespace Web {
         const Web::Gps::Fix f = Web::Gps::last_fix();
         o["model"]        = Web::Gps::model_name();
         o["available"]    = Web::Gps::has_serial();
+        // GPS is presented as a sensor in the popover (enable/interval
+        // controls alongside BME280/QMC6310/IMU), but its config is
+        // owned by TimeManager since it doubles as a time source. Pull
+        // those fields here so the SPA's sensor-config row can render
+        // without a second fetch.
+        {
+          const auto gcfg = Web::TimeManager::get_config(Web::TimeManager::Source::GPS);
+          o["enabled"]     = gcfg.enabled;
+          o["interval_ms"] = (uint32_t)gcfg.interval_s * 1000UL;
+        }
         o["valid"]        = f.valid;
         o["latitude"]     = f.latitude_deg;
         o["longitude"]    = f.longitude_deg;

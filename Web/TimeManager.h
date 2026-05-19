@@ -92,8 +92,13 @@ struct SourceConfig {
 
 inline SourceConfig default_config(Source s) {
   switch (s) {
-    case Source::GPS:     return { true,  0, 3600 };  // hourly GPS time reports
-    case Source::NTP:     return { true,  1, 3600 };  // hourly NTP refresh
+    // NTP is preferred over GPS by default: when WiFi has an internet
+    // route the NTP path is faster (<1 s) and doesn't keep the GPS
+    // chip warm. GPS remains enabled for offline-only deployments
+    // where WiFi isn't available — it just sits a step behind NTP in
+    // the priority list. Users can re-order via the Time settings tab.
+    case Source::NTP:     return { true,  0, 3600 };  // hourly NTP refresh
+    case Source::GPS:     return { true,  1, 3600 };  // hourly GPS time reports
     case Source::Browser: return { true,  2, 0    };  // event-driven
     case Source::RNS:     return { true,  3, 0    };  // event-driven
     case Source::None:    return { false, 255, 0  };

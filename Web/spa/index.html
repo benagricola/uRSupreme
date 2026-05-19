@@ -982,14 +982,16 @@ summary:hover { color: var(--text); }
     <div class="muted" id="sys-clock-source" style="font-size:11px"></div>
     <div class="muted mono" id="sys-clock-rtc"    style="font-size:11px;margin-top:4px"></div>
   </div>
-  <div class="popover-section" id="sys-section-gps" hidden>
-    <div class="popover-row">
+  <div class="popover-section" id="sys-section-gps" data-sensor="gps" hidden>
+    <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Position</div>
       <div id="sys-gps-line"></div>
+      <span class="muted" data-role="chev" style="font-size:11px;opacity:0.55;transition:transform .12s">▾</span>
     </div>
     <div class="mono" id="sys-gps-pos"    style="font-size:11px;margin-top:6px"></div>
     <div class="muted mono" id="sys-gps-speed"  style="font-size:11px"></div>
     <div class="muted mono" id="sys-gps-age"    style="font-size:11px"></div>
+    <div class="sensor-config" data-role="config" hidden style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bg-elev-2);display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
   </div>
   <div class="popover-section" id="sys-section-env" data-sensor="environment" hidden>
     <div class="popover-row" style="cursor:pointer" data-role="header">
@@ -4172,6 +4174,7 @@ function updateSensorConfigUI(s) {
     environment:  'sys-section-env',
     magnetometer: 'sys-section-mag',
     imu:          'sys-section-imu',
+    gps:          'sys-section-gps',
   };
   for (const [key, secId] of Object.entries(map)) {
     const section = $(secId);
@@ -5256,7 +5259,11 @@ const TIME_SOURCE_LABELS = {
 };
 // Sources for which a poll interval is meaningful (event-driven
 // sources hide the field).
-const TIME_SOURCE_HAS_INTERVAL = { gps: true, ntp: true, browser: false, rns: false };
+// GPS is configured from its sensor row in the system popover (it's
+// the only time source that's also a physical sensor). The Time tab
+// keeps the priority/enable knob for GPS but hides the interval
+// dropdown to avoid having two homes for the same value.
+const TIME_SOURCE_HAS_INTERVAL = { gps: false, ntp: true, browser: false, rns: false };
 
 // Live-ticking clock state. Anchor = the moment we last got an
 // authoritative reading from the device, captured as (deviceUnixMs,
@@ -5318,7 +5325,11 @@ function renderTimeSources(sources) {
   wrap.innerHTML = '';
   // Sort sources by current priority for the initial render. Equal
   // priority falls back to the canonical order.
-  const order = ['gps', 'ntp', 'browser', 'rns'];
+  // Canonical fallback order when priorities tie. NTP comes first
+  // because it's the cheapest, most-reliable source when WiFi has an
+  // internet route — see TimeManager::default_config. GPS sits a step
+  // behind for offline-only deployments.
+  const order = ['ntp', 'gps', 'browser', 'rns'];
   const rows = order.map(key => {
     const cfg = sources[key] || { enabled: true, priority: 99, interval_s: 0 };
     return { key, cfg };

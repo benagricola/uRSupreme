@@ -45,7 +45,7 @@
 #include "LXMFTypes.h"
 #include "../Web/BootCounter.h"
 #include "../Web/TimeManager.h"
-#include "../Web/OutboundStaging.h"
+#include "../Storage/OutboundStaging.h"
 #include <esp_heap_caps.h>
 
 namespace LXMF {
@@ -488,7 +488,7 @@ namespace LXMF {
       uint8_t              tag;
       // Byte source — exactly one of these is populated:
       //   * staging_id != 0: bytes live in OutboundStaging (PSRAM or
-      //     SD-backed). Read via Web::OutboundStaging::read() during
+      //     SD-backed). Read via Storage::OutboundStaging::read() during
       //     encoding. This is the only path the SPA exercises today
       //     (#130 wholesale switch).
       //   * data non-empty: bytes inlined here. Kept for code paths
@@ -529,7 +529,7 @@ namespace LXMF {
         ~StagingReleaser() {
           if (!atts) return;
           for (const auto& a : *atts) {
-            if (a.staging_id) Web::OutboundStaging::release(a.staging_id);
+            if (a.staging_id) Storage::OutboundStaging::release(a.staging_id);
           }
         }
       } releaser{attachments};
@@ -655,7 +655,7 @@ namespace LXMF {
             size_t off = 0;
             while (off < dlen) {
               const size_t want = std::min((size_t)4096, dlen - off);
-              const size_t got = Web::OutboundStaging::read(a.staging_id, off, want, &mp[mp_pos]);
+              const size_t got = Storage::OutboundStaging::read(a.staging_id, off, want, &mp[mp_pos]);
               if (got == 0) { ERRORF("LXMF: send: %s staging read failed at %u", err_label, (unsigned)off); return false; }
               mp_pos += got;
               off += got;

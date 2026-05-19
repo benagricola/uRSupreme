@@ -26,13 +26,13 @@
 #include "WebSocket.h"
 #include "Gps.h"
 #include "RtcPCF8563.h"
-#include "SDCard.h"
+#include "../Storage/SDCard.h"
 #include "Bme280.h"
 #include "QmcMag.h"
 #include "QmiImu.h"
 #include "SensorConfig.h"
-#include "OutboundStaging.h"
-#include "StorageConfig.h"
+#include "../Storage/OutboundStaging.h"
+#include "../Storage/Config.h"
 #include "StorageMigration.h"
 #include "BatteryTelemetry.h"
 
@@ -190,14 +190,14 @@ namespace Web {
       // it here so the SPA's Settings sliders + toast respond
       // immediately, without paying any cost on the steady-state
       // happy path.
-      if (Web::SDCard::take_eject_edge()) {
-        const auto& sc = Web::Storage::current();
+      if (Storage::SDCard::take_eject_edge()) {
+        const auto& sc = Storage::Config::current();
         Web::WS::publish_storage(
             false,
             (uint32_t)std::min<size_t>(sc.user_max_send_bytes,    0xFFFFFFFFu),
             (uint32_t)std::min<size_t>(sc.user_max_receive_bytes, 0xFFFFFFFFu),
-            (uint32_t)std::min<size_t>(Web::Storage::effective_max_send(),    0xFFFFFFFFu),
-            (uint32_t)std::min<size_t>(Web::Storage::effective_max_receive(), 0xFFFFFFFFu));
+            (uint32_t)std::min<size_t>(Storage::Config::effective_max_send(),    0xFFFFFFFFu),
+            (uint32_t)std::min<size_t>(Storage::Config::effective_max_receive(), 0xFFFFFFFFu));
       }
       // Skip all WS-publish work when nobody's listening — WebUI::loop
       // runs at ~50 Hz on the main task (shared with reticulum.loop and
@@ -1209,14 +1209,14 @@ namespace Web {
         fl["free_bytes"]  = (uint32_t)avail;
         fl["used_bytes"]  = (uint32_t)((total > avail) ? (total - avail) : 0);
         JsonObject sd = st["sd"].to<JsonObject>();
-        sd["present"] = Web::SDCard::present();
-        sd["status"]  = Web::SDCard::last_status();
-        if (Web::SDCard::present()) {
-          sd["card_type"]   = Web::SDCard::card_type_name();
-          sd["total_bytes"] = (uint64_t)Web::SDCard::total_bytes();
-          sd["used_bytes"]  = (uint64_t)Web::SDCard::used_bytes();
+        sd["present"] = Storage::SDCard::present();
+        sd["status"]  = Storage::SDCard::last_status();
+        if (Storage::SDCard::present()) {
+          sd["card_type"]   = Storage::SDCard::card_type_name();
+          sd["total_bytes"] = (uint64_t)Storage::SDCard::total_bytes();
+          sd["used_bytes"]  = (uint64_t)Storage::SDCard::used_bytes();
         }
-        const auto rs = Web::SDCard::rail_state();
+        const auto rs = Storage::SDCard::rail_state();
         if (rs.captured) {
           JsonObject rails = sd["rails"].to<JsonObject>();
           rails["bldo1_on"] = rs.bldo1_on;
@@ -1241,10 +1241,10 @@ namespace Web {
       fill_sensor_block(sensors, "imu");
       // ---- outbound staging caps + storage config ----
       {
-        const auto caps = Web::OutboundStaging::current_caps();
+        const auto caps = Storage::OutboundStaging::current_caps();
         JsonObject oc = root["outbound_caps"].to<JsonObject>();
         oc["max_bytes"]        = (uint32_t)caps.max_bytes;
-        oc["backend"]          = Web::OutboundStaging::backend_name(caps.chosen_backend);
+        oc["backend"]          = Storage::OutboundStaging::backend_name(caps.chosen_backend);
         oc["flash_free_bytes"] = (uint32_t)caps.flash_free;
         oc["psram_free_bytes"] = (uint32_t)caps.psram_free;
         oc["sd_present"]       = caps.sd_present;
@@ -1257,12 +1257,12 @@ namespace Web {
       // card was absent). .as<JsonObject>() returns the existing
       // object so the new fields land alongside the legacy ones.
       {
-        const auto& sc = Web::Storage::current();
+        const auto& sc = Storage::Config::current();
         JsonObject st = root["storage"].as<JsonObject>();
         st["user_max_send_bytes"]      = (uint32_t)std::min<size_t>(sc.user_max_send_bytes,    0xFFFFFFFFu);
         st["user_max_receive_bytes"]   = (uint32_t)std::min<size_t>(sc.user_max_receive_bytes, 0xFFFFFFFFu);
-        st["effective_max_send_bytes"] = (uint32_t)std::min<size_t>(Web::Storage::effective_max_send(),    0xFFFFFFFFu);
-        st["effective_max_recv_bytes"] = (uint32_t)std::min<size_t>(Web::Storage::effective_max_receive(), 0xFFFFFFFFu);
+        st["effective_max_send_bytes"] = (uint32_t)std::min<size_t>(Storage::Config::effective_max_send(),    0xFFFFFFFFu);
+        st["effective_max_recv_bytes"] = (uint32_t)std::min<size_t>(Storage::Config::effective_max_receive(), 0xFFFFFFFFu);
       }
       // ---- battery (detailed) ----
       {
@@ -1324,13 +1324,13 @@ namespace Web {
     static void handle_storage_config_get(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
-      const auto& cfg = Web::Storage::current();
+      const auto& cfg = Storage::Config::current();
       JsonDocument doc;
       doc["user_max_send_bytes"]      = (uint32_t)std::min<size_t>(cfg.user_max_send_bytes,    0xFFFFFFFFu);
       doc["user_max_receive_bytes"]   = (uint32_t)std::min<size_t>(cfg.user_max_receive_bytes, 0xFFFFFFFFu);
-      doc["effective_max_send_bytes"] = (uint32_t)std::min<size_t>(Web::Storage::effective_max_send(),    0xFFFFFFFFu);
-      doc["effective_max_recv_bytes"] = (uint32_t)std::min<size_t>(Web::Storage::effective_max_receive(), 0xFFFFFFFFu);
-      doc["sd_present"]               = Web::SDCard::present();
+      doc["effective_max_send_bytes"] = (uint32_t)std::min<size_t>(Storage::Config::effective_max_send(),    0xFFFFFFFFu);
+      doc["effective_max_recv_bytes"] = (uint32_t)std::min<size_t>(Storage::Config::effective_max_receive(), 0xFFFFFFFFu);
+      doc["sd_present"]               = Storage::SDCard::present();
       send_json(req, 200, doc);
     }
 
@@ -1342,10 +1342,10 @@ namespace Web {
     static void handle_storage_config_post(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
-      const auto& current = Web::Storage::current();
+      const auto& current = Storage::Config::current();
       const uint32_t snd = body["user_max_send_bytes"]    | (uint32_t)current.user_max_send_bytes;
       const uint32_t rcv = body["user_max_receive_bytes"] | (uint32_t)current.user_max_receive_bytes;
-      Web::Storage::set(filesystem, (size_t)snd, (size_t)rcv);
+      Storage::Config::set(filesystem, (size_t)snd, (size_t)rcv);
       handle_storage_config_get(req);
     }
 
@@ -1515,7 +1515,7 @@ namespace Web {
           err = "Invalid X-Total-Length header.";
           return;
         }
-        const size_t eff_max = Web::Storage::effective_max_send();
+        const size_t eff_max = Storage::Config::effective_max_send();
         if (total64 > (unsigned long long)eff_max) {
           err = "Requested upload size exceeds the configured send cap.";
           return;
@@ -1535,7 +1535,7 @@ namespace Web {
             return;
           }
         }
-        const uint32_t id = Web::OutboundStaging::allocate(total);
+        const uint32_t id = Storage::OutboundStaging::allocate(total);
         if (id == 0) {
           err = "Allocation rejected — file too large or PSRAM/SD unavailable.";
           return;
@@ -1543,18 +1543,18 @@ namespace Web {
         staging_id = id;
       }
       if (staging_id == 0) return;  // error already set
-      if (len > 0 && !Web::OutboundStaging::append(staging_id, data, len)) {
+      if (len > 0 && !Storage::OutboundStaging::append(staging_id, data, len)) {
         // append() refuses any write that would push past the
         // allocated size; treat as a hard fault.
         err = "Chunk write failed (overrun or backing-store error).";
-        Web::OutboundStaging::release(staging_id);
+        Storage::OutboundStaging::release(staging_id);
         staging_id = 0;
         return;
       }
       if (final) {
-        if (!Web::OutboundStaging::complete(staging_id)) {
+        if (!Storage::OutboundStaging::complete(staging_id)) {
           err = "Upload ended before all bytes were received.";
-          Web::OutboundStaging::release(staging_id);
+          Storage::OutboundStaging::release(staging_id);
           staging_id = 0;
         }
       }
@@ -1569,7 +1569,7 @@ namespace Web {
         // Auth fail. Drop any staging buffer the chunk path may have
         // built up — we shouldn't keep bytes for an unauthorized peer.
         uint32_t id = _current_upload_staging_id();
-        if (id) Web::OutboundStaging::release(id);
+        if (id) Storage::OutboundStaging::release(id);
         _current_upload_staging_id() = 0;
         _current_upload_error()      = nullptr;
         return;
@@ -1577,7 +1577,7 @@ namespace Web {
       std::string requested = std::string(req->pathArg(0).c_str());
       if (caller != requested) {
         uint32_t id = _current_upload_staging_id();
-        if (id) Web::OutboundStaging::release(id);
+        if (id) Storage::OutboundStaging::release(id);
         _current_upload_staging_id() = 0;
         _current_upload_error()      = nullptr;
         send_error(req, 403, "forbidden");
@@ -1598,9 +1598,9 @@ namespace Web {
       }
       JsonDocument doc;
       doc["staging_id"] = id;
-      doc["total_bytes"] = (uint32_t)Web::OutboundStaging::total_bytes(id);
-      doc["backend"]     = Web::OutboundStaging::backend_name(
-                              Web::OutboundStaging::backend_of(id));
+      doc["total_bytes"] = (uint32_t)Storage::OutboundStaging::total_bytes(id);
+      doc["backend"]     = Storage::OutboundStaging::backend_name(
+                              Storage::OutboundStaging::backend_of(id));
       send_json(req, 200, doc);
     }
 
@@ -1661,7 +1661,7 @@ namespace Web {
       // Backend dispatch. Try SD first if a card is mounted —
       // big attachments live there; small/pre-SD ones on LittleFS. If
       // neither has the file, return 404.
-      const bool on_sd    = Web::SDCard::present() && Web::SDCard::exists(full.c_str());
+      const bool on_sd    = Storage::SDCard::present() && Storage::SDCard::exists(full.c_str());
       const bool on_flash = !on_sd && filesystem.exists(full.c_str());
       if (!on_sd && !on_flash) {
         send_error(req, 404, "attachment_not_found");
@@ -1671,7 +1671,7 @@ namespace Web {
       File         sd_f;
       microStore::File flash_f;
       if (on_sd) {
-        sd_f = Web::SDCard::open_read(full.c_str());
+        sd_f = Storage::SDCard::open_read(full.c_str());
         if (!sd_f) { send_error(req, 500, "attachment_open_failed"); return; }
         total = sd_f.size();
       } else {
@@ -1735,7 +1735,7 @@ namespace Web {
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      if (!Web::SDCard::present()) {
+      if (!Storage::SDCard::present()) {
         send_error_with_message(req, 409, "sd_absent",
           "No SD card is inserted — nothing to migrate to.");
         return;
@@ -1973,7 +1973,7 @@ namespace Web {
               "Attachment is missing staging_id — upload bytes via /attachment/upload first.");
             return;
           }
-          if (!Web::OutboundStaging::complete(sid)) {
+          if (!Storage::OutboundStaging::complete(sid)) {
             send_error_with_message(req, 409, "staging_incomplete",
               "Attachment staging buffer hasn't finished uploading.");
             return;
@@ -1981,7 +1981,7 @@ namespace Web {
           LXMF::LXMFMinimal::OutgoingAttachment oa;
           oa.tag                  = (uint8_t)tag;
           oa.staging_id           = sid;
-          oa.staging_total_bytes  = Web::OutboundStaging::total_bytes(sid);
+          oa.staging_total_bytes  = Storage::OutboundStaging::total_bytes(sid);
           oa.filename             = a["filename"] | "";
           oa.mime                 = a["mime"]     | "";
           // Per Sideband convention, FIELD_IMAGE carries an `ext` string

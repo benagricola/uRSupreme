@@ -39,7 +39,7 @@
 
 extern microStore::FileSystem filesystem;
 
-namespace Web {
+namespace Storage {
 namespace OutboundStaging {
 
 // PSRAM allocation cap. Leaves ~4 MB headroom after RNS containers
@@ -98,7 +98,7 @@ namespace _detail {
         if (it->backend == Backend::Psram && it->psram_ptr) {
           heap_caps_free(it->psram_ptr);
         } else if (it->backend == Backend::Sd && !it->disk_path.isEmpty()) {
-          if (Web::SDCard::present()) SD.remove(it->disk_path);
+          if (Storage::SDCard::present()) SD.remove(it->disk_path);
         } else if (it->backend == Backend::Flash && !it->disk_path.isEmpty()) {
           if (filesystem.exists(it->disk_path.c_str())) filesystem.remove(it->disk_path.c_str());
         }
@@ -138,15 +138,15 @@ struct Caps {
 };
 inline Caps current_caps() {
   Caps c{};
-  c.sd_present = Web::SDCard::present();
+  c.sd_present = Storage::SDCard::present();
   c.psram_free = (size_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
   {
     const size_t avail = (size_t)filesystem.storageAvailable();
     c.flash_free = avail;
   }
   if (c.sd_present) {
-    const uint64_t total = Web::SDCard::total_bytes();
-    const uint64_t used  = Web::SDCard::used_bytes();
+    const uint64_t total = Storage::SDCard::total_bytes();
+    const uint64_t used  = Storage::SDCard::used_bytes();
     c.sd_free = (total > used) ? (size_t)(total - used) : 0;
   }
   c.psram_max = (c.psram_free > 512 * 1024)
@@ -180,7 +180,7 @@ inline const char* backend_name(Backend b) {
 
 // Allocate a new staging buffer. Returns 0 on failure (over cap,
 // PSRAM exhausted, SD write-fail). The user-facing transfer cap
-// (Web::Storage::effective_max_send) is enforced by the caller
+// (Storage::Config::effective_max_send) is enforced by the caller
 // before this point; allocate() only enforces backing-store
 // reality.
 inline uint32_t allocate(size_t total_bytes) {
@@ -248,10 +248,10 @@ inline bool append(uint32_t id, const uint8_t* data, size_t len) {
     memcpy(b->psram_ptr + b->written, data, len);
   } else if (b->backend == Backend::Sd) {
     File f = SD.open(b->disk_path, FILE_APPEND);
-    if (!f) { Web::SDCard::verify_or_disable(); return false; }
+    if (!f) { Storage::SDCard::verify_or_disable(); return false; }
     size_t w = f.write(data, len);
     f.close();
-    if (w != len) { Web::SDCard::verify_or_disable(); return false; }
+    if (w != len) { Storage::SDCard::verify_or_disable(); return false; }
   } else {  // Flash
     microStore::File f = filesystem.open(b->disk_path.c_str(),
                                          microStore::File::ModeAppend, true);
@@ -293,11 +293,11 @@ inline size_t read(uint32_t id, size_t offset, size_t len, uint8_t* dst) {
   }
   if (b->backend == Backend::Sd) {
     File f = SD.open(b->disk_path, FILE_READ);
-    if (!f) { Web::SDCard::verify_or_disable(); return 0; }
-    if (!f.seek(offset)) { f.close(); Web::SDCard::verify_or_disable(); return 0; }
+    if (!f) { Storage::SDCard::verify_or_disable(); return 0; }
+    if (!f.seek(offset)) { f.close(); Storage::SDCard::verify_or_disable(); return 0; }
     const int got = f.read(dst, avail);
     f.close();
-    if (got <= 0) { Web::SDCard::verify_or_disable(); return 0; }
+    if (got <= 0) { Storage::SDCard::verify_or_disable(); return 0; }
     return (size_t)got;
   }
   // Flash
@@ -317,7 +317,7 @@ inline void release(uint32_t id) {
     if (it->backend == Backend::Psram && it->psram_ptr) {
       heap_caps_free(it->psram_ptr);
     } else if (it->backend == Backend::Sd && !it->disk_path.isEmpty()) {
-      if (Web::SDCard::present()) SD.remove(it->disk_path);
+      if (Storage::SDCard::present()) SD.remove(it->disk_path);
     } else if (it->backend == Backend::Flash && !it->disk_path.isEmpty()) {
       if (filesystem.exists(it->disk_path.c_str())) filesystem.remove(it->disk_path.c_str());
     }
@@ -328,4 +328,4 @@ inline void release(uint32_t id) {
 }
 
 }  // namespace OutboundStaging
-}  // namespace Web
+}  // namespace Storage

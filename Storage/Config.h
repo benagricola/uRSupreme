@@ -35,8 +35,8 @@
 
 extern microStore::FileSystem filesystem;
 
-namespace Web {
 namespace Storage {
+namespace Config {
 
 inline constexpr const char* CONFIG_PATH = "/lxmf/storage_config.json";
 
@@ -116,9 +116,9 @@ inline size_t backing_max_send() {
 // Flash. We size the cap to the chosen backing store's free space
 // minus a safety margin.
 inline size_t backing_max_receive() {
-  if (Web::SDCard::present()) {
-    const uint64_t total = Web::SDCard::total_bytes();
-    const uint64_t used  = Web::SDCard::used_bytes();
+  if (Storage::SDCard::present()) {
+    const uint64_t total = Storage::SDCard::total_bytes();
+    const uint64_t used  = Storage::SDCard::used_bytes();
     const size_t free_b  = (total > used) ? (size_t)(total - used) : 0;
     return (free_b > RECEIVE_SAFETY_MARGIN) ? (free_b - RECEIVE_SAFETY_MARGIN) : 0;
   }
@@ -136,5 +136,5 @@ inline size_t effective_max_receive() {
   return std::min({c.user_max_receive_bytes, backing_max_receive(), PROTOCOL_CEILING});
 }
 
+}  // namespace Config
 }  // namespace Storage
-}  // namespace Web

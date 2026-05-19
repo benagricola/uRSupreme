@@ -26,7 +26,7 @@
 #include <SPI.h>
 #include <SensorQMI8658.hpp>
 #include "../Boards.h"
-#include "SDCard.h"   // for ensure_shared_bus
+#include "../Storage/SDCard.h"   // for ensure_shared_bus
 
 namespace Web {
 namespace QmiImu {
@@ -57,7 +57,7 @@ inline bool begin() {
   // (SPIClass&, cs, mosi, miso, sck) — the trailing pin args are
   // ignored when the bus is already begin()'d, but SensorLib still
   // expects them for cs-pinMode init.
-  SPIClass* bus = Web::SDCard::ensure_shared_bus();
+  SPIClass* bus = Storage::SDCard::ensure_shared_bus();
   if (!bus) {
     NOTICE("QMI8658: shared SPI bus unavailable — not on a Supreme board");
     return false;

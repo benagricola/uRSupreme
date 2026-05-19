@@ -35,7 +35,7 @@
 #include "Web/RtcPCF8563.h"
 #include "Web/Gps.h"
 #include "Web/Ntp.h"
-#include "Web/SDCard.h"
+#include "Storage/SDCard.h"
 #include <ResourceBuffer.h>  // for RNS::set_resource_tmp_path_resolver
 #include "Web/Bme280.h"
 #include "Web/QmcMag.h"
@@ -869,18 +869,18 @@ void setup() {
       const int  b2_mV = PMU->getPowerChannelVoltage(XPOWERS_BLDO2);
       NOTICEF("SDCard: BLDO1 on=%d %dmV  BLDO2 on=%d %dmV",
               (int)b1_on, b1_mV, (int)b2_on, b2_mV);
-      Web::SDCard::set_rail_state(b1_on, b1_mV, b2_on, b2_mV);
+      Storage::SDCard::set_rail_state(b1_on, b1_mV, b2_on, b2_mV);
     } else {
       NOTICEF("SDCard: PMU=%p chip=%d — not AXP2101, leaving rails alone",
               (void*)PMU, PMU ? (int)PMU->getChipModel() : -1);
     }
-    Web::SDCard::begin();
+    Storage::SDCard::begin();
     // Install the SD-aware Resource-temp-path resolver. microReticulum
     // calls this each time a FlashResourceBuffer opens, so mid-session
     // SD insert/eject is honoured on the next transfer. The resolver
     // is a stateless lambda → bare function pointer.
     RNS::set_resource_tmp_path_resolver([]() -> const char* {
-      return Web::SDCard::present()
+      return Storage::SDCard::present()
           ? "/sd/lxmf_resource_tmp"
           : "/lxmf_resource_tmp";
     });
@@ -890,8 +890,8 @@ void setup() {
     if (!filesystem.isDirectory("/lxmf_resource_tmp")) {
       filesystem.mkdir("/lxmf_resource_tmp");
     }
-    if (Web::SDCard::present()) {
-      if (!Web::SDCard::exists("/sd/lxmf_resource_tmp")) {
+    if (Storage::SDCard::present()) {
+      if (!Storage::SDCard::exists("/sd/lxmf_resource_tmp")) {
         SD.mkdir("/sd/lxmf_resource_tmp");
       }
     }
@@ -900,7 +900,7 @@ void setup() {
     // post-encrypt check) honour the user-configured cap clamped to
     // current backing-store free space.
     RNS::set_resource_max_incoming_resolver([]() -> size_t {
-      return Web::Storage::effective_max_receive();
+      return Storage::Config::effective_max_receive();
     });
     // Bring up the user/sensor I2C bus (Wire) at SDA=17 SCL=18
     // — this is where BME280 lives (and where future QMC6310
@@ -1054,7 +1054,7 @@ void setup() {
       // — wire TimeManager::now_epoch as the inbox clock source.
       LXMF::LXMFInbox::set_now_epoch_provider(&Web::TimeManager::now_epoch);
       LXMF::InboxConfig::load(filesystem);
-      Web::Storage::load(filesystem);
+      Storage::Config::load(filesystem);
       LXMF::LXMFGateway::setup();
       LXMF::AnnounceLog::setup();
       // Wire the microReticulum ratchet patches to our gateway-backed

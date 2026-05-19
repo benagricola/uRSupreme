@@ -5,8 +5,8 @@
 #include <Identity.h>
 #include <Utilities/OS.h>
 #include <microStore/FileSystem.h>
-#include "../Web/SDCard.h"
-#include "../Web/OutboundStaging.h"
+#include "../Storage/SDCard.h"
+#include "../Storage/OutboundStaging.h"
 #include <SD.h>
 
 #include <memory>
@@ -230,7 +230,7 @@ namespace LXMF {
             if (att.filename.empty()) continue;
             const std::string full = a->dir() + "/attachments/" + att.filename;
             if (att.backend == "sd") {
-              if (Web::SDCard::present() && Web::SDCard::exists(full.c_str())) {
+              if (Storage::SDCard::present() && Storage::SDCard::exists(full.c_str())) {
                 SD.remove(full.c_str());
               }
             } else {
@@ -426,8 +426,8 @@ namespace LXMF {
       LXMFInbox::BodyWriter body_writer = [](const std::string& path,
                                               const std::string& content) -> bool {
         // Make parent dir on whichever backend gets the write.
-        if (Web::SDCard::present()) {
-          const size_t w = Web::SDCard::write_file(
+        if (Storage::SDCard::present()) {
+          const size_t w = Storage::SDCard::write_file(
               path.c_str(), reinterpret_cast<const uint8_t*>(content.data()),
               content.size());
           if (w == content.size()) return true;
@@ -451,8 +451,8 @@ namespace LXMF {
       LXMFInbox::BodyReader body_reader = [](const std::string& path,
                                               std::string& out_content) -> bool {
         // Try SD first (the same path may live on either backend).
-        if (Web::SDCard::present() && Web::SDCard::exists(path.c_str())) {
-          auto f = Web::SDCard::open_read(path.c_str());
+        if (Storage::SDCard::present() && Storage::SDCard::exists(path.c_str())) {
+          auto f = Storage::SDCard::open_read(path.c_str());
           if (f) {
             const size_t sz = f.size();
             out_content.resize(sz);
@@ -475,7 +475,7 @@ namespace LXMF {
         return true;
       };
       LXMFInbox::BodyRemover body_remover = [](const std::string& path) {
-        if (Web::SDCard::present() && Web::SDCard::exists(path.c_str())) {
+        if (Storage::SDCard::present() && Storage::SDCard::exists(path.c_str())) {
           SD.remove(path.c_str());
         }
         if (filesystem.exists(path.c_str())) filesystem.remove(path.c_str());
@@ -488,7 +488,7 @@ namespace LXMF {
           if (att.filename.empty()) continue;
           const std::string full = adir + "/attachments/" + att.filename;
           if (att.backend == "sd") {
-            if (Web::SDCard::present() && Web::SDCard::exists(full.c_str())) {
+            if (Storage::SDCard::present() && Storage::SDCard::exists(full.c_str())) {
               SD.remove(full.c_str());
             }
           } else {
@@ -501,7 +501,7 @@ namespace LXMF {
         const std::string mailbox = rec.incoming ? "inbox" : "outbox";
         const std::string body_path = adir + "/" + mailbox + "/" +
                                        std::to_string(rec.seq) + ".body";
-        if (Web::SDCard::present() && Web::SDCard::exists(body_path.c_str())) {
+        if (Storage::SDCard::present() && Storage::SDCard::exists(body_path.c_str())) {
           SD.remove(body_path.c_str());
         }
         if (filesystem.exists(body_path.c_str())) {
@@ -572,7 +572,7 @@ namespace LXMF {
               const std::vector<LXMFMinimal::FieldBlob>& fields) -> std::vector<AttachmentMeta> {
             std::vector<AttachmentMeta> out;
             if (!p->active) return out;
-            const bool use_sd = Web::SDCard::present();
+            const bool use_sd = Storage::SDCard::present();
             const std::string att_dir = p->dir() + "/attachments";
             // LittleFS-side directory still gets prepared even when SD
             // is mounted — small attachments (or fallback) land here.
@@ -591,7 +591,7 @@ namespace LXMF {
               if (use_sd) {
                 // Try SD first. On failure, fall back to LittleFS so the
                 // user doesn't lose the attachment due to a flaky card.
-                const size_t w = Web::SDCard::write_file(full.c_str(), f.raw, f.raw_len);
+                const size_t w = Storage::SDCard::write_file(full.c_str(), f.raw, f.raw_len);
                 if (w == f.raw_len) { wrote_ok = true; backend = "sd"; }
                 else {
                   WARNINGF("LXMF: SD attachment write short (wrote %u/%u for %s) — falling back to flash",
@@ -637,7 +637,7 @@ namespace LXMF {
               -> std::vector<AttachmentMeta> {
             std::vector<AttachmentMeta> out;
             if (!p->active || !p->persist_outbound_attachments) return out;
-            const bool use_sd = Web::SDCard::present();
+            const bool use_sd = Storage::SDCard::present();
             const std::string att_dir = p->dir() + "/attachments";
             if (!filesystem.isDirectory(att_dir.c_str())) {
               filesystem.mkdir(att_dir.c_str());
@@ -663,7 +663,7 @@ namespace LXMF {
               size_t off = 0;
               auto next_chunk = [&](uint8_t* buf, size_t want) -> size_t {
                 if (a.staging_id) {
-                  return Web::OutboundStaging::read(a.staging_id, off, want, buf);
+                  return Storage::OutboundStaging::read(a.staging_id, off, want, buf);
                 }
                 const size_t avail = a.data.size() > off ? a.data.size() - off : 0;
                 const size_t take = std::min(want, avail);

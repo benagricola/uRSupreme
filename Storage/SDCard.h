@@ -27,7 +27,7 @@
 #include <SD.h>
 #include "../Boards.h"
 
-namespace Web {
+namespace Storage {
 namespace SDCard {
 
 namespace _detail {
@@ -258,4 +258,4 @@ inline const char* card_type_name() {
 }
 
 }  // namespace SDCard
-}  // namespace Web
+}  // namespace Storage

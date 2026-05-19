@@ -18,7 +18,7 @@
 #include <SD.h>
 #include <microStore/FileSystem.h>
 #include "../LXMF/LXMFGateway.h"
-#include "SDCard.h"
+#include "../Storage/SDCard.h"
 
 namespace Web {
 namespace StorageMigration {
@@ -34,8 +34,8 @@ struct Result {
 inline bool _copy_flash_to_sd_chunked(const std::string& path, size_t expected) {
   microStore::File src = filesystem.open(path.c_str(), microStore::File::ModeRead);
   if (!src) return false;
-  if (Web::SDCard::exists(path.c_str())) SD.remove(path.c_str());
-  if (!Web::SDCard::ensure_parent_dirs(path.c_str())) { src.close(); return false; }
+  if (Storage::SDCard::exists(path.c_str())) SD.remove(path.c_str());
+  if (!Storage::SDCard::ensure_parent_dirs(path.c_str())) { src.close(); return false; }
   File dst = SD.open(path.c_str(), FILE_WRITE);
   if (!dst) { src.close(); return false; }
   uint8_t buf[1024];
@@ -60,7 +60,7 @@ inline bool _copy_flash_to_sd_chunked(const std::string& path, size_t expected) 
 
 inline Result run() {
   Result r;
-  if (!Web::SDCard::present()) return r;
+  if (!Storage::SDCard::present()) return r;
   // Walk every identity's attachments/ directory on flash. Each
   // identity owns its own subtree; we do not touch files outside it.
   for (auto* ap : LXMF::LXMFGateway::active_identities()) {
@@ -77,7 +77,7 @@ inline Result run() {
       if (!probe) { ++r.failed; continue; }
       const size_t flash_size = probe.size();
       probe.close();
-      if (Web::SDCard::exists(full.c_str())) {
+      if (Storage::SDCard::exists(full.c_str())) {
         // Already on SD — drop the flash copy and count it as a skip.
         // (If the SD copy size disagrees, leave flash alone and flag
         // it as a failure for the user to investigate.)

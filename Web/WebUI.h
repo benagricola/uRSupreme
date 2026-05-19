@@ -1828,6 +1828,10 @@ namespace Web {
         send_error(req, 404, "attachment_not_found");
         return;
       }
+      NOTICEF("[ATTDBG] handle_attachment_get: path=%s backend=%s free_heap=%u psram=%u",
+              full.c_str(), on_sd ? "sd" : "flash",
+              (unsigned)esp_get_free_heap_size(),
+              (unsigned)ESP.getFreePsram());
       // Stream the file in 32 KiB chunks via AsyncTCP's producer lambda.
       // Two earlier failure modes to avoid:
       //
@@ -1873,12 +1877,21 @@ namespace Web {
       st->scratch_size = SCRATCH_SIZE;
       if (on_sd) {
         st->sd_f = Storage::SDCard::open_read(full.c_str());
-        if (!st->sd_f) { send_error(req, 500, "attachment_open_failed"); return; }
+        if (!st->sd_f) {
+          NOTICEF("[ATTDBG] SD open_read failed for %s", full.c_str());
+          send_error(req, 500, "attachment_open_failed");
+          return;
+        }
       } else {
         st->flash_f = filesystem.open(full.c_str(), microStore::File::ModeRead);
-        if (!st->flash_f) { send_error(req, 500, "attachment_open_failed"); return; }
+        if (!st->flash_f) {
+          NOTICEF("[ATTDBG] flash open failed for %s", full.c_str());
+          send_error(req, 500, "attachment_open_failed");
+          return;
+        }
       }
       const size_t total = on_sd ? (size_t)st->sd_f.size() : (size_t)st->flash_f.size();
+      NOTICEF("[ATTDBG] opened ok, total=%u bytes", (unsigned)total);
       st->scratch = (uint8_t*)heap_caps_malloc(SCRATCH_SIZE,
                                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!st->scratch) st->scratch = (uint8_t*)heap_caps_malloc(SCRATCH_SIZE, MALLOC_CAP_8BIT);

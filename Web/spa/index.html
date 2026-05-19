@@ -617,6 +617,35 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   transition: transform .12s;
 }
 .popover-section.is-open .popover-chev { transform: rotate(180deg); }
+
+/* Radio-option cards used by the retention modal (and any future
+   "pick one of N" modals). The global `input { width:100%;
+   min-height:36px }` rule makes raw radio buttons unusable in flex
+   layouts — overrides here put them back to their natural size and
+   wrap each option in a clickable label-card. */
+.cr-option {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; margin-bottom: 6px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-elev);
+  cursor: pointer; user-select: none;
+}
+.cr-option:hover { background: var(--bg-hover); }
+.cr-option input[type="radio"] {
+  width: 18px; height: 18px; min-height: auto;
+  margin: 0; flex: 0 0 auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.cr-option span { font-size: 14px; flex: 0 0 auto; }
+.cr-option-custom { flex-wrap: wrap; }
+.cr-option-custom .cr-num {
+  width: 72px; min-height: 32px; flex: 0 0 auto;
+  text-align: right;
+}
+.cr-option-custom .cr-unit {
+  width: auto; min-height: 32px; flex: 0 0 auto;
+}
 .pill {
   display: inline-block;
   font-size: 11px;
@@ -1198,29 +1227,29 @@ summary:hover { color: var(--text); }
 <div id="modal-conv-retention" class="modal-bg" hidden style="z-index:260">
   <div class="modal" style="max-width:440px">
     <h3>Retention for this chat</h3>
-    <p class="muted" style="margin-bottom:10px">
+    <p class="muted" style="margin-bottom:14px">
       Older messages are pruned according to the chosen retention.
       <span id="cr-default-line"></span>
     </p>
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+    <label class="cr-option">
       <input type="radio" name="cr-mode" value="default" id="cr-mode-default">
       <span id="cr-mode-default-label">Use identity default</span>
     </label>
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+    <label class="cr-option">
       <input type="radio" name="cr-mode" value="forever" id="cr-mode-forever">
       <span>Keep forever</span>
     </label>
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+    <label class="cr-option cr-option-custom">
       <input type="radio" name="cr-mode" value="custom" id="cr-mode-custom">
       <span>Expire after</span>
-      <input type="number" id="cr-custom-n" min="1" step="1" value="7" style="width:80px">
-      <select id="cr-custom-unit">
+      <input type="number" id="cr-custom-n" min="1" step="1" value="7" class="cr-num">
+      <select id="cr-custom-unit" class="cr-unit">
         <option value="60">minutes</option>
         <option value="3600">hours</option>
         <option value="86400" selected>days</option>
       </select>
     </label>
-    <div class="row">
+    <div class="row" style="margin-top:14px">
       <button class="secondary" id="cr-cancel">Cancel</button>
       <button id="cr-save">Save</button>
     </div>
@@ -2862,7 +2891,13 @@ async function downloadAttachment(identityId, meta, chipEl, bubbleEl) {
         src: url,
         style: 'margin-top:6px;max-width:240px;max-height:240px;border-radius:6px;display:block;cursor:zoom-in',
       });
-      img.addEventListener('click', () => window.open(url, '_blank'));
+      // Open the in-app modal viewer (with tap-to-zoom + save) rather
+      // than spawning a new browser tab — matches the renderInboundImage
+      // code path. The old window.open behaviour was a leftover from
+      // before the modal viewer existed and broke the UX for any
+      // image first fetched via the click-to-load chip (sent images
+      // after a page reload, or received images with auto-download off).
+      img.addEventListener('click', () => openImageModal(url, meta));
       bubbleEl.replaceChild(img, chipEl);
     } else if (meta.tag === 7) {
       // Audio: sniff the codec so the browser <audio> element accepts

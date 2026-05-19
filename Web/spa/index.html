@@ -568,6 +568,55 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--text-mute); margin: 0; font-weight: 600;
 }
+/* Consistent two-tier body layout for every popover section:
+   - .popover-value: the main bright line (mono, 13px) — the
+     "primary fact" for the section (eg. the current temperature,
+     the radio config summary, the wall-clock string).
+   - .popover-subline: dimmed secondary info (mono, 11px) — used
+     for "Last read 2s ago (BME280)", "RX 12 / TX 4 packets", etc.
+   Multiple .popover-subline children stack vertically. Both
+   inherit the section's left edge — no extra indent.
+   .popover-row spacer collapses the gap when the value and subline
+   are missing on a hidden section. */
+.popover-value {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 13px;
+  margin-top: 6px;
+  color: var(--text);
+  word-break: break-word;
+}
+.popover-subline {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.popover-subline:first-of-type { margin-top: 4px; }
+/* Sensor / interface configuration row — checkbox + interval
+   dropdown + any extras. Lives at the bottom of an expandable
+   section. Hidden until the user clicks the header (handled in
+   JS via [data-role="header"] + [data-role="config"]). */
+.popover-config {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--bg-elev-2);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.popover-config label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; cursor: pointer; margin: 0;
+}
+.popover-config input[type="checkbox"] {
+  width: auto; min-height: auto; margin: 0;
+}
+.popover-config select {
+  flex: 1; max-width: 140px; font-size: 12px;
+}
+.popover-chev {
+  font-size: 11px; opacity: 0.55;
+  transition: transform .12s;
+}
+.popover-section.is-open .popover-chev { transform: rotate(180deg); }
 .pill {
   display: inline-block;
   font-size: 11px;
@@ -912,22 +961,23 @@ summary:hover { color: var(--text); }
       <div class="popover-label" id="status-radio-label">RADIO</div>
       <div id="status-radio-line"></div>
     </div>
-    <div class="muted mono" id="status-radio-cfg-1"    style="font-size:11px;margin-top:6px"></div>
-    <div class="muted mono" id="status-radio-cfg-2"    style="font-size:11px"></div>
-    <div class="muted mono" id="status-radio-stats"    style="font-size:11px;margin-top:4px"></div>
-    <div class="muted mono" id="status-radio-rate"     style="font-size:11px"></div>
-    <div class="muted mono" id="status-radio-airtime"  style="font-size:11px;margin-top:10px"></div>
+    <!-- Radio config = primary fact for the section. Packet counters
+         and airtime are secondary, rendered as sublines. -->
+    <div class="popover-value" id="status-radio-cfg"></div>
+    <div class="popover-subline" id="status-radio-stats"></div>
+    <div class="popover-subline" id="status-radio-rate"></div>
+    <div class="popover-subline" id="status-radio-airtime"></div>
   </div>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label">WiFi</div>
       <div id="status-wifi-line"></div>
     </div>
-    <div class="muted mono" id="status-wifi-ssid" style="font-size:11px;margin-top:6px"></div>
-    <div class="muted mono" id="status-wifi-ip"   style="font-size:11px"></div>
-    <div class="muted mono" id="status-wifi-auth" style="font-size:11px"></div>
+    <div class="popover-value" id="status-wifi-ssid"></div>
+    <div class="popover-subline" id="status-wifi-ip"></div>
+    <div class="popover-subline" id="status-wifi-auth"></div>
     <button class="secondary" id="btn-force-softap" hidden style="width:100%;margin-top:8px">Switch to softAP</button>
-    <div class="muted" id="status-wifi-hint" hidden style="font-size:11px;margin-top:6px">Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again.</div>
+    <div class="popover-subline" id="status-wifi-hint" hidden>Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again.</div>
   </div>
   <div class="popover-section">
     <div class="popover-row">
@@ -935,7 +985,7 @@ summary:hover { color: var(--text); }
       <div id="status-transport-line"></div>
     </div>
     <button class="secondary" id="btn-toggle-transport" style="width:100%;margin-top:8px">…</button>
-    <div class="muted" style="font-size:11px;margin-top:6px">Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots.</div>
+    <div class="popover-subline">Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots.</div>
   </div>
 </div>
 
@@ -948,14 +998,14 @@ summary:hover { color: var(--text); }
       <div class="popover-label">Battery</div>
       <div id="pw-battery-line"></div>
     </div>
-    <div class="mono" id="pw-battery-values" style="font-size:13px;margin-top:6px"></div>
-    <div class="muted mono" id="pw-battery-slope" style="font-size:11px"></div>
+    <div class="popover-value" id="pw-battery-values"></div>
+    <div class="popover-subline" id="pw-battery-slope"></div>
   </div>
   <div class="popover-section" id="pw-tuning-section" hidden>
     <div class="popover-row">
       <div class="popover-label">Power tuning</div>
     </div>
-    <div class="muted" style="font-size:11px;margin-top:6px">Knobs will appear here as power-saving features land.</div>
+    <div class="popover-subline">Knobs will appear here as power-saving features land.</div>
   </div>
 </div>
 
@@ -967,8 +1017,8 @@ summary:hover { color: var(--text); }
       <div class="popover-label">Storage</div>
       <div id="sys-storage-line"></div>
     </div>
-    <div class="muted mono" id="sys-storage-flash" style="font-size:11px;margin-top:6px"></div>
-    <div class="muted mono" id="sys-storage-sd"    style="font-size:11px"></div>
+    <div class="popover-value" id="sys-storage-flash"></div>
+    <div class="popover-subline" id="sys-storage-sd"></div>
     <button id="sys-storage-migrate" class="secondary" hidden style="width:100%;margin-top:8px">
       Move flash attachments to SD card
     </button>
@@ -978,51 +1028,56 @@ summary:hover { color: var(--text); }
       <div class="popover-label">Clock</div>
       <div id="sys-clock-line"></div>
     </div>
-    <div class="mono" id="sys-clock-now" style="font-size:13px;margin-top:6px"></div>
-    <div class="muted" id="sys-clock-source" style="font-size:11px"></div>
-    <div class="muted mono" id="sys-clock-rtc"    style="font-size:11px;margin-top:4px"></div>
+    <!-- Wall-clock time = primary fact; calibration age + RTC chip
+         state are sublines. -->
+    <div class="popover-value" id="sys-clock-now"></div>
+    <div class="popover-subline" id="sys-clock-source"></div>
+    <div class="popover-subline" id="sys-clock-rtc"></div>
   </div>
   <div class="popover-section" id="sys-section-gps" data-sensor="gps" hidden>
     <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Position</div>
       <div id="sys-gps-line"></div>
-      <span class="muted" data-role="chev" style="font-size:11px;opacity:0.55;transition:transform .12s">▾</span>
+      <span class="popover-chev" data-role="chev">▾</span>
     </div>
-    <div class="mono" id="sys-gps-pos"    style="font-size:11px;margin-top:6px"></div>
-    <div class="muted mono" id="sys-gps-speed"  style="font-size:11px"></div>
-    <div class="muted mono" id="sys-gps-age"    style="font-size:11px"></div>
-    <div class="sensor-config" data-role="config" hidden style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bg-elev-2);display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
+    <!-- "No fix" / "lat, lon" goes in the primary line; "Last read
+         Xs ago (GPS)" is the subline. Speed is a second subline when
+         we have a fix. -->
+    <div class="popover-value" id="sys-gps-pos"></div>
+    <div class="popover-subline" id="sys-gps-speed"></div>
+    <div class="popover-subline" id="sys-gps-age"></div>
+    <div class="popover-config" data-role="config" hidden></div>
   </div>
   <div class="popover-section" id="sys-section-env" data-sensor="environment" hidden>
     <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Environment</div>
       <div id="sys-env-line"></div>
-      <span class="muted" data-role="chev" style="font-size:11px;opacity:0.55;transition:transform .12s">▾</span>
+      <span class="popover-chev" data-role="chev">▾</span>
     </div>
-    <div class="mono" id="sys-env-values"  style="font-size:11px;margin-top:6px"></div>
-    <div class="muted mono" id="sys-env-age"  style="font-size:11px"></div>
-    <div class="sensor-config" data-role="config" hidden style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bg-elev-2);display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
+    <div class="popover-value" id="sys-env-values"></div>
+    <div class="popover-subline" id="sys-env-age"></div>
+    <div class="popover-config" data-role="config" hidden></div>
   </div>
   <div class="popover-section" id="sys-section-mag" data-sensor="magnetometer" hidden>
     <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Compass</div>
       <div id="sys-mag-line"></div>
-      <span class="muted" data-role="chev" style="font-size:11px;opacity:0.55;transition:transform .12s">▾</span>
+      <span class="popover-chev" data-role="chev">▾</span>
     </div>
-    <div class="mono" id="sys-mag-values"  style="font-size:11px;margin-top:6px"></div>
-    <div class="muted mono" id="sys-mag-age"  style="font-size:11px"></div>
-    <div class="sensor-config" data-role="config" hidden style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bg-elev-2);display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
+    <div class="popover-value" id="sys-mag-values"></div>
+    <div class="popover-subline" id="sys-mag-age"></div>
+    <div class="popover-config" data-role="config" hidden></div>
   </div>
   <div class="popover-section" id="sys-section-imu" data-sensor="imu" hidden>
     <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Motion</div>
       <div id="sys-imu-line"></div>
-      <span class="muted" data-role="chev" style="font-size:11px;opacity:0.55;transition:transform .12s">▾</span>
+      <span class="popover-chev" data-role="chev">▾</span>
     </div>
-    <div class="mono" id="sys-imu-accel"   style="font-size:11px;margin-top:6px"></div>
-    <div class="mono" id="sys-imu-gyro"    style="font-size:11px"></div>
-    <div class="muted mono" id="sys-imu-age" style="font-size:11px"></div>
-    <div class="sensor-config" data-role="config" hidden style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bg-elev-2);display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>
+    <div class="popover-value" id="sys-imu-accel"></div>
+    <div class="popover-subline" id="sys-imu-gyro"></div>
+    <div class="popover-subline" id="sys-imu-age"></div>
+    <div class="popover-config" data-role="config" hidden></div>
   </div>
 </div>
 
@@ -3585,13 +3640,14 @@ function renderStatusPopover() {
     radioLine.appendChild(el('span', { class: 'pill bad' }, 'Offline'));
   }
   if (r.have_conf) {
-    $('status-radio-cfg-1').textContent =
-      (r.frequency/1e6).toFixed(3) + ' MHz · BW ' + (r.bandwidth/1000) + ' kHz';
-    $('status-radio-cfg-2').textContent =
-      'SF' + r.spreading_factor + ' · CR4/' + r.coding_rate + ' · ' + r.tx_power + ' dBm';
+    // Radio config = primary fact for the section. Render the full
+    // band + SF + CR + power summary on one line; the popover-value
+    // class wraps long lines automatically on narrow screens.
+    $('status-radio-cfg').textContent =
+      (r.frequency/1e6).toFixed(3) + ' MHz · BW ' + (r.bandwidth/1000) + ' kHz · '
+      + 'SF' + r.spreading_factor + ' · CR4/' + r.coding_rate + ' · ' + r.tx_power + ' dBm';
   } else {
-    $('status-radio-cfg-1').textContent = 'No radio config saved yet.';
-    $('status-radio-cfg-2').textContent = '';
+    $('status-radio-cfg').textContent = 'No radio config saved yet.';
   }
   const s = r.stats || {};
   // Airtime: current usage / regulatory cap, short-term and
@@ -3653,14 +3709,15 @@ function renderStatusPopover() {
   } else {
     wLine.appendChild(el('span', { class: 'pill' }, w.mode || 'off'));
   }
-  $('status-wifi-ssid').textContent = w.ssid ? 'SSID: ' + w.ssid : '';
+  // SSID is the primary fact; IP and security/RSSI are sublines.
+  $('status-wifi-ssid').textContent = w.ssid || '';
   let ipText = '';
   if (w.mode === 'ap' && w.ap_ip) ipText = 'http://' + w.ap_ip + '/';
   else if (w.ip && w.ip !== '0.0.0.0') ipText = w.ip;
-  $('status-wifi-ip').textContent = ipText ? 'IP: ' + ipText : '';
+  $('status-wifi-ip').textContent = ipText;
   let authText = '';
   if (w.auth) {
-    authText = 'Security: ' + w.auth;
+    authText = w.auth;
     if (typeof w.rssi_dbm === 'number') authText += ' · ' + w.rssi_dbm + ' dBm';
   }
   $('status-wifi-auth').textContent = authText;
@@ -3718,9 +3775,12 @@ function deviceMillisNow() {
 
 // "Last read Xs ago (MODEL)" from a raw device-millis snapshot.
 // Re-running this each tick advances the seconds count without a
-// refetch. taken_ms == -1 or missing => "never received."
+// refetch. taken_ms == -1 or missing => "never received" → empty
+// string so the subline collapses rather than showing a spinner-y
+// "Waiting for first read…" that duplicates the section's primary
+// line state. The `warming` arg is kept for callers that want the
+// distinction (none currently do).
 function ageLine(taken_ms, model, warming) {
-  if (warming) return 'Waiting for first read… (' + model + ')';
   if (typeof taken_ms !== 'number' || taken_ms < 0) return '';
   const now = deviceMillisNow();
   if (now === null) return '';
@@ -3750,12 +3810,16 @@ function renderSystemPopover(s) {
   const cls = pct < 10 ? 'pill bad' : pct < 25 ? 'pill warn' : 'pill ok';
   sLine.appendChild(el('span', { class: fl.total_bytes ? cls : 'pill' },
     fl.total_bytes ? (pct + '% free') : '—'));
+  // Flash usage is the primary fact for the storage section. SD line
+  // is the subline since SD is optional. Drop the "Flash:" / "SD:"
+  // prefixes — the popover label already says "Storage" and the
+  // section's two-tier layout signals the hierarchy.
   $('sys-storage-flash').textContent = fl.total_bytes
-    ? 'Flash: ' + formatBytes(fl.used_bytes || 0) + ' / ' + formatBytes(fl.total_bytes)
+    ? formatBytes(fl.used_bytes || 0) + ' / ' + formatBytes(fl.total_bytes) + ' flash'
     : '';
   $('sys-storage-sd').textContent = (sd.present && sd.total_bytes)
-    ? 'SD: ' + formatBytes(sd.used_bytes || 0) + ' / ' + formatBytes(sd.total_bytes)
-    : 'SD: not present';
+    ? formatBytes(sd.used_bytes || 0) + ' / ' + formatBytes(sd.total_bytes) + ' SD'
+    : 'SD card not present';
   // Migration button visible only when SD is present + flash isn't
   // mostly empty (no point offering it when there's nothing to free).
   const flashUsed = fl.used_bytes || 0;
@@ -3779,19 +3843,19 @@ function renderSystemPopover(s) {
     sysPopover.clockAnchor = null;
     $('sys-clock-now').textContent = '—';
   }
-  // Source + last-calibrated age in one line:
-  //   "Source: gps · Last calibrated 12s ago"
-  // When no calibration has ever happened (e.g. cold boot, RTC seed
-  // failed too) we just show the source label.
+  // "Last calibrated 50m ago (NTP)" — matches the "Last read Xs ago
+  // (MODEL)" subline pattern used by every other sensor section. When
+  // no calibration has happened yet, fall back to just the source.
   {
-    let src = 'Source: ' + (a.source || 'unknown');
+    const src    = (a.source || 'unknown').toUpperCase();
     const lastMs = Number(a.lastCalibratedMs || 0);
     const now    = deviceMillisNow();
     if (lastMs > 0 && now !== null) {
       const age_s = Math.max(0, Math.round((now - lastMs) / 1000));
-      src += ' · Last calibrated ' + compactAgo(age_s);
+      $('sys-clock-source').textContent = 'Last calibrated ' + compactAgo(age_s) + ' (' + src + ')';
+    } else {
+      $('sys-clock-source').textContent = 'Source: ' + src;
     }
-    $('sys-clock-source').textContent = src;
   }
   // RTC chip diagnostic moved to /api/system_status root under `rtc`.
   const rtc = s.rtc || {};
@@ -3808,29 +3872,30 @@ function renderSystemPopover(s) {
   if (g.available) {
     const gLine = $('sys-gps-line'); gLine.innerHTML = '';
     // Pill priority: Fix > Acquiring > Sleeping > No fix.
-    // Sleeping is the pulsed-mode idle state — chip is off between
-    // polls. Acquiring is when we've powered on and are waiting for
-    // first valid RMC. "No fix" is the (rare) case where the chip is
-    // on continuously but no satellites are visible.
     let pillClass = 'pill warn', pillText = 'No fix';
-    if (g.valid)                          { pillClass = 'pill ok';   pillText = 'Fix';       }
+    if (g.valid)                            { pillClass = 'pill ok';   pillText = 'Fix';       }
     else if (g.pulse_state === 'acquiring') { pillClass = 'pill warn'; pillText = 'Acquiring'; }
-    else if (g.powered === false)          { pillClass = 'pill';      pillText = 'Sleeping';  }
+    else if (g.powered === false)           { pillClass = 'pill';      pillText = 'Sleeping';  }
     gLine.appendChild(el('span', { class: pillClass }, pillText));
-    // Hide position + speed lines entirely when there's no fix — a
-    // dash and an empty line take up space without telling the user
-    // anything they didn't already learn from the pill.
-    $('sys-gps-pos').hidden   = !g.valid;
-    $('sys-gps-speed').hidden = !g.valid;
+    // Primary line: "lat, lon" when we have a fix, otherwise the
+    // top-level state word so the section never goes empty. Mirrors
+    // the "main value + status pill" hierarchy used by every other
+    // section (Clock = wall-clock string + Calibrated pill; Battery
+    // = 84% + Charging pill; etc.).
     if (g.valid) {
       $('sys-gps-pos').textContent =
         g.latitude.toFixed(5) + ', ' + g.longitude.toFixed(5);
       $('sys-gps-speed').textContent =
-        'Speed ' + g.speed_knots.toFixed(1) + ' kn · heading ' + g.heading.toFixed(0) + '°';
+        g.speed_knots.toFixed(1) + ' kn · heading ' + g.heading.toFixed(0) + '°';
+      $('sys-gps-speed').hidden = false;
+    } else {
+      $('sys-gps-pos').textContent = pillText;
+      $('sys-gps-speed').hidden = true;
     }
-    // "Last read Xs ago (L76K)" matches the other sensor sections.
-    // Last NMEA byte (raw device millis). Use it rather than
-    // fix_received_ms — the module is talking long before a fix lands.
+    // "Last read Xs ago (MODEL)" — always shown; reads the last
+    // NMEA byte (raw device millis). When the chip has never spoken
+    // yet (cold boot, before first power-on) ageLine returns
+    // empty, so the section just shows the primary line.
     const gWarming = typeof g.last_byte_ms !== 'number' || g.last_byte_ms < 0;
     $('sys-gps-age').textContent = ageLine(g.last_byte_ms, g.model || 'GPS', gWarming);
   }
@@ -3915,12 +3980,28 @@ function tickSystemClock() {
   // their focus / state between paints because we only update
   // textContent on the age + clock elements.
   if ($('popover-system').hidden) return;
-  // Device clock.
+  // Device clock. Tick both the primary wall-clock display and the
+  // "Last calibrated Xs ago" subline so the age advances live.
   const a = sysPopover.clockAnchor;
   if (a) {
     const nowMs = a.deviceUnixMs + (performance.now() - a.localNowMs);
     const elc = $('sys-clock-now');
     if (elc) elc.textContent = new Date(nowMs).toLocaleString();
+  }
+  {
+    const anchor = state.clockAnchor || {};
+    const lastMs = Number(anchor.lastCalibratedMs || 0);
+    const dnow   = deviceMillisNow();
+    const src    = (anchor.source || 'unknown').toUpperCase();
+    const el     = $('sys-clock-source');
+    if (el) {
+      if (lastMs > 0 && dnow !== null) {
+        const age_s = Math.max(0, Math.round((dnow - lastMs) / 1000));
+        el.textContent = 'Last calibrated ' + compactAgo(age_s) + ' (' + src + ')';
+      } else {
+        el.textContent = 'Source: ' + src;
+      }
+    }
   }
   // Per-sensor age labels. Same ageLine helper renderSystemPopover
   // uses on initial open — now at module scope so this can call it.
@@ -4117,12 +4198,15 @@ function buildSensorConfigRow(section, key, sensor) {
   const wrap = section.querySelector('[data-role="config"]');
   if (!wrap) return;
   wrap.innerHTML = '';
-  const enable = el('label', { style: 'display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer' });
-  const cb = el('input', { type: 'checkbox', style: 'width:auto;min-height:auto;margin:0' });
+  // Inline styling lives on .popover-config in the CSS — caller's
+  // markup just needs the class. Same for the checkbox + select
+  // size resets.
+  const enable = el('label');
+  const cb = el('input', { type: 'checkbox' });
   cb.checked = !!sensor.enabled;
   enable.appendChild(cb);
   enable.appendChild(el('span', { text: 'Enabled' }));
-  const sel = el('select', { style: 'flex:1;max-width:140px;font-size:12px' });
+  const sel = el('select');
   const snapped = sensorIntervalSnap(Math.round((sensor.interval_ms || 60000) / 1000));
   for (const p of SENSOR_INTERVALS) {
     const opt = el('option', { value: String(p.value), text: p.label });
@@ -4157,11 +4241,13 @@ function attachSensorConfigToggle(section) {
   section.dataset.toggleWired = '1';
   const header = section.querySelector('[data-role="header"]');
   const config = section.querySelector('[data-role="config"]');
-  const chev   = section.querySelector('[data-role="chev"]');
+  // Chevron rotation is driven by `.popover-section.is-open` in CSS
+  // so we don't hand-roll the style here. Toggling that class flips
+  // both the chev and any other open-state visuals consistently.
   header.addEventListener('click', () => {
     const open = !config.hidden;
     config.hidden = open;
-    chev.style.transform = open ? '' : 'rotate(180deg)';
+    section.classList.toggle('is-open', !open);
   });
 }
 

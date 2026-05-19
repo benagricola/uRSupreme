@@ -2360,9 +2360,44 @@ function _renderConversationsBody(wrap) {
 
   // Inbound transfers whose sender isn't known yet (Reticulum hasn't
   // decrypted the LXMF payload — peer="" is structural, not a bug)
-  // do NOT get a row in the conv list. The top-bar progress strip
-  // shows them as in-flight work; the in-chat bubble appears once the
-  // message lands under the correct conversation.
+  // surface as a synthetic "Incoming" section at the top of the
+  // conv list. The top-bar progress strip alone isn't self-
+  // explanatory — this row tells the user *what* is happening
+  // ("Incoming attachment" + size + an inline progress bar).
+  // Once message_complete clears the entry and the LXMF `incoming`
+  // event lands the new message under the right conversation, the
+  // synthetic row disappears.
+  const pendingInbound = (state.transfers && state.transfers.size > 0)
+    ? [...state.transfers.values()].filter(t => t.incoming && !t.peer)
+    : [];
+  if (pendingInbound.length > 0) {
+    wrap.appendChild(el('div', { class: 'list-section' }, 'Incoming'));
+    for (const t of pendingInbound) {
+      const pct = t.bytes_total
+        ? Math.max(2, Math.min(100, Math.floor(100 * t.bytes_done / t.bytes_total)))
+        : 0;
+      // Use a stable seed so the identicon doesn't reshuffle every
+      // tick. bytes_total is the closest thing to a per-transfer
+      // identifier we have pre-decryption.
+      const idc = identiconEl('inbound:' + (t.bytes_total || 0), 44);
+      const subText = formatBytes(t.bytes_done) + ' / ' + formatBytes(t.bytes_total)
+                    + ' · ' + pct + '%';
+      const middle = el('div', { class: 'middle' },
+        el('div', { class: 'name', text: 'Incoming attachment' }),
+        el('div', { class: 'last', text: subText }),
+        // Inline progress bar — slim, accent-coloured fill scaled to pct.
+        // The wrapper div has `position:relative` so the fill sits
+        // along the bottom of the row content without affecting flow.
+        el('div', { style: 'height:3px;margin-top:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden' },
+          el('div', { style: 'height:100%;width:' + pct + '%;background:var(--accent);transition:width 200ms ease-out' })),
+      );
+      const row = el('div', { class: 'conv-row', 'data-peer': '' },
+        idc, middle,
+        el('div', { class: 'meta' }, el('div', { class: 'when', text: 'now' })),
+      );
+      wrap.appendChild(row);
+    }
+  }
 
   if (convs.length > 0) {
     wrap.appendChild(el('div', { class: 'list-section' }, 'Chats'));

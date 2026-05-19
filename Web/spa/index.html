@@ -825,6 +825,10 @@ summary:hover { color: var(--text); }
         <div class="name" id="thread-name" title="Click to rename" style="cursor:pointer"></div>
         <div class="addr" id="thread-addr"></div>
       </div>
+      <button class="icon" id="btn-conv-retention" title="Retention settings">
+        <!-- clock -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      </button>
       <button class="icon" id="btn-clear-conv" title="Clear conversation">
         <!-- trash -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
@@ -1062,6 +1066,45 @@ summary:hover { color: var(--text); }
     <div class="row">
       <button class="secondary" id="cn-wifi-cancel">Cancel</button>
       <button id="cn-wifi-save">Save &amp; reboot</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== CONVERSATION RETENTION MODAL ===================== -->
+<!-- Per-conversation TTL override. Three choices:
+       - Use default (inherits the identity-wide ttl_seconds)
+       - Keep forever (explicit "never expire this chat")
+       - Expire after N (a custom TTL in the unit the user picks)
+     The identity-wide default is surfaced as the "default" label so the
+     user can see what they'd inherit. -->
+<div id="modal-conv-retention" class="modal-bg" hidden style="z-index:260">
+  <div class="modal" style="max-width:440px">
+    <h3>Retention for this chat</h3>
+    <p class="muted" style="margin-bottom:10px">
+      Older messages are pruned according to the chosen retention.
+      <span id="cr-default-line"></span>
+    </p>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <input type="radio" name="cr-mode" value="default" id="cr-mode-default">
+      <span id="cr-mode-default-label">Use identity default</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <input type="radio" name="cr-mode" value="forever" id="cr-mode-forever">
+      <span>Keep forever</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <input type="radio" name="cr-mode" value="custom" id="cr-mode-custom">
+      <span>Expire after</span>
+      <input type="number" id="cr-custom-n" min="1" step="1" value="7" style="width:80px">
+      <select id="cr-custom-unit">
+        <option value="60">minutes</option>
+        <option value="3600">hours</option>
+        <option value="86400" selected>days</option>
+      </select>
+    </label>
+    <div class="row">
+      <button class="secondary" id="cr-cancel">Cancel</button>
+      <button id="cr-save">Save</button>
     </div>
   </div>
 </div>
@@ -1818,6 +1861,16 @@ class UReticulumHTTPTransport extends Transport {
     return this._req('/api/identities/' + encodeURIComponent(identityId)
                    + '/conversations/' + encodeURIComponent(peerHex),
                      { method: 'DELETE' });
+  }
+  async getConversationConfig(identityId, peerHex) {
+    return this._req('/api/identities/' + encodeURIComponent(identityId)
+                   + '/conversations/' + encodeURIComponent(peerHex) + '/config',
+                     { method: 'GET' });
+  }
+  async setConversationConfig(identityId, peerHex, body) {
+    return this._req('/api/identities/' + encodeURIComponent(identityId)
+                   + '/conversations/' + encodeURIComponent(peerHex) + '/config',
+                     { method: 'POST', body });
   }
   subscribe(identityId, onEvent) {
     // Persistent WebSocket — one TCP connection that lives as long as
@@ -4536,6 +4589,98 @@ $('thread-name').addEventListener('click', async () => {
   renderConversations();
   renderThread();
 });
+// Format a TTL in seconds as a human-friendly label, choosing the
+// coarsest unit that comes out whole (minutes → hours → days). 0 is
+// rendered as "no expiry" so it's never ambiguous with "0 seconds".
+function ttlLabel(secs) {
+  const s = Number(secs) | 0;
+  if (s <= 0) return 'no expiry';
+  if (s % 86400 === 0) { const n = s / 86400; return n + ' day' + (n === 1 ? '' : 's'); }
+  if (s % 3600  === 0) { const n = s / 3600;  return n + ' hour' + (n === 1 ? '' : 's'); }
+  if (s % 60    === 0) { const n = s / 60;    return n + ' minute' + (n === 1 ? '' : 's'); }
+  return s + ' seconds';
+}
+
+// Open the retention modal for `peerHex` and return when the user
+// either cancels or saves. Save POSTs the new override to the device.
+async function openRetentionModal(identityId, peerHex) {
+  let cfg;
+  try {
+    cfg = await state.transport.getConversationConfig(identityId, peerHex);
+  } catch (e) {
+    toast('Could not load retention: ' + (e.message || e), 'error');
+    return;
+  }
+  const modal = $('modal-conv-retention');
+  const defaultTtl = Number(cfg.default_ttl_seconds || 0);
+  $('cr-default-line').textContent =
+      defaultTtl > 0
+        ? 'Identity default: ' + ttlLabel(defaultTtl) + '.'
+        : 'Identity default: no expiry.';
+  $('cr-mode-default-label').textContent =
+      'Use identity default (' + ttlLabel(defaultTtl) + ')';
+  // Populate the form to reflect the current stored state.
+  const override = cfg.ttl_seconds;   // null | 0 | uint
+  if (override === null || override === undefined) {
+    $('cr-mode-default').checked = true;
+  } else if (Number(override) === 0) {
+    $('cr-mode-forever').checked = true;
+  } else {
+    $('cr-mode-custom').checked = true;
+    const s = Number(override);
+    if (s % 86400 === 0)      { $('cr-custom-n').value = s / 86400; $('cr-custom-unit').value = '86400'; }
+    else if (s % 3600 === 0)  { $('cr-custom-n').value = s / 3600;  $('cr-custom-unit').value = '3600';  }
+    else if (s % 60 === 0)    { $('cr-custom-n').value = s / 60;    $('cr-custom-unit').value = '60';    }
+    else                       { $('cr-custom-n').value = s;         $('cr-custom-unit').value = '60';    }
+  }
+  modal.hidden = false;
+
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      modal.hidden = true;
+      $('cr-save').removeEventListener('click', onSave);
+      $('cr-cancel').removeEventListener('click', onCancel);
+      modal.removeEventListener('click', onBackdrop);
+    };
+    const onCancel = () => { cleanup(); resolve(false); };
+    const onBackdrop = (e) => { if (e.target === modal) onCancel(); };
+    const onSave = async () => {
+      const mode = (document.querySelector('input[name="cr-mode"]:checked') || {}).value;
+      let body;
+      if (mode === 'default')      body = { ttl_seconds: null };
+      else if (mode === 'forever') body = { ttl_seconds: 0 };
+      else {
+        const n = parseInt($('cr-custom-n').value, 10);
+        const unit = parseInt($('cr-custom-unit').value, 10);
+        if (!Number.isFinite(n) || n <= 0) {
+          toast('Enter a positive number.', 'error');
+          return;
+        }
+        body = { ttl_seconds: n * unit };
+      }
+      try {
+        await withBusy($('cr-save'), async () => {
+          await state.transport.setConversationConfig(identityId, peerHex, body);
+        }, { label: 'Saving…' });
+        toast('Retention saved.', 'ok');
+        cleanup();
+        resolve(true);
+      } catch (e) {
+        toast('Save failed: ' + (e.message || e), 'error');
+      }
+    };
+    $('cr-save').addEventListener('click', onSave);
+    $('cr-cancel').addEventListener('click', onCancel);
+    modal.addEventListener('click', onBackdrop);
+  });
+}
+
+$('btn-conv-retention').addEventListener('click', () => {
+  const peer = state.openPeer;
+  if (!peer) return;
+  openRetentionModal(state.identityId, peer);
+});
+
 $('btn-clear-conv').addEventListener('click', async () => {
   const peer = state.openPeer;
   if (!peer) return;

@@ -94,6 +94,7 @@ namespace LXMF {
     std::string identity_path() const { return dir() + "/identity.dat"; }
     std::string meta_path()     const { return dir() + "/meta.json"; }
     std::string ratchet_path()  const { return dir() + "/ratchet.dat"; }
+    std::string conversation_config_path() const { return dir() + "/conversation_config.json"; }
     std::string address_hex()   const { return lxmf.address_hex(); }
   };
 
@@ -401,6 +402,40 @@ namespace LXMF {
       if (!ps.empty()) a.password_salt.assignHex(ps.c_str());
     }
 
+    // Per-conversation TTL overrides persistence. Schema:
+    //   { "peer_ttl": { "<peer_hex>": ttl_seconds_uint, ... } }
+    // ttl_seconds == 0 in the map means "keep forever" for that peer
+    // (explicit choice, distinct from "no override, use default"). The
+    // map is loaded into both inbox + outbox at activate() time so the
+    // first prune_expired pass honours the user's choice.
+    static void read_conversation_config(const LXMFIdentity& a,
+                                          std::unordered_map<std::string, uint32_t>& out) {
+      out.clear();
+      const std::string path = a.conversation_config_path();
+      if (!filesystem.exists(path.c_str())) return;
+      std::vector<uint8_t> data;
+      if (filesystem.readFile(path.c_str(), data) == 0) return;
+      JsonDocument doc;
+      if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
+      JsonObject ttl = doc["peer_ttl"].as<JsonObject>();
+      if (ttl.isNull()) return;
+      for (JsonPair kv : ttl) {
+        if (!kv.value().is<uint32_t>()) continue;
+        out[std::string(kv.key().c_str())] = kv.value().as<uint32_t>();
+      }
+    }
+    static void write_conversation_config(const LXMFIdentity& a,
+                                           const std::unordered_map<std::string, uint32_t>& peer_ttl) {
+      JsonDocument doc;
+      JsonObject ttl = doc["peer_ttl"].to<JsonObject>();
+      for (const auto& kv : peer_ttl) ttl[kv.first.c_str()] = kv.second;
+      String body;
+      serializeJson(doc, body);
+      filesystem.writeFile(a.conversation_config_path().c_str(),
+                           reinterpret_cast<const uint8_t*>(body.c_str()),
+                           body.length());
+    }
+
     static void activate(LXMFIdentity& a) {
       a.active = true;
       // Inbox + outbox capacity/TTL come from the global config
@@ -411,6 +446,17 @@ namespace LXMF {
                                                          cfg.ram_capacity, cfg.ttl_seconds));
       a.outbox = std::unique_ptr<LXMFInbox>(new LXMFInbox(a.dir(), "outbox.jsonl",
                                                          cfg.ram_capacity, cfg.ttl_seconds));
+      // Per-conversation TTL overrides — load from disk and apply to
+      // both mailboxes before they replay their JSONL spools so the
+      // initial prune honours the user's saved choices.
+      {
+        std::unordered_map<std::string, uint32_t> peer_ttl;
+        read_conversation_config(a, peer_ttl);
+        for (const auto& kv : peer_ttl) {
+          a.inbox->set_peer_ttl_override(kv.first, kv.second);
+          a.outbox->set_peer_ttl_override(kv.first, kv.second);
+        }
+      }
       // Delete the on-disk attachment bytes when their owning record is
       // evicted from the inbox/outbox ring (TTL prune, capacity eviction,
       // or /api/.../conversations DELETE). Otherwise the JSONL line goes
@@ -777,6 +823,16 @@ namespace LXMF {
     }
 
   public:
+    // Persist per-conversation TTL overrides for `a`. Called from the
+    // WebUI handler after it has applied a change via
+    // LXMFInbox::set/clear_peer_ttl_override(). Delegates to the
+    // private write_conversation_config so the persistence layer
+    // stays in one place but the call site can sit in WebUI.h.
+    static void persist_conversation_config(const LXMFIdentity& a,
+                                             const std::unordered_map<std::string, uint32_t>& peer_ttl) {
+      write_conversation_config(a, peer_ttl);
+    }
+
     // Called from the Destination::announce patch via the C bridge.
     // Generates a fresh ratchet keypair for the identity whose delivery
     // destination hash matches `dest_hash`, persists the ring, and writes

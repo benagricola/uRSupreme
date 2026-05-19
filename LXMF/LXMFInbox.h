@@ -8,6 +8,7 @@
 #include <deque>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <stdint.h>
 
 #include "LXMFTypes.h"
@@ -103,18 +104,54 @@ namespace LXMF {
       _ttl_seconds = ttl;
       prune_expired();
     }
-    // Prune entries with ts older than (now_epoch - ttl). No-op when
-    // ttl is 0 (disabled) or the device clock is uncalibrated.
+    // Per-conversation TTL override. Three semantic states:
+    //   - absent from map     → inherit default (_ttl_seconds)
+    //   - present with value 0 → keep forever for this peer
+    //   - present with value N → expire after N seconds
+    // Caller passes peer_hex (destination hash, lowercase hex) so the
+    // map is owner-agnostic and round-trips cleanly through the
+    // persistence layer. set_peer_ttl_override returns true if the
+    // override map actually changed.
+    bool set_peer_ttl_override(const std::string& peer_hex, uint32_t ttl) {
+      auto it = _peer_ttl.find(peer_hex);
+      if (it != _peer_ttl.end() && it->second == ttl) return false;
+      _peer_ttl[peer_hex] = ttl;
+      prune_expired();
+      return true;
+    }
+    bool clear_peer_ttl_override(const std::string& peer_hex) {
+      if (_peer_ttl.erase(peer_hex) == 0) return false;
+      prune_expired();
+      return true;
+    }
+    void clear_all_peer_ttl_overrides() { _peer_ttl.clear(); }
+    // Returns the effective TTL applied to records from `peer_hex`,
+    // taking the override map into account. 0 means "no expiry".
+    uint32_t effective_ttl_for(const std::string& peer_hex) const {
+      auto it = _peer_ttl.find(peer_hex);
+      if (it != _peer_ttl.end()) return it->second;
+      return _ttl_seconds;
+    }
+    const std::unordered_map<std::string, uint32_t>& peer_ttl_overrides() const {
+      return _peer_ttl;
+    }
+
+    // Prune entries with ts older than (now_epoch - ttl). Per-record:
+    // an override on the peer wins over the default _ttl_seconds. When
+    // _peer_ttl is empty and _ttl_seconds is 0 there's no work to do.
     void prune_expired() {
-      if (_ttl_seconds == 0) return;
+      if (_ttl_seconds == 0 && _peer_ttl.empty()) return;
       // Late binding so we don't pull TimeManager.h here — caller
       // (LXMFGateway) sets the clock-source once after the inbox is
       // created. We just compare ts values.
-      const double cutoff = _now_epoch() - (double)_ttl_seconds;
-      if (cutoff <= 0.0) return;   // clock not calibrated
+      const double now = _now_epoch();
+      if (now <= 0.0) return;   // clock not calibrated
       const size_t before = _ring.size();
       for (auto it = _ring.begin(); it != _ring.end(); ) {
-        if (it->ts > 0.0 && it->ts < cutoff) {
+        const uint32_t ttl = effective_ttl_for(it->peer_hash.toHex());
+        if (ttl == 0 || it->ts <= 0.0) { ++it; continue; }
+        const double cutoff = now - (double)ttl;
+        if (it->ts < cutoff) {
           if (_on_remove) _on_remove(*it);
           it = _ring.erase(it);
         } else {
@@ -477,6 +514,7 @@ namespace LXMF {
     std::string                _body_dir;      // <identity_dir>/<mailbox_stem>
     size_t                     _ram_capacity;
     uint32_t                   _ttl_seconds = 0;
+    std::unordered_map<std::string, uint32_t> _peer_ttl;  // peer_hex → ttl_seconds
     uint32_t                   _next_seq;
     std::deque<MessageRecord>  _ring;
     std::function<void(const MessageRecord&)> _on_remove;

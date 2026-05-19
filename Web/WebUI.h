@@ -615,6 +615,10 @@ namespace Web {
       server.on(uri("/api/identities/{}/state"),    HTTP_GET,  handle_state);
       server.on(uri("/api/identities/{}/conversations/{}"),
                 HTTP_DELETE, handle_clear_conversation);
+      server.on(uri("/api/identities/{}/conversations/{}/config"),
+                HTTP_GET, handle_conversation_config_get);
+      on_json_post("/api/identities/{}/conversations/{}/config",
+                   handle_conversation_config_post);
       server.on(uri("/api/identities/{}/attachment/download/{}"),
                 HTTP_GET, handle_attachment_get);
       server.on("/api/storage/migrate_flash_to_sd",
@@ -1470,6 +1474,94 @@ namespace Web {
       doc["inbox_removed"]  = (uint32_t)inbox_removed;
       doc["outbox_removed"] = (uint32_t)outbox_removed;
       send_json(req, 200, doc);
+    }
+
+    // GET /api/identities/{id}/conversations/{peer_hex}/config
+    //
+    // Returns the per-conversation TTL override (if any) plus the
+    // *effective* TTL that's currently being applied to records from
+    // this peer. Semantics:
+    //   - ttl_seconds: the override the user has saved, or null if
+    //     no override exists (i.e. "use identity default").
+    //   - effective_ttl_seconds: what actually applies right now —
+    //     either the override or, if none, the identity-wide default
+    //     (LXMF::InboxConfig::current().ttl_seconds).
+    //   - default_ttl_seconds: the identity-wide default, surfaced
+    //     so the SPA can label "Use default (X days)" without a
+    //     second round-trip.
+    // ttl_seconds == 0 in either field means "no expiry" (keep
+    // forever).
+    static void handle_conversation_config_get(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
+      if (caller.empty()) return;
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      std::string peer_hex = std::string(req->pathArg(1).c_str());
+      RNS::Bytes peer = hex_to_bytes(peer_hex, LXMF::HASH_LEN);
+      if (peer.size() != LXMF::HASH_LEN) {
+        send_error_with_message(req, 400, "invalid_peer_hash",
+                                "Peer address must be 32 hex characters.");
+        return;
+      }
+      const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
+      if (!a || !a->inbox) { send_error(req, 404, "unknown_identity"); return; }
+      const auto& overrides = a->inbox->peer_ttl_overrides();
+      auto it = overrides.find(peer_hex);
+      const bool has_override = (it != overrides.end());
+      const uint32_t default_ttl = LXMF::InboxConfig::current().ttl_seconds;
+      const uint32_t effective   = has_override ? it->second : default_ttl;
+      JsonDocument doc;
+      if (has_override) doc["ttl_seconds"] = it->second;
+      else              doc["ttl_seconds"] = nullptr;
+      doc["effective_ttl_seconds"] = effective;
+      doc["default_ttl_seconds"]   = default_ttl;
+      send_json(req, 200, doc);
+    }
+
+    // POST /api/identities/{id}/conversations/{peer_hex}/config
+    //
+    // Body: { "ttl_seconds": <uint32|null> }
+    //   - null      → clear the override (inherit identity default)
+    //   - 0         → keep forever for this peer
+    //   - N         → expire records older than N seconds
+    // Persists the updated map to <identity_dir>/conversation_config.json
+    // and applies it live to both inbox and outbox so the next
+    // prune_expired pass honours it.
+    static void handle_conversation_config_post(AsyncWebServerRequest* req,
+                                                 JsonVariant& body) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
+      if (caller.empty()) return;
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      std::string peer_hex = std::string(req->pathArg(1).c_str());
+      RNS::Bytes peer = hex_to_bytes(peer_hex, LXMF::HASH_LEN);
+      if (peer.size() != LXMF::HASH_LEN) {
+        send_error_with_message(req, 400, "invalid_peer_hash",
+                                "Peer address must be 32 hex characters.");
+        return;
+      }
+      const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
+      if (!a || !a->inbox || !a->outbox) { send_error(req, 404, "unknown_identity"); return; }
+      JsonVariant v = body["ttl_seconds"];
+      if (v.isNull()) {
+        a->inbox->clear_peer_ttl_override(peer_hex);
+        a->outbox->clear_peer_ttl_override(peer_hex);
+      } else if (v.is<uint32_t>()) {
+        const uint32_t ttl = v.as<uint32_t>();
+        a->inbox->set_peer_ttl_override(peer_hex, ttl);
+        a->outbox->set_peer_ttl_override(peer_hex, ttl);
+      } else {
+        send_error_with_message(req, 400, "invalid_ttl",
+                                "ttl_seconds must be null or a non-negative integer.");
+        return;
+      }
+      LXMF::LXMFGateway::persist_conversation_config(*a, a->inbox->peer_ttl_overrides());
+      NOTICEF("WebUI: conversation TTL for %s <-> %s -> %s",
+              requested.c_str(), peer_hex.c_str(),
+              v.isNull() ? "default" : std::to_string(v.as<uint32_t>()).c_str());
+      handle_conversation_config_get(req);
     }
 
     // GET /api/identities/{id}/attachments/{filename}

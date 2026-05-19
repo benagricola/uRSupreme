@@ -1828,98 +1828,89 @@ namespace Web {
         send_error(req, 404, "attachment_not_found");
         return;
       }
-      // Read the whole file into a PSRAM-backed buffer up front, then
-      // stream from RAM. Prior incremental-stream approach kept the
-      // file handle open across the chunked-response producer lambda's
-      // many invocations, which competed with the radio task's
-      // inbound-Resource ciphertext-spill for the FATFS volume mutex.
-      // A slow chunk delayed AsyncTCP's worker enough to time the
-      // TCP connection out; tear-down racing the in-flight lambda
-      // wedged the webserver. Reading once, before handing the buffer
-      // to AsyncTCP, confines all SD/FS contention to a single bounded
-      // window inside this handler. The buffer lives on the heap
-      // (PSRAM-preferred via the existing ContainerAllocator) and is
-      // owned by the response lambda's StreamState.
+      // Stream the file in 32 KiB chunks via AsyncTCP's producer lambda.
+      // Two earlier failure modes to avoid:
       //
-      // Memory bound: attachments are gated by the user's
-      // max_receive_bytes config (#122), so the buffer size is
-      // already bounded by something the user controls. PSRAM
-      // headroom on the S3 board is ~7 MiB; typical image attachments
-      // are well under 1 MiB.
-      size_t total = 0;
-      {
-        if (on_sd) {
-          File f = Storage::SDCard::open_read(full.c_str());
-          if (!f) { send_error(req, 500, "attachment_open_failed"); return; }
-          total = f.size();
-          f.close();
-        } else {
-          microStore::File f = filesystem.open(full.c_str(), microStore::File::ModeRead);
-          if (!f) { send_error(req, 500, "attachment_open_failed"); return; }
-          total = f.size();
-          f.close();
-        }
-      }
-      // Allocate the read buffer. heap_caps_malloc with MALLOC_CAP_SPIRAM
-      // is the explicit PSRAM tier — if PSRAM is exhausted the call
-      // falls back to internal RAM, which is fine for small attachments.
-      uint8_t* buf = (uint8_t*)heap_caps_malloc(total ? total : 1,
-                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-      if (!buf) buf = (uint8_t*)heap_caps_malloc(total ? total : 1, MALLOC_CAP_8BIT);
-      if (!buf) {
-        send_error_with_message(req, 503, "out_of_memory",
-          "Not enough memory to load the attachment right now. Try again in a moment.");
-        return;
-      }
-      size_t read = 0;
-      if (on_sd) {
-        File f = Storage::SDCard::open_read(full.c_str());
-        if (!f) {
-          heap_caps_free(buf);
-          send_error(req, 500, "attachment_open_failed");
-          return;
-        }
-        read = (size_t)f.read(buf, total);
-        f.close();
-      } else {
-        microStore::File f = filesystem.open(full.c_str(), microStore::File::ModeRead);
-        if (!f) {
-          heap_caps_free(buf);
-          send_error(req, 500, "attachment_open_failed");
-          return;
-        }
-        read = (size_t)f.read(buf, total);
-        f.close();
-      }
-      if (read != total) {
-        heap_caps_free(buf);
-        send_error_with_message(req, 500, "attachment_read_short",
-          "Attachment read returned fewer bytes than the file claims to be.");
-        return;
-      }
-      // StreamState owns the buffer. Sent with a known content length
-      // so the response is not chunked — AsyncTCP can size the TX
-      // window appropriately and the client gets a proper
-      // Content-Length header for progress bars.
+      //   - Per-call SD reads. AsyncTCP invokes the lambda with maxLen
+      //     ≈ TCP MSS (~1460 B). A 1 MiB attachment naively means ~700
+      //     SD reads. Reading a bigger chunk into a scratch buffer and
+      //     draining it across many lambda calls amortises the SD-read
+      //     cost ~22x.
+      //   - Use-after-free on lambda re-entry. The previous code did
+      //     `delete st` when read returned 0, then returned 0. AsyncTCP
+      //     can (and sometimes does) call the lambda again after a 0
+      //     return — at which point st is freed and any access is UB.
+      //     This is the root of the "request never returns + webserver
+      //     wedges" crash that survived earlier attempts at fixing the
+      //     lock scope and the FATFS mutex contention.
+      //
+      // Fix: own StreamState by std::shared_ptr captured by VALUE into
+      // the lambda. The lambda holds a refcount for as long as
+      // AsyncWebServer retains it; when the response is destroyed (for
+      // any reason — completion, client disconnect, internal abort)
+      // the lambda is destroyed and the last refcount drops. The
+      // StreamState destructor closes the file handle and frees the
+      // scratch. Idempotent and crash-safe regardless of how many
+      // times the lambda is invoked.
+      const size_t SCRATCH_SIZE = 32 * 1024;
       struct StreamState {
-        uint8_t* buf;
-        size_t   total;
-        size_t   sent;
+        bool             on_sd          = false;
+        File             sd_f;
+        microStore::File flash_f;
+        uint8_t*         scratch        = nullptr;
+        size_t           scratch_size   = 0;
+        size_t           scratch_valid  = 0;
+        size_t           scratch_offset = 0;
+        bool             eof            = false;
+        ~StreamState() {
+          if (on_sd && sd_f)  sd_f.close();
+          else if (flash_f)   flash_f.close();
+          if (scratch)        heap_caps_free(scratch);
+        }
       };
-      auto* st = new StreamState{ buf, total, 0 };
+      auto st = std::make_shared<StreamState>();
+      st->on_sd        = on_sd;
+      st->scratch_size = SCRATCH_SIZE;
+      if (on_sd) {
+        st->sd_f = Storage::SDCard::open_read(full.c_str());
+        if (!st->sd_f) { send_error(req, 500, "attachment_open_failed"); return; }
+      } else {
+        st->flash_f = filesystem.open(full.c_str(), microStore::File::ModeRead);
+        if (!st->flash_f) { send_error(req, 500, "attachment_open_failed"); return; }
+      }
+      const size_t total = on_sd ? (size_t)st->sd_f.size() : (size_t)st->flash_f.size();
+      st->scratch = (uint8_t*)heap_caps_malloc(SCRATCH_SIZE,
+                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (!st->scratch) st->scratch = (uint8_t*)heap_caps_malloc(SCRATCH_SIZE, MALLOC_CAP_8BIT);
+      if (!st->scratch) {
+        // StreamState's destructor will close the file handle for us
+        // when `st` goes out of scope at the end of this function.
+        send_error_with_message(req, 503, "out_of_memory",
+          "Not enough memory to start the attachment download. Try again in a moment.");
+        return;
+      }
       AsyncWebServerResponse* resp = req->beginResponse(
           "application/octet-stream", total,
           [st](uint8_t* dst, size_t maxLen, size_t /*index*/) -> size_t {
-            const size_t remaining = st->total - st->sent;
-            const size_t chunk     = remaining < maxLen ? remaining : maxLen;
-            if (chunk == 0) {
-              heap_caps_free(st->buf);
-              delete st;
-              return 0;
+            // Refill scratch on demand; one SD/FS hit per 32 KiB
+            // instead of per TCP segment.
+            if (!st->eof && st->scratch_offset >= st->scratch_valid) {
+              const size_t got = st->on_sd
+                  ? (size_t)st->sd_f.read(st->scratch, st->scratch_size)
+                  : (size_t)st->flash_f.read(st->scratch, st->scratch_size);
+              st->scratch_offset = 0;
+              st->scratch_valid  = got;
+              if (got == 0) st->eof = true;
             }
-            memcpy(dst, st->buf + st->sent, chunk);
-            st->sent += chunk;
-            return chunk;
+            if (st->eof && st->scratch_offset >= st->scratch_valid) {
+              return 0;   // shared_ptr cleanup happens when AsyncWebServer
+                          // destroys the lambda; no explicit delete here.
+            }
+            const size_t avail = st->scratch_valid - st->scratch_offset;
+            const size_t n     = avail < maxLen ? avail : maxLen;
+            memcpy(dst, st->scratch + st->scratch_offset, n);
+            st->scratch_offset += n;
+            return n;
           });
       resp->addHeader("Content-Disposition",
                       String("attachment; filename=\"") + fname.c_str() + "\"");

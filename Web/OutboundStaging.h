@@ -293,11 +293,12 @@ inline size_t read(uint32_t id, size_t offset, size_t len, uint8_t* dst) {
   }
   if (b->backend == Backend::Sd) {
     File f = SD.open(b->disk_path, FILE_READ);
-    if (!f) return 0;
-    if (!f.seek(offset)) { f.close(); return 0; }
+    if (!f) { Web::SDCard::verify_or_disable(); return 0; }
+    if (!f.seek(offset)) { f.close(); Web::SDCard::verify_or_disable(); return 0; }
     const int got = f.read(dst, avail);
     f.close();
-    return got > 0 ? (size_t)got : 0;
+    if (got <= 0) { Web::SDCard::verify_or_disable(); return 0; }
+    return (size_t)got;
   }
   // Flash
   microStore::File f = filesystem.open(b->disk_path.c_str(),

@@ -220,17 +220,32 @@ inline size_t write_file(const char* path, const uint8_t* data, size_t len) {
   return wrote;
 }
 
+// Path existence. Returns false uniformly whether the file is
+// genuinely absent or the card has been pulled, so the caller can't
+// tell those cases apart from the bool alone — but on a probe that
+// suggests the card is gone (SD.exists() returns false AND a
+// totalBytes() check fails) we trip verify_or_disable so the
+// presence state catches up. The cost of the extra probe is paid
+// only on the negative path.
 inline bool exists(const char* path) {
   if (!_detail::present_ref()) return false;
-  return SD.exists(path);
+  const bool found = SD.exists(path);
+  if (!found) verify_or_disable();
+  return found;
 }
 
 // Open `path` for reading. Caller checks the result truthiness and
 // is responsible for close(). Used by the attachment download
-// endpoint to stream big blobs without loading them into RAM.
+// endpoint to stream big blobs without loading them into RAM. On
+// open-failure (file not found OR card ejected) we run
+// verify_or_disable so the presence flag flips when the card has
+// genuinely gone — preventing the SPA from showing SD as mounted
+// long after a mid-read eject.
 inline File open_read(const char* path) {
   if (!_detail::present_ref()) return File();
-  return SD.open(path, FILE_READ);
+  File f = SD.open(path, FILE_READ);
+  if (!f) verify_or_disable();
+  return f;
 }
 inline const char* card_type_name() {
   switch (_detail::card_type_ref()) {

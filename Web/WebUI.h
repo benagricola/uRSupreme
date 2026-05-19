@@ -157,6 +157,10 @@ namespace Web {
         clock["unix_ms"]            = (uint64_t)(Web::TimeManager::now_epoch() * 1000.0);
         clock["calibrated"]         = Web::TimeManager::is_calibrated();
         clock["source"]             = Web::TimeManager::source_name(Web::TimeManager::current_source());
+        // millis() of the most recent successful calibration. Pair
+        // with the clock-pill `now_ms` anchor in the SPA to render
+        // "Last calibrated Xs ago (SOURCE)".
+        clock["last_calibrated_ms"] = Web::TimeManager::last_calibrated_ms();
       });
       NOTICE("WebUI: listening on port 80");
     }

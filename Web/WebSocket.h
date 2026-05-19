@@ -196,10 +196,16 @@ namespace WS {
   // (GPS lock acquired, NTP sync completed, browser-set, RTC seed).
   inline void publish_time(const char* source, uint64_t unix_ms, bool calibrated) {
     JsonDocument doc;
-    doc["type"]       = "time_update";
-    doc["source"]     = source;
-    doc["unix_ms"]    = unix_ms;
-    doc["calibrated"] = calibrated;
+    doc["type"]               = "time_update";
+    doc["source"]              = source;
+    doc["unix_ms"]            = unix_ms;
+    doc["calibrated"]         = calibrated;
+    // Stamp the moment this event represents. Used by the SPA's
+    // "Last calibrated Xs ago" label so the user sees a fresh "0s ago"
+    // immediately after a source reports, without waiting for the
+    // next hello.
+    doc["now_ms"]             = (uint32_t)millis();
+    doc["last_calibrated_ms"] = (uint32_t)millis();
     broadcast(doc);
   }
 

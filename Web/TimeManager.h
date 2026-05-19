@@ -126,6 +126,11 @@ namespace _detail {
   // PCF8563 reads a sensible time at boot. Used for /api/info to
   // surface "we have an RTC value but no live source" state.
   inline bool& rtc_seed_applied_ref()    { static bool v = false; return v; }
+  // millis() at the moment the wall clock was last set by *any* source
+  // (including the RTC seed). 0 = never set. Surfaces in the SPA's
+  // clock pill as "Last calibrated Xs ago (SOURCE)" so the user can
+  // tell whether the clock is fresh or stale.
+  inline uint32_t& last_calibrated_ms_ref() { static uint32_t v = 0; return v; }
   // Post-adopt callback. Fires after a user-visible source's report
   // is accepted (passed priority + sentinel checks). The RTC driver
   // registers here to write the live time through to PCF8563 so the
@@ -163,6 +168,9 @@ inline bool   is_calibrated() {
          || _detail::rtc_seed_applied_ref();
 }
 inline Source current_source() { return _detail::current_source_ref(); }
+// millis() at the moment the wall clock was last set, or 0 if never.
+// The SPA uses this to display "Last calibrated Xs ago (SOURCE)".
+inline uint32_t last_calibrated_ms() { return _detail::last_calibrated_ms_ref(); }
 
 // Internal helper that bypasses source-priority gating. Used by the
 // RTC seed path at boot — RTC isn't a user-visible source so its
@@ -175,6 +183,7 @@ inline void seed_from_rtc(double epoch_seconds) {
   if (epoch_seconds < 1577836800.0 || epoch_seconds > 4102444800.0) return;
   _detail::offset_seconds_ref() = (int64_t)epoch_seconds - (int64_t)(millis() / 1000UL);
   _detail::rtc_seed_applied_ref() = true;
+  _detail::last_calibrated_ms_ref() = millis();
   // Label the current source as RTC so /api/time shows where the
   // clock came from. Priority stays at 255 (max) so any real source
   // report still wins via the report_time priority check.
@@ -202,6 +211,7 @@ inline bool report_time(Source src, double epoch_seconds) {
   _detail::offset_seconds_ref()   = (int64_t)epoch_seconds - (int64_t)(millis() / 1000UL);
   _detail::current_source_ref()   = src;
   _detail::current_priority_ref() = cfg.priority;
+  _detail::last_calibrated_ms_ref() = millis();
   // Fire the post-adopt hook (RTC write-through, etc). Exceptions
   // here must not break the caller — the callback is fire-and-forget.
   if (_detail::on_adopt_ref()) {

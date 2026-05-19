@@ -3527,6 +3527,18 @@ function ageLine(taken_ms, model, warming) {
   return 'Last read ' + age_s + 's ago (' + model + ')';
 }
 
+// Compact "Xs ago" / "Xm ago" / "Xh ago" / "Xd ago" formatter for
+// short-duration human-readable ages. Caller has already decided the
+// duration is real (i.e. not negative, not "never"). Used by the
+// clock popover's last-calibrated line.
+function compactAgo(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60)    return s + 's ago';
+  if (s < 3600)  return Math.round(s / 60)   + 'm ago';
+  if (s < 86400) return Math.round(s / 3600) + 'h ago';
+  return Math.round(s / 86400) + 'd ago';
+}
+
 function renderSystemPopover(s) {
   // Storage.
   const fl = (s.storage && s.storage.flash) || {};
@@ -3566,7 +3578,20 @@ function renderSystemPopover(s) {
     sysPopover.clockAnchor = null;
     $('sys-clock-now').textContent = '—';
   }
-  $('sys-clock-source').textContent = 'Source: ' + (a.source || 'unknown');
+  // Source + last-calibrated age in one line:
+  //   "Source: gps · Last calibrated 12s ago"
+  // When no calibration has ever happened (e.g. cold boot, RTC seed
+  // failed too) we just show the source label.
+  {
+    let src = 'Source: ' + (a.source || 'unknown');
+    const lastMs = Number(a.lastCalibratedMs || 0);
+    const now    = deviceMillisNow();
+    if (lastMs > 0 && now !== null) {
+      const age_s = Math.max(0, Math.round((now - lastMs) / 1000));
+      src += ' · Last calibrated ' + compactAgo(age_s);
+    }
+    $('sys-clock-source').textContent = src;
+  }
   // RTC chip diagnostic moved to /api/system_status root under `rtc`.
   const rtc = s.rtc || {};
   $('sys-clock-rtc').textContent = !rtc.available
@@ -4069,6 +4094,10 @@ function dispatchEvent(ev) {
         deviceUnixMs:     Number(c.unix_ms || 0),
         calibrated:       !!c.calibrated,
         source:           c.source || 'none',
+        // Device millis() of the last successful calibration. 0 = never.
+        // Combined with deviceNowMs at render time to display
+        // "Last calibrated Xs ago".
+        lastCalibratedMs: Number(c.last_calibrated_ms || 0),
         currentBootEpoch: c.current_boot_epoch || 0,
         localWallMs:      Date.now(),
         localPerfMs:      performance.now(),
@@ -4196,11 +4225,13 @@ function dispatchEvent(ev) {
     // the current browser wall-clock moment so the popover ticker and
     // any new received_ms calculation use the post-sync mapping.
     if (typeof ev.unix_ms === 'number' && state.clockAnchor) {
-      state.clockAnchor.deviceUnixMs = Number(ev.unix_ms);
-      state.clockAnchor.calibrated   = !!ev.calibrated;
-      state.clockAnchor.source       = ev.source || state.clockAnchor.source;
-      state.clockAnchor.localWallMs  = Date.now();
-      state.clockAnchor.localPerfMs  = performance.now();
+      state.clockAnchor.deviceUnixMs     = Number(ev.unix_ms);
+      state.clockAnchor.calibrated       = !!ev.calibrated;
+      state.clockAnchor.source           = ev.source || state.clockAnchor.source;
+      state.clockAnchor.lastCalibratedMs = Number(ev.last_calibrated_ms || ev.now_ms || 0);
+      if (typeof ev.now_ms === 'number') state.clockAnchor.deviceNowMs = Number(ev.now_ms);
+      state.clockAnchor.localWallMs      = Date.now();
+      state.clockAnchor.localPerfMs      = performance.now();
     }
   } else if (ev.type === 'message_progress' || ev.type === 'message_complete') {
     if (!state.transfers) state.transfers = new Map();

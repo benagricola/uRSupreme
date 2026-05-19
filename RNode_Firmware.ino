@@ -887,13 +887,43 @@ void setup() {
     // microStore I/O failure → SD presence re-probe. microStore goes
     // straight to POSIX/VFS for its file ops, so it never tells
     // Storage::SDCard when a write fails because the card was pulled.
-    // Hook every failed I/O whose path lives under /sd/ and ask the
-    // SDCard layer to re-verify presence; everything else (LittleFS,
-    // PSRAM file) is ignored. verify_or_disable is cheap and idempotent.
+    //
+    // verify_or_disable() under the hood calls SD.totalBytes(), an
+    // SDMMC hardware query that's expensive enough to starve the
+    // AsyncWebServer listener if fired on every loop tick (see the
+    // file's own comment at Storage/SDCard.h:160). So we filter
+    // aggressively: only fire on op kinds that actually imply
+    // "the card might have disappeared", not on legitimate negative
+    // answers from microStore.
+    //
+    // Skipped on purpose:
+    //   - Exists / Remove / Mkdir / Rmdir / Rename — false return is
+    //     normal during routine path-table maintenance (does this
+    //     segment file exist yet? remove this old version, mkdir if
+    //     missing, etc.). microStore probes these constantly on the
+    //     happy path; each one triggering SD.totalBytes() was choking
+    //     the WiFi/loop task on the SX.
+    //   - Open(create=true) — handled by the Write/WriteFile path
+    //     when the subsequent write actually fails.
+    //
+    // Fired:
+    //   - Read / Write / Seek — mid-stream I/O on an already-open
+    //     handle. If these fail the card is genuinely gone.
+    //   - WriteFile — full-file write returned short.
     microStore::set_io_failure_callback(
-        [](const char* path, microStore::IoOp /*op*/) {
-            if (path && strncmp(path, "/sd/", 4) == 0) {
-                Storage::SDCard::verify_or_disable();
+        [](const char* path, microStore::IoOp op) {
+            if (!path || strncmp(path, "/sd/", 4) != 0) return;
+            switch (op) {
+                case microStore::IoOp::Read:
+                case microStore::IoOp::Write:
+                case microStore::IoOp::Seek:
+                case microStore::IoOp::WriteFile:
+                    Storage::SDCard::verify_or_disable();
+                    break;
+                default:
+                    // Negative answer from a probe is normal — don't
+                    // hit the SDMMC bus.
+                    break;
             }
         });
     // Pre-create both candidate directories so OS::create_directory

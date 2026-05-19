@@ -27,6 +27,7 @@
 #include <SensorQMI8658.hpp>
 #include "../Boards.h"
 #include "../Storage/SDCard.h"   // for ensure_shared_bus
+#include "Gps.h"                 // for Gps::reset_backoff on motion events
 
 namespace Web {
 namespace QmiImu {
@@ -43,12 +44,28 @@ struct Reading {
   float     temp_c      = 0.0f;
 };
 
+// Motion-detection thresholds. The IMU runs at a long-ish poll
+// interval (default 60 s), so any "motion" we surface here is the
+// difference between two snapshots one interval apart. We compare
+// gravity-removed accel magnitude — gyro is noisier and the GPS-reset
+// use case cares about translation, not rotation. The hysteresis is
+// deliberately loose: the goal is to spot "the device was picked up
+// and walked somewhere" not "someone breathed on it". The default
+// chooses a value about 5x bench noise on the QMI8658.
+inline constexpr float    MOTION_ACCEL_DELTA_G = 0.15f;
+// Don't fire reset_backoff() more than once per N reads (motion will
+// often persist for several reads while someone walks); keep the
+// signal sparse so it doesn't flap the GPS retry cadence.
+inline constexpr uint32_t MOTION_REPORT_COOLDOWN_MS = 30UL * 1000UL;
+
 namespace _detail {
   inline SensorQMI8658& sensor()     { static SensorQMI8658 s; return s; }
   inline bool&     present_ref()     { static bool v = false; return v; }
   inline Reading&  last_ref()        { static Reading r; return r; }
   inline uint32_t& interval_ms_ref() { static uint32_t v = 60000; return v; }
   inline bool&     enabled_ref()     { static bool v = true; return v; }
+  // millis() when we last fired a motion notification. 0 = never.
+  inline uint32_t& last_motion_ms_ref() { static uint32_t v = 0; return v; }
 }
 
 inline bool begin() {
@@ -121,6 +138,28 @@ inline void pump() {
   r.gyro_z_dps  = gyr.z;
   r.temp_c      = _detail::sensor().getTemperature_C();
   r.valid       = true;
+  // Motion detection — compare gravity-removed magnitude against
+  // the previous snapshot's. Skip if there's no previous (first
+  // valid reading), and respect the cooldown so a long walk doesn't
+  // fire dozens of reset_backoff() pings.
+  if (last.valid) {
+    const float prev_mag = sqrtf(last.accel_x_g * last.accel_x_g
+                               + last.accel_y_g * last.accel_y_g
+                               + last.accel_z_g * last.accel_z_g);
+    const float curr_mag = sqrtf(r.accel_x_g * r.accel_x_g
+                               + r.accel_y_g * r.accel_y_g
+                               + r.accel_z_g * r.accel_z_g);
+    const float delta    = fabsf(curr_mag - prev_mag);
+    auto& cooldown = _detail::last_motion_ms_ref();
+    const bool cooled = (cooldown == 0) || (now - cooldown >= MOTION_REPORT_COOLDOWN_MS);
+    if (delta > MOTION_ACCEL_DELTA_G && cooled) {
+      cooldown = now;
+      // Drop the GPS exponential-backoff counter: motion implies the
+      // device may have a new sky view, so retry sooner rather than
+      // sit out the (potentially 30-min) backoff window.
+      Web::Gps::reset_backoff();
+    }
+  }
   _detail::last_ref() = r;
 }
 

@@ -66,7 +66,16 @@ struct Fix {
 // shred the cold-start budget.
 inline constexpr uint32_t PULSE_THRESHOLD_S    = 5 * 60;     // 5 min
 inline constexpr uint32_t PULSE_ACQUIRE_TIMEOUT_MS = 120000; // give up after 2 min hunting
-inline constexpr uint32_t PULSE_RETRY_BACKOFF_MS   = 60000;  // try again 60 s later on timeout
+inline constexpr uint32_t PULSE_RETRY_BACKOFF_MS   = 60000;  // try again 60 s later on first timeout
+// Exponential-backoff cap: after enough consecutive timeouts (cold
+// indoors, antenna shielded, no sky), stop retrying every minute and
+// fall back to ~once an hour. The user's nominal interval still wins
+// once we successfully acquire — backoff only modulates the
+// failure-side retry cadence so we don't burn power hunting forever.
+inline constexpr uint32_t PULSE_RETRY_BACKOFF_MAX_MS = 30UL * 60UL * 1000UL;
+// Cap the doubling at 9 (60s · 2^9 = ~30 min) so the shift doesn't
+// overflow if the firmware sits stuck for days.
+inline constexpr uint8_t  PULSE_RETRY_BACKOFF_SHIFT_MAX = 9;
 
 enum class PowerMode : uint8_t { Off, AlwaysOn, Pulsed };
 enum class PulseState : uint8_t { Idle, Acquiring };
@@ -93,6 +102,11 @@ namespace _detail {
   inline PulseState&     pulse_state_ref()    { static PulseState v = PulseState::Idle; return v; }
   inline uint32_t&       pulse_started_ms_ref(){ static uint32_t v = 0; return v; }
   inline uint32_t&       pulse_last_rep_snapshot() { static uint32_t v = 0; return v; }
+  // Consecutive pulse-timeout count. Reset to 0 on every successful
+  // acquire (handle_line→report_time), and on demand via
+  // Gps::reset_backoff() from the IMU motion path. Drives the
+  // exponential retry cadence in the pulse-timeout branch.
+  inline uint8_t&        backoff_count_ref()  { static uint8_t v = 0; return v; }
 
   // XOR-checksum the chars between '$' and '*' exclusive. The
   // sentence may or may not include the leading '$'.
@@ -269,6 +283,18 @@ inline void power_off() {
 
 inline bool is_powered() { return _detail::hw_powered_ref(); }
 inline PulseState pulse_state() { return _detail::pulse_state_ref(); }
+// External knob to drop the exponential-backoff counter back to 0.
+// Called by the IMU motion path: when the device gets moved we may
+// have a fresh sky view and should retry sooner rather than wait out
+// the (potentially 30-min) backoff window. Cheap; safe to call from
+// the sensor poll loop.
+inline void reset_backoff() {
+  if (_detail::backoff_count_ref() != 0) {
+    NOTICEF("GPS: backoff reset (was attempt %u)",
+            (unsigned)_detail::backoff_count_ref());
+    _detail::backoff_count_ref() = 0;
+  }
+}
 
 // Decide the current target power mode from the user's GPS time-
 // source config. Source enable-disable is the master switch; the
@@ -331,23 +357,36 @@ inline void pump() {
       const bool timed_out = (now - _detail::pulse_started_ms_ref())
                               > PULSE_ACQUIRE_TIMEOUT_MS;
       if (acquired) {
-        // Got a fix + reported time; back to sleep.
+        // Got a fix + reported time; back to sleep. Reset the
+        // exponential-backoff counter so future failures start at
+        // the short base interval again.
         NOTICEF("GPS: pulse acquired in %lums", (unsigned long)(now - _detail::pulse_started_ms_ref()));
+        _detail::backoff_count_ref() = 0;
         power_off();
         _detail::pulse_state_ref() = PulseState::Idle;
       } else if (timed_out) {
-        // No fix within the window. Power down and back off slightly
-        // so we don't immediately retry; next poll attempt happens
-        // PULSE_RETRY_BACKOFF_MS from now.
-        WARNINGF("GPS: pulse timed out after %lums; backing off %lums",
+        // No fix within the window. Compute the next-retry delay with
+        // exponential backoff: base · 2^N, capped at MAX. Indoors with
+        // no sky view the backoff lifts retry cadence from once a
+        // minute to once every ~30 min, which saves substantial power.
+        // Motion through the IMU calls Gps::reset_backoff() to drop
+        // back to base whenever the device gets carried somewhere
+        // new — a likely sign of a new sky view.
+        uint8_t& n = _detail::backoff_count_ref();
+        const uint8_t shift = (n < PULSE_RETRY_BACKOFF_SHIFT_MAX) ? n : PULSE_RETRY_BACKOFF_SHIFT_MAX;
+        uint32_t delay_ms = PULSE_RETRY_BACKOFF_MS << shift;
+        if (delay_ms > PULSE_RETRY_BACKOFF_MAX_MS) delay_ms = PULSE_RETRY_BACKOFF_MAX_MS;
+        if (n < 255) n++;
+        WARNINGF("GPS: pulse timed out after %lums; backing off %lums (attempt %u)",
                  (unsigned long)PULSE_ACQUIRE_TIMEOUT_MS,
-                 (unsigned long)PULSE_RETRY_BACKOFF_MS);
+                 (unsigned long)delay_ms,
+                 (unsigned)n);
         power_off();
         _detail::pulse_state_ref() = PulseState::Idle;
-        // Set last_report_ms so the next due-check fires PULSE_RETRY_BACKOFF_MS
+        // Set last_report_ms so the next due-check fires `delay_ms`
         // from now rather than interval_s from "never".
-        if (interval_ms > PULSE_RETRY_BACKOFF_MS) {
-          _detail::last_report_ms_ref() = now - (interval_ms - PULSE_RETRY_BACKOFF_MS);
+        if (interval_ms > delay_ms) {
+          _detail::last_report_ms_ref() = now - (interval_ms - delay_ms);
         } else {
           _detail::last_report_ms_ref() = now;
         }

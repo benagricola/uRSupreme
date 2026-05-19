@@ -538,9 +538,18 @@ namespace Web {
     // Helper: register a JSON-body POST route. AsyncCallbackJsonWebHandler
     // collects the body, parses it, then invokes the handler with the
     // parsed JsonVariant.
-    static void on_json_post(const char* path, void (*fn)(AsyncWebServerRequest*, JsonVariant&)) {
+    // AsyncCallbackJsonWebHandler defaults to a 16 KiB request-body
+    // cap, which silently truncates anything bigger and surfaces as a
+    // confusing parse failure on the client. `max_content_length`
+    // overrides it for routes that take long JSON bodies (notably
+    // /send, where the user's message text + inline metadata can run
+    // well past 16 KiB). 0 leaves the library default in place.
+    static void on_json_post(const char* path,
+                             void (*fn)(AsyncWebServerRequest*, JsonVariant&),
+                             size_t max_content_length = 0) {
       auto* h = new AsyncCallbackJsonWebHandler(uri(path), fn);
       h->setMethod(HTTP_POST);
+      if (max_content_length > 0) h->setMaxContentLength((int)max_content_length);
       server.addHandler(h);
     }
 
@@ -607,7 +616,14 @@ namespace Web {
                 handle_outbound_upload_chunk);
       server.on(uri("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
       server.on(uri("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
-      on_json_post("/api/identities/{}/send",     handle_send);
+      // /send takes the user's whole message body inline (text + emoji
+      // + paste markdown). 16 KiB is plenty for chat but trips up on
+      // realistic long-form content (e.g. logs pasted into a message).
+      // 512 KiB safely fits in PSRAM and still leaves attachments to
+      // ride the dedicated multipart staging-upload path for anything
+      // bigger.
+      on_json_post("/api/identities/{}/send", handle_send,
+                   /*max_content_length=*/512 * 1024);
       // POST /api/identities/{id}/outbox/{seq}/retry — manually re-queue
       // a Failed outbox entry. Resets the auto-retry budget.
       server.on(uri("/api/identities/{}/outbox/{}/retry"),

@@ -884,6 +884,18 @@ void setup() {
           ? "/sd/lxmf_resource_tmp"
           : "/lxmf_resource_tmp";
     });
+    // microStore I/O failure → SD presence re-probe. microStore goes
+    // straight to POSIX/VFS for its file ops, so it never tells
+    // Storage::SDCard when a write fails because the card was pulled.
+    // Hook every failed I/O whose path lives under /sd/ and ask the
+    // SDCard layer to re-verify presence; everything else (LittleFS,
+    // PSRAM file) is ignored. verify_or_disable is cheap and idempotent.
+    microStore::set_io_failure_callback(
+        [](const char* path, microStore::IoOp /*op*/) {
+            if (path && strncmp(path, "/sd/", 4) == 0) {
+                Storage::SDCard::verify_or_disable();
+            }
+        });
     // Pre-create both candidate directories so OS::create_directory
     // (which only knows microStore filesystem) doesn't have to deal
     // with the SD-rooted path at allocation time.

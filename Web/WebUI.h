@@ -58,6 +58,7 @@ extern bool eeprom_have_conf();
 extern uint32_t lora_freq;
 extern uint32_t lora_bw;
 extern int      lora_sf;
+extern uint32_t lora_bitrate;
 extern int      lora_cr;
 extern int      lora_txp;
 extern bool     radio_online;
@@ -2736,13 +2737,37 @@ namespace Web {
         send_json(req, 200, doc);
         return;
       }
-      const uint32_t bitrate = RNS::Transport::next_hop_interface_bitrate(to);
-      const uint8_t  hops    = RNS::Transport::hops_to(to);
+      uint32_t       bitrate = RNS::Transport::next_hop_interface_bitrate(to);
+      uint8_t        hops    = RNS::Transport::hops_to(to);
       const double   fh_to   = RNS::Transport::first_hop_timeout(to);
+      // Fallback path: microReticulum's path-table entries can come
+      // back "degraded" after a serialise→deserialise round-trip in
+      // the typed store (interface ref looked up by hash fails, or
+      // the cached announce packet doesn't unpack). In that state
+      // `has_path` is still true (the row exists) but `hops_to`
+      // returns PATHFINDER_M and `next_hop_interface_bitrate` returns
+      // 0 — leaving the SPA stuck at "ETA: pending path estimate"
+      // even though we have everything we need locally to estimate.
+      //
+      // Workaround: when the Transport doesn't have a usable bitrate
+      // or hop count, assume the destination is reachable over our
+      // local LoRa interface at hops=0 (direct RF). This is correct
+      // for the SX↔LR bench setup and any other direct-RF pair; for
+      // multi-hop links it just under-estimates the ETA, which is a
+      // better UX than refusing to show one.
+      // The real fix belongs in microReticulum (#165).
+      bool estimate_fallback = false;
+      if ((bitrate == 0 || hops == RNS::Type::Transport::PATHFINDER_M)
+          && lora_bitrate > 0) {
+        bitrate = lora_bitrate;
+        hops    = 0;
+        estimate_fallback = true;
+      }
       doc["kind"]     = "path";
       doc["bitrate"]  = bitrate;
       doc["hops"]     = (int)hops;
       doc["first_hop_timeout_ms"] = (uint32_t)(fh_to * 1000);
+      if (estimate_fallback) doc["estimate_fallback"] = true;
       if (bitrate > 0 && hops != RNS::Type::Transport::PATHFINDER_M) {
         // bytes*8 / bitrate = seconds to clock a single packet over
         // one hop; multiply by (hops + 1) for the cumulative on-air

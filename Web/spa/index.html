@@ -5886,7 +5886,15 @@ $('btn-idc-ok').addEventListener('click', () => {
 
 // ============================== REBOOT WAITER ==============================
 function waitForDeviceAndReload(message) {
-  // Replace the page contents with a status div and poll /api/info.
+  // Replace the page contents with a status div and poll the device
+  // for a successful /api/info. Two paths:
+  //   1. Same origin (default) — the device kept the same IP, so we
+  //      reload the current URL once /api/info responds.
+  //   2. Origin switch — we were in softAP and just configured STA.
+  //      The device now lives at a different IP, and the SPA's current
+  //      origin (the softAP IP) won't resolve once the device drops
+  //      its softAP. Use the mDNS hostname captured before reload and
+  //      jump to http://<host>.local/ as soon as it answers.
   document.body.innerHTML = '';
   const wrap = el('div', { class: 'page' },
     el('div', { class: 'card' },
@@ -5895,23 +5903,53 @@ function waitForDeviceAndReload(message) {
     ),
   );
   document.body.appendChild(wrap);
+  // Captured before the device reboots. Falsey when not yet known
+  // (first /api/info hasn't returned by the time we navigate here);
+  // we fall back to same-origin in that case.
+  const mdns = (state.info && state.info.mdns_hostname) || null;
+  const wasAp = (state.info && state.info.wifi_mode === 'ap');
+  const candidates = [];
+  // Always try same origin first — covers the case where the device
+  // is on a fixed IP or the user is already on the LAN it'll come
+  // back on. If we were in softAP and have a hostname, also try
+  // http://<host>.local/ in parallel.
+  candidates.push({ url: '/api/info', target: location.href });
+  if (wasAp && mdns) {
+    const lan = (location.protocol === 'https:' ? 'https' : 'http')
+              + '://' + mdns + '.local';
+    candidates.push({ url: lan + '/api/info', target: lan + '/' });
+  }
   const startMs = Date.now();
-  let attempts = 0;
-  const probe = async () => {
-    attempts++;
+  let attempts  = 0;
+  let stopped   = false;
+  const probeOne = async (c) => {
+    if (stopped) return;
     try {
       const ctl = new AbortController();
       const tmo = setTimeout(() => ctl.abort(), 1500);
-      const r = await fetch('/api/info', { cache: 'no-store', signal: ctl.signal });
+      const r = await fetch(c.url, { cache: 'no-store', signal: ctl.signal,
+                                     mode: c.url.startsWith('http') ? 'cors' : 'same-origin' });
       clearTimeout(tmo);
-      if (r.ok) { setTimeout(() => location.reload(), 400); return; }
+      if (r.ok) {
+        stopped = true;
+        setTimeout(() => { location.href = c.target; }, 400);
+      }
     } catch { /* still down */ }
+  };
+  const tick = async () => {
+    if (stopped) return;
+    attempts++;
+    await Promise.all(candidates.map(probeOne));
+    if (stopped) return;
     const elapsed = Math.floor((Date.now() - startMs) / 1000);
-    $('rb-status').textContent = 'Waiting for device to come back… (' + elapsed + 's)';
-    if (attempts < 60) setTimeout(probe, 1500);
+    const where = (wasAp && mdns)
+      ? '(trying both this IP and http://' + mdns + '.local — '
+      : '(';
+    $('rb-status').textContent = 'Waiting for device to come back… ' + where + elapsed + 's)';
+    if (attempts < 60) setTimeout(tick, 1500);
     else $('rb-status').textContent = "Device hasn't come back after 90 s — check serial.";
   };
-  setTimeout(probe, 2500);
+  setTimeout(tick, 2500);
 }
 
 // ============================== START ==============================

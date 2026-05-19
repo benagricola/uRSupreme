@@ -90,6 +90,7 @@ extern wl_status_t wr_wifi_status;
 extern bool      wr_runtime_softap;
 extern volatile bool wr_force_softap_pending;
 extern char      bt_devname[];
+extern char      wr_hostname[];
 extern microStore::FileSystem filesystem;
 
 namespace Web {
@@ -698,6 +699,21 @@ namespace Web {
       doc["bootstrap"]  = bootstrap_mode;
       doc["identity_code_pending"] = !id_code().hex6.empty() && !id_code().consumed
                               && millis() < id_code().expires_ms;
+      // mDNS hostname (no .local suffix) advertised on STA. The SPA
+      // uses this for the post-WiFi-save redirect so the user doesn't
+      // have to hunt the device's new DHCP-assigned IP after a softAP
+      // → STA transition. Always emitted (even in softAP) since the
+      // softAP's bootstrap UI is exactly when the SPA needs to know
+      // where the device will be after reboot.
+      doc["mdns_hostname"] = wr_hostname;
+      // WiFi mode + transitional state for the SPA's redirect logic:
+      //   "off"      → WiFi off entirely
+      //   "ap"       → softAP (bootstrap or runtime force)
+      //   "sta"      → connected to a configured network
+      //   "sta_wait" → STA configured but not yet associated
+      doc["wifi_mode"] = (wifi_mode == WR_WIFI_OFF) ? "off"
+                       : (wifi_mode == WR_WIFI_AP)  ? "ap"
+                       : (wr_wifi_status == WL_CONNECTED) ? "sta" : "sta_wait";
       // Time state lives on the WS `hello` frame now — the login
       // screen doesn't show it, and post-login the SPA only consumes
       // the WS-pinned clock anchor. Removed from /api/info.

@@ -14,6 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #if defined(UDP_TRANSPORT)
 #include <WiFiUdp.h>
 #include <Bytes.h>
@@ -296,6 +297,21 @@ void wifi_update_status() {
     // fallback timer — a transient drop later shouldn't kick us
     // out of STA (the existing 10 s reconnect logic handles that).
     wr_sta_fallback_armed = false;
+    // mDNS: advertise the device under wr_hostname.local so the SPA
+    // can redirect to it after a WiFi-save reboot, and so users on the
+    // LAN can reach the web UI without hunting for the DHCP-assigned
+    // IP. Start once on first STA-connected — MDNS.begin is idempotent
+    // but logging it twice is noisy.
+    static bool s_mdns_started = false;
+    if (!s_mdns_started && wifi_mode == WR_WIFI_STA) {
+      if (MDNS.begin(wr_hostname)) {
+        MDNS.addService("http", "tcp", 80);
+        NOTICEF("mDNS: advertising as http://%s.local", wr_hostname);
+        s_mdns_started = true;
+      } else {
+        WARNINGF("mDNS: begin(%s) failed", wr_hostname);
+      }
+    }
   }
   if (wifi_mode == WR_WIFI_AP && wifi_initialized) { wr_device_ip = WiFi.softAPIP(); wr_wifi_status = WL_CONNECTED; }
   if (wifi_init_ran && wifi_mode == WR_WIFI_STA && wr_wifi_status != WL_CONNECTED) {

@@ -618,6 +618,7 @@ namespace Web {
       on_json_post("/api/system/factory_reset", handle_factory_reset);
       on_json_post("/api/system/transport",     handle_transport_toggle);
       on_json_post("/api/system/kiss",          handle_kiss_toggle);
+      on_json_post("/api/system/reboot",        handle_reboot);
       // Time management. GET returns the current calibrated time +
       // source-priority config; POST /api/time {unix_ms} adopts a
       // browser-supplied time; POST /api/time/sources {sources:{...}}
@@ -1078,6 +1079,26 @@ namespace Web {
       JsonDocument doc;
       doc["enabled"] = enabled;
       send_json(req, 200, doc);
+    }
+
+    // POST /api/system/reboot { } — clean, no-side-effect reboot trigger.
+    // Bearer-auth gated like the other /api/system/* routes. Optional
+    // {delay_ms: N} in the body lets the caller widen/shorten the window
+    // between response and reset; default 2 s is enough for the client
+    // to read the response without hanging the dev terminal.
+    static void handle_reboot(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      uint32_t delay_ms = 2000;
+      if (body["delay_ms"].is<uint32_t>()) {
+        delay_ms = body["delay_ms"].as<uint32_t>();
+        if (delay_ms < 100)   delay_ms = 100;
+        if (delay_ms > 30000) delay_ms = 30000;
+      }
+      NOTICEF("WebUI: reboot requested via API (delay=%ums)", (unsigned)delay_ms);
+      JsonDocument doc;
+      doc["status"] = "rebooting";
+      respond_and_reboot(req, doc, delay_ms);
     }
 
     // GET /api/time — returns the current calibrated time, the source

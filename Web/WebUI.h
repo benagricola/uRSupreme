@@ -15,6 +15,7 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
+#include "PsramAllocator.h"
 #include <ChunkPrint.h>
 #include <Log.h>
 #include <Reticulum.h>
@@ -244,7 +245,7 @@ namespace Web {
       if (taken == 0 || taken == last_pub_ms) return;  // no allocation on the no-op path
       last_pub_ms = taken;
       Web::WS::publish_sensor(kind, [kind](JsonObject v) {
-        JsonDocument tmp;
+        Web::PsramJsonDocument tmp;
         JsonObject root = tmp.to<JsonObject>();
         fill_sensor_block(root, kind);
         for (JsonPair kv : root[kind].as<JsonObject>()) v[kv.key()] = kv.value();
@@ -472,7 +473,7 @@ namespace Web {
     }
 
     static void send_error(AsyncWebServerRequest* req, int code, const char* msg) {
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["error"]   = msg;
       send_json(req, code, doc);
     }
@@ -481,7 +482,7 @@ namespace Web {
     // field the SPA can display directly to the user.
     static void send_error_with_message(AsyncWebServerRequest* req, int code,
                                         const char* err, const char* msg) {
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["error"]   = err;
       doc["message"] = msg;
       send_json(req, code, doc);
@@ -734,7 +735,7 @@ namespace Web {
 
     static void handle_info(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["fw_version"] = "lxmf-gateway-0.1";
       doc["uptime_ms"]  = (uint32_t)millis();
       doc["bootstrap"]  = bootstrap_mode;
@@ -929,7 +930,7 @@ namespace Web {
       // login since the periodic announce loop will catch up.
       LXMF::LXMFGateway::announce(iden_id);
 
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["token"]         = token;
       doc["identity_id"]    = iden_id;
       doc["expires_in_s"]  = AuthTokens::DEFAULT_TTL_S;
@@ -979,7 +980,7 @@ namespace Web {
       }
       std::string token = AuthTokens::issue(iden_id);
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(iden_id);
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["id"]      = iden_id;
       doc["address"] = a ? a->address_hex() : "";
       doc["token"]   = token;
@@ -994,7 +995,7 @@ namespace Web {
       if (caller != requested) { send_error(req, 403, "forbidden"); return; }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a) { send_error(req, 404, "unknown_identity"); return; }
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["id"]                   = a->id;
       doc["display_name"]         = a->display_name;
       doc["address"]              = a->address_hex();
@@ -1045,14 +1046,14 @@ namespace Web {
       RNS::Reticulum::transport_enabled(enabled);
       // Persist for next boot. Tiny JSON file alongside the rest of
       // the gateway's state in /lxmf.
-      JsonDocument persist;
+      Web::PsramJsonDocument persist;
       persist["enabled"] = enabled;
       String s; serializeJson(persist, s);
       filesystem.writeFile("/lxmf/transport.json",
                            (const uint8_t*)s.c_str(), s.length());
       NOTICEF("WebUI: transport_enabled set to %s by %s",
               enabled ? "true" : "false", caller.c_str());
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["enabled"] = enabled;
       send_json(req, 200, doc);
     }
@@ -1076,7 +1077,7 @@ namespace Web {
       eeprom_update(eeprom_addr(ADDR_CONF_KISS_OUT), enabled ? 0x01 : 0x00);
       NOTICEF("WebUI: kiss_serial_output set to %s",
               enabled ? "true" : "false");
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["enabled"] = enabled;
       send_json(req, 200, doc);
     }
@@ -1096,7 +1097,7 @@ namespace Web {
         if (delay_ms > 30000) delay_ms = 30000;
       }
       NOTICEF("WebUI: reboot requested via API (delay=%ums)", (unsigned)delay_ms);
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["status"] = "rebooting";
       respond_and_reboot(req, doc, delay_ms);
     }
@@ -1108,7 +1109,7 @@ namespace Web {
     static void handle_time_get(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       const double epoch = Web::TimeManager::now_epoch();
       doc["calibrated"]  = Web::TimeManager::is_calibrated();
       doc["unix_ms"]     = (uint64_t)(epoch * 1000.0);
@@ -1149,7 +1150,7 @@ namespace Web {
       const double epoch = unix_ms / 1000.0;
       const bool adopted = Web::TimeManager::report_time(
         Web::TimeManager::Source::Browser, epoch);
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["adopted"]    = adopted;
       doc["calibrated"] = Web::TimeManager::is_calibrated();
       doc["source"]     = Web::TimeManager::source_name(Web::TimeManager::current_source());
@@ -1195,7 +1196,7 @@ namespace Web {
     static void handle_rtc_get(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       const auto s = Web::RtcPCF8563::debug_snapshot();
       doc["available"] = Web::RtcPCF8563::available();
       doc["present"]   = s.present;
@@ -1402,7 +1403,7 @@ namespace Web {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
       const auto& cfg = LXMF::InboxConfig::current();
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["ram_capacity"] = (cfg.ram_capacity >= 0xFFFFFFFEu)
           ? (uint32_t)0 : (uint32_t)cfg.ram_capacity;
       doc["ttl_seconds"]  = cfg.ttl_seconds;
@@ -1436,7 +1437,7 @@ namespace Web {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
       const auto& cfg = Storage::Config::current();
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["user_max_send_bytes"]      = (uint32_t)std::min<size_t>(cfg.user_max_send_bytes,    0xFFFFFFFFu);
       doc["user_max_receive_bytes"]   = (uint32_t)std::min<size_t>(cfg.user_max_receive_bytes, 0xFFFFFFFFu);
       doc["effective_max_send_bytes"] = (uint32_t)std::min<size_t>(Storage::Config::effective_max_send(),    0xFFFFFFFFu);
@@ -1486,7 +1487,7 @@ namespace Web {
           "Unknown sensor key. Expected bme280, magnetometer, or imu.");
         return;
       }
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["status"]     = "applied";
       doc["sensor"]     = key;
       doc["enabled"]    = enabled;
@@ -1500,7 +1501,7 @@ namespace Web {
     static void handle_gps_get(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       const Web::Gps::Fix f = Web::Gps::last_fix();
       doc["available"]   = Web::Gps::has_serial();
       doc["valid"]       = f.valid;
@@ -1544,7 +1545,7 @@ namespace Web {
       // (stored at /transport_identity) or path_store — those are
       // device-level state, not per-identity secrets.
 
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["status"]  = "wiped";
       doc["restart"] = true;
       respond_and_reboot(req, doc);
@@ -1577,7 +1578,7 @@ namespace Web {
       NOTICEF("WebUI: cleared conversation %s <-> %s (inbox=%u outbox=%u)",
               requested.c_str(), peer_hex.c_str(),
               (unsigned)inbox_removed, (unsigned)outbox_removed);
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["inbox_removed"]  = (uint32_t)inbox_removed;
       doc["outbox_removed"] = (uint32_t)outbox_removed;
       send_json(req, 200, doc);
@@ -1618,7 +1619,7 @@ namespace Web {
       const bool has_override = (it != overrides.end());
       const uint32_t default_ttl = LXMF::InboxConfig::current().ttl_seconds;
       const uint32_t effective   = has_override ? it->second : default_ttl;
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       if (has_override) doc["ttl_seconds"] = it->second;
       else              doc["ttl_seconds"] = nullptr;
       doc["effective_ttl_seconds"] = effective;
@@ -1795,7 +1796,7 @@ namespace Web {
           "Upload completed but no staging buffer was created.");
         return;
       }
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["staging_id"] = id;
       doc["total_bytes"] = (uint32_t)Storage::OutboundStaging::total_bytes(id);
       doc["backend"]     = Storage::OutboundStaging::backend_name(
@@ -1994,7 +1995,7 @@ namespace Web {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
       const auto& ring = LXMF::AnnounceLog::announces();
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       JsonArray arr = doc["announces"].to<JsonArray>();
       uint32_t now = millis();
       for (auto it = ring.rbegin(); it != ring.rend(); ++it) {
@@ -2021,7 +2022,7 @@ namespace Web {
         return;
       }
       const auto result = Web::StorageMigration::run();
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["moved"]            = (uint32_t)result.moved;
       doc["skipped"]          = (uint32_t)result.skipped;
       doc["failed"]           = (uint32_t)result.failed;
@@ -2043,7 +2044,7 @@ namespace Web {
         send_error(req, 404, "unknown_identity");
         return;
       }
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["status"] = "announced";
       send_json(req, 200, doc);
     }
@@ -2074,7 +2075,7 @@ namespace Web {
         }
       }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["id"]                            = requested;
       doc["announce_interval_ms"]          = a ? a->announce_interval_ms : 0;
       doc["persist_outbound_attachments"]  = a ? a->persist_outbound_attachments : true;
@@ -2137,7 +2138,7 @@ namespace Web {
       size_t   limit = (size_t)req->arg("limit").toInt();
       if (limit == 0 || limit > 50) limit = 50;
       auto msgs = since > 0 ? a->inbox->since(since) : a->inbox->recent(limit);
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       JsonArray arr = doc["messages"].to<JsonArray>();
       emit_messages_array(arr, msgs);
       doc["next_since"] = a->inbox->next_seq();
@@ -2156,7 +2157,7 @@ namespace Web {
       size_t   limit = (size_t)req->arg("limit").toInt();
       if (limit == 0 || limit > 50) limit = 50;
       auto msgs = since > 0 ? a->outbox->since(since) : a->outbox->recent(limit);
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       JsonArray arr = doc["messages"].to<JsonArray>();
       emit_messages_array(arr, msgs);
       doc["next_since"] = a->outbox->next_seq();
@@ -2288,7 +2289,7 @@ namespace Web {
           "The original send-state is no longer available (likely after a reboot). Send the message again.");
         return;
       }
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["status"]      = "retry_scheduled";
       doc["queued_seq"]  = seq;
       send_json(req, 202, doc);
@@ -2405,7 +2406,7 @@ namespace Web {
                                 err ? err : "Send failed for an unknown reason.");
         return;
       }
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["queued_seq"] = rec.seq;
       doc["status"]     = LXMF::outbox_status_name(rec.status);
       send_json(req, 202, doc);
@@ -2431,7 +2432,7 @@ namespace Web {
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a) { send_error(req, 404, "unknown_identity"); return; }
 
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       // Identity self-info.
       JsonObject me = doc["identity"].to<JsonObject>();
       me["id"]                   = a->id;
@@ -2575,7 +2576,7 @@ namespace Web {
       RnsLockGuard _g;
       // Scan results aren't sensitive; gate only the configure write.
       int n = WiFi.scanNetworks();
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       JsonArray arr = doc["networks"].to<JsonArray>();
       for (int i = 0; i < n; i++) {
         JsonObject obj = arr.add<JsonObject>();
@@ -2612,7 +2613,7 @@ namespace Web {
       }
       wr_conf_save(WR_WIFI_STA);
 
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["status"]  = "saved";
       doc["restart"] = true;
       // Deferred reboot so the response flushes cleanly.
@@ -2628,7 +2629,7 @@ namespace Web {
     static void handle_wifi_saved_list(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       JsonArray arr = doc["networks"].to<JsonArray>();
       char ssid[33] = {0};
       bool any = false;
@@ -2689,7 +2690,7 @@ namespace Web {
       wr_conf_save(WR_WIFI_OFF);
       NOTICEF("WiFi: forgot saved network '%s'", current);
 
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["status"]  = "forgotten";
       doc["restart"] = true;
       respond_and_reboot(req, doc);
@@ -2714,7 +2715,7 @@ namespace Web {
       // wifi_remote_init() from the WebServer task races against
       // in-flight requests and any other WiFi-touching code.
       wr_force_softap_pending = true;
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["status"] = "queued";
       doc["note"]   = "Switching to softAP — reconnect to the device's bootstrap SSID.";
       send_json(req, 200, doc);
@@ -2723,7 +2724,7 @@ namespace Web {
     static void handle_radio_get(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["frequency"]        = (uint32_t)lora_freq;
       doc["bandwidth"]        = (uint32_t)lora_bw;
       doc["spreading_factor"] = lora_sf;
@@ -2824,7 +2825,7 @@ namespace Web {
       }
       eeprom_update(eeprom_addr(ADDR_CONF_OK), CONF_OK_BYTE);
 
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["status"]  = "saved";
       doc["restart"] = true;
       respond_and_reboot(req, doc);
@@ -2834,7 +2835,7 @@ namespace Web {
       RnsLockGuard _g;
       if (!require_physical_auth(req, body)) return;
       eeprom_update(eeprom_addr(ADDR_CONF_OK), 0x00);
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["status"]  = "cleared";
       doc["restart"] = true;
       respond_and_reboot(req, doc);
@@ -2887,7 +2888,7 @@ namespace Web {
       if (st_airtime_limit != 0.0f && airtime          >= st_airtime_limit) airtime_lock = true;
       if (lt_airtime_limit != 0.0f && longterm_airtime >= lt_airtime_limit) airtime_lock = true;
 
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["airtime_limit_pct"]          = (int)(st_airtime_limit * 100);
       doc["longterm_airtime_limit_pct"] = (int)(lt_airtime_limit * 100);
       doc["airtime_locked"]             = airtime_lock;
@@ -2909,7 +2910,7 @@ namespace Web {
       // AnnounceHandler registered with nullptr aspect_filter, so it
       // sees every announce regardless of aspect.
       const auto& ring = LXMF::AnnounceLog::paths();
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       JsonArray arr = doc["paths"].to<JsonArray>();
       uint32_t now = millis();
       for (auto it = ring.rbegin(); it != ring.rend(); ++it) {
@@ -2938,7 +2939,7 @@ namespace Web {
         return;
       }
       bool known = RNS::Transport::has_path(to);
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["known"] = known;
       if (!known) {
         RNS::Transport::request_path(to);
@@ -2973,7 +2974,7 @@ namespace Web {
           "Destination must be 32 hex characters.");
         return;
       }
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["bytes"] = bytes;
 
       if (LXMF::LXMFGateway::is_own_destination(to)) {

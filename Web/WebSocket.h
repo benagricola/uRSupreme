@@ -28,6 +28,7 @@
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
+#include "PsramAllocator.h"
 #include <vector>
 #include <string>
 #include <stdint.h>
@@ -125,7 +126,7 @@ namespace WS {
   // event handlers can take both feeds.
   inline void publish_incoming(const LXMF::IdentityId& identity_id,
                                const LXMF::MessageRecord& m) {
-    JsonDocument doc;
+    Web::PsramJsonDocument doc;
     doc["type"]            = "incoming";
     JsonObject msg         = doc["msg"].to<JsonObject>();
     msg["seq"]             = m.seq;
@@ -171,7 +172,7 @@ namespace WS {
                                uint32_t bytes_done,
                                uint32_t bytes_total,
                                bool finished) {
-    JsonDocument doc;
+    Web::PsramJsonDocument doc;
     doc["type"]        = finished ? "message_complete" : "message_progress";
     doc["peer"]        = peer_hash.toHex();
     doc["link_hash"]   = link_hash.toHex();
@@ -187,7 +188,7 @@ namespace WS {
   inline void publish_outbox_status(const LXMF::IdentityId& identity_id,
                                     const RNS::Bytes& link_hash,
                                     const char* status_name) {
-    JsonDocument doc;
+    Web::PsramJsonDocument doc;
     doc["type"]      = "outbox_status";
     doc["link_hash"] = link_hash.toHex();
     doc["status"]    = status_name;
@@ -200,7 +201,7 @@ namespace WS {
   // contacts), is_lxmf=false → "path_seen" (any aspect, populates the
   // path table).
   inline void publish_announce_or_path(const LXMF::AnnounceRecord& rec, bool is_lxmf) {
-    JsonDocument doc;
+    Web::PsramJsonDocument doc;
     doc["type"]         = is_lxmf ? "announce_seen" : "path_seen";
     doc["dest"]         = rec.destination.toHex();
     doc["display_name"] = rec.display_name;
@@ -216,7 +217,7 @@ namespace WS {
   // its cached snapshot in place from this event.
   inline void publish_sensor(const char* kind,
                              const std::function<void(JsonObject)>& fill) {
-    JsonDocument doc;
+    Web::PsramJsonDocument doc;
     doc["type"] = "sensor_update";
     doc["kind"] = kind;
     JsonObject v = doc["value"].to<JsonObject>();
@@ -235,7 +236,7 @@ namespace WS {
   // Time-source update — fires when the active clock source changes
   // (GPS lock acquired, NTP sync completed, browser-set, RTC seed).
   inline void publish_time(const char* source, uint64_t unix_ms, bool calibrated) {
-    JsonDocument doc;
+    Web::PsramJsonDocument doc;
     doc["type"]               = "time_update";
     doc["source"]              = source;
     doc["unix_ms"]            = unix_ms;
@@ -255,7 +256,7 @@ namespace WS {
   // each event. Periodic (every 30 s from WebUI::loop) so the
   // popover stays live without polling.
   inline void publish_system(const std::function<void(JsonObject)>& fill) {
-    JsonDocument doc;
+    Web::PsramJsonDocument doc;
     doc["type"] = "system_update";
     JsonObject root = doc["payload"].to<JsonObject>();
     fill(root);
@@ -271,7 +272,7 @@ namespace WS {
                               uint32_t user_max_receive,
                               uint32_t effective_max_send,
                               uint32_t effective_max_receive) {
-    JsonDocument doc;
+    Web::PsramJsonDocument doc;
     doc["type"]                      = "storage_changed";
     doc["sd_present"]                = sd_present;
     doc["user_max_send_bytes"]       = user_max_send;
@@ -283,7 +284,7 @@ namespace WS {
 
   // Identity-code edge event (button-press triggered).
   inline void publish_identity_code_available() {
-    JsonDocument doc;
+    Web::PsramJsonDocument doc;
     doc["type"] = "identity_code_available";
     broadcast(doc);
   }
@@ -359,7 +360,7 @@ namespace WS {
       // If WebUI installed an extras hook, let it inject a current
       // sensor / clock snapshot so the SPA has live data from frame
       // one rather than waiting for the first periodic push.
-      JsonDocument hello;
+      Web::PsramJsonDocument hello;
       hello["type"]        = "hello";
       hello["identity_id"] = st.identity_id;
       hello["now_ms"]      = (uint32_t)millis();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ArduinoJson.h>
+#include "../Web/PsramAllocator.h"
 #include <Log.h>
 #include <microStore/FileSystem.h>
 
@@ -246,7 +247,7 @@ namespace LXMF {
       if (rec.seq == 0) rec.seq = ++_next_seq;
       else if (rec.seq > _next_seq) _next_seq = rec.seq;
 
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["seq"]     = rec.seq;
       doc["ts"]      = rec.ts;
       doc["boot"]    = rec.boot_epoch;
@@ -435,7 +436,7 @@ namespace LXMF {
 
   private:
     void parse_line(const char* p, size_t n) {
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       if (deserializeJson(doc, p, n) != DeserializationError::Ok) return;
       MessageRecord rec;
       rec.seq         = (uint32_t)(doc["seq"]    | 0);
@@ -501,7 +502,7 @@ namespace LXMF {
         MessageRecord copy = rec;
         copy.seq = rec.seq;  // keep existing seq
         // Inline a single-shot append without re-bumping _next_seq.
-        JsonDocument doc;
+        Web::PsramJsonDocument doc;
         doc["seq"]     = copy.seq;
         doc["ts"]      = copy.ts;
         doc["boot"]    = copy.boot_epoch;

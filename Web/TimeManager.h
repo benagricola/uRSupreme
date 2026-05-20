@@ -37,6 +37,7 @@
 #include <string.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include "PsramAllocator.h"
 #include <microStore/FileSystem.h>
 
 namespace Web {
@@ -245,7 +246,7 @@ inline void load_config(microStore::FileSystem& fs) {
   if (!fs.exists(CONFIG_PATH)) return;
   std::vector<uint8_t> data;
   if (fs.readFile(CONFIG_PATH, data) == 0) return;
-  JsonDocument doc;
+  Web::PsramJsonDocument doc;
   if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
   JsonObjectConst sources = doc["sources"].as<JsonObjectConst>();
   for (uint8_t i = 1; i < SOURCE_COUNT; ++i) {
@@ -261,7 +262,7 @@ inline void load_config(microStore::FileSystem& fs) {
 }
 
 inline void persist_config(microStore::FileSystem& fs) {
-  JsonDocument doc;
+  Web::PsramJsonDocument doc;
   JsonObject sources = doc["sources"].to<JsonObject>();
   for (uint8_t i = 1; i < SOURCE_COUNT; ++i) {
     const Source s = (Source)i;

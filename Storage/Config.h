@@ -28,6 +28,7 @@
 #include <stddef.h>
 #include <algorithm>
 #include <ArduinoJson.h>
+#include "../Web/PsramAllocator.h"
 #include <microStore/FileSystem.h>
 
 #include "OutboundStaging.h"
@@ -73,7 +74,7 @@ inline void load(microStore::FileSystem& fs) {
   if (!fs.exists(CONFIG_PATH)) return;
   std::vector<uint8_t> data;
   if (fs.readFile(CONFIG_PATH, data) == 0) return;
-  JsonDocument doc;
+  Web::PsramJsonDocument doc;
   if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
   if (doc["user_max_send_bytes"].is<uint32_t>()) {
     c.user_max_send_bytes = (size_t)doc["user_max_send_bytes"].as<uint32_t>();
@@ -87,7 +88,7 @@ inline void load(microStore::FileSystem& fs) {
 
 inline void persist(microStore::FileSystem& fs) {
   const Config& c = _detail::current_ref();
-  JsonDocument doc;
+  Web::PsramJsonDocument doc;
   doc["user_max_send_bytes"]    = (uint32_t)std::min<size_t>(c.user_max_send_bytes,    0xFFFFFFFFu);
   doc["user_max_receive_bytes"] = (uint32_t)std::min<size_t>(c.user_max_receive_bytes, 0xFFFFFFFFu);
   String out;

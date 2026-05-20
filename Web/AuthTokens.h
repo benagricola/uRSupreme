@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ArduinoJson.h>
+#include "PsramAllocator.h"
 #include <Log.h>
 #include <microStore/FileSystem.h>
 
@@ -50,7 +51,7 @@ namespace Web {
       if (!filesystem.exists(STORE_PATH)) return;
       std::vector<uint8_t> data;
       if (filesystem.readFile(STORE_PATH, data) == 0) return;
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
       if (!doc.is<JsonArray>()) return;
       for (JsonObject obj : doc.as<JsonArray>()) {
@@ -67,7 +68,7 @@ namespace Web {
     }
 
     static void save() {
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       JsonArray arr = doc.to<JsonArray>();
       for (const auto& t : _tokens()) {
         JsonObject obj = arr.add<JsonObject>();

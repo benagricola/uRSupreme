@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ArduinoJson.h>
+#include "../Web/PsramAllocator.h"
 #include <Log.h>
 #include <Identity.h>
 #include <Utilities/OS.h>
@@ -373,7 +374,7 @@ namespace LXMF {
     }
 
     static void write_meta(const LXMFIdentity& a) {
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       doc["display_name"]         = a.display_name;
       doc["created_ms"]           = (uint32_t)millis();
       doc["announce_interval_ms"]         = a.announce_interval_ms;
@@ -391,7 +392,7 @@ namespace LXMF {
       if (!filesystem.exists(a.meta_path().c_str())) return;
       std::vector<uint8_t> data;
       if (filesystem.readFile(a.meta_path().c_str(), data) == 0) return;
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
       a.display_name         = (const char*)(doc["display_name"] | "LXMF Identity");
       a.announce_interval_ms = (uint32_t)(doc["announce_interval_ms"] | LXMF_DEFAULT_ANNOUNCE_INTERVAL_MS);
@@ -415,7 +416,7 @@ namespace LXMF {
       if (!filesystem.exists(path.c_str())) return;
       std::vector<uint8_t> data;
       if (filesystem.readFile(path.c_str(), data) == 0) return;
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
       JsonObject ttl = doc["peer_ttl"].as<JsonObject>();
       if (ttl.isNull()) return;
@@ -426,7 +427,7 @@ namespace LXMF {
     }
     static void write_conversation_config(const LXMFIdentity& a,
                                            const std::unordered_map<std::string, uint32_t>& peer_ttl) {
-      JsonDocument doc;
+      Web::PsramJsonDocument doc;
       JsonObject ttl = doc["peer_ttl"].to<JsonObject>();
       for (const auto& kv : peer_ttl) ttl[kv.first.c_str()] = kv.second;
       String body;

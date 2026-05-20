@@ -185,6 +185,14 @@ void wifi_remote_init() {
   memcpy(wr_hostname, bt_devname, 5);
   memcpy(wr_hostname+5, bt_devname+6, 4);
   wr_hostname[9] = 0x00;
+  // mDNS / DNS-SD convention is all-lowercase hostnames. The DNS spec
+  // is case-insensitive but Bonjour/Avahi clients display whatever is
+  // advertised verbatim — keeping it lowercase avoids "RNode7D31.local"
+  // looking inconsistent with other devices on the LAN that follow the
+  // convention. Same byte count, just lowercased in place.
+  for (int i = 0; i < 9 && wr_hostname[i]; i++) {
+    wr_hostname[i] = (char)tolower((unsigned char)wr_hostname[i]);
+  }
   WiFi.softAPdisconnect(true);
   WiFi.disconnect(true, true);
   WiFi.mode(WIFI_MODE_NULL);
@@ -302,14 +310,23 @@ void wifi_update_status() {
     // LAN can reach the web UI without hunting for the DHCP-assigned
     // IP. Start once on first STA-connected — MDNS.begin is idempotent
     // but logging it twice is noisy.
+    //
+    // Retry on failure with a 30-second backoff, NOT every main-loop
+    // iteration. mDNS is non-critical, and the prior tight retry loop
+    // hammered the WiFi stack: each failed MDNS.begin() leaks small
+    // allocations in the lwIP / mdns service code, so unbounded retry
+    // burns through internal SRAM (we measured ~85 KB lost in 60 s).
     static bool s_mdns_started = false;
-    if (!s_mdns_started && wifi_mode == WR_WIFI_STA) {
+    static uint32_t s_mdns_next_retry_ms = 0;
+    if (!s_mdns_started && wifi_mode == WR_WIFI_STA
+        && (int32_t)(millis() - s_mdns_next_retry_ms) >= 0) {
       if (MDNS.begin(wr_hostname)) {
         MDNS.addService("http", "tcp", 80);
         NOTICEF("mDNS: advertising as http://%s.local", wr_hostname);
         s_mdns_started = true;
       } else {
-        WARNINGF("mDNS: begin(%s) failed", wr_hostname);
+        WARNINGF("mDNS: begin(%s) failed — retrying in 30s", wr_hostname);
+        s_mdns_next_retry_ms = millis() + 30000UL;
       }
     }
   }

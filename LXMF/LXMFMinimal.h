@@ -313,6 +313,20 @@ namespace LXMF {
         uint32_t          /*bytes_done*/,
         uint32_t          /*bytes_total*/)>;
 
+    // Inbound Resource completion — fires once when the receiving end's
+    // Resource finishes streaming bytes, BEFORE the LXMF decrypt /
+    // signature-verify step. Distinct from DeliveryCallback (which fires
+    // only on successful decrypt) so the gateway can emit a symmetric
+    // message_complete event even when decryption fails or the payload
+    // is malformed — the SPA-side "Incoming attachment …" row would
+    // otherwise stick at 100% forever. `ok` mirrors the Resource's
+    // COMPLETE-vs-FAILED status so the SPA can distinguish "received
+    // and decoded" from "received but unreadable" in future UX.
+    using ReceiveCompleteCallback = std::function<void(
+        const RNS::Bytes& /*link_hash*/,
+        uint32_t          /*bytes_total*/,
+        bool              /*ok*/)>;
+
     // Async state for an outbound DIRECT-mode send. We open a Link to the
     // peer in send_message and queue the wire bytes here keyed by the
     // link's hash; when the Link establishes, the static callback pops
@@ -425,6 +439,7 @@ namespace LXMF {
     void set_delivery_callback(DeliveryCallback cb) { _on_delivery = std::move(cb); }
     void set_outbox_status_callback(OutboxStatusCallback cb) { _on_outbox_status = std::move(cb); }
     void set_progress_callback(ProgressCallback cb) { _on_progress = std::move(cb); }
+    void set_receive_complete_callback(ReceiveCompleteCallback cb) { _on_receive_complete = std::move(cb); }
 
     // LXMF address of this identity (16-byte destination hash, hex-encoded).
     std::string address_hex() const {
@@ -1401,19 +1416,22 @@ namespace LXMF {
       auto& reg = registry();
       auto it = reg.find(our_dest_hash);
       if (it == reg.end() || it->second == nullptr) return;
-      // Fire a terminal progress event so the SPA can clear the
-      // synthetic "Incoming attachment" row from the conv list.
-      // peer is still unknown at this point — the SPA keys the
-      // clear off link_hash. Done before delivery so the conv
-      // list updates ahead of the new-message insertion.
-      if (it->second->_on_progress) {
-        const uint32_t total = (uint32_t)res.size();
+      const uint32_t total = (uint32_t)res.size();
+      const bool ok = (res.status() == RNS::Type::Resource::COMPLETE);
+      // Symmetric receive-complete event — fires regardless of whether
+      // the LXMF decrypt step that follows succeeds. The SPA uses this
+      // to clear synthetic "Incoming attachment …" rows + the topbar
+      // progress strip, mirroring the outbound message_complete path.
+      // Done BEFORE delivery so the conv list updates ahead of the
+      // new-message insertion. peer hash is unknown here (the LXMF
+      // payload hasn't been decrypted yet — that's why this exists);
+      // the SPA keys the clear off the link hash.
+      if (it->second->_on_receive_complete) {
         try {
-          it->second->_on_progress(RNS::Bytes(), link.hash(),
-                                    /*incoming=*/true, total, total);
+          it->second->_on_receive_complete(link.hash(), total, ok);
         } catch (...) {}
       }
-      if (res.status() != RNS::Type::Resource::COMPLETE) {
+      if (!ok) {
         WARNINGF("LXMF: inbound resource FAILED/CORRUPT (status=%d)",
                  (int)res.status());
         return;
@@ -1843,6 +1861,7 @@ namespace LXMF {
     DeliveryCallback  _on_delivery;
     OutboxStatusCallback _on_outbox_status;
     ProgressCallback  _on_progress;
+    ReceiveCompleteCallback _on_receive_complete;
     AttachmentPersistFn _persist_attachments_fn;
     OutboundPersistFn   _persist_outbound_fn;
   };

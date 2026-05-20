@@ -660,6 +660,23 @@ namespace LXMF {
                                        incoming, bytes_done, bytes_total,
                                        /*finished=*/false);
           });
+      // Inbound receive-complete: symmetric counterpart to the outbox
+      // Sent/Delivered terminal in set_outbox_status_callback above.
+      // Fires when the receiving Resource finishes streaming bytes,
+      // BEFORE the decrypt step — so even decrypt-fail / malformed-
+      // payload cases get a terminal message_complete on the wire and
+      // the SPA's synthetic "Incoming attachment …" row + topbar strip
+      // clear correctly. peer_hash is empty here (the LXMF source hash
+      // is only known post-decrypt); the SPA keys the clear off the
+      // link hash that earlier message_progress events also carried.
+      a.lxmf.set_receive_complete_callback(
+          [p](const RNS::Bytes& link_hash, uint32_t bytes_total, bool /*ok*/) {
+            if (!p->active) return;
+            Web::publish_lxmf_progress(
+                p->id, /*peer=*/RNS::Bytes{}, link_hash, /*incoming=*/true,
+                /*bytes_done=*/bytes_total, /*bytes_total=*/bytes_total,
+                /*finished=*/true);
+          });
       // Attachment persistence — when an incoming LXMF message carries
       // FIELD_FILE_ATTACHMENTS / FIELD_IMAGE / FIELD_AUDIO blobs, write
       // each one to <identity_dir>/attachments/ (#122 routing: SD if a

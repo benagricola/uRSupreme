@@ -285,12 +285,17 @@ namespace WS {
 
   // Radio telemetry — 1 Hz live sample of RSSI / channel util / CSMA
   // state. Frame is intentionally small (~120 B JSON) because it ships
-  // every second and shouldn't dominate WiFi/lwIP buffering.
+  // every second and shouldn't dominate WiFi/lwIP buffering. Fields are
+  // emitted flat alongside `type` to match the wire shape of the other
+  // light WS frames (announce_seen, path_seen, time_update, etc.) —
+  // the heavier frames (incoming, system_update) wrap under a semantic
+  // sub-object (msg / payload / value) because they carry the type
+  // plus their own meta; telemetry carries no meta beyond the sample
+  // itself, so the wrap was redundant.
   inline void publish_radio_telemetry(const RadioTelemetry::Sample& s) {
     Web::PsramJsonDocument doc;
     doc["type"] = "radio_telemetry";
-    JsonObject o = doc["s"].to<JsonObject>();
-    RadioTelemetry::encode(s, o);
+    RadioTelemetry::encode(s, doc.as<JsonObject>());
     broadcast(doc);
   }
 

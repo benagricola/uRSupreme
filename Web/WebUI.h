@@ -759,6 +759,11 @@ namespace Web {
       doc["bootstrap"]  = bootstrap_mode;
       doc["identity_code_pending"] = !id_code().hex6.empty() && !id_code().consumed
                               && millis() < id_code().expires_ms;
+      // TTL for a newly-generated identity code (constant compiled into
+      // the firmware). Exposed so the SPA's identity-code hint text
+      // can render the actual duration instead of hard-coding a
+      // number that drifts whenever IDENTITY_CODE_TTL_MS changes.
+      doc["identity_code_ttl_ms"] = (uint32_t)IDENTITY_CODE_TTL_MS;
       // mDNS hostname (no .local suffix) advertised on STA. The SPA
       // uses this for the post-WiFi-save redirect so the user doesn't
       // have to hunt the device's new DHCP-assigned IP after a softAP

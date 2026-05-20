@@ -565,6 +565,15 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   box-shadow: 0 6px 20px rgba(0,0,0,0.45);
   z-index: 250;
   font-size: 13px;
+  /* Cap to viewport so long popovers (radio popover with its chart,
+     system popover with all sensor blocks) scroll internally instead
+     of clipping below the fold. Mostly engages on phones — both
+     portrait (height ~890 px so 80 px reserved fits everything) and
+     landscape (height ~412 px, the more painful case). Mobile-portrait
+     and landscape media queries below tighten the reserved space when
+     they need a larger header offset. */
+  max-height: calc(100dvh - 80px - env(safe-area-inset-top));
+  overflow-y: auto;
 }
 .popover-section { padding: 8px 0; border-bottom: 1px solid var(--bg-elev-2); }
 .popover-section:last-child { border-bottom: none; padding-bottom: 0; }
@@ -785,6 +794,17 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
     align-items: stretch;
   }
   .toast { max-width: none; }
+  /* Popovers sit BELOW the toast slot on mobile so toasts (z-index
+     400) don't overlay popover content (z-index 250). A 70 px band is
+     reserved for the toast stack — fits one multi-line toast or two
+     single-line ones; further stacks would overlap, but those
+     auto-dismiss in seconds. Internal scroll keeps tall popovers from
+     clipping off the bottom of the viewport. */
+  .popover {
+    top: calc(130px + env(safe-area-inset-top));
+    max-height: calc(100dvh - 140px - env(safe-area-inset-top));
+    overflow-y: auto;
+  }
 }
 
 /* ============================== MOBILE ============================== */
@@ -820,6 +840,39 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 @media (max-height: 480px) {
   #modal-settings.modal-bg { padding-top: calc(56px + env(safe-area-inset-top)); }
   .modal.modal-tall        { max-height: calc(100vh - 64px); }
+  /* Short-height layout (phone in landscape, ~412 px viewport tall).
+     Topbar + thread-header default heights total ~110 px — over a
+     quarter of the screen — leaving the message list cramped. Squeeze
+     them down to ~40 px each, keep the icons usable at 36 px (the
+     Material guideline 32 px floor, with 4 px clear-zone). Saves
+     ~30 vertical px for messages. */
+  #topbar {
+    padding-top: calc(2px + env(safe-area-inset-top));
+    padding-bottom: 2px;
+    gap: 6px;
+  }
+  button.icon {
+    width: 36px; height: 36px; min-width: 36px; min-height: 36px;
+  }
+  button.icon svg { width: 18px; height: 18px; }
+  button.icon.icon-with-label { min-width: 36px; padding: 0 6px 0 4px; }
+  #thread-header { padding: 4px 12px; gap: 8px; }
+  #thread-header .idc { transform: scale(0.85); transform-origin: left center; }
+  /* Landscape phone (~412 px tall, with browser address bar possibly
+     eating another 50–60 px). Pull popovers back near the topbar —
+     the mobile-portrait 130 px offset would leave very little for
+     content. `100dvh` instead of `100vh` so the height reflects the
+     CURRENTLY visible viewport (Firefox Android's bottom address bar
+     would otherwise hide the popover's bottom edge under it).
+     Toasts inherit the desktop default (top: 8 px, centred in topbar)
+     — the topbar in landscape is short enough that toasts overlap it
+     only briefly during their 3-5 s lifespan, and the landscape
+     topbar has more horizontal slack than portrait so the icons
+     under a centered toast are usually still tappable in the gaps. */
+  .popover {
+    top: calc(48px + env(safe-area-inset-top));
+    max-height: calc(100dvh - 56px - env(safe-area-inset-top));
+  }
 }
 
 /* Identity picker */
@@ -1068,7 +1121,14 @@ summary:hover { color: var(--text); }
     <div class="popover-value" id="status-wifi-ssid"></div>
     <div class="popover-subline" id="status-wifi-ip"></div>
     <div class="popover-subline" id="status-wifi-auth"></div>
-    <button class="secondary" id="btn-force-softap" hidden style="width:100%;margin-top:8px">Switch to softAP</button>
+    <button class="secondary" id="btn-force-softap" hidden style="width:100%;margin-top:8px"
+            title="Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again.">Switch to softAP</button>
+    <!-- The button itself carries a `title=` for desktop hover; this
+         subline duplicates the text inline because mobile browsers
+         can't reliably show tooltips (long-press is reserved for the
+         browser context menu, hover doesn't exist). Popover scrolls
+         internally so the extra line doesn't push other content
+         offscreen. -->
     <div class="popover-subline" id="status-wifi-hint" hidden>Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again.</div>
   </div>
   <div class="popover-section">
@@ -1076,7 +1136,8 @@ summary:hover { color: var(--text); }
       <div class="popover-label">Transport</div>
       <div id="status-transport-line"></div>
     </div>
-    <button class="secondary" id="btn-toggle-transport" style="width:100%;margin-top:8px">…</button>
+    <button class="secondary" id="btn-toggle-transport" style="width:100%;margin-top:8px"
+            title="Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots.">…</button>
     <div class="popover-subline">Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots.</div>
   </div>
 </div>
@@ -1268,10 +1329,16 @@ summary:hover { color: var(--text); }
   <div id="mi-wrap" style="width:100vw;height:100vh;overflow:auto;display:flex;align-items:center;justify-content:center;cursor:zoom-out">
     <img id="mi-img" alt="" style="max-width:100vw;max-height:100vh;display:block;cursor:zoom-in;touch-action:pinch-zoom">
   </div>
-  <button id="mi-close" class="icon" title="Close" style="position:absolute;top:env(safe-area-inset-top,8px);right:8px;background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.2)">
+  <!-- `top: calc(8px + env(safe-area-inset-top, 0px))` rather than the
+       earlier `env(..., 8px)` form: the fallback only fires when the env
+       is UNDEFINED; on most Android browsers safe-area-inset-top IS
+       defined but evaluates to 0, so the fallback never kicked in and
+       the button pinned flush to the top edge. The calc form always
+       gives the 8 px gap plus any real notch / status-bar inset. -->
+  <button id="mi-close" class="icon" title="Close" style="position:absolute;top:calc(8px + env(safe-area-inset-top, 0px));right:8px;background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.2)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
   </button>
-  <a id="mi-save" download class="icon" title="Save" style="position:absolute;top:env(safe-area-inset-top,8px);right:60px;background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.2);display:inline-flex;align-items:center;justify-content:center;text-decoration:none">
+  <a id="mi-save" download class="icon" title="Save" style="position:absolute;top:calc(8px + env(safe-area-inset-top, 0px));right:60px;background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.2);display:inline-flex;align-items:center;justify-content:center;text-decoration:none">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
   </a>
 </div>
@@ -1319,7 +1386,12 @@ summary:hover { color: var(--text); }
 <div id="modal-id-code" class="modal-bg" hidden>
   <div class="modal">
     <h3>Identity code available</h3>
-    <p class="muted">The device button was pressed and an identity code is now available for ~5 minutes. Read the 6 hex chars from the OLED.</p>
+    <!-- Duration text is filled at runtime from /api/info's
+         identity_code_ttl_ms so it matches the firmware's actual TTL
+         instead of a hard-coded guess. id-code-modal-hint is the
+         placeholder; the .id-code-hint span below carries the full
+         "how to generate" explanation. -->
+    <p class="muted"><span id="id-code-modal-hint"></span> Read the 6 hex chars from the OLED.</p>
     <p class="muted id-code-hint"></p>
     <input id="idc-input" maxlength="6" placeholder="abc123" style="margin-bottom:12px;font-family:ui-monospace,monospace">
     <div class="row">
@@ -1655,14 +1727,44 @@ const state = {
   // modem detected non-self activity — aggregate, not per-peer.
   // `noise` is the measured ambient RSSI when DCD is off; rssi-noise
   // = effective SNR.
-  radioTlm: { samples: [], cap: 120, seeded: false, periodMs: 1000, cwMax: 4 },
+  // `smoothing` is a sample-count for a trailing moving average applied
+  // at render time. Firmware emits 1Hz raw — 1 leaves the data
+  // unsmoothed (sharp announce spikes), 3-5 gives gentler humps.
+  // Server-side raw is preserved either way; this is purely a render
+  // knob the SPA controls.
+  radioTlm: { samples: [], cap: 120, seeded: false, periodMs: 1000, cwMax: 4, smoothing: 3 },
+  // Identity-code TTL in ms. Defaulted to the firmware's current value
+  // (60 s) for the first-render fallback; replaced from /api/info's
+  // identity_code_ttl_ms once that lands.
+  idCodeTtlMs: 60_000,
 };
 
 // Shared copy for the identity-code hint, displayed everywhere a hex code
-// is required. Filled into every <p class="id-code-hint"> by fillIdCodeHints.
-const ID_CODE_HINT = "<strong>Identity code:</strong> a 6-character hex code that proves you're physically holding the device — required for any action sensitive enough that doing it remotely should not be possible. To generate one: long-press the device's user button (~1 s), release, then short-press within 2 s; the code appears on the OLED for 5 minutes.";
+// is required. Filled into every <p class="id-code-hint"> by
+// fillIdCodeHints. The "appears for X" duration is rendered at runtime
+// from state.idCodeTtlMs (sourced via /api/info → identity_code_ttl_ms)
+// so it tracks the firmware's compile-time IDENTITY_CODE_TTL_MS — the
+// previous hard-coded "5 minutes" was wrong (firmware actually uses
+// 60 seconds) and would drift again if anyone changes the firmware
+// constant. Fallback to 60 s only if /api/info hasn't been fetched yet
+// (matches the current firmware value).
+function idCodeTtlText() {
+  const ms = (state && state.idCodeTtlMs) || 60_000;
+  const s  = Math.round(ms / 1000);
+  if (s < 60)        return s + ' seconds';
+  if (s % 60 === 0)  return (s / 60) + ' minutes';
+  return s + ' seconds';
+}
+function idCodeHintHtml() {
+  return '<strong>Identity code:</strong> a 6-character hex code that proves you\'re physically holding the device — required for any action sensitive enough that doing it remotely should not be possible. To generate one: long-press the device\'s user button (~1 s), release, then short-press within 2 s; the code appears on the OLED for ' + idCodeTtlText() + '.';
+}
 function fillIdCodeHints() {
-  document.querySelectorAll('.id-code-hint').forEach(e => e.innerHTML = ID_CODE_HINT);
+  const html = idCodeHintHtml();
+  document.querySelectorAll('.id-code-hint').forEach(e => e.innerHTML = html);
+  const modalHint = document.getElementById('id-code-modal-hint');
+  if (modalHint) {
+    modalHint.textContent = 'The device button was pressed and an identity code is now available for ~' + idCodeTtlText() + '.';
+  }
 }
 
 // ============================== UTIL ==============================
@@ -1801,6 +1903,13 @@ function renderTopbarProgress() {
   let total = 0, done = 0, any = false, anyUnknown = false;
   if (state.transfers && state.transfers.size > 0) {
     for (const t of state.transfers.values()) {
+      // Inbound transfers already surface as a synthetic "Incoming
+      // attachment" row in the conversation list with its own inline
+      // progress bar — double-billing them on the topbar strip is
+      // redundant and (because the firmware doesn't emit
+      // message_complete for inbound) was leaving the strip stuck on
+      // forever. Only count outbound here.
+      if (t.incoming) continue;
       any = true;
       if (typeof t.bytes_total === 'number' && t.bytes_total > 0) {
         total += t.bytes_total; done += Math.min(t.bytes_done || 0, t.bytes_total);
@@ -2566,7 +2675,12 @@ function renderThread() {
   cmp.hidden = false;
   $('view-app').classList.add('thread-open');
   $('thread-name').textContent = nameFor(peer);
-  $('thread-addr').textContent = peer;
+  // Truncated form so the header doesn't run under the retention /
+  // clear-conversation icons on narrow mobile widths. The browser
+  // tooltip carries the full hash for verification on hover / long-press.
+  const addrEl = $('thread-addr');
+  addrEl.textContent = shortHex(peer);
+  addrEl.title       = peer;
   $('thread-idc').innerHTML = identicon(peer, 36);
 
   // "Stickiness" detection: if the user is at-or-near the bottom before
@@ -2813,10 +2927,13 @@ function renderInboundAudio(meta, fallbackLabel) {
 // renderThread passes reuse the cached object URL so SSE rerenders
 // don't refetch.
 // Full-screen image viewer. Pulls the same blob URL the inline
-// preview was rendered from (no second fetch). Tap the image to
-// toggle between fit-to-viewport and natural size; pan with the
-// container's scroll when zoomed. Tap the backdrop or hit Escape
-// to close.
+// preview was rendered from (no second fetch). Tap anywhere (image,
+// backdrop, or hit Escape) closes the viewer. Pinch-zoom on mobile
+// (touch-action: pinch-zoom is set on the <img>); Ctrl+wheel on
+// desktop. The earlier click-to-toggle-zoom flow confused users
+// because the cursor cycled between zoom-in / zoom-out on every tap
+// and never gave them a "this dismisses" affordance — the close X in
+// the corner was the only exit, easy to miss on mobile.
 function openImageModal(url, meta) {
   const modal = $('modal-image');
   const img   = $('mi-img');
@@ -2824,12 +2941,13 @@ function openImageModal(url, meta) {
   const save  = $('mi-save');
   const close = $('mi-close');
   img.src = url;
-  // Reset to fit-mode each open.
   img.style.maxWidth = '100vw';
   img.style.maxHeight = '100vh';
   img.style.width = '';
   img.style.height = '';
-  img.style.cursor = 'zoom-in';
+  // Pointer cursor so the user knows tapping does something. Mobile
+  // doesn't show cursors anyway; this is purely a desktop hint.
+  img.style.cursor = 'pointer';
   // Pick a sensible save-as filename: sender's display_name when
   // present, otherwise the canonical hash filename.
   const dl = (meta && meta.display_name) || (meta && meta.filename) || 'image';
@@ -2837,37 +2955,20 @@ function openImageModal(url, meta) {
   save.href = url;
   modal.hidden = false;
 
-  let zoomed = false;
-  const toggleZoom = (e) => {
-    if (e) { e.stopPropagation(); e.preventDefault(); }
-    zoomed = !zoomed;
-    if (zoomed) {
-      img.style.maxWidth = 'none';
-      img.style.maxHeight = 'none';
-      img.style.cursor = 'zoom-out';
-    } else {
-      img.style.maxWidth = '100vw';
-      img.style.maxHeight = '100vh';
-      img.style.cursor = 'zoom-in';
-    }
-  };
-  const onBackdrop = (e) => {
-    // Click on the scroll wrap (but not the image itself) closes.
-    if (e.target === wrap || e.target === modal) cleanup();
-  };
   const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
+  const onTap = (e) => {
+    // Save / close buttons handle their own clicks; don't double-fire.
+    if (close.contains(e.target) || save.contains(e.target)) return;
+    cleanup();
+  };
   const cleanup = () => {
     modal.hidden = true;
-    img.removeEventListener('click', toggleZoom);
-    wrap.removeEventListener('click', onBackdrop);
-    modal.removeEventListener('click', onBackdrop);
+    modal.removeEventListener('click', onTap);
     close.removeEventListener('click', cleanup);
     document.removeEventListener('keydown', onKey);
     img.src = '';   // release reference; the cached blob URL stays in state.attachmentBlobs
   };
-  img.addEventListener('click', toggleZoom);
-  wrap.addEventListener('click', onBackdrop);
-  modal.addEventListener('click', onBackdrop);
+  modal.addEventListener('click', onTap);
   close.addEventListener('click', cleanup);
   document.addEventListener('keydown', onKey);
 }
@@ -3695,6 +3796,29 @@ function renderAttachTray() {
   });
 }
 
+// Shared dismiss predicate for topbar popovers. Returns true when the
+// click should close the popover — i.e. it landed outside both the
+// popover content AND any button that should KEEP the popover open.
+//
+// "Keep open" list:
+//   - the popover's own anchor button (handles toggle-to-close itself)
+//   - the announce icon (momentary action; users want the popover to
+//     remain so they can confirm the announce went out without losing
+//     context)
+//
+// Sibling popover anchors (e.g. btn-system while popover-status is
+// open) are NOT in the keep-open list — clicking them legitimately
+// wants to swap which popover is visible.
+function popoverDismissibleClick(ev, popoverId, anchorBtnId) {
+  const pop    = document.getElementById(popoverId);
+  const anchor = document.getElementById(anchorBtnId);
+  const ann    = document.getElementById('btn-announce-top');
+  if (pop    && pop.contains(ev.target))    return false;
+  if (anchor && (ev.target === anchor || anchor.contains(ev.target))) return false;
+  if (ann    && (ev.target === ann    || ann.contains(ev.target)))    return false;
+  return true;
+}
+
 async function forceAnnounce() {
   const btn = $('btn-announce-top');
   if (btn) btn.disabled = true;
@@ -3724,6 +3848,16 @@ async function refreshStatus() {
   try {
     const info = await state.transport.getInfo();
     state.lastInfo = info;
+    // Cache identity-code TTL so the hint text reflects the firmware's
+    // actual compile-time IDENTITY_CODE_TTL_MS (currently 60 s) rather
+    // than whatever number the SPA happened to ship with. Refresh any
+    // already-rendered hint placeholders in case the value just changed
+    // (e.g. first load before /api/info had arrived).
+    if (typeof info.identity_code_ttl_ms === 'number'
+        && info.identity_code_ttl_ms !== state.idCodeTtlMs) {
+      state.idCodeTtlMs = info.identity_code_ttl_ms;
+      fillIdCodeHints();
+    }
     applyStatusToButton(info);
     applyBatteryToButton(info);
     if (!$('popover-status').hidden) renderStatusPopover();
@@ -3893,9 +4027,10 @@ function renderStatusPopover() {
   }
   $('status-wifi-auth').textContent = authText;
   // Only show the softAP-toggle button when we're actually in STA
-  // mode — there's nothing to switch to from AP.
+  // mode — there's nothing to switch to from AP. The same gate
+  // applies to its accompanying explanatory subline.
   const showSoftapBtn = w.mode === 'sta';
-  $('btn-force-softap').hidden = !showSoftapBtn;
+  $('btn-force-softap').hidden  = !showSoftapBtn;
   $('status-wifi-hint').hidden  = !showSoftapBtn;
 
   // Storage now lives in the System-status popover (#120); /api/info
@@ -3924,9 +4059,16 @@ function openStatusPopover() {
   renderRadioCsmaLine();
   $('popover-status').hidden = false;
   // Close on outside click; defer one tick so this click doesn't fire it.
+  // Announce button is excluded — it's a momentary action button users
+  // may legitimately want to hit while reading the popover (e.g. open
+  // radio status, see online + no recent announce, tap announce, see
+  // the popover update without losing context). Other topbar buttons
+  // (settings / logout / system / power) are popover-toggles that
+  // SHOULD dismiss this one — their own click handlers close us before
+  // opening their target.
   setTimeout(() => {
     const dismiss = (ev) => {
-      if (!$('popover-status').contains(ev.target) && ev.target !== $('btn-status') && !$('btn-status').contains(ev.target)) {
+      if (popoverDismissibleClick(ev, 'popover-status', 'btn-status')) {
         $('popover-status').hidden = true;
         document.removeEventListener('click', dismiss);
       }
@@ -4011,13 +4153,29 @@ function renderRadioChart() {
   // set of nice round values so the scale "feels" stable across
   // adjacent renders (otherwise the lines jitter as the absolute max
   // shifts each second).
+  // Auto-scale max uses the same smoothing window as the rendered
+  // lines so the y-axis tracks what's actually drawn (not the raw
+  // spike peak that gets averaged away). Computed inline since
+  // `path()` below defines its own smoothing logic — refactoring into
+  // a shared helper would require passing the smoothing window twice.
   const UTIL_BUCKETS = [5, 10, 25, 50, 100];
   let utilMax = 0;
-  for (const sm of rt.samples) {
-    const u = sm.util || {};
-    if (u.others > utilMax) utilMax = u.others;
-    if (u.own    > utilMax) utilMax = u.own;
-  }
+  const smoothPeak = (key) => {
+    const sw = Math.max(1, rt.smoothing | 0);
+    for (let i = 0; i < rt.samples.length; i++) {
+      let sum = 0, count = 0;
+      for (let j = Math.max(0, i - sw + 1); j <= i; j++) {
+        const v = (rt.samples[j].util || {})[key];
+        if (typeof v === 'number') { sum += v; count++; }
+      }
+      if (count > 0) {
+        const avg = sum / count;
+        if (avg > utilMax) utilMax = avg;
+      }
+    }
+  };
+  smoothPeak('own');
+  smoothPeak('others');
   const yMax = UTIL_BUCKETS.find(b => b >= utilMax) || 100;
   const yUtil = (v) => padT + plotH - (Math.max(0, Math.min(yMax, v)) / yMax) * plotH;
   // RSSI y: tightened to the practical LoRa range. The previous
@@ -4039,17 +4197,26 @@ function renderRadioChart() {
     let v = s; for (const k of key.split('.')) { if (v == null) return undefined; v = v[k]; }
     return v;
   };
+  // Trailing-window moving average applied at render time. Window=1
+  // gives the raw 1Hz data (sharp triangle spikes); larger windows
+  // smooth proportionally. Index `i`'s value averages samples from
+  // [i - window + 1 .. i], skipping non-numeric or sentinel readings
+  // within the window so the average only weights real data points.
+  const smoothW = Math.max(1, rt.smoothing | 0);
+  const sentinel = (k, v) => (k === 'rssi' || k === 'noise') && v < -160;
   const path = (yfn, key) => {
     let d = '';
     for (let i = 0; i < n; i++) {
-      const v = get(rt.samples[i], key);
-      if (typeof v !== 'number') continue;
-      // Drop obvious uninitialised sentinels (firmware seeds rssi /
-      // noise to -292 until the modem reports anything). Without this
-      // the line pins to the y-axis floor for the first few seconds
-      // after boot, which looks like a real -292 dBm reading.
-      if ((key === 'rssi' || key === 'noise') && v < -160) continue;
-      d += (d ? 'L' : 'M') + xOf(i).toFixed(1) + ',' + yfn(v).toFixed(1) + ' ';
+      let sum = 0, count = 0;
+      for (let j = Math.max(0, i - smoothW + 1); j <= i; j++) {
+        const v = get(rt.samples[j], key);
+        if (typeof v !== 'number') continue;
+        if (sentinel(key, v)) continue;
+        sum += v; count++;
+      }
+      if (count === 0) continue;
+      const avg = sum / count;
+      d += (d ? 'L' : 'M') + xOf(i).toFixed(1) + ',' + yfn(avg).toFixed(1) + ' ';
     }
     return d;
   };
@@ -4393,7 +4560,7 @@ async function openSystemPopover() {
   startSystemTicker();
   setTimeout(() => {
     const dismiss = (ev) => {
-      if (!$('popover-system').contains(ev.target) && ev.target !== $('btn-system') && !$('btn-system').contains(ev.target)) {
+      if (popoverDismissibleClick(ev, 'popover-system', 'btn-system')) {
         $('popover-system').hidden = true;
         stopSystemTicker();
         document.removeEventListener('click', dismiss);
@@ -4466,9 +4633,7 @@ async function openPowerPopover() {
   }
   setTimeout(() => {
     const dismiss = (ev) => {
-      if (!$('popover-power').contains(ev.target)
-          && ev.target !== $('btn-power')
-          && !$('btn-power').contains(ev.target)) {
+      if (popoverDismissibleClick(ev, 'popover-power', 'btn-power')) {
         $('popover-power').hidden = true;
         if (_pwTicker) { clearInterval(_pwTicker); _pwTicker = null; }
         document.removeEventListener('click', dismiss);
@@ -4770,13 +4935,14 @@ function dispatchEvent(ev) {
     return;
   }
   if (ev.type === 'radio_telemetry') {
-    // 1Hz push from the firmware. Append to the local ring, drop the
-    // oldest if over capacity, repaint the chart + CSMA line only if
-    // the popover is currently open (avoids a 1Hz wakeup on every
-    // other view).
-    const s = ev.s || ev.sample || ev;
-    if (s && typeof s.ts === 'number') {
+    // 1Hz push from the firmware. Fields live flat alongside `type`
+    // (no `s` wrapper) to match the wire shape of the other light WS
+    // frames. Append the sample to the local ring, drop the oldest if
+    // over capacity, repaint the chart + CSMA line only if the
+    // popover is currently open.
+    if (typeof ev.ts === 'number') {
       const rt = state.radioTlm;
+      const { type, ...s } = ev;   // strip `type`, keep the sample fields
       rt.samples.push(s);
       while (rt.samples.length > rt.cap) rt.samples.shift();
       if (!$('popover-status').hidden) {
@@ -4977,6 +5143,12 @@ async function boot() {
   catch (e) { console.warn('getInfo failed:', e); info = null; }
   state.info = info;
   state.identities = (info && info.identities) || [];
+  // Snapshot the identity-code TTL before any pre-auth view renders so
+  // the hint text on the bootstrap / identity-picker screens shows
+  // the right number. refreshStatus() also does this post-login.
+  if (info && typeof info.identity_code_ttl_ms === 'number') {
+    state.idCodeTtlMs = info.identity_code_ttl_ms;
+  }
 
   if (info && info.bootstrap && !state.skipBootstrap) { return enterBootstrap(); }
   if (info && info.identity_code_pending) { state.pendingIdCode = true; }
@@ -5249,7 +5421,13 @@ $('btn-nc-go').addEventListener('click', () => {
 $('conv-list').addEventListener('click', (ev) => {
   const row = ev.target.closest('[data-peer]');
   if (!row) return;
-  selectConversation(row.getAttribute('data-peer'));
+  const peer = row.getAttribute('data-peer');
+  // Synthetic "Incoming attachment …" rows carry data-peer="" because
+  // the sender isn't decrypted yet. Treat them as non-interactive
+  // until the LXMF message arrives — clicking would otherwise
+  // selectConversation('') and unload whatever chat the user was on.
+  if (!peer) return;
+  selectConversation(peer);
 });
 
 $('btn-back').addEventListener('click', () => { state.openPeer = null; renderThread(); });

@@ -80,14 +80,43 @@ namespace WS {
   // Broadcast a JSON event to every client whose identity_id matches
   // `scope`. Pass an empty IdentityId to broadcast to all authed
   // clients (e.g. global sensor / time / announce events).
+  //
+  // Heap-fragmentation note (#173): the previous form did
+  //   String s; serializeJson(doc, s); for (...) srv.text(id, s);
+  // which churned the default heap twice per broadcast — once for the
+  // Arduino String (resizing via repeated realloc) and once per client
+  // for AsyncWebSocket's internal makeSharedBuffer std::vector copy.
+  // Both landed in internal SRAM at the same size range
+  // (~200–2 KiB) and at high frequency (sensor_update + system_update
+  // + message_progress) — exactly the size range the ESP-IDF WiFi
+  // driver's `esf_buf_alloc_dynamic` needs (1626 B for 802.11 TX frames),
+  // so app-side churn fragmented region 1 of internal SRAM and starved
+  // the WiFi MAC layer, dropping outbound frames and tearing down
+  // Reticulum links.
+  //
+  // The new form does one allocation per broadcast: a SharedBuffer
+  // sized exactly from measureJson(doc), serialised directly into via
+  // serializeJson(doc, ptr, len). The shared_ptr is ref-counted across
+  // all targeted clients — srv.text(id, buf) does NOT copy.
   inline void broadcast(const JsonDocument& doc, const LXMF::IdentityId& scope = {}) {
-    String s;
-    serializeJson(doc, s);
+    const size_t n = measureJson(doc);
+    if (n == 0) return;
+    AsyncWebSocketSharedBuffer buf;
+    try {
+      buf = std::make_shared<std::vector<uint8_t>>(n);
+    }
+    catch (const std::bad_alloc&) {
+      // Default heap is too fragmented to allocate even the buffer.
+      // Silently drop the event — losing a sensor_update is preferable
+      // to crashing or recursively fragmenting the heap further.
+      return;
+    }
+    serializeJson(doc, buf->data(), n);
     auto& srv = server();
     for (const auto& c : clients()) {
       if (!c.authed) continue;
       if (!scope.empty() && c.identity_id != scope) continue;
-      srv.text(c.client_id, s);
+      srv.text(c.client_id, buf);  // SharedBuffer overload — refcounted, no copy
     }
   }
 
@@ -105,7 +134,18 @@ namespace WS {
     msg["received_ms"]     = m.received_ms;
     msg["peer"]            = m.peer_hash.toHex();
     msg["title"]           = m.title;
-    msg["body"]            = m.content;
+    // Body delivery mirrors the HTTP outbox/inbox JSON contract (#172):
+    // small bodies inline, large bodies (body_on_disk) omitted so the
+    // SPA fetches lazily via /api/identities/{id}/inbox/{seq}/body.
+    // body_size is authoritative regardless of inline vs disk. Sending
+    // a 50 KiB body inline here would re-introduce the multi-KiB heap
+    // churn the streaming JSON + lazy load was meant to remove.
+    if (m.body_on_disk) {
+      msg["body"]          = "";
+    } else {
+      msg["body"]          = m.content;
+    }
+    msg["body_size"]       = m.body_size;
     msg["sig_ok"]          = m.signature_ok;
     if (!m.attachments.empty()) {
       JsonArray atts = msg["attachments"].to<JsonArray>();
@@ -326,8 +366,23 @@ namespace WS {
       if (hello_extras()) {
         hello_extras()(hello.as<JsonObject>());
       }
-      String s; serializeJson(hello, s);
-      client->text(s);
+      // Same SharedBuffer pattern as broadcast() — see comment there.
+      // Hello frames are the largest periodic WS message (~2 KiB JSON
+      // from hello_extras), and fire on every client connect, so they
+      // belong on the same allocation path as the periodic broadcasts.
+      const size_t n = measureJson(hello);
+      if (n > 0) {
+        AsyncWebSocketSharedBuffer buf;
+        try {
+          buf = std::make_shared<std::vector<uint8_t>>(n);
+          serializeJson(hello, buf->data(), n);
+          client->text(buf);
+        }
+        catch (const std::bad_alloc&) {
+          // Fragmented default heap; client will reconnect on its own
+          // policy. Better than crashing on the hello path.
+        }
+      }
     }
     else if (type == WS_EVT_DISCONNECT) {
       auto& v = clients();

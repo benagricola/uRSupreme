@@ -62,6 +62,25 @@ namespace LXMF {
     using BodyWriter = std::function<bool(const std::string& path, const std::string& content)>;
     using BodyReader = std::function<bool(const std::string& path, std::string& out_content)>;
     using BodyRemover = std::function<void(const std::string& path)>;
+    // Returns the body file's size in bytes, or 0 if missing/unreadable.
+    // Used by load_from_jsonl to recover `body_size` for legacy records
+    // persisted before that field existed (no full body read required —
+    // size is a stat() call). Called at most once per legacy record at
+    // boot. Optional; if not set, legacy records return body_size=0
+    // (SPA will skip body display for those — acceptable degradation).
+    using BodySizeReader = std::function<uint32_t(const std::string& path)>;
+    // Streams the body file contents into the supplied buffer starting
+    // at `offset`, writing up to `max_len` bytes. Returns bytes written.
+    // 0 means EOF (or error — caller distinguishes via expected size).
+    // This is the hot path for the streaming /body endpoint: each TCP
+    // chunk callback invokes the reader for the next slice. The reader
+    // is responsible for keeping the file open across calls if it wants
+    // to (e.g. via a thread-local FILE* cache); the default fopen-per-
+    // chunk implementation is fine since LittleFS open is cheap.
+    using BodyChunkReader = std::function<size_t(const std::string& path,
+                                                 size_t offset,
+                                                 uint8_t* buf,
+                                                 size_t max_len)>;
 
     LXMFInbox(const std::string& identity_dir,
               const char* filename,
@@ -85,6 +104,13 @@ namespace LXMF {
       _body_reader  = std::move(r);
       _body_remover = std::move(d);
     }
+    void set_body_size_reader(BodySizeReader r) {
+      _body_size_reader = std::move(r);
+    }
+    void set_body_chunk_reader(BodyChunkReader r) {
+      _body_chunk_reader = std::move(r);
+    }
+    const BodyChunkReader& body_chunk_reader() const { return _body_chunk_reader; }
     // Absolute path for the body file of a given seq. The writer/reader
     // callbacks see this path and pick the backend (SD-first then flash).
     std::string body_path_for(uint32_t seq) const {
@@ -234,6 +260,11 @@ namespace LXMF {
       // write fails — the JSONL line might then be oversize and rejected
       // by the serialization check below, but that surfaces clearly
       // rather than silently truncating.
+      // Capture body_size BEFORE any potential clear() so it survives
+      // the post-spill drop of rec.content. Authoritative for downstream
+      // consumers (SPA's "should I fetch /body?" check; streaming /body
+      // endpoint's Content-Length).
+      const uint32_t body_size = (uint32_t)rec.content.size();
       bool spilled = false;
       if (rec.content.size() > BODY_SPILL_THRESHOLD && _body_writer) {
         if (_body_writer(body_path_for(rec.seq), rec.content)) {
@@ -242,6 +273,22 @@ namespace LXMF {
         }
       }
       if (!spilled) doc["body"] = rec.content;
+      doc["body_size"] = body_size;
+      rec.body_size = body_size;
+      // Hot-path memory: once the body bytes are safely on disk, drop
+      // the in-memory copy. Future reads route through the streaming
+      // /body endpoint, which copies disk → small SRAM scratch → TCP
+      // without materialising the full body in RAM. ESP-IDF puts
+      // std::string allocations > 16 KiB in PSRAM, but PSRAM is still
+      // contended with WiFi/lwIP DMA buffers and the persist-and-drop
+      // model is cleaner regardless of allocator.
+      if (spilled) {
+        rec.content.clear();
+        rec.content.shrink_to_fit();
+        rec.body_on_disk = true;
+      } else {
+        rec.body_on_disk = false;
+      }
       doc["in"]      = rec.incoming;
       doc["sig"]     = rec.signature_ok;
       doc["status"]  = outbox_status_name(rec.status);
@@ -398,23 +445,26 @@ namespace LXMF {
       std::string peer_hex = doc["peer"]    | "";
       rec.peer_hash.assignHex(peer_hex.c_str());
       rec.title    = (const char*)(doc["title"] | "");
-      // body_disk: load from spill file when set; falls back to inline
-      // body for legacy records that pre-date the spill mechanism.
+      // body_disk records keep `content` empty in RAM — body is read
+      // on demand by the streaming /body endpoint. body_size is the
+      // authoritative size (used by the SPA to decide whether to
+      // fetch lazily). For legacy records without body_size, fall back
+      // to file_size lookup; for inline (non-spilled) records, content
+      // size IS the body size.
       if (doc["body_disk"] | false) {
-        if (_body_reader) {
-          std::string body;
-          if (_body_reader(body_path_for(rec.seq), body)) {
-            rec.content = body;
-          } else {
-            WARNINGF("LXMFInbox: body_disk=true but body file missing for seq=%u",
-                     (unsigned)rec.seq);
-            rec.content = "";
-          }
-        } else {
-          rec.content = "";
+        rec.content = "";
+        rec.body_on_disk = true;
+        rec.body_size = (uint32_t)(doc["body_size"] | 0);
+        if (rec.body_size == 0 && _body_size_reader) {
+          // Legacy record: persisted before body_size existed. Probe
+          // the spill file directly for its size. This is one stat()
+          // call per legacy record at boot — acceptable.
+          rec.body_size = _body_size_reader(body_path_for(rec.seq));
         }
       } else {
         rec.content = (const char*)(doc["body"]  | "");
+        rec.body_on_disk = false;
+        rec.body_size = (uint32_t)rec.content.size();
       }
       rec.incoming = (bool)(doc["in"]  | false);
       rec.signature_ok = (bool)(doc["sig"] | false);
@@ -458,18 +508,26 @@ namespace LXMF {
         doc["recv_ms"] = copy.received_ms;
         doc["peer"]    = copy.peer_hash.toHex();
         doc["title"]   = copy.title;
-        // Match append()'s spill rule: bodies above the threshold keep
-        // their on-disk spill file (already written at original append
-        // time; re-spill defensively in case the file was lost). Smaller
-        // bodies inline.
+        // Body persistence during rewrite. Three cases:
+        //  1. body_on_disk already (post-#172): in-memory content is
+        //     empty by design. The body file stays where it is — we
+        //     just preserve body_disk + body_size in the new JSONL line.
+        //  2. Inline above threshold (legacy or freshly-appended in this
+        //     boot before drop): spill to disk now, then drop in-RAM
+        //     content to free std::string allocation.
+        //  3. Inline below threshold: write inline.
         bool spilled = false;
-        if (copy.content.size() > BODY_SPILL_THRESHOLD && _body_writer) {
+        if (copy.body_on_disk) {
+          doc["body_disk"] = true;
+          spilled = true;
+        } else if (copy.content.size() > BODY_SPILL_THRESHOLD && _body_writer) {
           if (_body_writer(body_path_for(copy.seq), copy.content)) {
             doc["body_disk"] = true;
             spilled = true;
           }
         }
         if (!spilled) doc["body"] = copy.content;
+        doc["body_size"] = copy.body_size > 0 ? copy.body_size : (uint32_t)copy.content.size();
         doc["in"]      = copy.incoming;
         doc["sig"]     = copy.signature_ok;
         doc["status"]  = outbox_status_name(copy.status);
@@ -521,6 +579,8 @@ namespace LXMF {
     BodyWriter                 _body_writer;
     BodyReader                 _body_reader;
     BodyRemover                _body_remover;
+    BodySizeReader             _body_size_reader;
+    BodyChunkReader            _body_chunk_reader;
   };
 
 } // namespace LXMF

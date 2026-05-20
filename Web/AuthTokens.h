@@ -76,16 +76,30 @@ namespace Web {
         obj["created_ms"]   = t.created_ms;
         obj["last_seen_ms"] = t.last_seen_ms;
       }
-      // Use a growable String — at MAX_TOKENS=16 the JSON runs ~2 KB, well
-      // past any reasonable stack-buffer choice.
-      String body;
-      if (serializeJson(doc, body) == 0) {
+      // Serialise directly into an exact-sized heap buffer rather than a
+      // growable Arduino String. Save() runs on every successful login
+      // and every token-cleanup pass; at MAX_TOKENS=16 the JSON is ~2 KB,
+      // and the previous String-grow-by-doubling pattern allocated up
+      // to 4 KiB transient (final 2 KiB + intermediate 2 KiB during the
+      // last realloc) on the default heap — exactly the size range the
+      // ESP-IDF WiFi driver needs for its esf_buf TX envelopes (#173).
+      // measureJson + one-shot alloc removes the realloc churn.
+      const size_t n = measureJson(doc);
+      if (n == 0) {
+        WARNING("AuthTokens: save measure returned 0");
+        return;
+      }
+      auto buf = std::make_unique<uint8_t[]>(n);
+      if (!buf) {
+        WARNING("AuthTokens: save buffer alloc failed");
+        return;
+      }
+      const size_t written = serializeJson(doc, buf.get(), n);
+      if (written == 0) {
         WARNING("AuthTokens: save serialization failed");
         return;
       }
-      filesystem.writeFile(STORE_PATH,
-                           reinterpret_cast<const uint8_t*>(body.c_str()),
-                           body.length());
+      filesystem.writeFile(STORE_PATH, buf.get(), written);
     }
 
     // Issue a fresh token for an identity. Returns the hex token. The

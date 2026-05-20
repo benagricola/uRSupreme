@@ -83,7 +83,9 @@ namespace LXMF {
     uint32_t      received_ms;    // millis() at the moment this record was appended to its inbox/outbox. Monotonic only within boot_epoch.
     RNS::Bytes    peer_hash;      // Remote LXMF address (16 bytes). For incoming: source. For outgoing: destination.
     std::string   title;          // LXMF title field (often empty).
-    std::string   content;        // Plaintext message content.
+    std::string   content;        // Plaintext message content. EMPTY when body_size > 0 && body_on_disk == true — load lazily via the body endpoint (or `_body_reader` on the inbox/outbox) instead of materialising the whole string in RAM. Inline only for messages under BODY_SPILL_THRESHOLD.
+    uint32_t      body_size = 0;  // Total body size in bytes (whether stored inline in `content` or spilled to disk). Authoritative — the SPA uses this for "load body?" decisions and the streaming /body endpoint uses it as Content-Length.
+    bool          body_on_disk = false;  // True when the body lives in the spill file (body_path_for(seq)) and `content` is intentionally empty. False when `content` holds the full body inline.
     bool          incoming;       // True for received, false for sent.
     bool          signature_ok;   // For incoming: did the Ed25519 signature verify against a known identity? For outgoing: always true.
     OutboxStatus  status;         // Only meaningful for outgoing messages; Delivered for incoming.

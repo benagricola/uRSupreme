@@ -37,6 +37,7 @@
 #include "Web/Ntp.h"
 #include "Storage/SDCard.h"
 #include <ResourceBuffer.h>  // for RNS::set_resource_tmp_path_resolver
+#include <Cryptography/Token.h>  // for RNS::Cryptography::Token::init_shared_scratch
 #include "Web/Bme280.h"
 #include "Web/QmcMag.h"
 #include "Web/QmiImu.h"
@@ -56,6 +57,8 @@ SPIClass SDSPI(HSPI);
 
 #if MCU_VARIANT == MCU_ESP32
   #include <esp_task_wdt.h>
+  #include <esp_heap_caps.h>
+  #include <esp_debug_helpers.h>  // esp_backtrace_print() in on_heap_alloc_failed
 #endif
 
 // WDT timeout
@@ -435,6 +438,72 @@ static void start_display_refresh_task() {
     0  // core 0 (PRO_CPU)
   );
 }
+
+// ---------------------------------------------------------------------------
+// Heap sampler — periodic DMA-cap + internal-SRAM heap stats so we can see
+// the moment-by-moment trajectory during Resource transfers. Without this
+// we only see snapshots at AES enc[ENTER/EXIT]; with it we see what
+// happens in between (where the 11.6 KiB drain over 977 ms was observed).
+//
+// Output every 100 ms; lots of serial volume but tractable. Set sampling
+// interval lower (e.g. 50 ms) if needed for finer trajectory.
+// ---------------------------------------------------------------------------
+static void heap_sampler_task(void* /*arg*/) {
+  for (;;) {
+    NOTICEF("[HEAP] dma_free=%u dma_largest=%u int_free=%u int_largest=%u",
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+}
+
+static void start_heap_sampler_task() {
+  static TaskHandle_t handle = nullptr;
+  if (handle) return;
+  xTaskCreatePinnedToCore(
+    heap_sampler_task,
+    "heap_sampler",
+    3072,
+    nullptr,
+    1,
+    &handle,
+    0  // core 0
+  );
+}
+
+// Alloc-failure hook — fires from inside heap_caps_malloc when it returns
+// NULL. We get the requested size, requested caps, and the calling
+// function name. Logs the failure plus calls heap_caps_dump for the
+// requested cap mask so we see every live block in that pool at the
+// failure moment. Block size patterns identify the consumer (many
+// 1500-byte blocks = lwIP pbufs, one 24KB block = WiFi rxbuf, etc).
+//
+// Throttle to one dump per second — if alloc failures cascade we don't
+// want to drown serial.
+static void on_heap_alloc_failed(size_t size, uint32_t caps, const char* function_name) {
+  static uint32_t last_dump_ms = 0;
+  const uint32_t now = millis();
+  ERRORF("[HEAP-FAIL] %s requested %u bytes caps=0x%x — dma_free=%u dma_largest=%u int_free=%u int_largest=%u",
+         function_name ? function_name : "?",
+         (unsigned)size, (unsigned)caps,
+         (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
+         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+  // Print a backtrace at the failure point so we can identify the caller
+  // by PC address (use `addr2line` on the .elf to resolve). function_name
+  // is just the heap_caps API entry; we need the caller's frame to know
+  // who's actually asking for this allocation.
+  esp_backtrace_print(10);
+  if (now - last_dump_ms > 1000) {
+    last_dump_ms = now;
+    // Dump heap info for the requested caps mask — prints each free
+    // block size + count per region. Reveals fragmentation pattern.
+    heap_caps_print_heap_info(caps);
+  }
+}
 #endif
 
 void setup() {
@@ -461,6 +530,38 @@ void setup() {
 	printf("Total PSRAM: %7u bytes\n", ESP.getPsramSize());
 #endif
 	//printf("Total flash: %zu bytes\n", RNS::Utilities::OS::storage_size());
+
+#if defined(ESP32)
+  // Heap diagnostic — register failure callback. Sampler task is
+  // disabled (concurrent Serial writes from two tasks tangle the output
+  // at the per-byte level). The per-encrypt AES enc[ENTER/EXIT] logs
+  // and the alloc-failure dump are sufficient + serialised.
+  heap_caps_register_failed_alloc_callback(on_heap_alloc_failed);
+#endif
+
+#if defined(ESP32)
+  // Reserve 32 KiB (2 x 16 KiB) of MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL
+  // for Token's AES staging scratch. This MUST happen before BLE and
+  // WiFi initialise — once they're up they consume most of the DMA-cap
+  // heap and a 16 KiB allocation reliably fails.
+  //
+  // Runtime equivalent of CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768,
+  // which the precompiled Arduino-ESP32 framework ships set to 0.
+  // Without this reservation, sustained encrypt load (Resource bulk +
+  // immediate ADV/HMU) starves esp-aes's per-call DMA allocations,
+  // manifesting as "esp-aes: Failed to allocate memory" → Resource
+  // transfer abort.
+  //
+  // Soft-fail: if the alloc doesn't succeed (extremely unlikely at
+  // this point in boot, would mean total heap exhaustion), Token
+  // falls back to direct mbedtls_aes_crypt_cbc calls — works for
+  // small messages but crashes for big Resource transfers, i.e.
+  // pre-fix behaviour.
+  if (!RNS::Cryptography::Token::init_shared_scratch(4 * 1024)) {
+    printf("WARNING: Token AES scratch reservation failed at boot — "
+           "big Resource transfers may fail under WiFi load\n");
+  }
+#endif
 
   // Configure WDT
   #if MCU_VARIANT == MCU_ESP32

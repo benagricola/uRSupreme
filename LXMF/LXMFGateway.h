@@ -529,6 +529,60 @@ namespace LXMF {
       a.inbox->set_body_storage(body_writer, body_reader, body_remover);
       a.outbox->set_body_storage(body_writer, body_reader, body_remover);
 
+      // body_size_reader — returns the on-disk body file's size in
+      // bytes without reading its content. Used at boot to recover
+      // body_size for legacy records persisted before that field
+      // existed (no per-record full body read). Single stat() per file.
+      LXMFInbox::BodySizeReader body_size_reader = [](const std::string& path) -> uint32_t {
+        if (Storage::SDCard::present() && Storage::SDCard::exists(path.c_str())) {
+          auto f = Storage::SDCard::open_read(path.c_str());
+          if (f) {
+            const size_t sz = f.size();
+            f.close();
+            return (uint32_t)sz;
+          }
+        }
+        if (filesystem.exists(path.c_str())) {
+          return (uint32_t)filesystem.size(path.c_str());
+        }
+        return 0;
+      };
+      a.inbox->set_body_size_reader(body_size_reader);
+      a.outbox->set_body_size_reader(body_size_reader);
+
+      // body_chunk_reader — slices a window out of the on-disk body
+      // file for the streaming /body endpoint. Each call opens the
+      // file, seeks to `offset`, reads up to `max_len` bytes, closes.
+      // LittleFS open is cheap (no syscall round-trip); SD is more
+      // expensive but still well under one TCP RTT. Keeping no
+      // persistent FILE* simplifies lifetime — the streaming response
+      // can outlive any single handler invocation, and we don't want
+      // to leak file handles if the client disconnects mid-stream.
+      LXMFInbox::BodyChunkReader body_chunk_reader = [](const std::string& path,
+                                                         size_t offset,
+                                                         uint8_t* buf,
+                                                         size_t max_len) -> size_t {
+        if (Storage::SDCard::present() && Storage::SDCard::exists(path.c_str())) {
+          auto f = Storage::SDCard::open_read(path.c_str());
+          if (f) {
+            f.seek(offset);
+            const size_t r = f.read(buf, max_len);
+            f.close();
+            return r;
+          }
+        }
+        if (!filesystem.exists(path.c_str())) return 0;
+        microStore::File f = filesystem.open(path.c_str(),
+                                              microStore::File::ModeRead, false);
+        if (!f) return 0;
+        if (offset > 0) f.seek((uint32_t)offset, microStore::SeekModeSet);
+        const size_t r = f.read(buf, max_len);
+        f.close();
+        return r;
+      };
+      a.inbox->set_body_chunk_reader(body_chunk_reader);
+      a.outbox->set_body_chunk_reader(body_chunk_reader);
+
       auto on_remove = [adir, p = &a](const MessageRecord& rec) {
         for (const auto& att : rec.attachments) {
           if (att.filename.empty()) continue;

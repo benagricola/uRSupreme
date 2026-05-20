@@ -15,6 +15,7 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
+#include <ChunkPrint.h>
 #include <Log.h>
 #include <Reticulum.h>
 #include <Transport.h>
@@ -437,10 +438,37 @@ namespace Web {
       return u;
     }
 
-    static void send_json(AsyncWebServerRequest* req, int code, const JsonDocument& doc) {
-      String body;
-      serializeJson(doc, body);
-      req->send(code, "application/json", body);
+    // Streams the JSON document to the client via beginChunkedResponse +
+    // ChunkPrint, never materialising the full serialised JSON as an
+    // Arduino String. Required because String allocates from the default
+    // heap (internal SRAM); for responses > ~16 KiB the realloc hits the
+    // largest-contiguous-block ceiling and partway-fails, producing
+    // garbled output where later field values overwrite earlier bytes
+    // (observed: outbox JSON with 50K body returned `"ts":1.AAA...`).
+    //
+    // The filler closure owns the JsonDocument via shared_ptr because
+    // the original lives on the handler's stack which returns before
+    // any bytes are sent. serializeJson runs once per TCP chunk —
+    // ChunkPrint discards the first `index` bytes (already sent) and
+    // writes up to `maxLen` into the buffer. CPU cost is O(N) per chunk,
+    // O(N²/chunkSize) total; for a 50 KiB response on a 240 MHz ESP32-S3
+    // that's ~50 ms — acceptable given the device is memory-poor,
+    // CPU-rich.
+    //
+    // Takes `doc` by non-const lvalue ref and std::move's into the
+    // shared_ptr: zero-copy transfer of the ArduinoJson internal pool.
+    // Callers MUST NOT use `doc` after send_json — its pool is empty.
+    static void send_json(AsyncWebServerRequest* req, int code, JsonDocument& doc) {
+      auto holder = std::make_shared<JsonDocument>(std::move(doc));
+      AsyncWebServerResponse* response = req->beginChunkedResponse(
+        "application/json",
+        [holder](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
+          ChunkPrint dest(buf, index, maxLen);
+          serializeJson(*holder, dest);
+          return dest.written();
+        });
+      response->setCode(code);
+      req->send(response);
     }
 
     static void send_error(AsyncWebServerRequest* req, int code, const char* msg) {
@@ -634,6 +662,17 @@ namespace Web {
       // a Failed outbox entry. Resets the auto-retry budget.
       server.on(uri("/api/identities/{}/outbox/{}/retry"),
                 HTTP_POST, handle_outbox_retry);
+      // GET /api/identities/{id}/{outbox|inbox}/{seq}/body — stream the
+      // message body bytes straight from the spill file via a chunked
+      // response that reads disk → small scratch → TCP. Used by the SPA
+      // when a record's `body_size > 0 && body` is empty in the list
+      // response (body lives on disk, not in RAM). Returns text/plain;
+      // body bytes are whatever the original sender provided (UTF-8 in
+      // practice). Returns 404 if the file is missing.
+      server.on(uri("/api/identities/{}/outbox/{}/body"),
+                HTTP_GET, handle_message_body_outbox);
+      server.on(uri("/api/identities/{}/inbox/{}/body"),
+                HTTP_GET, handle_message_body_inbox);
       server.on(uri("/api/identities/{}/state"),    HTTP_GET,  handle_state);
       server.on(uri("/api/identities/{}/conversations/{}"),
                 HTTP_DELETE, handle_clear_conversation);
@@ -2031,7 +2070,17 @@ namespace Web {
         obj["received_ms"] = m.received_ms;
         obj["peer"]        = m.peer_hash.toHex();
         obj["title"]       = m.title;
-        obj["body"]        = m.content;
+        // Body delivery: small bodies inline (content held in RAM by
+        // the MessageRecord); large bodies omitted from the list
+        // response — the SPA fetches them lazily via the streaming
+        // /body endpoint when it actually wants to render them.
+        // body_size is always authoritative (whether inline or on disk).
+        if (m.body_on_disk) {
+          obj["body"]      = "";
+        } else {
+          obj["body"]      = m.content;
+        }
+        obj["body_size"]   = m.body_size;
         obj["sig_ok"]      = m.signature_ok;
         obj["status"]      = LXMF::outbox_status_name(m.status);
         // Attachments (LXMF fields-dict file/image/audio blobs). The
@@ -2093,6 +2142,84 @@ namespace Web {
       send_json(req, 200, doc);
     }
 
+    // GET /api/identities/{id}/{outbox|inbox}/{seq}/body — stream the
+    // body bytes from disk into the response in chunks. Reads disk →
+    // small SRAM scratch (managed by ESPAsyncWebServer's TCP buffer)
+    // → TCP. Never materialises the full body in RAM. The chunked
+    // response's filler callback runs per TCP segment; each call
+    // reads up to maxLen bytes at the current offset. body_size on
+    // the MessageRecord is the authoritative Content-Length.
+    //
+    // For inline bodies (body_size <= BODY_SPILL_THRESHOLD ≈ 319 B),
+    // the SPA already has the content in the list response — these
+    // endpoints don't apply. We still serve inline bodies by writing
+    // m.content directly into the chunked response, so the SPA can
+    // use a single fetch path regardless of size. Same shape, smaller
+    // cost.
+    static void handle_message_body_outbox(AsyncWebServerRequest* req) {
+      handle_message_body_impl(req, /*outbox=*/true);
+    }
+    static void handle_message_body_inbox(AsyncWebServerRequest* req) {
+      handle_message_body_impl(req, /*outbox=*/false);
+    }
+    static void handle_message_body_impl(AsyncWebServerRequest* req, bool outbox) {
+      RnsLockGuard _g;
+      LXMF::IdentityId caller = require_auth(req);
+      if (caller.empty()) return;
+      std::string requested = std::string(req->pathArg(0).c_str());
+      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
+      if (!a || !a->outbox || !a->inbox) {
+        send_error(req, 404, "unknown_identity"); return;
+      }
+      const uint32_t seq = (uint32_t)atoi(req->pathArg(1).c_str());
+      auto* mailbox = outbox ? a->outbox.get() : a->inbox.get();
+      // recent() clamps to the ring's actual size, so SIZE_MAX-equivalent
+      // just returns the whole ring — exactly what we want for a seq
+      // lookup with no a-priori upper bound.
+      auto msgs = mailbox->recent(static_cast<size_t>(-1));
+      const LXMF::MessageRecord* rec = nullptr;
+      for (const auto& m : msgs) {
+        if (m.seq == seq) { rec = &m; break; }
+      }
+      if (!rec) { send_error(req, 404, "seq_not_found"); return; }
+      const uint32_t total = rec->body_size;
+      if (total == 0) {
+        // No body at all — empty response, content-length 0.
+        AsyncWebServerResponse* response =
+          req->beginResponse(200, "text/plain", "");
+        req->send(response);
+        return;
+      }
+      if (!rec->body_on_disk) {
+        // Inline path. We can't safely move out of rec->content (it
+        // belongs to the in-RAM ring); copy the bytes into a heap
+        // String — but only for SMALL inline bodies, which by
+        // construction are < BODY_SPILL_THRESHOLD ≈ 319 B. Negligible.
+        AsyncWebServerResponse* response =
+          req->beginResponse(200, "text/plain",
+                             String(rec->content.c_str(), rec->content.size()));
+        req->send(response);
+        return;
+      }
+      // Disk-backed body. Stream via beginResponse(contentLength, filler):
+      // ESPAsyncWebServer drives the filler whenever it can write to TCP.
+      // We capture the path + chunk reader by value into the lambda; the
+      // mailbox object outlives the response (identity-scoped, lives
+      // until factory_reset), so the chunk_reader reference is stable.
+      const std::string path = mailbox->body_path_for(seq);
+      const auto& chunk_reader = mailbox->body_chunk_reader();
+      if (!chunk_reader) {
+        send_error(req, 500, "no_body_chunk_reader"); return;
+      }
+      AsyncWebServerResponse* response = req->beginResponse(
+        "text/plain", total,
+        [path, &chunk_reader](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
+          return chunk_reader(path, index, buf, maxLen);
+        });
+      req->send(response);
+    }
+
     // POST /api/identities/{id}/outbox/{seq}/retry — manually re-queue
     // a Failed outbox entry whose auto-retry budget was exhausted. The
     // outbox seq -> MessageRecord -> packet_hash (== PendingLinkSend
@@ -2148,6 +2275,21 @@ namespace Web {
 
     static void handle_send(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
+      // Big-body diagnostic — log heap state on entry / exit of large
+      // POSTs so we can see whether the wedge happens during the HTTP
+      // ingest (this handler), during outbox write (later in this
+      // function), or only later in the LXMF gateway loop's encrypt.
+      const size_t content_hint = body.containsKey("content")
+        ? strlen(body["content"] | "")
+        : strlen(body["body"] | "");
+      const bool diag_send = content_hint > 1024;
+      if (diag_send) {
+        NOTICEF("handle_send[ENTER] content_len=%u dma_free=%u dma_largest=%u sram_free=%u",
+               (unsigned)content_hint,
+               (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+               (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
+               (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+      }
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
       std::string requested = std::string(req->pathArg(0).c_str());
@@ -2246,6 +2388,13 @@ namespace Web {
       doc["queued_seq"] = rec.seq;
       doc["status"]     = LXMF::outbox_status_name(rec.status);
       send_json(req, 202, doc);
+      if (diag_send) {
+        NOTICEF("handle_send[EXIT] seq=%u status=%s dma_free=%u dma_largest=%u sram_free=%u",
+               (unsigned)rec.seq, LXMF::outbox_status_name(rec.status),
+               (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+               (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
+               (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+      }
     }
 
     static void handle_state(AsyncWebServerRequest* req) {

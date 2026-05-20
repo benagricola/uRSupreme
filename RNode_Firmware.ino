@@ -65,15 +65,21 @@ SPIClass SDSPI(HSPI);
 #define WDT_TIMEOUT 60  // seconds
 
 FIFOBuffer serialFIFO;
-uint8_t serialBuffer[CONFIG_UART_BUFFER_SIZE+1];
+// PSRAM-preferred allocations for the four big radio/UART buffers.
+// On PSRAM boards (T-Beam Supreme, Heltec V4) these land in SPIRAM,
+// freeing ~14 KB of internal SRAM that's contested by Wi-Fi/lwIP under
+// concurrent web load. On non-PSRAM boards the SPIRAM alloc returns NULL
+// and we fall back to internal malloc, identical behaviour to the old
+// static arrays. Allocated once in setup() before fifo_init().
+uint8_t* serialBuffer = nullptr;
 
 FIFOBuffer16 packet_starts;
-uint16_t packet_starts_buf[CONFIG_QUEUE_MAX_LENGTH+1];
+uint16_t* packet_starts_buf = nullptr;
 
 FIFOBuffer16 packet_lengths;
-uint16_t packet_lengths_buf[CONFIG_QUEUE_MAX_LENGTH+1];
+uint16_t* packet_lengths_buf = nullptr;
 
-uint8_t packet_queue[CONFIG_QUEUE_SIZE];
+uint8_t* packet_queue = nullptr;
 
 #if defined(HAS_LXMF_GATEWAY)
 // Diagnostic: per-burst BLE-in byte counter, drained either when 64 bytes
@@ -506,10 +512,40 @@ static void on_heap_alloc_failed(size_t size, uint32_t caps, const char* functio
 }
 #endif
 
+// PSRAM-first allocator with internal-RAM fallback. Returns NULL only if
+// BOTH PSRAM and internal RAM allocations fail (effectively never at
+// boot). On non-PSRAM boards the first call silently returns NULL and
+// we fall through to MALLOC_CAP_8BIT (regular heap). On PSRAM boards
+// large buffers move out of contested internal SRAM.
+static void* psram_or_internal(size_t n) {
+#if defined(ESP32)
+  void* p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
+  if (!p) p = heap_caps_malloc(n, MALLOC_CAP_8BIT);
+  return p;
+#else
+  return malloc(n);
+#endif
+}
+
 void setup() {
 
+  // Allocate the four big radio/UART buffers in PSRAM (~14 KB freed
+  // from internal SRAM on PSRAM boards). MUST happen before fifo_init.
+  // No graceful failure path — these are required to operate; panic
+  // early if both PSRAM and internal allocations are out.
+  serialBuffer       = (uint8_t*)psram_or_internal(CONFIG_UART_BUFFER_SIZE + 1);
+  packet_queue       = (uint8_t*)psram_or_internal(CONFIG_QUEUE_SIZE);
+  packet_starts_buf  = (uint16_t*)psram_or_internal((CONFIG_QUEUE_MAX_LENGTH + 1) * sizeof(uint16_t));
+  packet_lengths_buf = (uint16_t*)psram_or_internal((CONFIG_QUEUE_MAX_LENGTH + 1) * sizeof(uint16_t));
+  if (!serialBuffer || !packet_queue || !packet_starts_buf || !packet_lengths_buf) {
+    // We have not initialised the serial port yet, but the IDF early
+    // boot serial output gets to UART0 directly. abort() prints the
+    // diagnostic + reset reason.
+    abort();
+  }
+
   // Initialise serial communication
-  memset(serialBuffer, 0, sizeof(serialBuffer));
+  memset(serialBuffer, 0, CONFIG_UART_BUFFER_SIZE + 1);
   fifo_init(&serialFIFO, serialBuffer, CONFIG_UART_BUFFER_SIZE);
 
   Serial.begin(serial_baudrate);
@@ -679,16 +715,18 @@ void setup() {
     }
   #endif
 
-  // Initialise buffers
+  // Initialise buffers. The four PSRAM-allocated buffers
+  // (serialBuffer, packet_queue, packet_starts_buf, packet_lengths_buf)
+  // use literal sizes — sizeof(ptr) would give 4 (the pointer size).
   memset(pbuf, 0, sizeof(pbuf));
   memset(cmdbuf, 0, sizeof(cmdbuf));
-  
-  memset(packet_queue, 0, sizeof(packet_queue));
 
-  memset(packet_starts_buf, 0, sizeof(packet_starts_buf));
+  memset(packet_queue, 0, CONFIG_QUEUE_SIZE);
+
+  memset(packet_starts_buf, 0, (CONFIG_QUEUE_MAX_LENGTH + 1) * sizeof(uint16_t));
   fifo16_init(&packet_starts, packet_starts_buf, CONFIG_QUEUE_MAX_LENGTH);
-  
-  memset(packet_lengths_buf, 0, sizeof(packet_starts_buf));
+
+  memset(packet_lengths_buf, 0, (CONFIG_QUEUE_MAX_LENGTH + 1) * sizeof(uint16_t));
   fifo16_init(&packet_lengths, packet_lengths_buf, CONFIG_QUEUE_MAX_LENGTH);
 
   #if PLATFORM == PLATFORM_ESP32 || PLATFORM == PLATFORM_NRF52

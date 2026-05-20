@@ -215,11 +215,19 @@ bool device_firmware_ok() {
 
 #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
 bool device_init() {
-  if (bt_ready) {
+  // The historical `if (bt_ready)` gate here was a coupling holdover —
+  // device_init's body doesn't actually use the Bluedroid stack, only
+  // the dev_bt_mac global (which nothing in this firmware ever
+  // populates from the live BT controller — it stays all-zeros). With
+  // BLE-disabled boots (EEPROM ADDR_CONF_BT != BT_ENABLE_BYTE), bt_init
+  // is skipped so bt_ready stays false, but device_init still needs to
+  // run for hw_ready to be set true and the radio config to load.
+  // Drop the gate; the function works regardless of BLE state.
+  {
     #if MCU_VARIANT == MCU_ESP32
     for (uint8_t i=0; i<EEPROM_SIG_LEN; i++){dev_eeprom_signature[i]=EEPROM.read(eeprom_addr(ADDR_SIGNATURE+i));}
     mbedtls_md_context_t ctx;
-    mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;     
+    mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
     mbedtls_md_init(&ctx);
     mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 0);
     mbedtls_md_starts(&ctx);
@@ -260,8 +268,6 @@ bool device_init() {
     #endif
     device_init_done = true;
     return device_init_done && fw_signature_validated;
-  } else {
-    return false;
   }
 }
 #endif

@@ -827,8 +827,44 @@ void setup() {
     #endif
 
     #if HAS_BLUETOOTH || HAS_BLE == true
-      bt_init();
-      bt_init_ran = true;
+      // bt_init() populates `bt_dh` (device hash) and `bt_devname` as a
+      // side-effect. Several non-BT subsystems read those — softAP SSID
+      // uses bt_devname, mDNS hostname (wr_hostname) is derived from
+      // it, etc. Compute them up front from the efuse-backed BT MAC so
+      // they're available regardless of whether we actually init the
+      // BT controller.
+      //
+      // This must produce IDENTICAL output to bt_init()'s sprintf
+      // (RNode XXXX with XXXX being the last 2 bytes of MD5(BT_MAC))
+      // because the resulting hostname is what existing deployed
+      // devices are reachable under.
+      {
+        uint8_t bt_mac[6] = {0};
+        esp_read_mac(bt_mac, ESP_MAC_BT);
+        unsigned char* hash = MD5::make_hash((char*)bt_mac, 6);
+        memcpy(bt_dh, hash, BT_DEV_HASH_LEN);
+        free(hash);
+        sprintf(bt_devname, "RNode %02X%02X", bt_dh[14], bt_dh[15]);
+      }
+
+      // Gate bt_init() on the EEPROM enable flag. bt_setup_hw() (called
+      // from bt_init) loads the entire Bluedroid controller + host
+      // stack, which consumes ~20-30 KB of internal SRAM permanently
+      // regardless of whether advertising is started. On devices where
+      // BLE is disabled the cost is pure waste — and worse, it eats
+      // contiguous internal-SRAM blocks the WiFi driver needs for its
+      // esf_buf (1626 B) and lwIP pbuf allocations under web load.
+      //
+      // If the user later enables BLE via the SPA, the device reboots
+      // (existing behaviour for radio/wifi config changes), so init at
+      // boot is sufficient — no need to support runtime BLE toggle
+      // without reboot.
+      if (EEPROM.read(eeprom_addr(ADDR_CONF_BT)) == BT_ENABLE_BYTE) {
+        bt_init();
+        bt_init_ran = true;
+      } else {
+        NOTICEF("BLE: disabled in EEPROM — skipping bt_init() (frees ~20-30 KB internal SRAM, devname=%s)", bt_devname);
+      }
     #endif
 
     if (console_active) {
@@ -1192,7 +1228,7 @@ void setup() {
       if (filesystem.exists("/lxmf/transport.json")) {
         std::vector<uint8_t> data;
         if (filesystem.readFile("/lxmf/transport.json", data) > 0) {
-          JsonDocument tdoc;
+          Web::PsramJsonDocument tdoc;
           if (deserializeJson(tdoc, data.data(), data.size()) == DeserializationError::Ok) {
             bool want = tdoc["enabled"] | false;
             reticulum.transport_enabled(want);

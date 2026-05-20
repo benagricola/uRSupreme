@@ -1747,6 +1747,13 @@ void add_airtime(uint16_t written) {
     airtime_bins[cb] += packet_cost_ms;
     airtime_bins[nb] = 0;
 
+    // High-resolution own-TX feed for radio_telemetry. The firmware's
+    // own `airtime` is a 15s smoothed value, which hides short bursts
+    // (a single 30ms announce ≈ 0.2% there). This accumulator gets
+    // drained every 1s by the telemetry sampler so the SPA chart sees
+    // bursts as a real "own X%" spike.
+    Web::RadioTelemetry::note_tx_ms((uint32_t)packet_cost_ms);
+
   #endif
 }
 
@@ -2552,6 +2559,12 @@ void check_modem_status() {
     #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
       util_samples[dcd_sample] = dcd;
       dcd_sample = (dcd_sample+1)%DCD_SAMPLES;
+      // High-resolution peer-activity feed for radio_telemetry. Same
+      // source as the upstream 7.5s-smoothed local_channel_util, but
+      // drained every 1s by the telemetry sampler so the SPA chart
+      // sees short peer bursts (single ~60ms announce ≈ 6%) as a real
+      // "others X%" spike rather than 0%.
+      Web::RadioTelemetry::note_dcd_sample(dcd);
       if (dcd_sample % UTIL_UPDATE_INTERVAL == 0) {
         int util_count = 0;
         for (int ui = 0; ui < DCD_SAMPLES; ui++) {

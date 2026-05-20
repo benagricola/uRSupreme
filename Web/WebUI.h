@@ -207,6 +207,17 @@ namespace Web {
             (uint32_t)std::min<size_t>(Storage::Config::effective_max_send(),    0xFFFFFFFFu),
             (uint32_t)std::min<size_t>(Storage::Config::effective_max_receive(), 0xFFFFFFFFu));
       }
+      // Radio telemetry — sample at 1 Hz unconditionally so the ring is
+      // pre-populated for any client that connects later. Only the WS
+      // broadcast is gated on subscribers.
+      if (now - _last_radio_tlm >= RadioTelemetry::SAMPLE_PERIOD_MS) {
+        _last_radio_tlm = now;
+        const RadioTelemetry::Sample* s = RadioTelemetry::tick(now);
+        if (s && Web::WS::any_subscribers()) {
+          Web::WS::publish_radio_telemetry(*s);
+        }
+      }
+
       // Skip all WS-publish work when nobody's listening — WebUI::loop
       // runs at ~50 Hz on the main task (shared with reticulum.loop and
       // the radio modem), so any allocation here is hot-path cost.
@@ -702,7 +713,14 @@ namespace Web {
       on_json_post("/api/wifi/forget",    handle_wifi_forget);
       // Radio config — read requires bearer auth; write/reset require
       // bearer OR identity_code. Both write paths reboot on success.
-      server.on("/api/radio",         HTTP_GET,  handle_radio_get);
+      // Telemetry history — auth-gated. Returns the rolling ring of 1Hz
+      // samples (oldest→newest) so a freshly-connected SPA client can
+      // backfill its chart before the WS push catches up.
+      // REGISTERED BEFORE /api/radio because AsyncWebServer's plain
+      // string matcher does prefix matching, so /api/radio would
+      // otherwise swallow the more-specific /api/radio/telemetry.
+      server.on("/api/radio/telemetry", HTTP_GET, handle_radio_telemetry);
+      server.on("/api/radio",           HTTP_GET,  handle_radio_get);
       on_json_post("/api/radio",         handle_radio_set);
       on_json_post("/api/radio/reset",   handle_radio_reset);
       on_json_post("/api/radio/airtime", handle_radio_airtime);
@@ -2748,6 +2766,20 @@ namespace Web {
       send_json(req, 200, doc);
     }
 
+    static void handle_radio_telemetry(AsyncWebServerRequest* req) {
+      if (require_auth(req).empty()) return;
+      Web::PsramJsonDocument doc;
+      doc["period_ms"] = RadioTelemetry::sample_period_ms();
+      doc["capacity"]  = RadioTelemetry::history_capacity();
+      doc["size"]      = RadioTelemetry::history_size();
+      // Echo cw_min/cw_max alongside the history so the SPA can colour
+      // the CW-band line against its valid range without a second call.
+      doc["cw_max_band"] = 4;  // CSMA_CW_BANDS — matches firmware Misc
+      JsonArray arr = doc["samples"].to<JsonArray>();
+      RadioTelemetry::fill_history(arr);
+      send_json(req, 200, doc);
+    }
+
     static void handle_radio_set(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
       if (!require_physical_auth(req, body)) return;
@@ -3045,6 +3077,7 @@ namespace Web {
     static inline uint32_t _last_pub_mag_ms = 0;
     static inline uint32_t _last_pub_imu_ms = 0;
     static inline uint32_t _last_system_push = 0;
+    static inline uint32_t _last_radio_tlm   = 0;
   };
 
   // Free function the LXMF gateway calls to publish a Resource-transfer

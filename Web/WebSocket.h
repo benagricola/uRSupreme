@@ -34,6 +34,7 @@
 #include <stdint.h>
 #include "../LXMF/LXMFTypes.h"
 #include "../LXMF/AnnounceLog.h"
+#include "RadioTelemetry.h"
 
 namespace LXMF { struct MessageRecord; }
 
@@ -279,6 +280,17 @@ namespace WS {
     doc["user_max_receive_bytes"]    = user_max_receive;
     doc["effective_max_send_bytes"]  = effective_max_send;
     doc["effective_max_recv_bytes"]  = effective_max_receive;
+    broadcast(doc);
+  }
+
+  // Radio telemetry — 1 Hz live sample of RSSI / channel util / CSMA
+  // state. Frame is intentionally small (~120 B JSON) because it ships
+  // every second and shouldn't dominate WiFi/lwIP buffering.
+  inline void publish_radio_telemetry(const RadioTelemetry::Sample& s) {
+    Web::PsramJsonDocument doc;
+    doc["type"] = "radio_telemetry";
+    JsonObject o = doc["s"].to<JsonObject>();
+    RadioTelemetry::encode(s, o);
     broadcast(doc);
   }
 

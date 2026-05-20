@@ -216,6 +216,12 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 @media (max-width: 720px) {
   #topbar #self-info .name, #topbar #self-info .addr { max-width: 36vw; }
   #announce-countdown { display: none; }
+  /* On narrow screens the icon owns the slot — the percentage text
+     reads as redundant alongside the (now colour-coded + level-fill)
+     battery glyph. Long-press / tap to open the popover for the exact
+     percentage and the dV/dt slope. */
+  #btn-power .icon-label { display: none; }
+  #btn-power.icon-with-label { min-width: 44px; padding: 0; }
 }
 
 #pane-list {
@@ -592,6 +598,45 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   margin-top: 2px;
 }
 .popover-subline:first-of-type { margin-top: 4px; }
+
+/* Inline radio-telemetry chart in #popover-status. Two y-axes (left
+   = utilisation %, right = RSSI dBm) drawn in pure SVG so we don't
+   pull a charting dep into the SPA bundle. The legend below is a
+   compact "color · label · value" row.
+   Width is set per-render to match the popover; height stays fixed. */
+.radio-chart-wrap { margin-top: 8px; }
+.radio-chart-svg  {
+  display: block; width: 100%; height: 56px;
+  background: var(--bg-elev); border: 1px solid var(--bg-elev-2);
+  border-radius: 4px;
+}
+.radio-chart-grid  { stroke: var(--bg-elev-2); stroke-width: 1; }
+.radio-chart-line  { fill: none; stroke-width: 1.4; }
+.radio-chart-line.own    { stroke: #58a6ff; }  /* own TX duty cycle */
+.radio-chart-line.others { stroke: #ff9933; }  /* aggregate non-self DCD-busy */
+.radio-chart-line.rssi   { stroke: #4caf50; }  /* RSSI dBm — right axis */
+.radio-chart-line.noise  { stroke: #b39ddb; stroke-dasharray: 3 2; stroke-width: 1; }
+                                              /* noise-floor dBm — right axis */
+.radio-chart-legend {
+  margin-top: 4px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10px; color: var(--text-dim);
+}
+.radio-chart-legend-row {
+  display: flex; flex-wrap: wrap; gap: 10px;
+}
+.radio-chart-legend-row + .radio-chart-legend-row { margin-top: 2px; }
+.radio-chart-legend .swatch {
+  display: inline-block; width: 8px; height: 8px;
+  margin-right: 4px; vertical-align: middle;
+  border-radius: 1px;
+}
+.radio-chart-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 56px; font-size: 11px; color: var(--text-mute);
+  background: var(--bg-elev); border: 1px solid var(--bg-elev-2);
+  border-radius: 4px;
+}
 /* Sensor / interface configuration row — checkbox + interval
    dropdown + any extras. Lives at the bottom of an expandable
    section. Hidden until the user clicks the header (handled in
@@ -728,7 +773,13 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .toast.dismissing { animation: toast-out 0.18s ease-in forwards; }
 @media (max-width: 720px) {
   #toast-stack {
-    top: calc(8px + env(safe-area-inset-top));
+    /* On narrow screens, toasts sit BELOW the topbar so they don't
+       visually or interactively block the status / battery / settings
+       icons. The compose row at the bottom keeps that edge unavailable
+       for toasts too, leaving the under-topbar slot as the only
+       conflict-free position. Topbar is ~56 px tall (6 + 44 + 6) plus
+       its 1 px border and the 3 px progress strip, so 60 px clears it. */
+    top: calc(60px + env(safe-area-inset-top));
     left: 8px; right: 8px;
     transform: none;
     align-items: stretch;
@@ -1000,6 +1051,14 @@ summary:hover { color: var(--text); }
     <div class="popover-subline" id="status-radio-stats"></div>
     <div class="popover-subline" id="status-radio-rate"></div>
     <div class="popover-subline" id="status-radio-airtime"></div>
+    <!-- Live CSMA state — band the contention-window loop is parked in
+         plus DCD / LOCK flags. Pulled from the latest radio_telemetry
+         sample, so it refreshes at 1 Hz while the popover is open. -->
+    <div class="popover-subline" id="status-radio-csma"></div>
+    <!-- Live 1Hz telemetry chart. Seeded on popover-open via
+         GET /api/radio/telemetry, then patched in place from the WS
+         `radio_telemetry` frame so it scrolls smoothly while open. -->
+    <div class="radio-chart-wrap" id="status-radio-chart"></div>
   </div>
   <div class="popover-section">
     <div class="popover-row">
@@ -1588,6 +1647,15 @@ const state = {
   reconnectStart: 0,
   skipBootstrap: false,             // set true by "skip" button on view-bootstrap so subsequent
                                     // routing doesn't bounce back into bootstrap mode
+  // Radio telemetry ring. `samples` is oldest→newest. `cap` is the
+  // server-side ring size echoed back in /api/radio/telemetry; we trust
+  // it for trimming to keep client + firmware aligned. Each sample is
+  // { ts, rssi, noise, util:{own, others}, cw, dcd, lock, rx, tx }.
+  // `util.others` is the fraction of recent DCD samples where the
+  // modem detected non-self activity — aggregate, not per-peer.
+  // `noise` is the measured ambient RSSI when DCD is off; rssi-noise
+  // = effective SNR.
+  radioTlm: { samples: [], cap: 120, seeded: false, periodMs: 1000, cwMax: 4 },
 };
 
 // Shared copy for the identity-code hint, displayed everywhere a hex code
@@ -3688,7 +3756,9 @@ function applyStatusToButton(info) {
 // Battery icon in the topbar. Hidden when the device hasn't reported
 // a battery block at all (older firmware / non-PMU boards). The fill
 // rectangle's width is scaled to the percent value; a bolt overlay
-// shows when charging.
+// shows when charging. Fill colour conveys remaining charge at a
+// glance (green / amber / red) so the icon stays meaningful on mobile
+// where the numeric percent is hidden via the @media rule above.
 function applyBatteryToButton(info) {
   const btn  = $('btn-power');
   const b    = info && info.battery;
@@ -3700,9 +3770,30 @@ function applyBatteryToButton(info) {
   const pct  = Math.max(0, Math.min(100, Number(b.percent) || 0));
   // Inner rectangle is x=4..18 (width 14). Map pct to width.
   fill.setAttribute('width', String((pct / 100) * 14));
+  // Colour banding. Charging always reads as healthy regardless of
+  // pct so a low-but-charging cell doesn't flash red while plugged in.
+  let colour;
+  if (b.state === 'charging' || b.state === 'charged') colour = '#3fb950';
+  else if (pct >= 50) colour = '#3fb950';
+  else if (pct >= 20) colour = '#d29922';
+  else                colour = '#f85149';
+  fill.setAttribute('fill', colour);
+  bolt.setAttribute('fill', colour);
   bolt.hidden = b.state !== 'charging';
   lbl.textContent = pct + '%';
   btn.title = 'Battery ' + pct + '% · ' + b.state;
+}
+
+// Re-render the topbar battery icon from cached state. Called from the
+// WS hello + system_update dispatchers (which carry battery in the
+// system snapshot) so the icon updates live, not only on the periodic
+// /api/info poll. Pulls from state.system first (WS-authoritative),
+// falls back to state.lastInfo (the polling snapshot) if WS hasn't
+// settled yet.
+function renderTopbarBattery() {
+  const sysB  = (state.system   && state.system.battery)   || null;
+  const infoB = (state.lastInfo && state.lastInfo.battery) || null;
+  applyBatteryToButton({ battery: sysB || infoB });
 }
 function renderStatusPopover() {
   const info = state.lastInfo || {};
@@ -3818,6 +3909,19 @@ function renderStatusPopover() {
 }
 function openStatusPopover() {
   renderStatusPopover();
+  // Backfill the radio-telemetry ring once per session so the chart
+  // shows ~2 min of history right away. Subsequent updates arrive via
+  // the WS `radio_telemetry` push and are appended in dispatchEvent.
+  // Re-seed each open is wasteful — the local ring is already correct
+  // once seeded — so the guard prevents that.
+  refreshRadioTelemetry().finally(() => {
+    renderRadioChart();
+    renderRadioCsmaLine();
+  });
+  // Repaint the CSMA subline from the currently-cached last sample so
+  // the popover doesn't show a blank line for the second it takes the
+  // first WS frame to arrive.
+  renderRadioCsmaLine();
   $('popover-status').hidden = false;
   // Close on outside click; defer one tick so this click doesn't fire it.
   setTimeout(() => {
@@ -3837,6 +3941,158 @@ $('btn-status').addEventListener('click', async () => {
   await refreshStatus();
   openStatusPopover();
 });
+
+// ============================== RADIO TELEMETRY ==============================
+// One-shot fetch of /api/radio/telemetry to seed the local ring. Idempotent
+// — once seeded we trust the WS push to keep it fresh. Re-seeds on
+// reconnect (state.radioTlm.seeded is cleared by the _reconnect handler).
+async function refreshRadioTelemetry() {
+  const rt = state.radioTlm;
+  if (rt.seeded) return;
+  const tok = state.token; if (!tok) return;
+  try {
+    const r = await fetch('/api/radio/telemetry',
+                          { headers: { 'Authorization': 'Bearer ' + tok } });
+    if (!r.ok) return;
+    const j = await r.json();
+    rt.samples = Array.isArray(j.samples) ? j.samples : [];
+    if (typeof j.capacity === 'number')  rt.cap      = j.capacity;
+    if (typeof j.period_ms === 'number') rt.periodMs = j.period_ms;
+    if (typeof j.cw_max_band === 'number') rt.cwMax  = j.cw_max_band;
+    rt.seeded = true;
+  } catch (_) { /* leave seeded=false so we retry next open */ }
+}
+
+// Render the CSMA state line into #status-radio-csma. Carries the
+// contention-window band the firmware is parked in plus the live DCD /
+// LOCK flags. Pulled from the most recent radio_telemetry sample so it
+// refreshes at 1 Hz while the popover is open. Empty when the
+// telemetry ring is still warming up so the row doesn't leave a stale
+// figure on screen.
+function renderRadioCsmaLine() {
+  const el = $('status-radio-csma');
+  if (!el) return;
+  const rt = state.radioTlm;
+  const last = rt.samples.length ? rt.samples[rt.samples.length - 1] : null;
+  if (!last) { el.textContent = ''; return; }
+  const parts = ['CW band ' + (last.cw ?? '?') + '/' + rt.cwMax];
+  if (last.dcd)  parts.push('DCD');
+  if (last.lock) parts.push('TX locked');
+  el.textContent = parts.join(' · ');
+}
+
+// Render the inline chart into #status-radio-chart. Two y-axes:
+//   left  = 0..100 % for own / peer / total channel utilisation
+//   right = -120..-40 dBm for RSSI
+// Time axis is sample-index — 1 px-per-sample at the popover's width.
+// Re-renders in place; safe to call on every WS push while open.
+function renderRadioChart() {
+  const host = $('status-radio-chart');
+  if (!host) return;
+  const rt = state.radioTlm;
+  const n = rt.samples.length;
+  if (n < 2) {
+    host.innerHTML = '<div class="radio-chart-empty">Awaiting telemetry…</div>';
+    return;
+  }
+  // Width: use the host's clientWidth so SVG matches the popover width.
+  // Fall back to 240 if the host hasn't laid out yet (display:none parent).
+  const W = Math.max(120, host.clientWidth || 240);
+  const H = 56;
+  const padL = 22, padR = 22, padT = 4, padB = 4;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  // X: each sample maps to one column.
+  const dx = plotW / Math.max(1, (rt.cap - 1));
+  const xOf = (i) => padL + (rt.cap - n + i) * dx;
+  // Util y: 0 at bottom, snapped-max at top. Auto-scaling so low
+  // activity stays visible — when everything is <5%, the lines would
+  // otherwise hug the bottom of a fixed 0-100 axis. Snap to a small
+  // set of nice round values so the scale "feels" stable across
+  // adjacent renders (otherwise the lines jitter as the absolute max
+  // shifts each second).
+  const UTIL_BUCKETS = [5, 10, 25, 50, 100];
+  let utilMax = 0;
+  for (const sm of rt.samples) {
+    const u = sm.util || {};
+    if (u.others > utilMax) utilMax = u.others;
+    if (u.own    > utilMax) utilMax = u.own;
+  }
+  const yMax = UTIL_BUCKETS.find(b => b >= utilMax) || 100;
+  const yUtil = (v) => padT + plotH - (Math.max(0, Math.min(yMax, v)) / yMax) * plotH;
+  // RSSI y: tightened to the practical LoRa range. The previous
+  // -120/-40 band was wider than anything real RSSI ever reaches
+  // (noise floor sits around -95, packets around -50 to -90), so
+  // -110/-50 gives a similar amount of pixel per dB on the useful
+  // part of the range without sacrificing useful detail.
+  const RSSI_HI = -50, RSSI_LO = -110;
+  const yRssi = (v) => {
+    if (typeof v !== 'number') return padT + plotH;
+    const cv = Math.max(RSSI_LO, Math.min(RSSI_HI, v));
+    return padT + plotH - ((cv - RSSI_LO) / (RSSI_HI - RSSI_LO)) * plotH;
+  };
+  // `path` walks the ring building an SVG path-d. `keys` is either a
+  // top-level key (e.g. 'rssi') or a dotted path (e.g. 'util.own') to
+  // reach into the nested util block.
+  const get = (s, key) => {
+    if (!key.includes('.')) return s[key];
+    let v = s; for (const k of key.split('.')) { if (v == null) return undefined; v = v[k]; }
+    return v;
+  };
+  const path = (yfn, key) => {
+    let d = '';
+    for (let i = 0; i < n; i++) {
+      const v = get(rt.samples[i], key);
+      if (typeof v !== 'number') continue;
+      // Drop obvious uninitialised sentinels (firmware seeds rssi /
+      // noise to -292 until the modem reports anything). Without this
+      // the line pins to the y-axis floor for the first few seconds
+      // after boot, which looks like a real -292 dBm reading.
+      if ((key === 'rssi' || key === 'noise') && v < -160) continue;
+      d += (d ? 'L' : 'M') + xOf(i).toFixed(1) + ',' + yfn(v).toFixed(1) + ' ';
+    }
+    return d;
+  };
+  const last = rt.samples[n - 1] || {};
+  const lastU = last.util || {};
+  // Grid: a single midline matched to the current util scale. Two
+  // lines for the very-low scales would crowd the plot.
+  const utilGrid =
+    `<line class="radio-chart-grid" x1="${padL}" x2="${W - padR}" y1="${yUtil(yMax / 2)}" y2="${yUtil(yMax / 2)}"/>`;
+  // Y-axis tick labels: left = util %, right = RSSI dBm. The util-top
+  // label is dynamic — it tracks the auto-scaled yMax so the user
+  // knows whether they're looking at a 5% or 100% axis.
+  const labels = `
+    <text x="2"           y="${padT + 6}"        font-size="8" fill="#888">${yMax}%</text>
+    <text x="2"           y="${padT + plotH}"    font-size="8" fill="#888">0%</text>
+    <text x="${W - 20}"   y="${padT + 6}"        font-size="8" fill="#888">${RSSI_HI}</text>
+    <text x="${W - 20}"   y="${padT + plotH}"    font-size="8" fill="#888">${RSSI_LO}</text>
+  `;
+  host.innerHTML = `
+    <svg class="radio-chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      ${utilGrid}
+      <path class="radio-chart-line noise"  d="${path(yRssi, 'noise')}"/>
+      <path class="radio-chart-line others" d="${path(yUtil, 'util.others')}"/>
+      <path class="radio-chart-line own"    d="${path(yUtil, 'util.own')}"/>
+      <path class="radio-chart-line rssi"   d="${path(yRssi, 'rssi')}"/>
+      ${labels}
+    </svg>
+    <div class="radio-chart-legend">
+      <!-- Row 1: left-axis lines (utilisation %). -->
+      <div class="radio-chart-legend-row">
+        <span><span class="swatch" style="background:#58a6ff"></span>own ${lastU.own ?? 0}%</span>
+        <span title="Fraction of recent DCD samples that detected non-self channel activity. Aggregate — could be one peer, many peers, or LoRa-like interference. DCD doesn't sample while we're TX'ing, so our own emissions are excluded."><span class="swatch" style="background:#ff9933"></span>others ${lastU.others ?? 0}%</span>
+      </div>
+      <!-- Row 2: right-axis lines (dBm). RSSI / noise share a y-scale;
+           grouping them on their own row keeps the legend readable on
+           narrow popovers. -->
+      <div class="radio-chart-legend-row">
+        <span><span class="swatch" style="background:#4caf50"></span>RSSI ${(typeof last.rssi === 'number' && last.rssi > -160) ? last.rssi + ' dBm' : '— dBm'}</span>
+        <span title="Measured ambient RSSI when no LoRa carrier is detected. The gap to RSSI is effective SNR. Jumps in noise indicate new in-band interferers."><span class="swatch" style="background:#b39ddb"></span>noise ${(typeof last.noise === 'number' && last.noise > -160) ? last.noise + ' dBm' : '— dBm'}</span>
+      </div>
+    </div>
+  `;
+}
 
 // ============================== SYSTEM POPOVER ==============================
 // Storage + clock + sensor snapshot. Source data: /api/system_status,
@@ -4452,6 +4708,10 @@ function dispatchEvent(ev) {
   if (ev.type === '_reconnect') {
     // We've been disconnected long enough — re-fetch /state to resync.
     refreshState();
+    // Drop the local radio-telemetry seed marker so the next popover
+    // open re-seeds from /api/radio/telemetry rather than trusting a
+    // stale ring that has a gap from the disconnect.
+    if (state.radioTlm) state.radioTlm.seeded = false;
     return;
   }
   if (ev.type === 'hello') {
@@ -4507,6 +4767,23 @@ function dispatchEvent(ev) {
       renderSystemPopover(state.system);
     }
     if (typeof renderTopbarBattery === 'function') renderTopbarBattery();
+    return;
+  }
+  if (ev.type === 'radio_telemetry') {
+    // 1Hz push from the firmware. Append to the local ring, drop the
+    // oldest if over capacity, repaint the chart + CSMA line only if
+    // the popover is currently open (avoids a 1Hz wakeup on every
+    // other view).
+    const s = ev.s || ev.sample || ev;
+    if (s && typeof s.ts === 'number') {
+      const rt = state.radioTlm;
+      rt.samples.push(s);
+      while (rt.samples.length > rt.cap) rt.samples.shift();
+      if (!$('popover-status').hidden) {
+        renderRadioChart();
+        renderRadioCsmaLine();
+      }
+    }
     return;
   }
   if (ev.type === 'sensor_update') {

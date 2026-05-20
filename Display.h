@@ -44,6 +44,12 @@
 #endif
 
 #include "Fonts/Org_01.h"
+// Picopixel is a 4x6 *monospace* font from Adafruit_GFX. Used for the
+// 6-char identity code render — Org_01 (the SMALL_FONT default) is
+// variable-width, so different hex digits produce different total
+// widths, causing the code to overflow the 64-px disp_area on some
+// glyph combinations.
+#include "Fonts/Picopixel.h"
 #define DISP_W 128
 #define DISP_H 64
 
@@ -835,9 +841,20 @@ void draw_disp_area() {
       disp_area.setTextSize(1);
       disp_area.setCursor(8, 9);
       disp_area.print("ID CODE");
+      // Switch to the monospace Picopixel font for the code itself. Org_01
+      // is variable-width — at setTextSize(2) a 6-char hex code can be
+      // anywhere from ~60 px ('1's) to ~96 px ('0','8','B') wide, which
+      // overflows the 64-px disp_area on wide-glyph runs. Picopixel is
+      // 4×6 monospace; at setTextSize(2) every glyph is exactly 8×12 px,
+      // so 6 chars = 48 px regardless of which hex digits land. The Y
+      // origin convention also differs (GFX custom fonts draw above the
+      // cursor's baseline rather than below it), hence the cursor shift.
+      disp_area.setFont(&Picopixel);
       disp_area.setTextSize(2);
-      disp_area.setCursor(2, 28);
+      disp_area.setCursor(8, 36);
       disp_area.print(id_code.c_str());
+      // Restore Org_01 for the small "Ns left" footer line.
+      disp_area.setFont(SMALL_FONT);
       disp_area.setTextSize(1);
       disp_area.setCursor(8, 56);
       disp_area.printf("%lus left", (unsigned long)((remaining_ms + 999) / 1000));

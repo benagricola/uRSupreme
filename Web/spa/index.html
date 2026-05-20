@@ -420,7 +420,13 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
    all "settings"-shaped UI uses one display method. */
 .modal.modal-tall {
   width: 100%; max-width: 560px;
-  max-height: calc(100vh - 96px);
+  /* `100dvh` (dynamic viewport height) tracks the CURRENTLY visible
+     area, so Firefox Android's bottom address bar — and any other
+     collapsible browser chrome — actually counts. `100vh` returns
+     the largest possible viewport, which was leaving tab content
+     (notably Settings → App and Settings → Connectivity) sliding
+     under the address bar on portrait phones. */
+  max-height: calc(100dvh - 96px);
   display: flex; flex-direction: column;
   padding: 0;
   overflow: hidden;
@@ -503,6 +509,13 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   border-radius: 10px;
   padding: 20px;
   width: 100%; max-width: 380px;
+  /* Constrain to visible viewport so modal action buttons (Attach,
+     Confirm, OK, etc.) don't slide under Firefox Android's address
+     bar on narrow screens. .modal-bg has 16 px of inset padding, so
+     the 32 px reserve here = top+bottom of that. dvh, not vh, so
+     the height reflects the CURRENTLY visible area. */
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
 }
 .modal h3 { margin: 0 0 12px; font-size: 15px; }
 
@@ -839,7 +852,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
    the settings modal needs to fit even when the keyboard is open. */
 @media (max-height: 480px) {
   #modal-settings.modal-bg { padding-top: calc(56px + env(safe-area-inset-top)); }
-  .modal.modal-tall        { max-height: calc(100vh - 64px); }
+  .modal.modal-tall        { max-height: calc(100dvh - 64px); }
   /* Short-height layout (phone in landscape, ~412 px viewport tall).
      Topbar + thread-header default heights total ~110 px — over a
      quarter of the screen — leaving the message list cramped. Squeeze
@@ -858,6 +871,15 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   button.icon.icon-with-label { min-width: 36px; padding: 0 6px 0 4px; }
   #thread-header { padding: 4px 12px; gap: 8px; }
   #thread-header .idc { transform: scale(0.85); transform-origin: left center; }
+  /* Compose row: trim top/bottom padding from 8 px to 4 px and drop
+     the textarea's min-height from 40 px to 32 px. The textarea
+     auto-grows up to its max-height when content wraps, so single-
+     line input stays compact in landscape and multi-line still works. */
+  #compose {
+    padding: 4px 10px;
+    padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  }
+  #compose textarea { min-height: 32px; padding: 6px 12px; }
   /* Landscape phone (~412 px tall, with browser address bar possibly
      eating another 50–60 px). Pull popovers back near the topbar —
      the mobile-portrait 130 px offset would leave very little for
@@ -1326,8 +1348,11 @@ summary:hover { color: var(--text); }
      fit-to-viewport and natural size (pan via scroll when zoomed).
      Tap the backdrop or hit Escape to close. -->
 <div id="modal-image" class="modal-bg" hidden style="z-index:280;background:rgba(0,0,0,0.92)">
-  <div id="mi-wrap" style="width:100vw;height:100vh;overflow:auto;display:flex;align-items:center;justify-content:center;cursor:zoom-out">
-    <img id="mi-img" alt="" style="max-width:100vw;max-height:100vh;display:block;cursor:zoom-in;touch-action:pinch-zoom">
+  <!-- 100dvh, not 100vh — Firefox Android's bottom address bar
+       otherwise hides the bottom of the image (and the close/save
+       buttons by reducing the usable area). Same fix as the modals. -->
+  <div id="mi-wrap" style="width:100vw;height:100dvh;overflow:auto;display:flex;align-items:center;justify-content:center;cursor:zoom-out">
+    <img id="mi-img" alt="" style="max-width:100vw;max-height:100dvh;display:block;cursor:zoom-in;touch-action:pinch-zoom">
   </div>
   <!-- `top: calc(8px + env(safe-area-inset-top, 0px))` rather than the
        earlier `env(..., 8px)` form: the fallback only fires when the env
@@ -2942,7 +2967,7 @@ function openImageModal(url, meta) {
   const close = $('mi-close');
   img.src = url;
   img.style.maxWidth = '100vw';
-  img.style.maxHeight = '100vh';
+  img.style.maxHeight = '100dvh';
   img.style.width = '';
   img.style.height = '';
   // Pointer cursor so the user knows tapping does something. Mobile
@@ -4719,6 +4744,13 @@ function buildSensorConfigRow(section, key, sensor) {
     if (p.value === snapped) opt.selected = true;
     sel.appendChild(opt);
   }
+  // Defensive: setting the `selected` property on individual <option>s
+  // pre-DOM-insertion is supposed to be honored, but some browsers
+  // (notably Firefox Android during a re-render burst) ignore it and
+  // fall back to index-0 — which would make the dropdown appear to
+  // "revert" to the first option on every save. Canonicalising via
+  // sel.value after build forces the correct display.
+  sel.value = String(snapped);
   const save = async () => {
     const body = { sensor: key, enabled: cb.checked, interval_s: parseInt(sel.value, 10) };
     try {
@@ -4926,9 +4958,17 @@ function dispatchEvent(ev) {
       rtc:           p.rtc           || {},
     };
     // Repaint open popovers + the topbar battery icon in place.
+    // The element ID is `popover-system` (set by the HTML); the
+    // earlier `sys-popover` lookup was a typo, making this branch a
+    // permanent no-op. Result: system_update WS frames silently
+    // updated state.system but never repainted the open popover —
+    // so any optimistic-patched value the SPA wrote (e.g. a sensor
+    // interval just changed by the user) appeared correct, and a
+    // later snapshot couldn't correct it because the render path
+    // was unreachable.
     if (typeof renderSystemPopover === 'function'
-        && document.getElementById('sys-popover')
-        && !document.getElementById('sys-popover').hidden) {
+        && document.getElementById('popover-system')
+        && !document.getElementById('popover-system').hidden) {
       renderSystemPopover(state.system);
     }
     if (typeof renderTopbarBattery === 'function') renderTopbarBattery();

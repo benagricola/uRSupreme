@@ -29,6 +29,7 @@
 #include <Reticulum.h>     // for transport_enabled()
 #include <Identity.h>
 #include <Bytes.h>
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
@@ -84,6 +85,20 @@ namespace _detail {
   // true on a complete payload, false if mandatory fields are missing
   // (e.g. unknown interface type — we just skip those rather than
   // emitting half-formed announces).
+  // Sanitise the user-supplied label the same way upstream
+  // RNS/Discovery.py does: strip newlines + carriage returns +
+  // leading/trailing whitespace. Without this, a multi-line label
+  // would break the on-wire msgpack-string and confuse listeners
+  // that split log lines by \n.
+  inline std::string sanitise_name(std::string s) {
+    s.erase(std::remove(s.begin(), s.end(), '\n'), s.end());
+    s.erase(std::remove(s.begin(), s.end(), '\r'), s.end());
+    size_t lo = s.find_first_not_of(" \t");
+    size_t hi = s.find_last_not_of(" \t");
+    if (lo == std::string::npos) return std::string();
+    return s.substr(lo, hi - lo + 1);
+  }
+
   inline bool build_for_interface(Announce::Builder& b,
                                   const RNS::Interface& iface,
                                   const Config::Entry& cfg) {
@@ -92,9 +107,9 @@ namespace _detail {
     // when empty. The interface name is the technical identifier
     // ("LoRaInterface") which isn't a great label on rmap.world.
     const std::string user_name = State::current().advertised_name;
-    const std::string nm = !user_name.empty()
+    const std::string nm = sanitise_name(!user_name.empty()
         ? user_name
-        : const_cast<RNS::Interface&>(iface).name();
+        : const_cast<RNS::Interface&>(iface).name());
     b.name(nm);
     b.transport_enabled(RNS::Reticulum::transport_enabled());
     b.transport_id(RNS::Transport::identity().hash());
@@ -106,6 +121,12 @@ namespace _detail {
       b.lat(fix.latitude_deg);
       b.lon(fix.longitude_deg);
     }
+    // Upstream always emits HEIGHT (defaults to 0.0 if unset). We
+    // don't have a barometric sensor wired up to derive altitude
+    // and the GPS module doesn't surface it through our driver yet,
+    // so send 0.0 as a parity marker — matches what an unconfigured
+    // upstream node sends.
+    b.height(0.0);
     switch (cfg.type) {
       case Config::Type::Lora:
         b.interface_type(TYPE_LORA);

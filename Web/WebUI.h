@@ -2943,17 +2943,19 @@ namespace Web {
       std::string name = (const char*)(body["name"] | "");
       std::string host = (const char*)(body["host"] | "");
       int port         = (int)(body["port"] | 0);
-      bool discoverable= (bool)(body["discoverable"] | false);
       if (name.empty() || host.empty() || port <= 0 || port > 65535) {
         send_error_with_message(req, 400, "invalid_args",
           "Body must include `name`, `host`, and 1<=`port`<=65535.");
         return;
       }
-      // Adding an interface that will be marked discoverable on
-      // creation requires identity-code physical presence — per the
-      // privacy gate (anything that ENABLES discoverability must be
-      // intentional). Non-discoverable adds are bearer-only.
-      if (discoverable && !require_physical_auth(req, body)) return;
+      // A TCP client is outbound-only; peers cannot connect to it,
+      // so advertising it via discovery would be wrong. Reject any
+      // attempt to set discoverable=true even if a client tried.
+      if ((bool)(body["discoverable"] | false)) {
+        send_error_with_message(req, 400, "not_discoverable",
+          "TCP clients can't be advertised — peers can't connect to an outbound-only link.");
+        return;
+      }
       if (Discovery::Config::get(name)) {
         send_error_with_message(req, 409, "name_exists",
           "An interface with this name already exists.");
@@ -2968,10 +2970,8 @@ namespace Web {
       e.type         = Discovery::Config::Type::TcpClient;
       e.host         = host;
       e.port         = port;
-      e.discoverable = discoverable;
+      e.discoverable = false;
       if (!Discovery::Config::upsert(name, e)) {
-        // Persist failed — roll back the runtime side so we don't
-        // leave an unconfigured interface registered.
         TCPTransport::remove_client(name.c_str());
         send_error_with_message(req, 500, "persist_failed",
           "Could not persist interface config to /reticulum/interfaces.json.");
@@ -2982,7 +2982,6 @@ namespace Web {
       doc["name"]         = name;
       doc["host"]         = host;
       doc["port"]         = port;
-      doc["discoverable"] = discoverable;
       send_json(req, 201, doc);
     }
 
@@ -3014,16 +3013,12 @@ namespace Web {
           "No TCP client with that name is configured.");
         return;
       }
-      // Track whether this PATCH ENABLES discoverable. Only that
-      // direction needs identity-code. Disabling / changing host/port
-      // alone is bearer-only.
-      bool wants_enable_discovery = false;
-      if (body["discoverable"].is<bool>()) {
-        const bool new_d = body["discoverable"].as<bool>();
-        if (new_d && !e.discoverable) wants_enable_discovery = true;
+      // TCP clients can't be advertised — see handle_tcp_clients_add.
+      if ((bool)(body["discoverable"] | false)) {
+        send_error_with_message(req, 400, "not_discoverable",
+          "TCP clients can't be advertised — peers can't connect to an outbound-only link.");
+        return;
       }
-      if (wants_enable_discovery && !require_physical_auth(req, body)) return;
-
       bool host_port_changed = false;
       if (body["host"].is<const char*>()) {
         const std::string nh = (const char*)(body["host"] | "");
@@ -3033,18 +3028,15 @@ namespace Web {
         const int np = body["port"].as<int>();
         if (np > 0 && np <= 65535 && np != e.port) { e.port = np; host_port_changed = true; }
       }
-      if (body["discoverable"].is<bool>()) {
-        e.discoverable = body["discoverable"].as<bool>();
-      }
+      // Always clamp discoverable to false on TCP clients regardless
+      // of what's in the body — defensive against legacy persisted
+      // entries that have it set to true from before this restriction.
+      e.discoverable = false;
       if (!Discovery::Config::upsert(name, e)) {
         send_error_with_message(req, 500, "persist_failed",
           "Could not persist interface config update.");
         return;
       }
-      // If host or port changed, we have to rebuild the runtime
-      // interface so the new endpoint is used. The slot stays the
-      // same because add_client puts it back into the first free
-      // slot (which the just-removed one becomes).
       if (host_port_changed) {
         TCPTransport::remove_client(name.c_str());
         TCPTransport::add_client(name.c_str(), e.host.c_str(), (uint16_t)e.port);
@@ -3054,7 +3046,6 @@ namespace Web {
       doc["name"]         = name;
       doc["host"]         = e.host;
       doc["port"]         = e.port;
-      doc["discoverable"] = e.discoverable;
       send_json(req, 200, doc);
     }
 #endif  // HAS_WIFI && TCP_TRANSPORT

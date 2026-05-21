@@ -1396,13 +1396,11 @@ summary:hover { color: var(--text); }
         <input id="cn-tcp-port" type="number" min="1" max="65535" value="4965">
       </div>
     </div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:8px 0 0">
-      <input type="checkbox" id="cn-tcp-discoverable" style="width:auto;min-height:auto">
-      <span>Announce this connection on discovery</span>
-    </label>
-    <p class="muted" id="cn-tcp-code-hint" style="margin:6px 0 0;font-size:11px" hidden>Enabling discoverable requires the identity code shown on the device's display.</p>
-    <label id="cn-tcp-code-label" style="margin-top:8px" hidden>Identity code</label>
-    <input id="cn-tcp-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:12px" hidden>
+    <p class="muted" style="margin:8px 0 0;font-size:11px">
+      A TCP client is an outbound link only — this device opens the
+      connection. Peers can't reach back through it, so it can't be
+      publicly advertised the way a LoRa or UDP interface can.
+    </p>
     <div class="row" style="margin-top:12px">
       <button class="secondary" id="cn-tcp-cancel">Cancel</button>
       <button id="cn-tcp-save">Add</button>
@@ -1555,10 +1553,20 @@ summary:hover { color: var(--text); }
           <summary>LoRa Radio <span class="cn-dot" id="cn-dot-radio" hidden></span></summary>
           <div class="cn-section-body">
             <p class="muted" id="rd-intro">Pick the region preset that matches your local LoRa community. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.</p>
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0 0 12px">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0">
               <input type="checkbox" id="rd-discoverable" style="width:auto;min-height:auto">
-              <span>Announce this radio on discovery — let other Reticulum nodes find this device on the air</span>
+              <span>Publicly advertise this interface</span>
             </label>
+            <div class="muted" style="margin:4px 0 12px">
+              Periodically sends an <code>rnstransport.discovery.interface</code>
+              announce over LoRa. The announce contains this device's identity
+              hash, radio parameters (frequency, bandwidth, SF, coding rate),
+              and approximate location (if GPS has a fix) so other Reticulum
+              nodes hearing it can decide whether they're configured to reach
+              this device, and apps like
+              <a href="https://rmap.world/info.html" target="_blank" rel="noopener">rmap.world</a>
+              can plot the device on a map.
+            </div>
             <label>Region preset</label>
             <select id="rd-preset" style="margin-bottom:6px"></select>
             <div class="muted" id="rd-preset-note" style="margin-bottom:14px;min-height:14px"></div>
@@ -6184,7 +6192,7 @@ $('rd-discoverable').addEventListener('change', (ev) => {
       await state.transport._req('/api/transport/lora/discoverable',
         { method: 'POST', body });
       setConnectivityDot('cn-dot-radio', wantOn ? 'ok' : '');
-      toast('LoRa discoverable ' + (wantOn ? 'enabled' : 'disabled'));
+      toast('LoRa interface ' + (wantOn ? 'is now publicly advertised' : 'is no longer advertised'));
     } catch (e) {
       cb.checked = !wantOn;
       toast('Could not save: ' + (e.message || e), 'error');
@@ -6292,12 +6300,6 @@ async function populateTcpClientsList() {
       info.append(el('div', { class: 'muted',
         text: `${c.host}:${c.port} — ${c.online ? 'connected' : 'offline'}` }));
       row.append(info);
-      const discLabel = el('label', { title: 'Announce this connection on discovery' });
-      const discCb = el('input', { type: 'checkbox' });
-      discCb.checked = !!c.discoverable;
-      discCb.addEventListener('change', () => onTcpDiscoverableToggle(c, discCb));
-      discLabel.append(discCb, el('span', { text: 'discover' }));
-      row.append(discLabel);
       const rmBtn = el('button', { class: 'secondary', text: '✕',
         title: 'Remove this TCP client', style: 'padding:4px 8px;margin:0' });
       rmBtn.addEventListener('click', () => onTcpRemove(c));
@@ -6320,31 +6322,6 @@ function setConnectivityDot(id, cls) {
   if (cls) { dot.classList.add(cls); dot.hidden = false; }
   else      { dot.hidden = true; }
 }
-async function onTcpDiscoverableToggle(client, cb) {
-  const wantOn = cb.checked;
-  const body = { discoverable: wantOn };
-  const apply = async () => {
-    try {
-      await state.transport._req(
-        '/api/transport/tcp_clients/' + encodeURIComponent(client.name) + '/patch',
-        { method: 'POST', body });
-      toast('Discoverable ' + (wantOn ? 'enabled' : 'disabled'));
-    } catch (e) {
-      cb.checked = !wantOn;
-      toast('Could not save: ' + (e.message || e), 'error');
-    }
-  };
-  if (wantOn) {
-    state.pendingIdCodeAction = (code) => {
-      if (!code) { cb.checked = false; return; }
-      body.identity_code = code;
-      apply();
-    };
-    openIdCodeModal();
-  } else {
-    apply();
-  }
-}
 async function onTcpRemove(client) {
   const ok = await showConfirm({
     title: 'Remove TCP client?',
@@ -6366,40 +6343,25 @@ function openAddTcpModal() {
   $('cn-tcp-name').value = '';
   $('cn-tcp-host').value = '';
   $('cn-tcp-port').value = '4965';
-  $('cn-tcp-discoverable').checked = false;
-  $('cn-tcp-code').value = '';
-  updateTcpCodeVisibility();
   $('cn-tcp-status').textContent = '';
   $('modal-tcp-add').hidden = false;
 }
-function updateTcpCodeVisibility() {
-  const need = $('cn-tcp-discoverable').checked;
-  $('cn-tcp-code-hint').hidden  = !need;
-  $('cn-tcp-code-label').hidden = !need;
-  $('cn-tcp-code').hidden       = !need;
-}
 $('btn-tcp-add').addEventListener('click', openAddTcpModal);
 $('cn-tcp-cancel').addEventListener('click', () => { $('modal-tcp-add').hidden = true; });
-$('cn-tcp-discoverable').addEventListener('change', updateTcpCodeVisibility);
 $('cn-tcp-save').addEventListener('click', async () => {
   const name = $('cn-tcp-name').value.trim();
   const host = $('cn-tcp-host').value.trim();
   const port = parseInt($('cn-tcp-port').value, 10);
-  const discoverable = $('cn-tcp-discoverable').checked;
-  const code = $('cn-tcp-code').value.trim();
   const status = $('cn-tcp-status');
   if (!name || !host || !(port > 0 && port < 65536)) {
     status.textContent = 'Name, host, and a valid port (1–65535) are required.';
     return;
   }
-  if (discoverable && !code) {
-    status.textContent = 'Identity code is required to mark this connection discoverable.';
-    return;
-  }
-  const body = { name, host, port, discoverable };
-  if (discoverable) body.identity_code = code;
+  // discoverable is never sent: a TCP client is outbound-only, so an
+  // announce telling peers "this device is at host:port" would be
+  // wrong (peers can't connect that way).
   try {
-    await state.transport._req('/api/transport/tcp_clients', { method: 'POST', body });
+    await state.transport._req('/api/transport/tcp_clients', { method: 'POST', body: { name, host, port } });
     $('modal-tcp-add').hidden = true;
     populateTcpClientsList();
     toast('TCP client added');

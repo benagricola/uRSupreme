@@ -30,10 +30,14 @@
 //     worker task. The Announcer's callback grabs rns_lock before
 //     touching the destination.
 //
-// Watchdog: the search loop feeds the task watchdog every 1024
-// iterations. A 14-bit search at ~50 µs/try takes ~0.8 s in the median
-// — well under the default 5 s WDT window — but adding the feed makes
-// the worst-case-bad-seed (≈20× median) safe.
+// Watchdog: a stamp search is a tight CPU-bound loop. Without an
+// explicit yield it starves IDLE0 on the pinned core, which trips
+// IDLE0's WDT subscription. The loop calls vTaskDelay(1) every 256
+// iterations so IDLE0 gets scheduling time and feeds its own WDT.
+// We deliberately do NOT esp_task_wdt_add() the worker itself: the
+// task spends most of its life blocked on a semaphore, and a
+// subscribed-but-blocked task can't feed → 5 s blocked = abort. IDLE0
+// is the safety net for genuine hangs of the worker's CPU work.
 
 #pragma once
 
@@ -43,7 +47,6 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
-#include <esp_task_wdt.h>
 #include <stdint.h>
 #include <string.h>
 #include <functional>
@@ -132,8 +135,10 @@ inline bool generate(const RNS::Bytes& material,
       return true;
     }
     n++;
-    if ((n & 0x3FF) == 0) {
-      esp_task_wdt_reset();
+    if ((n & 0xFF) == 0) {
+      // Yield to IDLE0 + other tasks pinned to this core so they get
+      // scheduling time and feed their own WDT subscriptions.
+      vTaskDelay(1);
       if (should_abort && should_abort()) return false;
     }
   }
@@ -166,7 +171,6 @@ namespace _detail {
   inline RNS::Bytes&       cache_stamp()   { static RNS::Bytes b; return b; }
 
   inline void worker_main(void*) {
-    esp_task_wdt_add(nullptr);  // join the WDT subscriber list
     for (;;) {
       // Wait for a request. The signal is given by submit().
       if (xSemaphoreTake(signal(), portMAX_DELAY) != pdTRUE) continue;
@@ -223,7 +227,6 @@ namespace _detail {
         is_busy() = false;
         xSemaphoreGive(mutex());
       }
-      esp_task_wdt_reset();
     }
   }
 }  // namespace _detail

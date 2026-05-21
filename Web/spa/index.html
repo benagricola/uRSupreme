@@ -1482,15 +1482,18 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== IDENTITY CODE MODAL ===================== -->
-<div id="modal-id-code" class="modal-bg" hidden>
+<div id="modal-id-code" class="modal-bg" hidden style="z-index:280">
   <div class="modal">
-    <h3>Identity code available</h3>
-    <!-- Duration text is filled at runtime from /api/info's
-         identity_code_ttl_ms so it matches the firmware's actual TTL
-         instead of a hard-coded guess. id-code-modal-hint is the
-         placeholder; the .id-code-hint span below carries the full
-         "how to generate" explanation. -->
-    <p class="muted"><span id="id-code-modal-hint"></span> Read the 6 hex chars from the OLED.</p>
+    <h3 id="id-code-modal-title">Identity code required</h3>
+    <!-- Two opening paths: (1) the device button was pressed and the
+         firmware fired identity_code_available — we got here from the
+         WS event handler, so a code is already on the OLED; (2) the
+         SPA needs a code to authorise a privileged action and opened
+         this modal itself — the user may need to press the button
+         first. id-code-modal-hint carries whichever context applies;
+         the .id-code-hint span below has the full "how to generate"
+         instructions. -->
+    <p class="muted"><span id="id-code-modal-hint"></span></p>
     <p class="muted id-code-hint"></p>
     <input id="idc-input" maxlength="6" placeholder="abc123" style="margin-bottom:12px;font-family:ui-monospace,monospace">
     <div class="row">
@@ -1932,10 +1935,9 @@ function idCodeHintHtml() {
 function fillIdCodeHints() {
   const html = idCodeHintHtml();
   document.querySelectorAll('.id-code-hint').forEach(e => e.innerHTML = html);
-  const modalHint = document.getElementById('id-code-modal-hint');
-  if (modalHint) {
-    modalHint.textContent = 'The device button was pressed and an identity code is now available for ~' + idCodeTtlText() + '.';
-  }
+  // #id-code-modal-hint inside #modal-id-code is owned by
+  // openIdCodeModal — it varies by call site (button-pressed vs
+  // SPA-initiated) and shouldn't be stomped on every refresh.
 }
 
 // ============================== UTIL ==============================
@@ -5340,8 +5342,8 @@ function dispatchEvent(ev) {
   } else if (ev.type === 'identity_code_available') {
     state.pendingIdCode = true;
     if (state.pendingIdCodeAction) {
-      // Already waiting to consume — open the modal.
-      openIdCodeModal();
+      // Already waiting to consume — code is fresh on the OLED.
+      openIdCodeModal({ codePresent: true });
     }
   } else if (ev.type === 'outbox_status') {
     // Lifecycle pill update for an outbound message bubble. The
@@ -5540,6 +5542,10 @@ function enterLogin(identity) {
   state.identityId = identity.id;
   $('login-title').textContent = 'Login: ' + (identity.display_name || identity.id);
   $('login-pw').value = '';
+  // setTimeout to next tick so focus lands after the view becomes
+  // visible; calling focus() while the element is in a hidden parent
+  // is a no-op in some browsers.
+  setTimeout(() => $('login-pw').focus(), 0);
 }
 async function enterApp() {
   show('view-app');
@@ -7065,9 +7071,27 @@ $('disc-stamp-cost').addEventListener('change', async (ev) => {
 });
 
 // ============================== IDENTITY CODE MODAL ==============================
-function openIdCodeModal() {
+// opts.codePresent: true if a code is already on the OLED (we got
+// here from the identity_code_available WS event), false if the SPA
+// initiated this prompt and the user may still need to press the
+// device button. Drives the hint text + title so the message
+// matches reality.
+function openIdCodeModal(opts) {
+  const codePresent = !!(opts && opts.codePresent);
   $('idc-input').value = '';
+  $('id-code-modal-title').textContent = codePresent
+    ? 'Identity code available'
+    : 'Identity code required';
+  const hint = document.getElementById('id-code-modal-hint');
+  if (hint) {
+    hint.textContent = codePresent
+      ? 'A code is on the device OLED for ~' + idCodeTtlText() + '. Read the 6 hex chars and type them below.'
+      : 'A 6-character code is needed to authorise this action. If one is not already on the device OLED, press the device button (see below) to generate one, then type it below.';
+  }
   $('modal-id-code').hidden = false;
+  // Focus the input next tick so the box doesn't fight the modal's
+  // own paint for first-frame attention.
+  setTimeout(() => $('idc-input').focus(), 0);
 }
 $('btn-idc-cancel').addEventListener('click', () => { $('modal-id-code').hidden = true; });
 $('btn-idc-ok').addEventListener('click', () => {

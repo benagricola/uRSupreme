@@ -40,6 +40,7 @@
 #include "../Discovery/Config.h"
 #include "../Discovery/State.h"
 #include "../Discovery/Identity.h"
+#include "../Discovery/Announcer.h"
 #if HAS_WIFI && defined(TCP_TRANSPORT)
 #include "../TCPTransport.h"
 #endif
@@ -2882,6 +2883,18 @@ namespace Web {
       doc["default_stamp_cost"]   = s.default_stamp_cost;
       doc["min_interval_min"]     = Discovery::State::MIN_INTERVAL_MIN;
       doc["max_interval_min"]     = Discovery::State::MAX_INTERVAL_MIN;
+      // Runtime view of the announcer's progress since boot. Lets the
+      // SPA tell the user "device last advertised N seconds ago" and
+      // confirm the announcer is alive without needing serial access.
+      const Discovery::Announcer::Status status = Discovery::Announcer::status();
+      JsonObject ann = doc["announcer"].to<JsonObject>();
+      ann["total_count"]       = status.total_announce_count;
+      ann["last_any_ms"]       = status.last_any_announce_ms;
+      ann["uptime_ms"]         = (uint32_t)millis();
+      JsonObject per_if = ann["last_per_interface_ms"].to<JsonObject>();
+      for (const auto& kv : status.per_interface_last_ms) {
+        per_if[kv.first] = kv.second;
+      }
       send_json(req, 200, doc);
     }
 

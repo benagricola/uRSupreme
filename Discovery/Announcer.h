@@ -67,6 +67,14 @@ namespace _detail {
     return m;
   }
   inline uint32_t& last_tick_ms() { static uint32_t v = 0; return v; }
+  // Most recent announce, regardless of interface. Used by the API
+  // to surface "this device last shouted N seconds ago" without the
+  // caller needing to walk per-interface map keys.
+  inline uint32_t& last_any_announce_ms() { static uint32_t v = 0; return v; }
+  // Running count since boot, all interfaces. Useful for sanity-
+  // checking that the announcer is alive at all on a long-uptime
+  // device where the per-interface ms timestamp could be stale.
+  inline uint32_t& total_announce_count() { static uint32_t v = 0; return v; }
   // Rate-limit the tick itself — upstream's job loop runs every 60s.
   // No point evaluating "is anything due" more often than once a
   // minute since the minimum cadence in State is also several minutes.
@@ -208,8 +216,27 @@ inline void tick() {
   }
   _detail::destination()->announce(app_data);
   last_map[due_name] = now;
+  _detail::last_any_announce_ms() = now;
+  _detail::total_announce_count()++;
   NOTICEF("Discovery::Announcer: announced interface '%s' (%u B app_data, next due in %u min)",
           due_name.c_str(), (unsigned)app_data.size(), (unsigned)s.default_interval_min);
+}
+
+// Snapshot for /api/discovery/state. Read-only view that lets the
+// SPA tell the user when the device last shouted and how many times
+// since boot — useful when serial isn't available and the user
+// wants to verify the announcer is actually running.
+struct Status {
+  uint32_t last_any_announce_ms;   // device millis() of most recent announce, 0 = never
+  uint32_t total_announce_count;   // count since boot
+  std::map<std::string, uint32_t> per_interface_last_ms;  // copy keyed by name
+};
+inline Status status() {
+  Status s;
+  s.last_any_announce_ms  = _detail::last_any_announce_ms();
+  s.total_announce_count  = _detail::total_announce_count();
+  s.per_interface_last_ms = _detail::last_announce_ms();
+  return s;
 }
 
 }  // namespace Announcer

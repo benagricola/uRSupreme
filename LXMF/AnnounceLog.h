@@ -27,7 +27,7 @@
 #include <vector>
 
 #include "LXMFTypes.h"
-#include "LXMFMinimal.h"   // for RawMsgPack helpers
+#include "../Common/MsgPack.h"
 
 namespace LXMF {
 
@@ -101,7 +101,7 @@ namespace LXMF {
           size_t off = 0;
           if (len >= 1 && (data[off] & 0xF0) == 0x90) {
             off++;
-            display_name = RawMsgPack::read_bin_or_str(data, len, off);
+            display_name = Common::MsgPack::read_bin_or_str(data, len, off);
           }
         }
 

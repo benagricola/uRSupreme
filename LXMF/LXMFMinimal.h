@@ -43,236 +43,13 @@
 #include <Utilities/OS.h>     // for OS::open_file / OS::remove_file
 
 #include "LXMFTypes.h"
+#include "../Common/MsgPack.h"
 #include "../Web/BootCounter.h"
 #include "../Clock/Manager.h"
 #include "../Storage/OutboundStaging.h"
 #include <esp_heap_caps.h>
 
 namespace LXMF {
-
-  // Raw MsgPack helpers (PR #17). Kept verbatim — no library dependency.
-  namespace RawMsgPack {
-
-    inline std::string read_bin_or_str(const uint8_t* data, size_t len, size_t& offset) {
-      if (offset >= len) return "";
-      uint8_t tag = data[offset++];
-      size_t slen = 0;
-      if ((tag & 0xE0) == 0xA0) {
-        slen = tag & 0x1F;
-      } else if (tag == 0xD9 && offset < len) {
-        slen = data[offset++];
-      } else if (tag == 0xDA && offset + 1 < len) {
-        slen = (data[offset] << 8) | data[offset + 1];
-        offset += 2;
-      } else if (tag == 0xDB && offset + 3 < len) {
-        slen = ((uint32_t)data[offset] << 24) | ((uint32_t)data[offset+1] << 16) |
-               ((uint32_t)data[offset+2] << 8) | data[offset+3];
-        offset += 4;
-      } else if (tag == 0xC4 && offset < len) {
-        slen = data[offset++];
-      } else if (tag == 0xC5 && offset + 1 < len) {
-        slen = (data[offset] << 8) | data[offset + 1];
-        offset += 2;
-      } else if (tag == 0xC6 && offset + 3 < len) {
-        slen = ((uint32_t)data[offset] << 24) | ((uint32_t)data[offset+1] << 16) |
-               ((uint32_t)data[offset+2] << 8) | data[offset+3];
-        offset += 4;
-      } else {
-        return "";
-      }
-      if (offset + slen > len) return "";
-      std::string result((const char*)&data[offset], slen);
-      offset += slen;
-      return result;
-    }
-
-    inline bool skip_element(const uint8_t* data, size_t len, size_t& offset) {
-      if (offset >= len) return false;
-      uint8_t tag = data[offset++];
-      if (tag == 0xC0 || tag == 0xC2 || tag == 0xC3) return true;
-      if (tag <= 0x7F) return true;
-      if (tag >= 0xE0) return true;
-      if ((tag & 0xE0) == 0xA0) { size_t n = tag & 0x1F; offset += n; return offset <= len; }
-      if ((tag & 0xF0) == 0x90) {
-        size_t n = tag & 0x0F;
-        for (size_t i = 0; i < n; i++) if (!skip_element(data, len, offset)) return false;
-        return true;
-      }
-      if ((tag & 0xF0) == 0x80) {
-        size_t n = tag & 0x0F;
-        for (size_t i = 0; i < n * 2; i++) if (!skip_element(data, len, offset)) return false;
-        return true;
-      }
-      if (tag == 0xCC || tag == 0xD0) { offset += 1; return offset <= len; }
-      if (tag == 0xCD || tag == 0xD1) { offset += 2; return offset <= len; }
-      if (tag == 0xCE || tag == 0xD2 || tag == 0xCA) { offset += 4; return offset <= len; }
-      if (tag == 0xCF || tag == 0xD3 || tag == 0xCB) { offset += 8; return offset <= len; }
-      if (tag == 0xD9 && offset < len) { size_t n = data[offset++]; offset += n; return offset <= len; }
-      if (tag == 0xDA && offset + 1 < len) {
-        size_t n = (data[offset] << 8) | data[offset+1]; offset += 2 + n; return offset <= len;
-      }
-      if (tag == 0xDB && offset + 3 < len) {
-        size_t n = ((uint32_t)data[offset] << 24) | ((uint32_t)data[offset+1] << 16) |
-                   ((uint32_t)data[offset+2] << 8) | data[offset+3];
-        offset += 4 + n; return offset <= len;
-      }
-      if (tag == 0xC4 && offset < len) { size_t n = data[offset++]; offset += n; return offset <= len; }
-      if (tag == 0xC5 && offset + 1 < len) {
-        size_t n = (data[offset] << 8) | data[offset+1]; offset += 2 + n; return offset <= len;
-      }
-      if (tag == 0xC6 && offset + 3 < len) {
-        size_t n = ((uint32_t)data[offset] << 24) | ((uint32_t)data[offset+1] << 16) |
-                   ((uint32_t)data[offset+2] << 8) | data[offset+3];
-        offset += 4 + n; return offset <= len;
-      }
-      if (tag == 0xDC && offset + 1 < len) {
-        size_t n = (data[offset] << 8) | data[offset+1]; offset += 2;
-        for (size_t i = 0; i < n; i++) if (!skip_element(data, len, offset)) return false;
-        return true;
-      }
-      if (tag == 0xDE && offset + 1 < len) {
-        size_t n = (data[offset] << 8) | data[offset+1]; offset += 2;
-        for (size_t i = 0; i < n * 2; i++) if (!skip_element(data, len, offset)) return false;
-        return true;
-      }
-      if (tag == 0xD4) { offset += 2; return offset <= len; }
-      if (tag == 0xD5) { offset += 3; return offset <= len; }
-      if (tag == 0xD6) { offset += 5; return offset <= len; }
-      if (tag == 0xD7) { offset += 9; return offset <= len; }
-      if (tag == 0xD8) { offset += 17; return offset <= len; }
-      return false;
-    }
-
-    // Just the bin-format header (bin8 / bin16 / bin32). Returns the
-    // header length; caller writes the body bytes into the buffer
-    // separately. Used for staging-backed attachments where the body
-    // bytes are streamed into the encode buffer chunk by chunk
-    // rather than memcpy'd from a vector.
-    inline size_t pack_bin_header(uint8_t* buf, size_t buflen, size_t dlen) {
-      if (dlen <= 255) {
-        if (buflen < 2) return 0;
-        buf[0] = 0xC4;
-        buf[1] = (uint8_t)dlen;
-        return 2;
-      }
-      if (dlen <= 0xFFFF) {
-        if (buflen < 3) return 0;
-        buf[0] = 0xC5;
-        buf[1] = (dlen >> 8) & 0xFF;
-        buf[2] = dlen & 0xFF;
-        return 3;
-      }
-      if (buflen < 5) return 0;
-      buf[0] = 0xC6;
-      buf[1] = (dlen >> 24) & 0xFF;
-      buf[2] = (dlen >> 16) & 0xFF;
-      buf[3] = (dlen >> 8) & 0xFF;
-      buf[4] = dlen & 0xFF;
-      return 5;
-    }
-
-    inline size_t pack_bin(uint8_t* buf, size_t buflen, const uint8_t* data, size_t dlen) {
-      size_t pos = pack_bin_header(buf, buflen, dlen);
-      if (pos == 0) return 0;
-      if (pos + dlen > buflen) return 0;
-      memcpy(&buf[pos], data, dlen);
-      return pos + dlen;
-    }
-
-    inline size_t pack_bin_str(uint8_t* buf, size_t buflen, const std::string& str) {
-      return pack_bin(buf, buflen, (const uint8_t*)str.c_str(), str.length());
-    }
-
-    inline size_t pack_float64(uint8_t* buf, size_t buflen, double val) {
-      if (buflen < 9) return 0;
-      buf[0] = 0xCB;
-      uint64_t bits;
-      memcpy(&bits, &val, 8);
-      for (int i = 7; i >= 0; i--) {
-        buf[8 - i] = (bits >> (i * 8)) & 0xFF;
-      }
-      return 9;
-    }
-
-    // Write a positive integer key suitable for a fixmap entry. FIELD_*
-    // tags are all < 128 so the fixint form is enough for our use.
-    inline size_t pack_uint8(uint8_t* buf, size_t buflen, uint8_t v) {
-      if (buflen < 1) return 0;
-      if (v <= 0x7F) { buf[0] = v; return 1; }
-      if (buflen < 2) return 0;
-      buf[0] = 0xCC; buf[1] = v; return 2;
-    }
-
-    // Write a string (msgpack `str` type, distinct from `bin`). Sideband
-    // uses str for filenames and image extensions; using `bin` here
-    // would break interop.
-    inline size_t pack_str(uint8_t* buf, size_t buflen, const std::string& s) {
-      const size_t slen = s.length();
-      size_t pos = 0;
-      if (slen <= 31) {
-        if (pos + 1 + slen > buflen) return 0;
-        buf[pos++] = 0xA0 | (uint8_t)slen;
-      } else if (slen <= 255) {
-        if (pos + 2 + slen > buflen) return 0;
-        buf[pos++] = 0xD9;
-        buf[pos++] = (uint8_t)slen;
-      } else if (slen <= 0xFFFF) {
-        if (pos + 3 + slen > buflen) return 0;
-        buf[pos++] = 0xDA;
-        buf[pos++] = (slen >> 8) & 0xFF; buf[pos++] = slen & 0xFF;
-      } else {
-        if (pos + 5 + slen > buflen) return 0;
-        buf[pos++] = 0xDB;
-        buf[pos++] = (slen >> 24) & 0xFF; buf[pos++] = (slen >> 16) & 0xFF;
-        buf[pos++] = (slen >> 8)  & 0xFF; buf[pos++] =  slen        & 0xFF;
-      }
-      memcpy(&buf[pos], s.c_str(), slen);
-      pos += slen;
-      return pos;
-    }
-
-    // Write an array header. Caller follows with `n` packed elements.
-    inline size_t pack_array_header(uint8_t* buf, size_t buflen, size_t n) {
-      if (n <= 15) {
-        if (buflen < 1) return 0;
-        buf[0] = 0x90 | (uint8_t)n;
-        return 1;
-      }
-      if (n <= 0xFFFF) {
-        if (buflen < 3) return 0;
-        buf[0] = 0xDC;
-        buf[1] = (n >> 8) & 0xFF; buf[2] = n & 0xFF;
-        return 3;
-      }
-      if (buflen < 5) return 0;
-      buf[0] = 0xDD;
-      buf[1] = (n >> 24) & 0xFF; buf[2] = (n >> 16) & 0xFF;
-      buf[3] = (n >> 8)  & 0xFF; buf[4] =  n        & 0xFF;
-      return 5;
-    }
-
-    // Write a map header. Picks the narrowest msgpack encoding that
-    // fits the entry count. Caller follows with `n` key/value pairs.
-    inline size_t pack_map_header(uint8_t* buf, size_t buflen, size_t n) {
-      if (n <= 15) {
-        if (buflen < 1) return 0;
-        buf[0] = 0x80 | (uint8_t)n;
-        return 1;
-      }
-      if (n <= 0xFFFF) {
-        if (buflen < 3) return 0;
-        buf[0] = 0xDE;
-        buf[1] = (n >> 8) & 0xFF; buf[2] = n & 0xFF;
-        return 3;
-      }
-      if (buflen < 5) return 0;
-      buf[0] = 0xDF;
-      buf[1] = (n >> 24) & 0xFF; buf[2] = (n >> 16) & 0xFF;
-      buf[3] = (n >> 8)  & 0xFF; buf[4] =  n        & 0xFF;
-      return 5;
-    }
-
-  } // namespace RawMsgPack
 
 
   // LXMF wire-size thresholds.
@@ -481,7 +258,7 @@ namespace LXMF {
       size_t pos = 0;
       buf[pos++] = 0x93;  // fixarray(3)
       // [0] display_name
-      size_t n = RawMsgPack::pack_bin(&buf[pos], sizeof(buf) - pos,
+      size_t n = Common::MsgPack::pack_bin(&buf[pos], sizeof(buf) - pos,
                                       (const uint8_t*)_display_name.c_str(),
                                       _display_name.length());
       if (n == 0) { ERROR("LXMF: announce pack failed"); return; }
@@ -614,15 +391,15 @@ namespace LXMF {
       mp[mp_pos++] = 0x94;  // fixarray(4)
 
       double ts = get_timestamp();
-      size_t n = RawMsgPack::pack_float64(&mp[mp_pos], mp_cap - mp_pos, ts);
+      size_t n = Common::MsgPack::pack_float64(&mp[mp_pos], mp_cap - mp_pos, ts);
       if (n == 0) { ERROR("LXMF: send: timestamp pack failed"); return fail("Internal error packing timestamp."); }
       mp_pos += n;
 
-      n = RawMsgPack::pack_bin_str(&mp[mp_pos], mp_cap - mp_pos, title);
+      n = Common::MsgPack::pack_bin_str(&mp[mp_pos], mp_cap - mp_pos, title);
       if (n == 0) { ERROR("LXMF: send: title pack failed"); return fail("Title is too long to encode."); }
       mp_pos += n;
 
-      n = RawMsgPack::pack_bin_str(&mp[mp_pos], mp_cap - mp_pos, content);
+      n = Common::MsgPack::pack_bin_str(&mp[mp_pos], mp_cap - mp_pos, content);
       if (n == 0) { ERROR("LXMF: send: content pack failed"); return fail("Internal error: content pack returned 0 unexpectedly."); }
       mp_pos += n;
 
@@ -647,7 +424,7 @@ namespace LXMF {
         size_t field_count = (file_idxs.empty() ? 0 : 1)
                            + (image_idxs.empty() ? 0 : 1)
                            + (audio_idxs.empty() ? 0 : 1);
-        n = RawMsgPack::pack_map_header(&mp[mp_pos], mp_cap - mp_pos, field_count);
+        n = Common::MsgPack::pack_map_header(&mp[mp_pos], mp_cap - mp_pos, field_count);
         if (n == 0) { ERROR("LXMF: send: map header pack failed"); return fail("Too many attachments."); }
         mp_pos += n;
 
@@ -659,18 +436,18 @@ namespace LXMF {
                              bool use_audio_mode,
                              const OutgoingAttachment& a,
                              const char* err_label) -> bool {
-          size_t m = RawMsgPack::pack_array_header(&mp[mp_pos], mp_cap - mp_pos, 2);
+          size_t m = Common::MsgPack::pack_array_header(&mp[mp_pos], mp_cap - mp_pos, 2);
           if (m == 0) { ERROR("LXMF: send: pair header pack failed"); return false; }
           mp_pos += m;
           if (use_audio_mode) {
-            m = RawMsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, audio_mode);
+            m = Common::MsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, audio_mode);
           } else {
-            m = RawMsgPack::pack_str(&mp[mp_pos], mp_cap - mp_pos, name_or_ext);
+            m = Common::MsgPack::pack_str(&mp[mp_pos], mp_cap - mp_pos, name_or_ext);
           }
           if (m == 0) { ERRORF("LXMF: send: %s name pack failed", err_label); return false; }
           mp_pos += m;
           const size_t dlen = a.byte_count();
-          const size_t hdr = RawMsgPack::pack_bin_header(&mp[mp_pos], mp_cap - mp_pos, dlen);
+          const size_t hdr = Common::MsgPack::pack_bin_header(&mp[mp_pos], mp_cap - mp_pos, dlen);
           if (hdr == 0) { ERRORF("LXMF: send: %s bin header pack failed", err_label); return false; }
           mp_pos += hdr;
           if (mp_pos + dlen > mp_cap) { ERRORF("LXMF: send: %s bytes overflow", err_label); return false; }
@@ -692,22 +469,22 @@ namespace LXMF {
 
         if (!image_idxs.empty()) {
           const auto& a = (*attachments)[image_idxs.front()];
-          n = RawMsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, FIELD_IMAGE);
+          n = Common::MsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, FIELD_IMAGE);
           if (n == 0) return fail("Internal error packing image key."); mp_pos += n;
           if (!pack_pair(a.ext, 0, false, a, "image"))
             return fail("Internal error packing image attachment.");
         }
         if (!audio_idxs.empty()) {
           const auto& a = (*attachments)[audio_idxs.front()];
-          n = RawMsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, FIELD_AUDIO);
+          n = Common::MsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, FIELD_AUDIO);
           if (n == 0) return fail("Internal error packing audio key."); mp_pos += n;
           if (!pack_pair("", a.audio_mode, true, a, "audio"))
             return fail("Internal error packing audio attachment.");
         }
         if (!file_idxs.empty()) {
-          n = RawMsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, FIELD_FILE_ATTACHMENTS);
+          n = Common::MsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, FIELD_FILE_ATTACHMENTS);
           if (n == 0) return fail("Internal error packing file-attachments key."); mp_pos += n;
-          n = RawMsgPack::pack_array_header(&mp[mp_pos], mp_cap - mp_pos, file_idxs.size());
+          n = Common::MsgPack::pack_array_header(&mp[mp_pos], mp_cap - mp_pos, file_idxs.size());
           if (n == 0) return fail("Too many file attachments to encode."); mp_pos += n;
           for (size_t idx : file_idxs) {
             const auto& a = (*attachments)[idx];
@@ -1676,14 +1453,14 @@ namespace LXMF {
         for (int i = 0; i < 8; i++) u.b[7 - i] = data[off + 1 + i];
         *out_ts = u.d;
       }
-      if (!RawMsgPack::skip_element(data, len, off)) return false;
+      if (!Common::MsgPack::skip_element(data, len, off)) return false;
 
       // Element 1: title
-      std::string title = RawMsgPack::read_bin_or_str(data, len, off);
+      std::string title = Common::MsgPack::read_bin_or_str(data, len, off);
       if (out_title) *out_title = title;
 
       // Element 2: content
-      std::string content = RawMsgPack::read_bin_or_str(data, len, off);
+      std::string content = Common::MsgPack::read_bin_or_str(data, len, off);
       if (content.empty()) return false;
       if (out_content) *out_content = content;
 
@@ -1734,7 +1511,7 @@ namespace LXMF {
             //   2. Bare-bytes legacy (what this firmware sent before #115).
             // Detect by peeking the value tag — array means Sideband.
             const size_t value_start = off;
-            if (!RawMsgPack::skip_element(data, len, off)) return true;
+            if (!Common::MsgPack::skip_element(data, len, off)) return true;
             const size_t value_end = off;
             const bool is_target_tag = (key_tag == FIELD_FILE_ATTACHMENTS
                                       || key_tag == FIELD_IMAGE
@@ -1761,7 +1538,7 @@ namespace LXMF {
                 } else { return 0; }
               } else {
                 size_t name_off = p;
-                blob.filename = RawMsgPack::read_bin_or_str(data, value_end, name_off);
+                blob.filename = Common::MsgPack::read_bin_or_str(data, value_end, name_off);
                 if (name_off == p) return 0;   // read failed
                 p = name_off;
               }

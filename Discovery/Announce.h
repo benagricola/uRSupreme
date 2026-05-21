@@ -25,9 +25,8 @@
 //     accept this; the default upstream required_value is 14 so
 //     stricter listeners will drop us until we land the PoW.
 //
-// Self-contained: inlines a small msgpack encoder rather than
-// depending on LXMF/RawMsgPack so the Discovery folder doesn't
-// pull LXMFMinimal.h transitively.
+// Serialisation primitives come from Common/MsgPack.h — same module
+// LXMF uses, so the codebase has a single msgpack encoder.
 
 #pragma once
 
@@ -37,7 +36,7 @@
 #include <stddef.h>
 #include <string>
 #include <vector>
-#include <cstring>
+#include "../Common/MsgPack.h"
 
 namespace Discovery {
 namespace Announce {
@@ -67,98 +66,8 @@ enum Tag : uint8_t {
 inline constexpr uint8_t FLAG_SIGNED    = 0x01;
 inline constexpr uint8_t FLAG_ENCRYPTED = 0x02;
 inline constexpr size_t  STAMP_SIZE     = 32;   // RNS::Identity::HASHLENGTH/8
-
-namespace _msgpack {
-
-inline void put_u8(std::vector<uint8_t>& out, uint8_t v) {
-  out.push_back(v);
-}
-inline void put_be(std::vector<uint8_t>& out, uint64_t v, int n) {
-  for (int i = n - 1; i >= 0; --i) out.push_back((uint8_t)(v >> (i * 8)));
-}
-
-// uint8 tag for a map key (0x00 .. 0xFF). Per upstream, keys are
-// emitted as fixint when ≤127, else uint8 (0xCC). The Discovery
-// tag table includes 0xFE / 0xFF so we always take the uint8 path
-// for safety + match — the Python umsgpack also uses uint8 for
-// values > positive-fixint.
-inline void put_map_key(std::vector<uint8_t>& out, uint8_t k) {
-  if (k <= 0x7F) { out.push_back(k); }
-  else           { out.push_back(0xCC); out.push_back(k); }
-}
-
-inline void put_map_header(std::vector<uint8_t>& out, size_t n) {
-  if (n <= 0x0F) {
-    out.push_back(0x80 | (uint8_t)n);
-  } else if (n <= 0xFFFF) {
-    out.push_back(0xDE);
-    put_be(out, n, 2);
-  } else {
-    out.push_back(0xDF);
-    put_be(out, n, 4);
-  }
-}
-
-inline void put_str(std::vector<uint8_t>& out, const std::string& s) {
-  const size_t n = s.size();
-  if (n <= 0x1F) {
-    out.push_back(0xA0 | (uint8_t)n);
-  } else if (n <= 0xFF) {
-    out.push_back(0xD9);
-    out.push_back((uint8_t)n);
-  } else if (n <= 0xFFFF) {
-    out.push_back(0xDA);
-    put_be(out, n, 2);
-  } else {
-    out.push_back(0xDB);
-    put_be(out, n, 4);
-  }
-  for (char c : s) out.push_back((uint8_t)c);
-}
-
-inline void put_bin(std::vector<uint8_t>& out, const uint8_t* data, size_t n) {
-  if (n <= 0xFF) {
-    out.push_back(0xC4);
-    out.push_back((uint8_t)n);
-  } else if (n <= 0xFFFF) {
-    out.push_back(0xC5);
-    put_be(out, n, 2);
-  } else {
-    out.push_back(0xC6);
-    put_be(out, n, 4);
-  }
-  for (size_t i = 0; i < n; ++i) out.push_back(data[i]);
-}
-
-inline void put_bool(std::vector<uint8_t>& out, bool v) {
-  out.push_back(v ? 0xC3 : 0xC2);
-}
-
-inline void put_int(std::vector<uint8_t>& out, int64_t v) {
-  if (v >= 0) {
-    if (v <= 0x7F)             { out.push_back((uint8_t)v); }
-    else if (v <= 0xFF)        { out.push_back(0xCC); out.push_back((uint8_t)v); }
-    else if (v <= 0xFFFF)      { out.push_back(0xCD); put_be(out, v, 2); }
-    else if (v <= 0xFFFFFFFFLL){ out.push_back(0xCE); put_be(out, v, 4); }
-    else                       { out.push_back(0xCF); put_be(out, (uint64_t)v, 8); }
-  } else {
-    if (v >= -32)              { out.push_back((uint8_t)(0xE0 | (v & 0x1F))); }
-    else if (v >= -128)        { out.push_back(0xD0); out.push_back((uint8_t)(int8_t)v); }
-    else if (v >= -32768)      { out.push_back(0xD1); put_be(out, (uint16_t)v, 2); }
-    else if (v >= INT32_MIN)   { out.push_back(0xD2); put_be(out, (uint32_t)v, 4); }
-    else                       { out.push_back(0xD3); put_be(out, (uint64_t)v, 8); }
-  }
-}
-
-inline void put_float64(std::vector<uint8_t>& out, double v) {
-  uint64_t bits;
-  static_assert(sizeof(bits) == sizeof(v), "float64 bit-width");
-  std::memcpy(&bits, &v, sizeof(bits));
-  out.push_back(0xCB);
-  put_be(out, bits, 8);
-}
-
-}  // namespace _msgpack
+inline constexpr size_t  MAX_WIRE_SIZE  = 1024; // generous upper bound; real
+                                                 // announces top out near 200 B
 
 // Field value-type tags. C++ doesn't get a tagged union for free;
 // this is the simplest "one entry per field" representation.
@@ -204,27 +113,41 @@ public:
   // Serialize to wire form: [flags=0x00] + packed-msgpack + stamp(32 B).
   // For v1 we send unsigned + unencrypted, with a zero-filled stamp.
   // Returns the full app_data ready to hand to RNS::Destination::announce.
+  // Returns empty Bytes on encoder overflow (shouldn't happen — the
+  // MAX_WIRE_SIZE upper bound is generous).
   RNS::Bytes serialize() const {
-    std::vector<uint8_t> packed;
-    packed.reserve(64 + _fields.size() * 16);
-    _msgpack::put_map_header(packed, _fields.size());
+    uint8_t buf[MAX_WIRE_SIZE];
+    size_t pos = 0;
+
+    // flags
+    if (pos >= sizeof(buf)) return {};
+    buf[pos++] = 0x00;                                                  // unsigned + unencrypted
+
+    // packed-msgpack dict
+    size_t n;
+    n = Common::MsgPack::pack_map_header(&buf[pos], sizeof(buf) - pos, _fields.size());
+    if (n == 0) return {};
+    pos += n;
     for (const auto& f : _fields) {
-      _msgpack::put_map_key(packed, f.tag);
+      n = Common::MsgPack::pack_uint8(&buf[pos], sizeof(buf) - pos, f.tag);
+      if (n == 0) return {};
+      pos += n;
       switch (f.type) {
-        case Field::T::Str:   _msgpack::put_str    (packed, f.s); break;
-        case Field::T::Int:   _msgpack::put_int    (packed, f.i); break;
-        case Field::T::Float: _msgpack::put_float64(packed, f.f); break;
-        case Field::T::Bool:  _msgpack::put_bool   (packed, f.b); break;
-        case Field::T::Bin:   _msgpack::put_bin    (packed, f.bin.data(), f.bin.size()); break;
+        case Field::T::Str:   n = Common::MsgPack::pack_str    (&buf[pos], sizeof(buf) - pos, f.s); break;
+        case Field::T::Int:   n = Common::MsgPack::pack_int    (&buf[pos], sizeof(buf) - pos, f.i); break;
+        case Field::T::Float: n = Common::MsgPack::pack_float64(&buf[pos], sizeof(buf) - pos, f.f); break;
+        case Field::T::Bool:  n = Common::MsgPack::pack_bool   (&buf[pos], sizeof(buf) - pos, f.b); break;
+        case Field::T::Bin:   n = Common::MsgPack::pack_bin    (&buf[pos], sizeof(buf) - pos, f.bin.data(), f.bin.size()); break;
       }
+      if (n == 0) return {};
+      pos += n;
     }
 
-    std::vector<uint8_t> wire;
-    wire.reserve(1 + packed.size() + STAMP_SIZE);
-    wire.push_back(0x00);                                              // flags: unsigned + unencrypted
-    wire.insert(wire.end(), packed.begin(), packed.end());             // packed dict
-    wire.insert(wire.end(), STAMP_SIZE, 0x00);                         // zero stamp (PoW placeholder)
-    return RNS::Bytes(wire.data(), wire.size());
+    // stamp (zero-filled placeholder; PoW lands in a later commit)
+    if (pos + STAMP_SIZE > sizeof(buf)) return {};
+    for (size_t i = 0; i < STAMP_SIZE; ++i) buf[pos++] = 0x00;
+
+    return RNS::Bytes(buf, pos);
   }
 
   // Direct read of the in-progress field list — useful for tests

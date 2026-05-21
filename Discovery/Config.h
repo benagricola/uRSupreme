@@ -37,7 +37,7 @@
 #include <string>
 #include <vector>
 #include <microStore/FileSystem.h>
-#include "../Web/PsramAllocator.h"
+#include "../Common/PsramAllocator.h"
 
 extern microStore::FileSystem filesystem;
 
@@ -109,7 +109,7 @@ inline void load() {
              (unsigned)r, (unsigned)sz);
     return;
   }
-  Web::PsramJsonDocument doc;
+  Common::PsramJsonDocument doc;
   if (deserializeJson(doc, buf.data(), sz) != DeserializationError::Ok) {
     WARNINGF("Discovery::Config: %s did not parse as JSON — ignoring",
              PERSIST_PATH);
@@ -132,7 +132,7 @@ inline void load() {
 // missing. Returns true on full write.
 inline bool save() {
   if (!filesystem.isDirectory("/reticulum")) filesystem.mkdir("/reticulum");
-  Web::PsramJsonDocument doc;
+  Common::PsramJsonDocument doc;
   JsonObject root = doc.to<JsonObject>();
   for (const auto& kv : _detail::entries_ref()) {
     JsonObject o = root[kv.first].to<JsonObject>();

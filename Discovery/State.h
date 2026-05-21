@@ -20,7 +20,7 @@
 #include <Log.h>
 #include <ArduinoJson.h>
 #include <microStore/FileSystem.h>
-#include "../Web/PsramAllocator.h"
+#include "../Common/PsramAllocator.h"
 
 extern microStore::FileSystem filesystem;
 
@@ -59,7 +59,7 @@ inline void load() {
   const size_t r = f.read(buf.data(), sz);
   f.close();
   if (r != sz) return;
-  Web::PsramJsonDocument doc;
+  Common::PsramJsonDocument doc;
   if (deserializeJson(doc, buf.data(), sz) != DeserializationError::Ok) {
     WARNINGF("Discovery::State: %s did not parse", PERSIST_PATH);
     return;
@@ -75,7 +75,7 @@ inline void load() {
 inline bool save() {
   if (!filesystem.isDirectory("/reticulum")) filesystem.mkdir("/reticulum");
   const Master& m = _detail::slot();
-  Web::PsramJsonDocument doc;
+  Common::PsramJsonDocument doc;
   doc["enabled"]              = m.enabled;
   doc["default_interval_min"] = m.default_interval_min;
   doc["default_stamp_cost"]   = m.default_stamp_cost;

@@ -1237,7 +1237,7 @@ void setup() {
       if (filesystem.exists("/lxmf/transport.json")) {
         std::vector<uint8_t> data;
         if (filesystem.readFile("/lxmf/transport.json", data) > 0) {
-          Web::PsramJsonDocument tdoc;
+          Common::PsramJsonDocument tdoc;
           if (deserializeJson(tdoc, data.data(), data.size()) == DeserializationError::Ok) {
             bool want = tdoc["enabled"] | false;
             reticulum.transport_enabled(want);

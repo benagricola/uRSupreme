@@ -41,7 +41,7 @@
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
 
-namespace Web {
+namespace Common {
 
 class PsramAllocator : public ArduinoJson::Allocator {
 public:
@@ -80,4 +80,4 @@ public:
     : ::ArduinoJson::JsonDocument(PsramAllocator::instance()) {}
 };
 
-} // namespace Web
+} // namespace Common

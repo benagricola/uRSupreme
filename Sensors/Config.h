@@ -24,7 +24,7 @@
 #include <stdint.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include "../Web/PsramAllocator.h"
+#include "../Common/PsramAllocator.h"
 #include <microStore/FileSystem.h>
 
 #include "Environment/BME280.h"
@@ -46,7 +46,7 @@ inline void load(microStore::FileSystem& fs) {
   if (!fs.exists(CONFIG_PATH)) return;
   std::vector<uint8_t> data;
   if (fs.readFile(CONFIG_PATH, data) == 0) return;
-  Web::PsramJsonDocument doc;
+  Common::PsramJsonDocument doc;
   if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
 
   auto apply = [&](const char* key, void (*set_enable)(bool), void (*set_iv_ms)(uint32_t)) {
@@ -63,7 +63,7 @@ inline void load(microStore::FileSystem& fs) {
 }
 
 inline void persist(microStore::FileSystem& fs) {
-  Web::PsramJsonDocument doc;
+  Common::PsramJsonDocument doc;
   auto write = [&](const char* key, bool en, uint32_t iv_ms) {
     JsonObject o = doc[key].to<JsonObject>();
     o["enabled"]    = en;

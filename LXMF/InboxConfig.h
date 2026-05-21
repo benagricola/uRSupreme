@@ -11,7 +11,7 @@
 
 #include <stdint.h>
 #include <ArduinoJson.h>
-#include "../Web/PsramAllocator.h"
+#include "../Common/PsramAllocator.h"
 #include <microStore/FileSystem.h>
 
 #include "LXMFInbox.h"
@@ -45,7 +45,7 @@ inline void load(microStore::FileSystem& fs) {
   if (!fs.exists(CONFIG_PATH)) return;
   std::vector<uint8_t> data;
   if (fs.readFile(CONFIG_PATH, data) == 0) return;
-  Web::PsramJsonDocument doc;
+  Common::PsramJsonDocument doc;
   if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
   // ram_capacity: a SIZE_MAX sentinel encodes as a large JSON number.
   // Treat anything ≥ 0xFFFFFFFE as "unlimited" so we never accidentally
@@ -61,7 +61,7 @@ inline void load(microStore::FileSystem& fs) {
 
 inline void persist(microStore::FileSystem& fs) {
   const Config& c = _detail::current_ref();
-  Web::PsramJsonDocument doc;
+  Common::PsramJsonDocument doc;
   doc["ram_capacity"] = (c.ram_capacity >= 0xFFFFFFFEu)
       ? (uint32_t)0xFFFFFFFFu : (uint32_t)c.ram_capacity;
   doc["ttl_seconds"]  = c.ttl_seconds;

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <ArduinoJson.h>
-#include "../Web/PsramAllocator.h"
+#include "../Common/PsramAllocator.h"
 #include <Log.h>
 #include <microStore/FileSystem.h>
 
@@ -174,7 +174,7 @@ namespace LXMF {
         }
         if (f.peek() == -1) break;
 
-        Web::PsramJsonDocument doc;
+        Common::PsramJsonDocument doc;
         DeserializationError err = deserializeJson(doc, f);
         if (err) {
           // Malformed record — scan to the next newline and resume.
@@ -212,7 +212,7 @@ namespace LXMF {
       else if (rec.seq > _next_seq) _next_seq = rec.seq;
       rec.body_size = (uint32_t)rec.content.size();
 
-      Web::PsramJsonDocument doc;
+      Common::PsramJsonDocument doc;
       record_to_doc(rec, doc);
 
       microStore::File f = filesystem.open(_path.c_str(), microStore::File::ModeAppend, true);
@@ -422,7 +422,7 @@ namespace LXMF {
         return;
       }
       for (const auto& rec : _ring) {
-        Web::PsramJsonDocument doc;
+        Common::PsramJsonDocument doc;
         record_to_doc(rec, doc);
         if (serializeJson(doc, f) == 0) continue;
         f.write((uint8_t)'\n');

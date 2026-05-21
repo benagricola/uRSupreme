@@ -4,10 +4,13 @@
 //   master_enabled:        global on/off for the announcer (default false)
 //   default_interval_min:  how often each discoverable interface emits
 //                          (default 360 min, matches upstream)
-//   default_stamp_cost:    stamp PoW difficulty in leading zero bits
-//                          (default 0 in v1 — stamp impl is a later
-//                          commit, listeners with required_value=0
-//                          accept zero-stamps)
+//   default_stamp_cost:    stamp PoW difficulty in leading zero bits.
+//                          Default 14 matches the upstream listener's
+//                          required_value, so rmap.world and other RNS
+//                          nodes following the reference impl accept
+//                          our announces out of the box. Set to 0 to
+//                          disable the PoW entirely (worker emits a
+//                          zero-filled stamp; stricter listeners drop).
 //
 // Lives separately from interfaces.json (which is the per-interface
 // registry) so the master toggle has its own clean read/write surface
@@ -32,7 +35,7 @@ inline constexpr const char* PERSIST_PATH = "/reticulum/discovery.json";
 inline constexpr uint32_t DEFAULT_INTERVAL_MIN     = 360;   // 6 h, upstream default
 inline constexpr uint32_t MIN_INTERVAL_MIN         = 5;     // upstream-enforced floor
 inline constexpr uint32_t MAX_INTERVAL_MIN         = 1440;  // 24 h UI cap
-inline constexpr uint32_t DEFAULT_STAMP_COST       = 0;     // PoW deferred — see Announce.h
+inline constexpr uint32_t DEFAULT_STAMP_COST       = 14;    // upstream listener's required_value
 
 // Cap on the user-set advertisement label. The on-air announce
 // app_data carries this as the interface's `name` field. Sideband-

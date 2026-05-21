@@ -16,6 +16,7 @@
 #include <AsyncJson.h>
 #include <ArduinoJson.h>
 #include "../Common/PsramAllocator.h"
+#include "../Common/RnsLock.h"
 #include <ChunkPrint.h>
 #include <Log.h>
 #include <Reticulum.h>
@@ -302,31 +303,16 @@ namespace Web {
     // arriving mid-flight while the main loop is mutating path tables
     // races and crashes the device. The mutex is recursive so a handler
     // that holds it can call any number of nested RNS helpers without
-    // deadlocking itself.
-    static SemaphoreHandle_t& rns_lock() {
-      static SemaphoreHandle_t s = nullptr;
-      if (!s) s = xSemaphoreCreateRecursiveMutex();
-      return s;
-    }
+    // deadlocking itself. Implementation lives in Common/RnsLock.h so
+    // non-web callers (Discovery, LXMF) can grab the same lock without
+    // a circular dependency on Web/.
     static bool acquire_rns_lock(uint32_t timeout_ms = portMAX_DELAY) {
-      return xSemaphoreTakeRecursive(rns_lock(),
-                                     timeout_ms == portMAX_DELAY ? portMAX_DELAY
-                                                                 : pdMS_TO_TICKS(timeout_ms))
-             == pdTRUE;
+      return Common::RnsLock::acquire(timeout_ms);
     }
     static void release_rns_lock() {
-      xSemaphoreGiveRecursive(rns_lock());
+      Common::RnsLock::release();
     }
-
-    // RAII helper for handlers / main-loop code that wants
-    // mutex-guarded access to RNS state.
-    struct RnsLockGuard {
-      bool ok;
-      explicit RnsLockGuard(uint32_t timeout_ms = portMAX_DELAY)
-        : ok(acquire_rns_lock(timeout_ms)) {}
-      ~RnsLockGuard() { if (ok) release_rns_lock(); }
-      explicit operator bool() const { return ok; }
-    };
+    using RnsLockGuard = Common::RnsLock::Guard;
 
     // Flush in-memory RNS state to flash, then restart. Used by every
     // controlled-reboot path (WiFi save, radio save, radio reset,

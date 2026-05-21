@@ -20,10 +20,10 @@
 //     typed values (string / int / float / bool / bin) per the
 //     upstream tag table.
 //   - The stamp is an LXMF proof-of-work over the SHA-256 of the
-//     packed bytes. v1 emits 32 zero bytes — stamp PoW will be
-//     implemented in a later commit. Listeners with required_value=0
-//     accept this; the default upstream required_value is 14 so
-//     stricter listeners will drop us until we land the PoW.
+//     packed-msgpack bytes. Computed asynchronously by
+//     Discovery::Stamp; the Builder exposes serialize_unstamped() to
+//     get the bytes that feed the PoW, and serialize_with_stamp() to
+//     assemble the final wire frame once the 32-byte stamp is back.
 //
 // Serialisation primitives come from Common/MsgPack.h — same module
 // LXMF uses, so the codebase has a single msgpack encoder.
@@ -110,20 +110,15 @@ public:
   Builder& modulation(const std::string& s)         { return set_str(TAG_MODULATION, s); }
   Builder& channel(int64_t v)                       { return set_int(TAG_CHANNEL, v); }
 
-  // Serialize to wire form: [flags=0x00] + packed-msgpack + stamp(32 B).
-  // For v1 we send unsigned + unencrypted, with a zero-filled stamp.
-  // Returns the full app_data ready to hand to RNS::Destination::announce.
+  // Serialise just the msgpack dict — the bytes that get hashed to
+  // produce the LXStamper "material" input. Caller hands this to
+  // Discovery::Stamp::submit() and assembles the final wire frame via
+  // serialize_with_stamp() once the 32-byte stamp is back.
   // Returns empty Bytes on encoder overflow (shouldn't happen — the
   // MAX_WIRE_SIZE upper bound is generous).
-  RNS::Bytes serialize() const {
+  RNS::Bytes serialize_unstamped() const {
     uint8_t buf[MAX_WIRE_SIZE];
     size_t pos = 0;
-
-    // flags
-    if (pos >= sizeof(buf)) return {};
-    buf[pos++] = 0x00;                                                  // unsigned + unencrypted
-
-    // packed-msgpack dict
     size_t n;
     n = Common::MsgPack::pack_map_header(&buf[pos], sizeof(buf) - pos, _fields.size());
     if (n == 0) return {};
@@ -142,12 +137,21 @@ public:
       if (n == 0) return {};
       pos += n;
     }
-
-    // stamp (zero-filled placeholder; PoW lands in a later commit)
-    if (pos + STAMP_SIZE > sizeof(buf)) return {};
-    for (size_t i = 0; i < STAMP_SIZE; ++i) buf[pos++] = 0x00;
-
     return RNS::Bytes(buf, pos);
+  }
+
+  // Assemble the final wire frame: [flags=0x00] + packed-msgpack + stamp.
+  // `stamp` must be exactly STAMP_SIZE bytes; pass a zero-filled buffer
+  // to emit a cost=0 announce.
+  static RNS::Bytes serialize_with_stamp(const RNS::Bytes& unstamped,
+                                         const RNS::Bytes& stamp) {
+    if (stamp.size() != STAMP_SIZE) return {};
+    RNS::Bytes out;
+    uint8_t flags = 0x00;
+    out.append(&flags, 1);
+    out.append(unstamped);
+    out.append(stamp);
+    return out;
   }
 
   // Direct read of the in-progress field list — useful for tests

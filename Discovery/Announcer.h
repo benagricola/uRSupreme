@@ -38,6 +38,8 @@
 #include "Config.h"
 #include "State.h"
 #include "Announce.h"
+#include "Stamp.h"
+#include "../Common/RnsLock.h"
 
 // LoRa-radio + GPS state we sample for outbound announces. Per-device
 // extern globals live in Config.h / RNode_Firmware.ino.
@@ -173,6 +175,9 @@ inline void setup() {
       "discovery.interface"));
   NOTICEF("Discovery::Announcer: destination %s ready",
           _detail::destination()->hash().toHex().c_str());
+  // Spin up the background stamp worker so the first announce doesn't
+  // pay the FreeRTOS task-create cost on the hot path.
+  Stamp::start();
 }
 
 // Main-loop pulse. Cheap on the no-op path: returns immediately if
@@ -234,18 +239,57 @@ inline void tick() {
     }
     break;
   }
-  const RNS::Bytes app_data = builder.serialize();
-  if (app_data.size() == 0) {
-    WARNINGF("Discovery::Announcer: serialize() returned empty for '%s'",
+  const RNS::Bytes packed = builder.serialize_unstamped();
+  if (packed.size() == 0) {
+    WARNINGF("Discovery::Announcer: serialize_unstamped() returned empty for '%s'",
              due_name.c_str());
     return;
   }
-  _detail::destination()->announce(app_data);
+
+  // PoW + announce runs on the Stamp worker. We pass the on_done
+  // callback that captures the interface name (by value — the worker
+  // outlives this scope) so the snapshot is consistent even if the
+  // config changes between dispatch and completion.
+  const uint32_t cost = s.default_stamp_cost;  // 0 = disable PoW entirely
+  const std::string iface_name = due_name;
+  const uint32_t default_interval_min = s.default_interval_min;
+  auto on_done = [packed, iface_name, default_interval_min](const RNS::Bytes& stamp) {
+    if (!_detail::destination()) return;
+    const RNS::Bytes app_data = Announce::Builder::serialize_with_stamp(packed, stamp);
+    if (app_data.size() == 0) {
+      WARNINGF("Discovery::Announcer: serialize_with_stamp() empty for '%s'",
+               iface_name.c_str());
+      return;
+    }
+    // The RNS path tables aren't reentrant. Take the recursive lock
+    // before calling into the destination — the WebUI handlers grab
+    // the same lock when they touch state.
+    Common::RnsLock::Guard guard;
+    if (!guard) {
+      WARNINGF("Discovery::Announcer: rns_lock timed out for '%s'", iface_name.c_str());
+      return;
+    }
+    _detail::destination()->announce(app_data);
+    _detail::last_announce_ms()[iface_name] = millis();
+    _detail::last_any_announce_ms() = millis();
+    _detail::total_announce_count()++;
+    NOTICEF("Discovery::Announcer: announced interface '%s' (%u B app_data, next due in %u min)",
+            iface_name.c_str(), (unsigned)app_data.size(), (unsigned)default_interval_min);
+  };
+
+  if (!Stamp::submit(packed, cost, std::move(on_done))) {
+    // Worker is busy with a prior submission — leave last_map untouched
+    // so this interface remains "due" and we retry on the next tick.
+    NOTICEF("Discovery::Announcer: stamp worker busy, deferring '%s'",
+            due_name.c_str());
+    return;
+  }
+  // Pre-record the timestamp so we don't resubmit the same interface
+  // every tick while the worker is computing. The interface will be
+  // suppressed for one interval period; if the stamp callback ends up
+  // not firing for any reason, the next tick after the interval will
+  // try again.
   last_map[due_name] = now;
-  _detail::last_any_announce_ms() = now;
-  _detail::total_announce_count()++;
-  NOTICEF("Discovery::Announcer: announced interface '%s' (%u B app_data, next due in %u min)",
-          due_name.c_str(), (unsigned)app_data.size(), (unsigned)s.default_interval_min);
 }
 
 // Snapshot for /api/discovery/state. Read-only view that lets the

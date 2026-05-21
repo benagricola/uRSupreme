@@ -652,6 +652,48 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 }
 .cn-section > summary .cn-row-toggle:hover { background: var(--bg-elev-2); }
 
+/* Reusable info icon + click-triggered tooltip. Use anywhere a UI
+   element needs explanation but the explanation is too long to live
+   inline. Markup:
+     <button class="info-icon" data-info="Some explanatory text...">ⓘ</button>
+   The tooltip element is created lazily by the document-level handler
+   in JS, positioned below the icon, and closed on outside-click / Esc
+   / scroll. Multiple icons are supported but only one tooltip is
+   visible at a time. */
+.info-icon {
+  width: 16px; height: 16px;
+  background: transparent;
+  border: 1px solid var(--text-mute);
+  border-radius: 50%;
+  color: var(--text-mute);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.info-icon:hover { color: var(--text); border-color: var(--text); }
+.info-tooltip {
+  position: fixed;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  max-width: 280px;
+  z-index: 280;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+  font-weight: normal;
+}
+.info-tooltip a { color: var(--accent); }
+
 /* iOS/Material-style switch. Reusable — wrap a checkbox so the SPA
    stops shipping bare browser-default checkboxes wherever a boolean
    preference is being expressed. Usage:
@@ -1726,8 +1768,9 @@ summary:hover { color: var(--text); }
           <summary>
             <span class="cn-title">LoRa Radio</span>
             <span class="cn-dot" id="cn-dot-radio" hidden></span>
-            <label class="cn-row-toggle" title="Periodically announce this interface so other Reticulum nodes can find it">
+            <label class="cn-row-toggle">
               <span>Discoverable</span>
+              <button type="button" class="info-icon" data-info="When on, this interface periodically emits an <code>rnstransport.discovery.interface</code> announce over LoRa. The announce contains this device's identity hash, radio parameters (frequency, bandwidth, SF, coding rate), and approximate location (if GPS has a fix) so other Reticulum nodes hearing it can decide whether they're configured to reach this device, and apps like <a href='https://rmap.world/info.html' target='_blank' rel='noopener'>rmap.world</a> can plot the device on a map.">i</button>
               <span class="switch">
                 <input type="checkbox" id="rd-discoverable">
                 <span class="switch-slider"></span>
@@ -1735,17 +1778,6 @@ summary:hover { color: var(--text); }
             </label>
           </summary>
           <div class="cn-section-body">
-            <div class="muted" style="margin:0 0 14px">
-              The <strong>Discoverable</strong> toggle on the row controls whether
-              this interface periodically emits an <code>rnstransport.discovery.interface</code>
-              announce over LoRa. The announce contains this device's identity
-              hash, radio parameters (frequency, bandwidth, SF, coding rate),
-              and approximate location (if GPS has a fix) so other Reticulum
-              nodes hearing it can decide whether they're configured to reach
-              this device, and apps like
-              <a href="https://rmap.world/info.html" target="_blank" rel="noopener">rmap.world</a>
-              can plot the device on a map.
-            </div>
             <label>Region preset</label>
             <p class="muted" id="rd-intro" style="margin:4px 0 6px">Pick the region preset that matches your local LoRa community. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.</p>
             <select id="rd-preset" style="margin-bottom:6px"></select>
@@ -6579,6 +6611,53 @@ async function populateRadioTab() {
     toggle.addEventListener('click', (ev) => ev.stopPropagation());
   }
 })();
+
+// ============== INFO ICON / CLICK TOOLTIP ==============
+// Generic explainer popover. Click an `.info-icon` button to show a
+// tooltip containing its `data-info` text. Outside-click / Esc / scroll
+// closes. Used where an inline paragraph would crowd the UI but the
+// user still needs an explanation on demand.
+let _infoTooltipEl = null;
+function _closeInfoTooltip() {
+  if (_infoTooltipEl) { _infoTooltipEl.remove(); _infoTooltipEl = null; }
+}
+document.addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.info-icon');
+  if (btn) {
+    // Stop the click from toggling whatever container the icon lives in
+    // (e.g. the accordion summary or the .cn-row-toggle label).
+    ev.preventDefault();
+    ev.stopPropagation();
+    // Re-clicking the same icon closes the open tooltip — feels right
+    // for an "info" affordance that doubles as a dismiss button.
+    const info = btn.dataset.info || '';
+    if (_infoTooltipEl && _infoTooltipEl.dataset.from === info) {
+      _closeInfoTooltip();
+      return;
+    }
+    _closeInfoTooltip();
+    const tip = el('div', { class: 'info-tooltip' });
+    tip.innerHTML = info;
+    tip.dataset.from = info;
+    document.body.appendChild(tip);
+    _infoTooltipEl = tip;
+    const r = btn.getBoundingClientRect();
+    const w = tip.offsetWidth || 280;
+    const h = tip.offsetHeight || 60;
+    let left = r.left + r.width / 2 - w / 2;
+    let top  = r.bottom + 6;
+    if (left + w > window.innerWidth  - 8) left = window.innerWidth  - w - 8;
+    if (left < 8) left = 8;
+    if (top  + h > window.innerHeight - 8) top  = r.top - h - 6;
+    if (top  < 8) top  = 8;
+    tip.style.left = left + 'px';
+    tip.style.top  = top  + 'px';
+    return;
+  }
+  if (_infoTooltipEl && !_infoTooltipEl.contains(ev.target)) _closeInfoTooltip();
+}, true);
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') _closeInfoTooltip(); });
+window.addEventListener('scroll', _closeInfoTooltip, true);
 $('rd-discoverable').addEventListener('change', (ev) => {
   const cb = ev.target;
   const wantOn = cb.checked;

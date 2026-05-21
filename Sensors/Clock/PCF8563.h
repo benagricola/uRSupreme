@@ -4,7 +4,7 @@
 // SDA=42 SCL=41 — NOT the user/sensor bus on 17/18), sharing the
 // bus with the AXP2101 PMU at 0x34. The RTC's own address is 0x51.
 // It has a coin-cell backup so its time survives ESP32 power-off
-// and reboot. We use it as a cold-boot seed for Web::TimeManager
+// and reboot. We use it as a cold-boot seed for Clock::Manager
 // and write back to it whenever a higher-trust source (GPS, NTP,
 // Browser) reports a new time. The RTC is NOT a user-configurable
 // source — see TimeManager.h for the rationale.
@@ -29,10 +29,10 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <time.h>
-#include "TimeManager.h"
+#include "../../Clock/Manager.h"
 
-namespace Web {
-namespace RtcPCF8563 {
+namespace Sensors {
+namespace PCF8563 {
 
 inline constexpr uint8_t I2C_ADDR = 0x51;
 
@@ -166,7 +166,7 @@ inline bool init_and_seed(TwoWire& wire, const Pins& pins) {
     NOTICE("RtcPCF8563: present but no valid time stored (VL set) — waiting for a live source to seed it");
     return false;
   }
-  Web::TimeManager::seed_from_rtc(epoch);
+  Clock::Manager::seed_from_rtc(epoch);
   NOTICEF("RtcPCF8563: seeded TimeManager with epoch %.0f from on-board RTC", epoch);
   return true;
 }
@@ -206,5 +206,5 @@ inline DebugSnapshot debug_snapshot() {
   return s;
 }
 
-}  // namespace RtcPCF8563
-}  // namespace Web
+} // namespace PCF8563
+} // namespace Sensors

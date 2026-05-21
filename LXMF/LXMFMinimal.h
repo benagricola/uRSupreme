@@ -44,7 +44,7 @@
 
 #include "LXMFTypes.h"
 #include "../Web/BootCounter.h"
-#include "../Web/TimeManager.h"
+#include "../Clock/Manager.h"
 #include "../Storage/OutboundStaging.h"
 #include <esp_heap_caps.h>
 
@@ -846,8 +846,8 @@ namespace LXMF {
     // Falls back to a compile-time-epoch + millis() guess until the
     // manager is calibrated, so outbound messages don't carry ts=0.
     double get_timestamp() {
-      if (Web::TimeManager::is_calibrated()) {
-        return Web::TimeManager::now_epoch();
+      if (Clock::Manager::is_calibrated()) {
+        return Clock::Manager::now_epoch();
       }
       double up = (double)millis() / 1000.0;
       return _compile_time_epoch() + up;
@@ -857,8 +857,8 @@ namespace LXMF {
       // Hand the peer-supplied ts to TimeManager as a low-priority
       // RNS source; the manager will adopt it only if no
       // higher-priority source has reported and the value is sane.
-      if (Web::TimeManager::report_time(
-            Web::TimeManager::Source::RNS, remote_ts)) {
+      if (Clock::Manager::report_time(
+            Clock::Manager::Source::RNS, remote_ts)) {
         NOTICEF("LXMF: time calibrated from peer (epoch %.0f)", remote_ts);
       }
     }

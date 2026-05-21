@@ -21,8 +21,8 @@
 #include <Wire.h>
 #include <SensorQMC6310.hpp>
 
-namespace Web {
-namespace QmcMag {
+namespace Sensors {
+namespace QMC6310 {
 
 struct Reading {
   bool      valid       = false;
@@ -101,5 +101,5 @@ inline void      set_interval_ms(uint32_t ms) { _detail::interval_ms_ref() = ms;
 inline bool      enabled()       { return _detail::enabled_ref(); }
 inline void      set_enabled(bool on) { _detail::enabled_ref() = on; }
 
-}  // namespace QmcMag
-}  // namespace Web
+} // namespace QMC6310
+} // namespace Sensors

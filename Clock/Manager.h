@@ -37,11 +37,11 @@
 #include <string.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include "PsramAllocator.h"
+#include "../Web/PsramAllocator.h"
 #include <microStore/FileSystem.h>
 
-namespace Web {
-namespace TimeManager {
+namespace Clock {
+namespace Manager {
 
 // User-configurable sources occupy indices 1..4 (GPS, NTP, Browser,
 // RNS). RTC is a display-only label for the cold-boot seed —
@@ -279,5 +279,5 @@ inline void persist_config(microStore::FileSystem& fs) {
                out.length());
 }
 
-}  // namespace TimeManager
-}  // namespace Web
+} // namespace Manager
+} // namespace Clock

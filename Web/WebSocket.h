@@ -34,7 +34,7 @@
 #include <stdint.h>
 #include "../LXMF/LXMFTypes.h"
 #include "../LXMF/AnnounceLog.h"
-#include "RadioTelemetry.h"
+#include "../Telemetry/Radio.h"
 
 namespace LXMF { struct MessageRecord; }
 
@@ -292,10 +292,10 @@ namespace WS {
   // sub-object (msg / payload / value) because they carry the type
   // plus their own meta; telemetry carries no meta beyond the sample
   // itself, so the wrap was redundant.
-  inline void publish_radio_telemetry(const RadioTelemetry::Sample& s) {
+  inline void publish_radio_telemetry(const Telemetry::Radio::Sample& s) {
     Web::PsramJsonDocument doc;
     doc["type"] = "radio_telemetry";
-    RadioTelemetry::encode(s, doc.as<JsonObject>());
+    Telemetry::Radio::encode(s, doc.as<JsonObject>());
     broadcast(doc);
   }
 

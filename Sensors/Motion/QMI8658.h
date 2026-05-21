@@ -25,12 +25,12 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <SensorQMI8658.hpp>
-#include "../Boards.h"
-#include "../Storage/SDCard.h"   // for ensure_shared_bus
-#include "Gps.h"                 // for Gps::reset_backoff on motion events
+#include "../../Boards.h"
+#include "../../Storage/SDCard.h"  // for ensure_shared_bus
+#include "../Position/L76K.h"      // for L76K::reset_backoff on motion events
 
-namespace Web {
-namespace QmiImu {
+namespace Sensors {
+namespace QMI8658 {
 
 struct Reading {
   bool      valid       = false;
@@ -160,7 +160,7 @@ inline void pump() {
       // Drop the GPS exponential-backoff counter: motion implies the
       // device may have a new sky view, so retry sooner rather than
       // sit out the (potentially 30-min) backoff window.
-      Web::Gps::reset_backoff();
+      Sensors::L76K::reset_backoff();
     }
   }
   _detail::last_ref() = r;
@@ -174,5 +174,5 @@ inline void      set_interval_ms(uint32_t ms) { _detail::interval_ms_ref() = ms;
 inline bool      enabled()       { return _detail::enabled_ref(); }
 inline void      set_enabled(bool on) { _detail::enabled_ref() = on; }
 
-}  // namespace QmiImu
-}  // namespace Web
+} // namespace QMI8658
+} // namespace Sensors

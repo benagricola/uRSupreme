@@ -1,6 +1,6 @@
 // Per-sensor enable + polling-interval persistence.
 //
-// Each Web::Bme280 / Web::QmcMag / Web::QmiImu driver has its own
+// Each Sensors::BME280 / Sensors::QMC6310 / Sensors::QMI8658 driver has its own
 // in-RAM enable + interval_ms state with sensible defaults. This
 // module persists those overrides to /lxmf/sensors.json so the user
 // can disable a sensor or change its poll rate from the SPA and the
@@ -14,7 +14,7 @@
 //     "gps":          {"enabled": true,  "interval_s": 3600}
 //   }
 //
-// GPS reuses Web::TimeManager's GPS source config rather than this
+// GPS reuses Clock::Manager's GPS source config rather than this
 // store — its enable/interval are bound to the time source priority
 // list. Surfaced here read-only so the popover UI can show it
 // alongside the other sensors.
@@ -24,17 +24,17 @@
 #include <stdint.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include "PsramAllocator.h"
+#include "../Web/PsramAllocator.h"
 #include <microStore/FileSystem.h>
 
-#include "Bme280.h"
-#include "QmcMag.h"
-#include "QmiImu.h"
-#include "TimeManager.h"
+#include "Environment/BME280.h"
+#include "Compass/QMC6310.h"
+#include "Motion/QMI8658.h"
+#include "../Clock/Manager.h"
 
 extern microStore::FileSystem filesystem;
 
-namespace Web {
+namespace Sensors {
 namespace SensorConfig {
 
 inline constexpr const char* CONFIG_PATH = "/lxmf/sensors.json";
@@ -57,9 +57,9 @@ inline void load(microStore::FileSystem& fs) {
       set_iv_ms(o["interval_s"].as<uint32_t>() * 1000UL);
     }
   };
-  apply("environment",       Web::Bme280::set_enabled,  Web::Bme280::set_interval_ms);
-  apply("magnetometer", Web::QmcMag::set_enabled,  Web::QmcMag::set_interval_ms);
-  apply("imu",          Web::QmiImu::set_enabled,  Web::QmiImu::set_interval_ms);
+  apply("environment",       Sensors::BME280::set_enabled,  Sensors::BME280::set_interval_ms);
+  apply("magnetometer", Sensors::QMC6310::set_enabled,  Sensors::QMC6310::set_interval_ms);
+  apply("imu",          Sensors::QMI8658::set_enabled,  Sensors::QMI8658::set_interval_ms);
 }
 
 inline void persist(microStore::FileSystem& fs) {
@@ -69,9 +69,9 @@ inline void persist(microStore::FileSystem& fs) {
     o["enabled"]    = en;
     o["interval_s"] = iv_ms / 1000UL;
   };
-  write("environment",       Web::Bme280::enabled(),  Web::Bme280::interval_ms());
-  write("magnetometer", Web::QmcMag::enabled(),  Web::QmcMag::interval_ms());
-  write("imu",          Web::QmiImu::enabled(),  Web::QmiImu::interval_ms());
+  write("environment",       Sensors::BME280::enabled(),  Sensors::BME280::interval_ms());
+  write("magnetometer", Sensors::QMC6310::enabled(),  Sensors::QMC6310::interval_ms());
+  write("imu",          Sensors::QMI8658::enabled(),  Sensors::QMI8658::interval_ms());
   String out;
   serializeJson(doc, out);
   fs.writeFile(CONFIG_PATH,
@@ -93,21 +93,21 @@ inline bool update_one(microStore::FileSystem& fs, const char* key,
                        bool enabled, uint32_t interval_s) {
   const uint32_t iv_ms = interval_s * 1000UL;
   if (strcmp(key, "environment") == 0) {
-    Web::Bme280::set_enabled(enabled);
-    Web::Bme280::set_interval_ms(iv_ms);
+    Sensors::BME280::set_enabled(enabled);
+    Sensors::BME280::set_interval_ms(iv_ms);
   } else if (strcmp(key, "magnetometer") == 0) {
-    Web::QmcMag::set_enabled(enabled);
-    Web::QmcMag::set_interval_ms(iv_ms);
+    Sensors::QMC6310::set_enabled(enabled);
+    Sensors::QMC6310::set_interval_ms(iv_ms);
   } else if (strcmp(key, "imu") == 0) {
-    Web::QmiImu::set_enabled(enabled);
-    Web::QmiImu::set_interval_ms(iv_ms);
+    Sensors::QMI8658::set_enabled(enabled);
+    Sensors::QMI8658::set_interval_ms(iv_ms);
   } else if (strcmp(key, "gps") == 0) {
-    Web::TimeManager::SourceConfig c =
-        Web::TimeManager::get_config(Web::TimeManager::Source::GPS);
+    Clock::Manager::SourceConfig c =
+        Clock::Manager::get_config(Clock::Manager::Source::GPS);
     c.enabled    = enabled;
     c.interval_s = interval_s;
-    Web::TimeManager::set_config(Web::TimeManager::Source::GPS, c);
-    Web::TimeManager::persist_config(fs);
+    Clock::Manager::set_config(Clock::Manager::Source::GPS, c);
+    Clock::Manager::persist_config(fs);
     return true;
   } else {
     return false;
@@ -117,4 +117,4 @@ inline bool update_one(microStore::FileSystem& fs, const char* key,
 }
 
 }  // namespace SensorConfig
-}  // namespace Web
+} // namespace Sensors

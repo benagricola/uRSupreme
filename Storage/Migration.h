@@ -20,8 +20,8 @@
 #include "../LXMF/LXMFGateway.h"
 #include "../Storage/SDCard.h"
 
-namespace Web {
-namespace StorageMigration {
+namespace Storage {
+namespace Migration {
 
 struct Result {
   size_t   moved   = 0;
@@ -110,5 +110,5 @@ inline Result run() {
   return r;
 }
 
-}  // namespace StorageMigration
-}  // namespace Web
+} // namespace Migration
+} // namespace Storage

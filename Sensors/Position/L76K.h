@@ -9,7 +9,7 @@
 //     speed + heading. Cache the most recent fix in a `Fix` struct.
 //   * When the fix's status flag is A (Active) and the user-
 //     configured GPS time-source poll interval has elapsed, call
-//     `Web::TimeManager::report_time(Source::GPS, epoch)`.
+//     `Clock::Manager::report_time(Source::GPS, epoch)`.
 //   * Expose the last fix via `last_fix()` so the SPA can read
 //     position over the existing HTTP surface.
 //   * Power-cycle the module via the AXP2101's ALDO4 rail when the
@@ -35,12 +35,12 @@
 #include <Arduino.h>
 #include <time.h>
 #include <XPowersLib.h>
-#include "TimeManager.h"
+#include "../../Clock/Manager.h"
 
 extern XPowersLibInterface* PMU;
 
-namespace Web {
-namespace Gps {
+namespace Sensors {
+namespace L76K {
 
 struct Pins {
   int rx;          // GPS_RX_PIN on the Supreme: data FROM the L76K
@@ -225,14 +225,14 @@ namespace _detail {
     // interval_s = 0  → "at boot" only: report once, never repoll
     // interval_s > 0  → seconds between repolls
     if (f.unix_epoch > 0.0) {
-      const auto& cfg = Web::TimeManager::get_config(Web::TimeManager::Source::GPS);
+      const auto& cfg = Clock::Manager::get_config(Clock::Manager::Source::GPS);
       const uint32_t now = millis();
       const bool first_time = (last_report_ms_ref() == 0);
       const bool may_repoll = (cfg.interval_s > 0)
           && ((now - last_report_ms_ref()) >= cfg.interval_s * 1000UL);
       if (first_time || may_repoll) {
-        if (Web::TimeManager::report_time(
-              Web::TimeManager::Source::GPS, f.unix_epoch)) {
+        if (Clock::Manager::report_time(
+              Clock::Manager::Source::GPS, f.unix_epoch)) {
           last_report_ms_ref() = now;
         }
       }
@@ -300,7 +300,7 @@ inline void reset_backoff() {
 // source config. Source enable-disable is the master switch; the
 // interval picks always-on vs pulsed.
 inline PowerMode target_mode() {
-  const auto& cfg = Web::TimeManager::get_config(Web::TimeManager::Source::GPS);
+  const auto& cfg = Clock::Manager::get_config(Clock::Manager::Source::GPS);
   if (!cfg.enabled)                              return PowerMode::Off;
   // interval_s == 0 → "boot-only": power on long enough to acquire one
   // fix + report it to TimeManager, then power down and stay off until
@@ -325,7 +325,7 @@ inline void pump() {
   const PowerMode mode = target_mode();
   const uint32_t  now  = millis();
   Fix&            f    = _detail::fix_ref();
-  const auto&     cfg  = Web::TimeManager::get_config(Web::TimeManager::Source::GPS);
+  const auto&     cfg  = Clock::Manager::get_config(Clock::Manager::Source::GPS);
 
   // ---- power-mode transitions ----
   if (mode == PowerMode::Off) {
@@ -436,5 +436,5 @@ inline bool has_serial() { return _detail::serial_ref() != nullptr; }
 // add a hardware probe).
 inline const char* model_name() { return "L76K"; }
 
-}  // namespace Gps
-}  // namespace Web
+} // namespace L76K
+} // namespace Sensors

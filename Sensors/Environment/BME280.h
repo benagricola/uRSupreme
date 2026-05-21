@@ -26,8 +26,8 @@
 #include <Wire.h>
 #include <Adafruit_BME280.h>
 
-namespace Web {
-namespace Bme280 {
+namespace Sensors {
+namespace BME280 {
 
 struct Reading {
   bool      valid          = false;
@@ -110,5 +110,5 @@ inline void      set_interval_ms(uint32_t ms) { _detail::interval_ms_ref() = ms;
 inline bool      enabled()       { return _detail::enabled_ref(); }
 inline void      set_enabled(bool on) { _detail::enabled_ref() = on; }
 
-}  // namespace Bme280
-}  // namespace Web
+} // namespace BME280
+} // namespace Sensors

@@ -32,17 +32,17 @@
 #include "LXMF/AnnounceLog.h"
 #include "LXMF/RatchetBridge.h"
 #include "Web/WebUI.h"
-#include "Web/RtcPCF8563.h"
-#include "Web/Gps.h"
-#include "Web/Ntp.h"
+#include "Sensors/Clock/PCF8563.h"
+#include "Sensors/Position/L76K.h"
+#include "Clock/Ntp.h"
 #include "Storage/SDCard.h"
 #include <ResourceBuffer.h>  // for RNS::set_resource_tmp_path_resolver
 #include <Cryptography/Token.h>  // for RNS::Cryptography::Token::init_shared_scratch
-#include "Web/Bme280.h"
-#include "Web/QmcMag.h"
-#include "Web/QmiImu.h"
-#include "Web/BatteryTelemetry.h"
-#include "Web/SensorConfig.h"
+#include "Sensors/Environment/BME280.h"
+#include "Sensors/Compass/QMC6310.h"
+#include "Sensors/Motion/QMI8658.h"
+#include "Telemetry/Battery.h"
+#include "Sensors/Config.h"
 #endif
 
 #include <Arduino.h>
@@ -1001,14 +1001,14 @@ void setup() {
       // hosts the OLED + BME280 + magnetometer (Bus 0); the RTC is
       // on Bus 1 alongside the AXP2101 PMU. See LilyGo's docs:
       // https://wiki.lilygo.cc/get_started/en/LoRa_GPS/T-Beam-SUPREME
-      Web::RtcPCF8563::Pins pins{ /*sda=*/42, /*scl=*/41, /*hz=*/100000 };
-      Web::RtcPCF8563::init_and_seed(Wire1, pins);
+      Sensors::PCF8563::Pins pins{ /*sda=*/42, /*scl=*/41, /*hz=*/100000 };
+      Sensors::PCF8563::init_and_seed(Wire1, pins);
       // RTC write-through whenever a higher-trust source adopts.
-      Web::TimeManager::set_on_adopt([](Web::TimeManager::Source src, double epoch) {
-        if (!Web::RtcPCF8563::available()) return;
-        if (Web::RtcPCF8563::write_epoch(epoch)) {
+      Clock::Manager::set_on_adopt([](Clock::Manager::Source src, double epoch) {
+        if (!Sensors::PCF8563::available()) return;
+        if (Sensors::PCF8563::write_epoch(epoch)) {
           NOTICEF("RtcPCF8563: write-through epoch %.0f (from %s)",
-                  epoch, Web::TimeManager::source_name(src));
+                  epoch, Clock::Manager::source_name(src));
         }
       });
     }
@@ -1016,12 +1016,12 @@ void setup() {
     // the parser; valid RMC fixes call TimeManager::report_time
     // (Source::GPS) per the user-configured interval.
     {
-      Web::Gps::Pins pins{ /*rx=*/9, /*tx=*/8, /*en=*/7, /*baud=*/9600 };
-      Web::Gps::begin(Serial1, pins);
+      Sensors::L76K::Pins pins{ /*rx=*/9, /*tx=*/8, /*en=*/7, /*baud=*/9600 };
+      Sensors::L76K::begin(Serial1, pins);
     }
     // NTP — non-blocking SNTP against pool.ntp.org. Sync
     // happens when WiFi STA becomes ready; pump() handles adoption.
-    Web::Ntp::begin();
+    Clock::Ntp::begin();
     // SD card — mount the microSD slot if a card is inserted.
     // The card's power rails (BLDO1 + BLDO2 on the AXP2101) are
     // disabled by default in Power.h. Bring them up here, and do a
@@ -1124,17 +1124,17 @@ void setup() {
     // magnetometer + any other Wire-side sensors will sit). PMU /
     // RTC are on Wire1 (42/41), untouched by this.
     Wire.begin(17, 18);
-    Web::Bme280::begin(Wire);
+    Sensors::BME280::begin(Wire);
     // QMC6310 magnetometer — also on Wire (0x1C or 0x3C).
-    Web::QmcMag::begin(Wire);
+    Sensors::QMC6310::begin(Wire);
     // QMI8658 IMU — on the HSPI bus shared with the SD slot.
     // Its begin() reuses SDCard::ensure_shared_bus() so we don't
     // double-init the bus.
-    Web::QmiImu::begin();
+    Sensors::QMI8658::begin();
     // Restore user-configured enable/interval overrides on
     // top of the driver defaults. No-op if /lxmf/sensors.json doesn't
     // exist yet (factory state).
-    Web::SensorConfig::load(filesystem);
+    Sensors::SensorConfig::load(filesystem);
 #endif
 
     // Remove legacy files
@@ -1269,7 +1269,7 @@ void setup() {
       // so identity activation picks up the user's settings rather
       // than the compiled default. The TTL prune needs a wall-clock
       // — wire TimeManager::now_epoch as the inbox clock source.
-      LXMF::LXMFInbox::set_now_epoch_provider(&Web::TimeManager::now_epoch);
+      LXMF::LXMFInbox::set_now_epoch_provider(&Clock::Manager::now_epoch);
       LXMF::InboxConfig::load(filesystem);
       Storage::Config::load(filesystem);
       LXMF::LXMFGateway::setup();
@@ -1752,7 +1752,7 @@ void add_airtime(uint16_t written) {
     // (a single 30ms announce ≈ 0.2% there). This accumulator gets
     // drained every 1s by the telemetry sampler so the SPA chart sees
     // bursts as a real "own X%" spike.
-    Web::RadioTelemetry::note_tx_ms((uint32_t)packet_cost_ms);
+    Telemetry::Radio::note_tx_ms((uint32_t)packet_cost_ms);
 
   #endif
 }
@@ -2564,7 +2564,7 @@ void check_modem_status() {
       // drained every 1s by the telemetry sampler so the SPA chart
       // sees short peer bursts (single ~60ms announce ≈ 6%) as a real
       // "others X%" spike rather than 0%.
-      Web::RadioTelemetry::note_dcd_sample(dcd);
+      Telemetry::Radio::note_dcd_sample(dcd);
       if (dcd_sample % UTIL_UPDATE_INTERVAL == 0) {
         int util_count = 0;
         for (int ui = 0; ui < DCD_SAMPLES; ui++) {
@@ -2828,20 +2828,20 @@ void loop() {
   // parser only touches its own static state and TimeManager (whose
   // adopt path is reentrant-safe).
 #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
-  Web::Gps::pump();
+  Sensors::L76K::pump();
   // NTP — cheap when no transition; checks SNTP sync status
   // and forwards to TimeManager when a fresh epoch lands. Gated on
   // WiFi STA connection internally.
-  Web::Ntp::pump();
+  Clock::Ntp::pump();
   // BME280 — periodic temp/humidity/pressure poll, gated by
   // the driver's own interval. No-op if the chip wasn't detected.
-  Web::Bme280::pump();
+  Sensors::BME280::pump();
   // QMC6310 magnetometer + QMI8658 IMU — same pattern.
-  Web::QmcMag::pump();
-  Web::QmiImu::pump();
+  Sensors::QMC6310::pump();
+  Sensors::QMI8658::pump();
   // Battery: voltage + state + sliding-window slope. Cheap — only
   // hits the PMU once per SAMPLE_PERIOD_MS, otherwise no-op.
-  Web::BatteryTelemetry::tick();
+  Telemetry::Battery::tick();
 #endif
 
   if (radio_online) {

@@ -24,19 +24,19 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
-#include "TimeManager.h"
+#include "../Clock/Manager.h"
 #include "WebSocket.h"
-#include "Gps.h"
-#include "RtcPCF8563.h"
+#include "../Sensors/Position/L76K.h"
+#include "../Sensors/Clock/PCF8563.h"
 #include "../Storage/SDCard.h"
-#include "Bme280.h"
-#include "QmcMag.h"
-#include "QmiImu.h"
-#include "SensorConfig.h"
+#include "../Sensors/Environment/BME280.h"
+#include "../Sensors/Compass/QMC6310.h"
+#include "../Sensors/Motion/QMI8658.h"
+#include "../Sensors/Config.h"
 #include "../Storage/OutboundStaging.h"
 #include "../Storage/Config.h"
-#include "StorageMigration.h"
-#include "BatteryTelemetry.h"
+#include "../Storage/Migration.h"
+#include "../Telemetry/Battery.h"
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
@@ -126,7 +126,7 @@ namespace Web {
       BootCounter::init();  // emit the log line; current() is otherwise lazy
       // Restore time-source priority/enable/interval from
       // /lxmf/time.json.
-      Web::TimeManager::load_config(filesystem);
+      Clock::Manager::load_config(filesystem);
       register_routes();
       server.begin();
       // Wire AnnounceLog → WebSocket. Every new announce / path now
@@ -139,10 +139,10 @@ namespace Web {
       // Wire TimeManager → WebSocket. Fires when a source (NTP, GPS,
       // browser, RTC seed) adopts a new wall-clock value, so the SPA
       // clock pill updates without polling /api/time.
-      Web::TimeManager::set_on_change(
-        [](Web::TimeManager::Source src, double epoch_s) {
+      Clock::Manager::set_on_change(
+        [](Clock::Manager::Source src, double epoch_s) {
           const uint64_t unix_ms = (uint64_t)(epoch_s * 1000.0);
-          Web::WS::publish_time(Web::TimeManager::source_name(src),
+          Web::WS::publish_time(Clock::Manager::source_name(src),
                                 unix_ms, /*calibrated=*/true);
         });
       // Stuff a fresh sensor + clock snapshot into every `hello` frame
@@ -158,13 +158,13 @@ namespace Web {
         JsonObject clock = hello["clock"].to<JsonObject>();
         clock["now_ms"]            = millis();
         clock["current_boot_epoch"] = Web::BootCounter::current();
-        clock["unix_ms"]            = (uint64_t)(Web::TimeManager::now_epoch() * 1000.0);
-        clock["calibrated"]         = Web::TimeManager::is_calibrated();
-        clock["source"]             = Web::TimeManager::source_name(Web::TimeManager::current_source());
+        clock["unix_ms"]            = (uint64_t)(Clock::Manager::now_epoch() * 1000.0);
+        clock["calibrated"]         = Clock::Manager::is_calibrated();
+        clock["source"]             = Clock::Manager::source_name(Clock::Manager::current_source());
         // millis() of the most recent successful calibration. Pair
         // with the clock-pill `now_ms` anchor in the SPA to render
         // "Last calibrated Xs ago (SOURCE)".
-        clock["last_calibrated_ms"] = Web::TimeManager::last_calibrated_ms();
+        clock["last_calibrated_ms"] = Clock::Manager::last_calibrated_ms();
       });
       NOTICE("WebUI: listening on port 80");
     }
@@ -210,9 +210,9 @@ namespace Web {
       // Radio telemetry — sample at 1 Hz unconditionally so the ring is
       // pre-populated for any client that connects later. Only the WS
       // broadcast is gated on subscribers.
-      if (now - _last_radio_tlm >= RadioTelemetry::SAMPLE_PERIOD_MS) {
+      if (now - _last_radio_tlm >= Telemetry::Radio::SAMPLE_PERIOD_MS) {
         _last_radio_tlm = now;
-        const RadioTelemetry::Sample* s = RadioTelemetry::tick(now);
+        const Telemetry::Radio::Sample* s = Telemetry::Radio::tick(now);
         if (s && Web::WS::any_subscribers()) {
           Web::WS::publish_radio_telemetry(*s);
         }
@@ -245,10 +245,10 @@ namespace Web {
     // (~50 Hz), so we must not allocate. Returns 0 for kinds whose
     // last reading hasn't lit up yet.
     static uint32_t sensor_taken_ms(const char* kind) {
-      if (strcmp(kind, "gps")          == 0) return Web::Gps::last_fix().fix_received_ms;
-      if (strcmp(kind, "environment")  == 0) return Web::Bme280::last_reading().taken_ms;
-      if (strcmp(kind, "magnetometer") == 0) return Web::QmcMag::last_reading().taken_ms;
-      if (strcmp(kind, "imu")          == 0) return Web::QmiImu::last_reading().taken_ms;
+      if (strcmp(kind, "gps")          == 0) return Sensors::L76K::last_fix().fix_received_ms;
+      if (strcmp(kind, "environment")  == 0) return Sensors::BME280::last_reading().taken_ms;
+      if (strcmp(kind, "magnetometer") == 0) return Sensors::QMC6310::last_reading().taken_ms;
+      if (strcmp(kind, "imu")          == 0) return Sensors::QMI8658::last_reading().taken_ms;
       return 0;
     }
     static void publish_sensor_if_changed(const char* kind, uint32_t& last_pub_ms) {
@@ -505,11 +505,11 @@ namespace Web {
     // /api/info gets the lightweight battery summary — what the topbar
     // icon needs to render its glyph (percent + charge state).
     static void emit_battery_summary(JsonDocument& doc) {
-      const auto b = Web::BatteryTelemetry::current();
+      const auto b = Telemetry::Battery::current();
       if (!b.pmu_present) return;
       JsonObject bo = doc["battery"].to<JsonObject>();
       bo["percent"] = b.percent;
-      bo["state"]   = Web::BatteryTelemetry::state_name(b.state);
+      bo["state"]   = Telemetry::Battery::state_name(b.state);
     }
 
     // Detailed battery telemetry (voltage, slope, USB rail, PMU temp,
@@ -1133,17 +1133,17 @@ namespace Web {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
       Web::PsramJsonDocument doc;
-      const double epoch = Web::TimeManager::now_epoch();
-      doc["calibrated"]  = Web::TimeManager::is_calibrated();
+      const double epoch = Clock::Manager::now_epoch();
+      doc["calibrated"]  = Clock::Manager::is_calibrated();
       doc["unix_ms"]     = (uint64_t)(epoch * 1000.0);
-      doc["source"]      = Web::TimeManager::source_name(Web::TimeManager::current_source());
+      doc["source"]      = Clock::Manager::source_name(Clock::Manager::current_source());
       doc["uptime_ms"]   = (uint32_t)millis();
       JsonObject sources = doc["sources"].to<JsonObject>();
-      using Web::TimeManager::Source;
-      for (uint8_t i = 1; i < Web::TimeManager::SOURCE_COUNT; ++i) {
+      using Clock::Manager::Source;
+      for (uint8_t i = 1; i < Clock::Manager::SOURCE_COUNT; ++i) {
         const auto src = (Source)i;
-        const auto& cfg = Web::TimeManager::get_config(src);
-        JsonObject s = sources[Web::TimeManager::source_name(src)].to<JsonObject>();
+        const auto& cfg = Clock::Manager::get_config(src);
+        JsonObject s = sources[Clock::Manager::source_name(src)].to<JsonObject>();
         s["enabled"]    = cfg.enabled;
         s["priority"]   = cfg.priority;
         s["interval_s"] = cfg.interval_s;
@@ -1171,13 +1171,13 @@ namespace Web {
         return;
       }
       const double epoch = unix_ms / 1000.0;
-      const bool adopted = Web::TimeManager::report_time(
-        Web::TimeManager::Source::Browser, epoch);
+      const bool adopted = Clock::Manager::report_time(
+        Clock::Manager::Source::Browser, epoch);
       Web::PsramJsonDocument doc;
       doc["adopted"]    = adopted;
-      doc["calibrated"] = Web::TimeManager::is_calibrated();
-      doc["source"]     = Web::TimeManager::source_name(Web::TimeManager::current_source());
-      doc["unix_ms"]    = (uint64_t)(Web::TimeManager::now_epoch() * 1000.0);
+      doc["calibrated"] = Clock::Manager::is_calibrated();
+      doc["source"]     = Clock::Manager::source_name(Clock::Manager::current_source());
+      doc["unix_ms"]    = (uint64_t)(Clock::Manager::now_epoch() * 1000.0);
       if (adopted) {
         NOTICEF("WebUI: time set from browser to epoch %.3f", epoch);
       }
@@ -1198,17 +1198,17 @@ namespace Web {
       }
       JsonObject sources = body["sources"];
       for (JsonPair kv : sources) {
-        Web::TimeManager::Source src = Web::TimeManager::source_from_name(kv.key().c_str());
-        if (src == Web::TimeManager::Source::None) continue;
+        Clock::Manager::Source src = Clock::Manager::source_from_name(kv.key().c_str());
+        if (src == Clock::Manager::Source::None) continue;
         if (!kv.value().is<JsonObject>()) continue;
         JsonObject o = kv.value().as<JsonObject>();
-        auto cfg = Web::TimeManager::get_config(src);
+        auto cfg = Clock::Manager::get_config(src);
         if (o["enabled"].is<bool>())   cfg.enabled    = o["enabled"].as<bool>();
         if (o["priority"].is<int>())   cfg.priority   = (uint8_t)o["priority"].as<int>();
         if (o["interval_s"].is<long>()) cfg.interval_s = (uint32_t)o["interval_s"].as<long>();
-        Web::TimeManager::set_config(src, cfg);
+        Clock::Manager::set_config(src, cfg);
       }
-      Web::TimeManager::persist_config(filesystem);
+      Clock::Manager::persist_config(filesystem);
       NOTICE("WebUI: time-source config updated");
       handle_time_get(req);
     }
@@ -1220,8 +1220,8 @@ namespace Web {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
       Web::PsramJsonDocument doc;
-      const auto s = Web::RtcPCF8563::debug_snapshot();
-      doc["available"] = Web::RtcPCF8563::available();
+      const auto s = Sensors::PCF8563::debug_snapshot();
+      doc["available"] = Sensors::PCF8563::available();
       doc["present"]   = s.present;
       doc["vl_set"]    = s.vl_set;
       JsonArray regs   = doc["regs"].to<JsonArray>();
@@ -1239,16 +1239,16 @@ namespace Web {
     static uint32_t fill_sensor_block(JsonObject parent, const char* kind) {
       JsonObject o = parent[kind].to<JsonObject>();
       if (strcmp(kind, "gps") == 0) {
-        const Web::Gps::Fix f = Web::Gps::last_fix();
-        o["model"]        = Web::Gps::model_name();
-        o["available"]    = Web::Gps::has_serial();
+        const Sensors::L76K::Fix f = Sensors::L76K::last_fix();
+        o["model"]        = Sensors::L76K::model_name();
+        o["available"]    = Sensors::L76K::has_serial();
         // GPS is presented as a sensor in the popover (enable/interval
         // controls alongside BME280/QMC6310/IMU), but its config is
         // owned by TimeManager since it doubles as a time source. Pull
         // those fields here so the SPA's sensor-config row can render
         // without a second fetch.
         {
-          const auto gcfg = Web::TimeManager::get_config(Web::TimeManager::Source::GPS);
+          const auto gcfg = Clock::Manager::get_config(Clock::Manager::Source::GPS);
           o["enabled"]     = gcfg.enabled;
           o["interval_ms"] = (uint32_t)gcfg.interval_s * 1000UL;
         }
@@ -1264,21 +1264,21 @@ namespace Web {
         // -1 sentinel = "never received."
         o["fix_received_ms"] = f.fix_received_ms == 0 ? -1 : (long)f.fix_received_ms;
         o["last_byte_ms"]    = f.last_byte_ms    == 0 ? -1 : (long)f.last_byte_ms;
-        o["powered"]      = Web::Gps::is_powered();
-        switch (Web::Gps::pulse_state()) {
-          case Web::Gps::PulseState::Acquiring: o["pulse_state"] = "acquiring"; break;
+        o["powered"]      = Sensors::L76K::is_powered();
+        switch (Sensors::L76K::pulse_state()) {
+          case Sensors::L76K::PulseState::Acquiring: o["pulse_state"] = "acquiring"; break;
           default:                              o["pulse_state"] = "idle";      break;
         }
         return f.fix_received_ms;
       }
       if (strcmp(kind, "environment") == 0) {
-        const Web::Bme280::Reading r = Web::Bme280::last_reading();
+        const Sensors::BME280::Reading r = Sensors::BME280::last_reading();
         // Driver supplies the chip name — so swapping for a BMP280 /
         // BME680 variant in the future is a one-line driver change.
-        o["model"]       = Web::Bme280::model_name();
-        o["available"]   = Web::Bme280::present();
-        o["enabled"]     = Web::Bme280::enabled();
-        o["interval_ms"] = (uint32_t)Web::Bme280::interval_ms();
+        o["model"]       = Sensors::BME280::model_name();
+        o["available"]   = Sensors::BME280::present();
+        o["enabled"]     = Sensors::BME280::enabled();
+        o["interval_ms"] = (uint32_t)Sensors::BME280::interval_ms();
         o["valid"]       = r.valid;
         if (r.valid) {
           o["temp_c"]       = r.temp_c;
@@ -1286,15 +1286,15 @@ namespace Web {
           o["pressure_pa"]  = r.pressure_pa;
           o["taken_ms"]     = (uint32_t)r.taken_ms;
         }
-        if (Web::Bme280::present()) o["address"] = Web::Bme280::address();
+        if (Sensors::BME280::present()) o["address"] = Sensors::BME280::address();
         return r.taken_ms;
       }
       if (strcmp(kind, "magnetometer") == 0) {
-        const Web::QmcMag::Reading r = Web::QmcMag::last_reading();
-        o["model"]       = Web::QmcMag::model_name();
-        o["available"]   = Web::QmcMag::present();
-        o["enabled"]     = Web::QmcMag::enabled();
-        o["interval_ms"] = (uint32_t)Web::QmcMag::interval_ms();
+        const Sensors::QMC6310::Reading r = Sensors::QMC6310::last_reading();
+        o["model"]       = Sensors::QMC6310::model_name();
+        o["available"]   = Sensors::QMC6310::present();
+        o["enabled"]     = Sensors::QMC6310::enabled();
+        o["interval_ms"] = (uint32_t)Sensors::QMC6310::interval_ms();
         o["valid"]       = r.valid;
         if (r.valid) {
           o["heading_deg"] = r.heading_deg;
@@ -1303,15 +1303,15 @@ namespace Web {
           o["z_uT"]        = r.z_uT;
           o["taken_ms"]    = (uint32_t)r.taken_ms;
         }
-        if (Web::QmcMag::present()) o["address"] = Web::QmcMag::address();
+        if (Sensors::QMC6310::present()) o["address"] = Sensors::QMC6310::address();
         return r.taken_ms;
       }
       if (strcmp(kind, "imu") == 0) {
-        const Web::QmiImu::Reading r = Web::QmiImu::last_reading();
-        o["model"]       = Web::QmiImu::model_name();
-        o["available"]   = Web::QmiImu::present();
-        o["enabled"]     = Web::QmiImu::enabled();
-        o["interval_ms"] = (uint32_t)Web::QmiImu::interval_ms();
+        const Sensors::QMI8658::Reading r = Sensors::QMI8658::last_reading();
+        o["model"]       = Sensors::QMI8658::model_name();
+        o["available"]   = Sensors::QMI8658::present();
+        o["enabled"]     = Sensors::QMI8658::enabled();
+        o["interval_ms"] = (uint32_t)Sensors::QMI8658::interval_ms();
         o["valid"]       = r.valid;
         if (r.valid) {
           o["accel_x_g"]  = r.accel_x_g;
@@ -1363,8 +1363,8 @@ namespace Web {
       // ---- rtc (hardware chip diagnostic) ----
       {
         JsonObject rtc = root["rtc"].to<JsonObject>();
-        const auto rs = Web::RtcPCF8563::debug_snapshot();
-        rtc["available"] = Web::RtcPCF8563::available();
+        const auto rs = Sensors::PCF8563::debug_snapshot();
+        rtc["available"] = Sensors::PCF8563::available();
         rtc["vl_set"]    = rs.vl_set;
         rtc["unix_ms"]   = (uint64_t)(rs.epoch * 1000.0);
       }
@@ -1401,11 +1401,11 @@ namespace Web {
       }
       // ---- battery (detailed) ----
       {
-        const auto b = Web::BatteryTelemetry::current();
+        const auto b = Telemetry::Battery::current();
         if (b.pmu_present) {
           JsonObject bo = root["battery"].to<JsonObject>();
           bo["percent"]      = b.percent;
-          bo["state"]        = Web::BatteryTelemetry::state_name(b.state);
+          bo["state"]        = Telemetry::Battery::state_name(b.state);
           bo["voltage_v"]    = b.voltage_v;
           bo["vbus_present"] = b.vbus_present;
           if (b.vbus_present)     bo["vbus_voltage_v"] = b.vbus_voltage_v;
@@ -1505,7 +1505,7 @@ namespace Web {
           "Interval must be no more than 7 days.");
         return;
       }
-      if (!Web::SensorConfig::update_one(filesystem, key, enabled, iv_s)) {
+      if (!Sensors::SensorConfig::update_one(filesystem, key, enabled, iv_s)) {
         send_error_with_message(req, 400, "unknown_sensor",
           "Unknown sensor key. Expected bme280, magnetometer, or imu.");
         return;
@@ -1525,8 +1525,8 @@ namespace Web {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
       Web::PsramJsonDocument doc;
-      const Web::Gps::Fix f = Web::Gps::last_fix();
-      doc["available"]   = Web::Gps::has_serial();
+      const Sensors::L76K::Fix f = Sensors::L76K::last_fix();
+      doc["available"]   = Sensors::L76K::has_serial();
       doc["valid"]       = f.valid;
       doc["latitude"]    = f.latitude_deg;
       doc["longitude"]   = f.longitude_deg;
@@ -2044,7 +2044,7 @@ namespace Web {
           "No SD card is inserted — nothing to migrate to.");
         return;
       }
-      const auto result = Web::StorageMigration::run();
+      const auto result = Storage::Migration::run();
       Web::PsramJsonDocument doc;
       doc["moved"]            = (uint32_t)result.moved;
       doc["skipped"]          = (uint32_t)result.skipped;
@@ -2774,14 +2774,14 @@ namespace Web {
     static void handle_radio_telemetry(AsyncWebServerRequest* req) {
       if (require_auth(req).empty()) return;
       Web::PsramJsonDocument doc;
-      doc["period_ms"] = RadioTelemetry::sample_period_ms();
-      doc["capacity"]  = RadioTelemetry::history_capacity();
-      doc["size"]      = RadioTelemetry::history_size();
+      doc["period_ms"] = Telemetry::Radio::sample_period_ms();
+      doc["capacity"]  = Telemetry::Radio::history_capacity();
+      doc["size"]      = Telemetry::Radio::history_size();
       // Echo cw_min/cw_max alongside the history so the SPA can colour
       // the CW-band line against its valid range without a second call.
       doc["cw_max_band"] = 4;  // CSMA_CW_BANDS — matches firmware Misc
       JsonArray arr = doc["samples"].to<JsonArray>();
-      RadioTelemetry::fill_history(arr);
+      Telemetry::Radio::fill_history(arr);
       send_json(req, 200, doc);
     }
 

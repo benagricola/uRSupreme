@@ -31,9 +31,9 @@ extern "C" {
   #include "esp_sntp.h"
 }
 
-#include "TimeManager.h"
+#include "Manager.h"
 
-namespace Web {
+namespace Clock {
 namespace Ntp {
 
 namespace _detail {
@@ -67,7 +67,7 @@ inline void begin() {
 inline void pump() {
   if (!_detail::started_ref()) return;
 
-  const auto& cfg = Web::TimeManager::get_config(Web::TimeManager::Source::NTP);
+  const auto& cfg = Clock::Manager::get_config(Clock::Manager::Source::NTP);
   if (!cfg.enabled) return;
 
   // No WiFi → SNTP can't make progress. Don't burn CPU.
@@ -84,7 +84,7 @@ inline void pump() {
     // Sentinel check. SNTP shouldn't hand back garbage but guard
     // anyway so a misconfigured server can't bump us back to 1970.
     if (epoch >= 1577836800.0 && epoch <= 4102444800.0) {
-      if (Web::TimeManager::report_time(Web::TimeManager::Source::NTP, epoch)) {
+      if (Clock::Manager::report_time(Clock::Manager::Source::NTP, epoch)) {
         _detail::last_adopt_ms_ref() = millis();
         NOTICEF("NTP: adopted epoch %.0f from pool.ntp.org", epoch);
       }
@@ -113,4 +113,4 @@ inline bool is_running()        { return _detail::started_ref(); }
 inline uint32_t last_adopt_ms() { return _detail::last_adopt_ms_ref(); }
 
 }  // namespace Ntp
-}  // namespace Web
+} // namespace Clock

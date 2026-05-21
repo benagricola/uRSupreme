@@ -8,19 +8,19 @@
 // AXP2101 (T-Beam Supreme) does not expose a getBattDischargeCurrent()
 // accessor — that method is AXP192-only. So on Supreme builds we
 // infer relative current from voltage slope. AXP192 boards get the
-// true current alongside.
+// true current alongside (via the Sensors::AXP2101 wrapper which
+// gracefully routes AXP192 discharge_ma() too).
 
 #pragma once
 
 #include <Arduino.h>
 #include <stdint.h>
 #include <stddef.h>
-#include <XPowersLib.h>
 
-extern XPowersLibInterface* PMU;
+#include "../Sensors/Battery/AXP2101.h"
 
-namespace Web {
-namespace BatteryTelemetry {
+namespace Telemetry {
+namespace Battery {
 
 inline constexpr uint32_t SAMPLE_PERIOD_MS  = 10000;      // 10 s
 inline constexpr size_t   RING_CAP          = 30;         // → 5 min window
@@ -105,32 +105,31 @@ namespace _detail {
 }
 
 inline void tick() {
-  if (!PMU) return;
+  if (!Sensors::AXP2101::present()) return;
   const uint32_t now = millis();
   if (now - _detail::last_sample_ms() < SAMPLE_PERIOD_MS
       && _detail::last_sample_ms() != 0) {
     return;
   }
   _detail::last_sample_ms() = now;
-  const uint16_t mv = PMU->getBattVoltage();
+  const uint16_t mv = Sensors::AXP2101::voltage_mv();
   if (mv == 0) return;                 // no battery / read fail
   _detail::push_sample(now, (float)mv / 1000.0f);
 }
 
 inline Snapshot current() {
   Snapshot s;
-  if (!PMU) return s;
-  s.pmu_present = true;
-  const uint16_t mv = PMU->getBattVoltage();
-  s.voltage_v   = (float)mv / 1000.0f;
-  s.vbus_present     = PMU->isVbusIn();
-  s.vbus_voltage_v   = (float)PMU->getVbusVoltage() / 1000.0f;
-  const bool has_batt = PMU->isBatteryConnect();
+  if (!Sensors::AXP2101::present()) return s;
+  s.pmu_present      = true;
+  s.voltage_v        = (float)Sensors::AXP2101::voltage_mv() / 1000.0f;
+  s.vbus_present     = Sensors::AXP2101::vbus_in();
+  s.vbus_voltage_v   = (float)Sensors::AXP2101::vbus_voltage_mv() / 1000.0f;
+  const bool has_batt = Sensors::AXP2101::battery_connected();
   if (!has_batt) {
     s.state = State::Absent;
-  } else if (PMU->isCharging()) {
+  } else if (Sensors::AXP2101::is_charging()) {
     s.state = State::Charging;
-  } else if (PMU->isDischarge()) {
+  } else if (Sensors::AXP2101::is_discharging()) {
     s.state = State::Discharging;
   } else {
     s.state = State::Charged;
@@ -147,26 +146,26 @@ inline Snapshot current() {
     if (pct > 100) pct = 100;
     s.percent = pct;
   }
-  // PMU die temperature. The 18650 cell on these boards has no
-  // thermistor wired to the PMU, so this is the AXP2101's *own*
+  // PMU die temperature (AXP2101 only). The 18650 cell on these boards
+  // has no thermistor wired to the PMU, so this is the AXP2101's *own*
   // die temp — useful for spotting heat during charge or hot-load.
-  // Power.h enables the internal ADC channel at boot.
-  if (PMU->getChipModel() == XPOWERS_AXP2101) {
-    const float t = ((XPowersAXP2101*)PMU)->getTemperature();
-    if (t > -40.0f && t < 125.0f) {
-      s.has_pmu_temp = true;
-      s.pmu_temp_c   = t;
-    }
+  bool t_ok = false;
+  const float t = Sensors::AXP2101::temperature_c(&t_ok);
+  if (t_ok) {
+    s.has_pmu_temp = true;
+    s.pmu_temp_c   = t;
   }
   // AXP192-only: actual battery discharge current.
-  if (PMU->getChipModel() == XPOWERS_AXP192) {
+  bool d_ok = false;
+  const float ma = Sensors::AXP2101::discharge_ma(&d_ok);
+  if (d_ok) {
     s.has_discharge_ma = true;
-    s.discharge_ma     = ((XPowersAXP192*)PMU)->getBattDischargeCurrent();
+    s.discharge_ma     = ma;
   }
   s.has_slope = _detail::slope_mv_per_min(&s.slope_mv_per_min,
                                           &s.slope_window_ms);
   return s;
 }
 
-}  // namespace BatteryTelemetry
-}  // namespace Web
+}  // namespace Battery
+}  // namespace Telemetry

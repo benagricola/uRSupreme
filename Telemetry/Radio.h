@@ -46,8 +46,8 @@ extern bool     airtime_lock;
 extern uint32_t stat_rx;
 extern uint32_t stat_tx;
 
-namespace Web {
-namespace RadioTelemetry {
+namespace Telemetry {
+namespace Radio {
 
 inline constexpr uint32_t SAMPLE_PERIOD_MS = 1000;
 inline constexpr size_t   RING_CAP         = 120;   // 2 minutes at 1 Hz
@@ -285,5 +285,5 @@ inline size_t history_size()         { return _detail::ring_count(); }
 inline size_t history_capacity()     { return RING_CAP; }
 inline uint32_t sample_period_ms()   { return SAMPLE_PERIOD_MS; }
 
-}  // namespace RadioTelemetry
-}  // namespace Web
+} // namespace Radio
+} // namespace Telemetry

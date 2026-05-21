@@ -31,10 +31,11 @@ namespace LXMF {
   //   None:  no expiry / no per-peer cap (effectively "keep forever",
   //          bounded only by the LXMFInbox-wide ring capacity).
   //
-  // The global LXMFInbox default is snapshotted onto each peer the
-  // first time we see a message from / to them, so subsequent changes
-  // to the default don't retroactively touch existing chats. Per-peer
-  // overrides are set via the SPA's per-chat retention modal.
+  // A peer with NO entry in LXMFInbox's _peer_retention map inherits
+  // the global default at every prune. The per-chat retention modal's
+  // "Use identity default" radio clears any saved override and puts
+  // the peer back into inherit-mode, so subsequent changes to the
+  // global default cascade automatically.
   struct Retention {
     enum class Kind : uint8_t { None = 0, Time = 1, Count = 2 };
     Kind     kind  = Kind::None;

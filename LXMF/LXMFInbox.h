@@ -41,13 +41,13 @@ namespace LXMF {
     //   * _ram_capacity is the per-identity-per-mailbox SAFETY bound on
     //     the in-RAM ring. Not user-configurable today; defends against
     //     unbounded growth.
-    //   * _default_retention is the per-peer retention applied to NEW
-    //     chats. The Retention struct picks between "keep N seconds"
-    //     (Time), "keep N messages" (Count), or no per-peer cap (None).
-    //   * _peer_retention[peer_hex] is the per-peer policy. Snapshotted
-    //     from _default_retention at first encounter, then user-editable
-    //     via the per-chat retention modal — subsequent changes to the
-    //     global default don't retroactively touch existing chats.
+    //   * _default_retention is the global default: applied to any peer
+    //     that DOESN'T have an explicit per-peer override.
+    //   * _peer_retention[peer_hex] is the per-peer override. Absent
+    //     entry = inherit (the default is consulted every prune).
+    //     The per-chat retention modal's "Use identity default" radio
+    //     clears the override, putting the peer back into inherit-mode
+    //     so subsequent default changes cascade.
     //
     // TTL/Time pruning uses the LXMF `ts` field (sender wall-clock);
     // requires a calibrated local clock — the prune is a no-op while
@@ -74,19 +74,21 @@ namespace LXMF {
       while (_ring.size() > _ram_capacity) { _ring.pop_front(); changed = true; }
       if (changed) rewrite_spool();
     }
-    // Default retention applied to NEW peers (snapshot-at-first-encounter).
-    // Changing this DOES NOT touch peers that already have an override.
+    // Global default. Inherit-by-default: every peer without an
+    // explicit override consults this at prune time. Changing this
+    // immediately affects all inheriting peers on the next prune.
     void set_default_retention(Retention r) {
       _default_retention = r;
+      prune_expired();
     }
     Retention default_retention() const { return _default_retention; }
 
     // Per-conversation retention override. Two cases:
-    //   - absent from map: peer hasn't received a message yet (will be
-    //     snapshotted from _default_retention via ensure_peer_retention
-    //     on the next append).
-    //   - present:         this peer's per-chat setting (may be None,
-    //     Time, or Count).
+    //   - absent from map: inherit-mode. _default_retention applies at
+    //     every prune.
+    //   - present:         explicit per-chat setting. May be Kind::None
+    //     (keep forever for this peer specifically), Kind::Time, or
+    //     Kind::Count.
     // Returns true if the map actually changed.
     bool set_peer_retention(const std::string& peer_hex, Retention r) {
       auto it = _peer_retention.find(peer_hex);
@@ -111,17 +113,6 @@ namespace LXMF {
     }
     const std::unordered_map<std::string, Retention>& peer_retention_overrides() const {
       return _peer_retention;
-    }
-
-    // Snapshot _default_retention onto a peer that doesn't have an
-    // override yet. No-op when the peer already has one. Called by
-    // append() on every record so the per-chat retention pin point is
-    // "when the user first interacts with this peer", not "when the
-    // user opens the conv settings modal".
-    bool ensure_peer_retention(const std::string& peer_hex) {
-      if (_peer_retention.find(peer_hex) != _peer_retention.end()) return false;
-      _peer_retention[peer_hex] = _default_retention;
-      return true;
     }
 
     // Apply both time-based and count-based retention to the ring.
@@ -296,9 +287,6 @@ namespace LXMF {
       }
 
       _ring.push_back(rec);
-      // Snapshot the default retention onto this peer if we haven't
-      // seen them before. No-op for existing peers.
-      ensure_peer_retention(rec.peer_hash.toHex());
       // Outer safety cap: keep the ring under _ram_capacity regardless
       // of retention. UNLIMITED_CAPACITY (SIZE_MAX) makes this a no-op.
       while (_ring.size() > _ram_capacity) {

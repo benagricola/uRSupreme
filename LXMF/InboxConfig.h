@@ -1,11 +1,9 @@
-// Global default retention applied to NEW chats. Persisted at
-// /lxmf/inbox_config.json.
+// Global default retention. Persisted at /lxmf/inbox_config.json.
 //
-// The default is snapshotted onto each peer the first time we see
-// a message from / to them (LXMFInbox::ensure_peer_retention).
-// Changing the default later DOES NOT touch existing chats — that's
-// the whole point of "default for new chats" semantics. Users edit
-// individual chats via the per-conversation retention modal.
+// Every peer without an explicit override in conversation_config.json
+// inherits this default at every prune pass — i.e. changing this
+// cascades immediately to all inheriting chats. Per-chat overrides
+// stay pinned until the user clears them ("Use identity default").
 
 #pragma once
 

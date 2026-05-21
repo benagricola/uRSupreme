@@ -1782,12 +1782,14 @@ summary:hover { color: var(--text); }
           <button class="secondary" disabled title="Only one transport is wired up so far">Switch transport…</button>
         </div>
         <div class="card" style="margin-top:14px">
-          <strong>Default retention for new chats</strong>
+          <strong>Default retention</strong>
           <div class="muted" style="margin-top:4px;margin-bottom:10px">
-            Snapshotted onto each chat the first time you receive or
-            send a message with that peer. Changing this here does not
-            touch existing chats — edit those individually from the
-            retention icon in the conversation.
+            Applied to every chat that's set to "Use identity default"
+            (the inherit mode). Changing this here cascades to all
+            inheriting chats at the next prune. Chats with an explicit
+            per-chat override stay on their own setting until you
+            switch them back to "Use identity default" from the
+            conversation's retention icon.
           </div>
           <label>Pick one</label>
           <select id="inbox-default-retention">

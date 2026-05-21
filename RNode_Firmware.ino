@@ -45,6 +45,8 @@
 #include "Sensors/Config.h"
 #include "Discovery/Identity.h"
 #include "Discovery/Config.h"
+#include "Discovery/State.h"
+#include "Discovery/Announcer.h"
 #endif
 
 #include <Arduino.h>
@@ -1283,6 +1285,16 @@ void setup() {
       // file = nothing discoverable.
       Discovery::Config::load();
       Discovery::Config::log_summary();
+      // Master discovery state (enable + default interval + stamp
+      // cost). Loaded after Config so the master_enabled flag is in
+      // place before the announcer wakes up.
+      Discovery::State::load();
+      // Build the shared rnstransport.discovery.interface destination
+      // signed by the persistent network identity. Setup is a no-op
+      // if discovery is master-disabled (announcer.tick short-circuits
+      // anyway) — but the destination itself is always constructed so
+      // toggling the master enable at runtime doesn't need a reboot.
+      Discovery::Announcer::setup();
 
 #if defined(HAS_LXMF_GATEWAY)
       HEAD("Initializing LXMF gateway...", RNS::LOG_TRACE);
@@ -2863,6 +2875,10 @@ void loop() {
   // Battery: voltage + state + sliding-window slope. Cheap — only
   // hits the PMU once per SAMPLE_PERIOD_MS, otherwise no-op.
   Telemetry::Battery::tick();
+  // Discovery announce scheduler. Cheap on the no-op path (rate-
+  // limited to once a minute regardless of caller cadence; master
+  // toggle off short-circuits immediately).
+  Discovery::Announcer::tick();
 #endif
 
   if (radio_online) {

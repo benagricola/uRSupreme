@@ -45,7 +45,11 @@ namespace LXMF {
     // calibrated local clock — the prune is a no-op while uncalibrated.
     static constexpr size_t DEFAULT_RAM_CAPACITY = 200;
     static constexpr size_t UNLIMITED_CAPACITY   = SIZE_MAX;
-    static constexpr size_t MAX_LINE_BYTES       = 4096;
+    // Per-line cap for the JSONL spool reader. A single record is the
+    // 4096-char body cap + title + status + multi-attachment metadata
+    // + JSON envelope/escaping, so well above 4 KB. 16 KB leaves
+    // headroom and stays cheap on the chunked read path.
+    static constexpr size_t MAX_LINE_BYTES       = 16384;
     // Bodies whose wire size needed Link+Resource transport (i.e. >319
     LXMFInbox(const std::string& identity_dir,
               const char* filename,

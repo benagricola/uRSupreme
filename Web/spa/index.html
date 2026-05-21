@@ -1364,10 +1364,17 @@ summary:hover { color: var(--text); }
        defined but evaluates to 0, so the fallback never kicked in and
        the button pinned flush to the top edge. The calc form always
        gives the 8 px gap plus any real notch / status-bar inset. -->
-  <button id="mi-close" class="icon" title="Close" style="position:absolute;top:calc(8px + env(safe-area-inset-top, 0px));right:8px;background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.2)">
+  <!-- Close + Save controls floated above the image. Explicit
+       z-index because when the viewer is in zoomed-1:1 mode the
+       <img> can be enormous and live in its own stacking context;
+       without z-index the controls would still stack on top in
+       DOM-order but it's worth being explicit so any future style
+       change to .icon doesn't accidentally introduce a new
+       stacking context that buries them. -->
+  <button id="mi-close" class="icon" title="Close" style="position:absolute;top:calc(8px + env(safe-area-inset-top, 0px));right:8px;background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.2);z-index:10">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
   </button>
-  <a id="mi-save" download class="icon" title="Save" style="position:absolute;top:calc(8px + env(safe-area-inset-top, 0px));right:60px;background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.2);display:inline-flex;align-items:center;justify-content:center;text-decoration:none">
+  <a id="mi-save" download class="icon" title="Save" style="position:absolute;top:calc(8px + env(safe-area-inset-top, 0px));right:60px;background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.2);display:inline-flex;align-items:center;justify-content:center;text-decoration:none;z-index:10">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
   </a>
 </div>
@@ -2955,49 +2962,154 @@ function renderInboundAudio(meta, fallbackLabel) {
 // actual <img> is swapped in once the fetch resolves. Subsequent
 // renderThread passes reuse the cached object URL so SSE rerenders
 // don't refetch.
-// Full-screen image viewer. Pulls the same blob URL the inline
-// preview was rendered from (no second fetch). Tap anywhere (image,
-// backdrop, or hit Escape) closes the viewer. Pinch-zoom on mobile
-// (touch-action: pinch-zoom is set on the <img>); Ctrl+wheel on
-// desktop. The earlier click-to-toggle-zoom flow confused users
-// because the cursor cycled between zoom-in / zoom-out on every tap
-// and never gave them a "this dismisses" affordance — the close X in
-// the corner was the only exit, easy to miss on mobile.
+// Full-screen image viewer.
+//
+// Three interaction zones with distinct behaviours:
+//   - Image, when fit-to-viewport AND natural size > viewport:
+//       cursor zoom-in, click → switches to 1:1, recentred.
+//   - Image, when zoomed 1:1: cursor zoom-out, click → back to fit.
+//     While zoomed: mouse-drag pans the overflowing image (touch
+//     scroll already pans natively via overflow:auto).
+//   - Image, when natural already fits: cursor default, click is
+//     a no-op (the user can't zoom into something already at 1:1).
+//   - Backdrop (anywhere inside the modal that ISN'T the image
+//     itself, the close button, or the save button): click closes.
+//   - Close X (top right, always above the image) + Escape: close.
+//
+// Earlier revisions cycled "click anywhere closes" — fine for mobile
+// where pinch-zoom is the native zoom gesture, but it confused
+// desktop users who wanted detail inspection without leaving the
+// modal. This version restores conditional zoom: only when there's
+// actually more detail to see than the fit-to-viewport pass shows.
 function openImageModal(url, meta) {
   const modal = $('modal-image');
   const img   = $('mi-img');
   const wrap  = $('mi-wrap');
   const save  = $('mi-save');
   const close = $('mi-close');
+  // Reset to fit-mode on each open.
   img.src = url;
-  img.style.maxWidth = '100vw';
+  img.style.maxWidth  = '100vw';
   img.style.maxHeight = '100dvh';
-  img.style.width = '';
+  img.style.width  = '';
   img.style.height = '';
-  // Pointer cursor so the user knows tapping does something. Mobile
-  // doesn't show cursors anyway; this is purely a desktop hint.
-  img.style.cursor = 'pointer';
-  // Pick a sensible save-as filename: sender's display_name when
-  // present, otherwise the canonical hash filename.
+  img.style.cursor = 'default';      // overridden on load if zoom is available
+  // Save-as filename: prefer sender display_name, fall back to hash.
   const dl = (meta && meta.display_name) || (meta && meta.filename) || 'image';
   save.setAttribute('download', dl);
   save.href = url;
   modal.hidden = false;
 
-  const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
-  const onTap = (e) => {
-    // Save / close buttons handle their own clicks; don't double-fire.
-    if (close.contains(e.target) || save.contains(e.target)) return;
+  let zoomed = false;          // true: image rendered at natural 1:1
+  let zoomAvailable = false;   // set on load; image natural > viewport
+  let drag = null;             // {startX, startY, startSL, startST} while pan-dragging
+
+  const computeZoomAvailable = () => {
+    // Compare the image's natural pixels to the wrap's viewport.
+    // wrap is overflow:auto so its clientWidth/Height is the
+    // visible area after any scrollbar reservation.
+    return img.naturalWidth  > wrap.clientWidth
+        || img.naturalHeight > wrap.clientHeight;
+  };
+  const applyFit = () => {
+    zoomed = false;
+    img.style.maxWidth  = '100vw';
+    img.style.maxHeight = '100dvh';
+    img.style.width  = '';
+    img.style.height = '';
+    img.style.cursor = zoomAvailable ? 'zoom-in' : 'default';
+  };
+  const applyZoom = () => {
+    zoomed = true;
+    img.style.maxWidth  = 'none';
+    img.style.maxHeight = 'none';
+    img.style.width  = img.naturalWidth + 'px';
+    img.style.height = img.naturalHeight + 'px';
+    img.style.cursor = 'zoom-out';
+    // Recentre the scroll viewport on the image's geometric centre.
+    // After style change the browser lays out synchronously; scrollTo
+    // operates on the new bounds.
+    requestAnimationFrame(() => {
+      wrap.scrollLeft = (img.naturalWidth  - wrap.clientWidth)  / 2;
+      wrap.scrollTop  = (img.naturalHeight - wrap.clientHeight) / 2;
+    });
+  };
+  const onImgLoad = () => {
+    zoomAvailable = computeZoomAvailable();
+    img.style.cursor = zoomAvailable ? 'zoom-in' : 'default';
+  };
+  if (img.complete && img.naturalWidth > 0) {
+    onImgLoad();
+  } else {
+    img.addEventListener('load', onImgLoad, { once: true });
+  }
+
+  const onImgClick = (e) => {
+    e.stopPropagation();         // don't bubble to onBackdrop and close
+    if (drag) return;            // a drag just completed — ignore click
+    if (!zoomAvailable) return;  // image already fits naturally, no zoom
+    if (zoomed) applyFit(); else applyZoom();
+  };
+
+  // Mouse drag-to-pan while zoomed. Cursor flips to grabbing for
+  // visual feedback. Touch pan is already free via overflow:auto.
+  const onMouseDown = (e) => {
+    if (!zoomed) return;
+    if (e.button !== 0) return;  // only primary button
+    drag = {
+      startX: e.clientX, startY: e.clientY,
+      startSL: wrap.scrollLeft, startST: wrap.scrollTop,
+      moved: false,
+    };
+    img.style.cursor = 'grabbing';
+    e.preventDefault();
+  };
+  const onMouseMove = (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    wrap.scrollLeft = drag.startSL - dx;
+    wrap.scrollTop  = drag.startST - dy;
+  };
+  const onMouseUp = () => {
+    if (!drag) return;
+    const wasMoved = drag.moved;
+    drag = null;
+    img.style.cursor = zoomed ? 'zoom-out' : 'zoom-in';
+    // If the user actually dragged (vs a click that registered tiny
+    // movement), suppress the immediate click handler.
+    if (wasMoved) {
+      img.addEventListener('click', swallowOnce, { once: true, capture: true });
+    }
+  };
+  const swallowOnce = (e) => { e.stopPropagation(); e.preventDefault(); };
+
+  const onBackdrop = (e) => {
+    // Backdrop = anywhere inside the modal that isn't the image, the
+    // close button, or the save button.
+    if (e.target === img) return;
+    if (close.contains(e.target)) return;
+    if (save.contains(e.target))  return;
     cleanup();
   };
+  const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
   const cleanup = () => {
     modal.hidden = true;
-    modal.removeEventListener('click', onTap);
+    img.removeEventListener('click', onImgClick);
+    img.removeEventListener('mousedown', onMouseDown);
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup',   onMouseUp);
+    modal.removeEventListener('click', onBackdrop);
     close.removeEventListener('click', cleanup);
     document.removeEventListener('keydown', onKey);
-    img.src = '';   // release reference; the cached blob URL stays in state.attachmentBlobs
+    img.src = '';   // release reference; cached blob URL stays in state.attachmentBlobs
   };
-  modal.addEventListener('click', onTap);
+  img.addEventListener('click', onImgClick);
+  img.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup',   onMouseUp);
+  modal.addEventListener('click', onBackdrop);
   close.addEventListener('click', cleanup);
   document.addEventListener('keydown', onKey);
 }

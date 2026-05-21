@@ -642,17 +642,68 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-size: 12px;
   color: var(--text-mute);
   font-weight: 500;
   cursor: pointer;
-  padding: 2px 6px;
+  padding: 2px 4px;
   border-radius: 4px;
 }
 .cn-section > summary .cn-row-toggle:hover { background: var(--bg-elev-2); }
-.cn-section > summary .cn-row-toggle input {
-  width: auto; min-height: auto; margin: 0;
+
+/* iOS/Material-style switch. Reusable — wrap a checkbox so the SPA
+   stops shipping bare browser-default checkboxes wherever a boolean
+   preference is being expressed. Usage:
+     <label class="switch">
+       <input type="checkbox">
+       <span class="switch-slider"></span>
+     </label>
+   The native checkbox stays in the DOM (form semantics, JS listens
+   to `change`), it's just visually replaced by the slider. */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 34px; height: 18px;
+  flex-shrink: 0;
+}
+.switch input {
+  opacity: 0; width: 0; height: 0;
+  position: absolute; pointer-events: none;
+}
+.switch-slider {
+  position: absolute; inset: 0;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+.switch-slider::before {
+  content: '';
+  position: absolute;
+  height: 12px; width: 12px;
+  left: 2px; top: 50%;
+  transform: translateY(-50%);
+  background: var(--text-mute);
+  border-radius: 50%;
+  transition: transform 0.18s ease, background 0.18s ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+}
+.switch input:checked + .switch-slider {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.switch input:checked + .switch-slider::before {
+  transform: translate(16px, -50%);
+  background: #fff;
+}
+.switch input:focus-visible + .switch-slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.switch input:disabled + .switch-slider {
+  opacity: 0.4; cursor: not-allowed;
 }
 
 /* ============================== STATUS INDICATOR + POPOVER ============================== */
@@ -1676,8 +1727,11 @@ summary:hover { color: var(--text); }
             <span class="cn-title">LoRa Radio</span>
             <span class="cn-dot" id="cn-dot-radio" hidden></span>
             <label class="cn-row-toggle" title="Periodically announce this interface so other Reticulum nodes can find it">
-              <input type="checkbox" id="rd-discoverable">
               <span>Discoverable</span>
+              <span class="switch">
+                <input type="checkbox" id="rd-discoverable">
+                <span class="switch-slider"></span>
+              </span>
             </label>
           </summary>
           <div class="cn-section-body">

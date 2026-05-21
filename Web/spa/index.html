@@ -3038,6 +3038,15 @@ function formatBytes(n) {
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
   return (n / (1024 * 1024)).toFixed(2) + ' MB';
 }
+// HTML-rendering variant. Same value formatting as formatBytes, but
+// wraps the unit (B / KB / MB) in <span class="unit"> so the popover
+// CSS dims and shrinks it relative to the digits. Caller must use
+// innerHTML, not textContent.
+function formatBytesVU(n) {
+  if (n < 1024) return vu(n, 'B');
+  if (n < 1024 * 1024) return vu((n / 1024).toFixed(1), 'KB');
+  return vu((n / (1024 * 1024)).toFixed(2), 'MB');
+}
 
 // Sniff an audio file's MIME from its first few bytes so the browser
 // picks the right decoder. Returns `audio/*` strings the major
@@ -4280,10 +4289,10 @@ function renderStatusPopover() {
     radioLine.appendChild(el('span', { class: 'pill bad' }, 'Offline'));
   }
   if (r.have_conf) {
-    $('status-radio-cfg-1').textContent =
-      (r.frequency/1e6).toFixed(3) + ' MHz · BW ' + (r.bandwidth/1000) + ' kHz';
-    $('status-radio-cfg-2').textContent =
-      'SF' + r.spreading_factor + ' · CR4/' + r.coding_rate + ' · ' + r.tx_power + ' dBm';
+    $('status-radio-cfg-1').innerHTML =
+      vu((r.frequency/1e6).toFixed(3), 'MHz') + ' · BW ' + vu((r.bandwidth/1000), 'kHz');
+    $('status-radio-cfg-2').innerHTML =
+      'SF' + r.spreading_factor + ' · CR4/' + r.coding_rate + ' · ' + vu(r.tx_power, 'dBm');
   } else {
     $('status-radio-cfg-1').textContent = 'No radio config saved yet.';
     $('status-radio-cfg-2').textContent = '';
@@ -4354,12 +4363,13 @@ function renderStatusPopover() {
   if (w.mode === 'ap' && w.ap_ip) ipText = 'http://' + w.ap_ip + '/';
   else if (w.ip && w.ip !== '0.0.0.0') ipText = w.ip;
   $('status-wifi-ip').textContent = ipText;
-  let authText = '';
   if (w.auth) {
-    authText = w.auth;
-    if (typeof w.rssi_dbm === 'number') authText += ' · ' + w.rssi_dbm + ' dBm';
+    let html = w.auth;
+    if (typeof w.rssi_dbm === 'number') html += ' · ' + vu(w.rssi_dbm, 'dBm');
+    $('status-wifi-auth').innerHTML = html;
+  } else {
+    $('status-wifi-auth').textContent = '';
   }
-  $('status-wifi-auth').textContent = authText;
   // Only show the softAP-toggle button when we're actually in STA
   // mode — there's nothing to switch to from AP. The same gate
   // applies to its accompanying explanatory subline.
@@ -4581,15 +4591,15 @@ function renderRadioChart() {
     <div class="radio-chart-legend">
       <!-- Row 1: left-axis lines (utilisation %). -->
       <div class="radio-chart-legend-row">
-        <span><span class="swatch" style="background:#58a6ff"></span>own ${lastU.own ?? 0}%</span>
-        <span title="Fraction of recent DCD samples that detected non-self channel activity. Aggregate — could be one peer, many peers, or LoRa-like interference. DCD doesn't sample while we're TX'ing, so our own emissions are excluded."><span class="swatch" style="background:#ff9933"></span>others ${lastU.others ?? 0}%</span>
+        <span><span class="swatch" style="background:#58a6ff"></span>own ${vu(lastU.own ?? 0, '%')}</span>
+        <span title="Fraction of recent DCD samples that detected non-self channel activity. Aggregate — could be one peer, many peers, or LoRa-like interference. DCD doesn't sample while we're TX'ing, so our own emissions are excluded."><span class="swatch" style="background:#ff9933"></span>others ${vu(lastU.others ?? 0, '%')}</span>
       </div>
       <!-- Row 2: right-axis lines (dBm). RSSI / noise share a y-scale;
            grouping them on their own row keeps the legend readable on
            narrow popovers. -->
       <div class="radio-chart-legend-row">
-        <span><span class="swatch" style="background:#4caf50"></span>RSSI ${(typeof last.rssi === 'number' && last.rssi > -160) ? last.rssi + ' dBm' : '— dBm'}</span>
-        <span title="Measured ambient RSSI when no LoRa carrier is detected. The gap to RSSI is effective SNR. Jumps in noise indicate new in-band interferers."><span class="swatch" style="background:#b39ddb"></span>noise ${(typeof last.noise === 'number' && last.noise > -160) ? last.noise + ' dBm' : '— dBm'}</span>
+        <span><span class="swatch" style="background:#4caf50"></span>RSSI ${(typeof last.rssi === 'number' && last.rssi > -160) ? vu(last.rssi, 'dBm') : vu('—', 'dBm')}</span>
+        <span title="Measured ambient RSSI when no LoRa carrier is detected. The gap to RSSI is effective SNR. Jumps in noise indicate new in-band interferers."><span class="swatch" style="background:#b39ddb"></span>noise ${(typeof last.noise === 'number' && last.noise > -160) ? vu(last.noise, 'dBm') : vu('—', 'dBm')}</span>
       </div>
     </div>
   `;
@@ -4659,12 +4669,15 @@ function renderSystemPopover(s) {
   // is the subline since SD is optional. Drop the "Flash:" / "SD:"
   // prefixes — the popover label already says "Storage" and the
   // section's two-tier layout signals the hierarchy.
-  $('sys-storage-flash').textContent = fl.total_bytes
-    ? formatBytes(fl.used_bytes || 0) + ' / ' + formatBytes(fl.total_bytes) + ' flash'
+  $('sys-storage-flash').innerHTML = fl.total_bytes
+    ? formatBytesVU(fl.used_bytes || 0) + ' / ' + formatBytesVU(fl.total_bytes) + ' flash'
     : '';
-  $('sys-storage-sd').textContent = (sd.present && sd.total_bytes)
-    ? formatBytes(sd.used_bytes || 0) + ' / ' + formatBytes(sd.total_bytes) + ' SD'
-    : 'SD card not present';
+  if (sd.present && sd.total_bytes) {
+    $('sys-storage-sd').innerHTML =
+      formatBytesVU(sd.used_bytes || 0) + ' / ' + formatBytesVU(sd.total_bytes) + ' SD';
+  } else {
+    $('sys-storage-sd').textContent = 'SD card not present';
+  }
   // Migration button visible only when SD is present + flash isn't
   // mostly empty (no point offering it when there's nothing to free).
   const flashUsed = fl.used_bytes || 0;

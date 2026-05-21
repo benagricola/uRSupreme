@@ -7,9 +7,11 @@
 
 #include "TCPClientInterface.h"
 #include "TCPServerInterface.h"
+#include "Discovery/Config.h"
 
 #include <WiFi.h>
 #include <WiFiServer.h>
+#include <string>
 
 #include <microStore/FileSystem.h>
 
@@ -124,24 +126,90 @@ namespace TCPTransport {
     return true;
   }
 
-  inline void setup() {
-    ClientCfg clients[TCP_MAX_CLIENTS];
-    uint8_t num_clients = 0;
-    load_config(clients, num_clients, server_cfg);
+  // Find the slot a named client occupies, or -1 if not present.
+  inline int find_client_slot(const char* name) {
+    if (!name) return -1;
+    // Read the name through the wrapper — InterfaceImpl's _name is
+    // protected, only the RNS::Interface wrapper exposes a public
+    // accessor.
+    for (uint8_t i = 0; i < TCP_MAX_CLIENTS; ++i) {
+      if (client_impls[i] && client_interfaces[i].name() == name) return (int)i;
+    }
+    return -1;
+  }
 
-    for (uint8_t i = 0; i < num_clients; ++i) {
-      auto* impl = new TCPClientInterface(
-        clients[i].name.c_str(),
-        clients[i].host.c_str(),
-        clients[i].port,
-        clients[i].reconnect_ms);
-      client_impls[i] = impl;
-      client_interfaces[i] = impl;
-      client_interfaces[i].mode(RNS::Type::Interface::MODE_GATEWAY);
-      RNS::Transport::register_interface(client_interfaces[i]);
-      RNS::logf(RNS::LOG_NOTICE, "TCPTransport: client[%u] %s:%u",
-                (unsigned)i, clients[i].host.c_str(), (unsigned)clients[i].port);
-      client_count++;
+  // Construct a TCP client interface + register it with Transport.
+  // Returns true on success. Reasons for failure: array full, name
+  // collision with an existing client. Idempotent for name-conflict
+  // (does not replace; caller should remove_client() first if it
+  // wants to swap host/port for the same name).
+  inline bool add_client(const char* name, const char* host, uint16_t port,
+                          uint32_t reconnect_ms = TCPClientInterface::DEFAULT_RECONNECT_MS) {
+    if (!name || !*name || !host || !*host) return false;
+    if (find_client_slot(name) >= 0) return false;
+    int slot = -1;
+    for (uint8_t i = 0; i < TCP_MAX_CLIENTS; ++i) {
+      if (!client_impls[i]) { slot = (int)i; break; }
+    }
+    if (slot < 0) {
+      RNS::logf(RNS::LOG_WARNING, "TCPTransport: add_client('%s') refused — all %u slots full",
+                name, (unsigned)TCP_MAX_CLIENTS);
+      return false;
+    }
+    auto* impl = new TCPClientInterface(name, host, port, reconnect_ms);
+    client_impls[slot] = impl;
+    client_interfaces[slot] = impl;
+    client_interfaces[slot].mode(RNS::Type::Interface::MODE_GATEWAY);
+    RNS::Transport::register_interface(client_interfaces[slot]);
+    client_count = 0;
+    for (uint8_t i = 0; i < TCP_MAX_CLIENTS; ++i) if (client_impls[i]) ++client_count;
+    RNS::logf(RNS::LOG_NOTICE, "TCPTransport: add_client('%s') %s:%u → slot %d",
+              name, host, (unsigned)port, slot);
+    return true;
+  }
+
+  // Deregister + destroy a TCP client by name. Returns true if a
+  // client was actually removed. The shared_ptr in Transport's
+  // interface table will free the impl once we drop our raw ref.
+  inline bool remove_client(const char* name) {
+    int slot = find_client_slot(name);
+    if (slot < 0) return false;
+    RNS::Transport::deregister_interface(client_interfaces[slot]);
+    client_interfaces[slot].clear();
+    client_impls[slot] = nullptr;
+    client_count = 0;
+    for (uint8_t i = 0; i < TCP_MAX_CLIENTS; ++i) if (client_impls[i]) ++client_count;
+    RNS::logf(RNS::LOG_NOTICE, "TCPTransport: remove_client('%s') → slot %d freed", name, slot);
+    return true;
+  }
+
+  // Iterate live clients. The visitor receives (slot, *impl); skip
+  // empty slots. Used by /api/transport/tcp_clients for status.
+  template <typename V>
+  inline void for_each_client(V&& visit) {
+    for (uint8_t i = 0; i < TCP_MAX_CLIENTS; ++i) {
+      if (client_impls[i]) visit((int)i, client_impls[i]);
+    }
+  }
+
+  inline uint8_t client_capacity() { return TCP_MAX_CLIENTS; }
+  inline uint8_t live_client_count() { return client_count; }
+
+  inline void setup() {
+    // Server-side config still lives in the legacy /tcp_config.json
+    // for the moment (separate concern from outbound clients, no UI
+    // yet). The clients block there is now ignored — outbound TCP
+    // clients are sourced exclusively from Discovery::Config's
+    // /reticulum/interfaces.json entries of type=tcp_client.
+    ClientCfg ignored_clients[TCP_MAX_CLIENTS];
+    uint8_t ignored_num_clients = 0;
+    load_config(ignored_clients, ignored_num_clients, server_cfg);
+
+    // Outbound clients: iterate Discovery::Config entries.
+    for (const auto& kv : Discovery::Config::all()) {
+      if (kv.second.type != Discovery::Config::Type::TcpClient) continue;
+      add_client(kv.first.c_str(), kv.second.host.c_str(),
+                 (uint16_t)kv.second.port);
     }
 
     if (server_cfg.enabled) {

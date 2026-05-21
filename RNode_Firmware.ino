@@ -1218,6 +1218,11 @@ void setup() {
 
 #if HAS_WIFI && defined(TCP_TRANSPORT)
       HEAD("Registering TCP Interfaces...", RNS::LOG_TRACE);
+      // Load /reticulum/interfaces.json up front so TCPTransport::setup()
+      // can iterate Discovery::Config entries of type=tcp_client and
+      // instantiate them. The Identity / State / Announcer setup
+      // below also use the same loaded map.
+      Discovery::Config::load();
       TCPTransport::setup();
 #endif
 

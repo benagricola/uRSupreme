@@ -37,6 +37,10 @@
 #include "../Storage/Config.h"
 #include "../Storage/Migration.h"
 #include "../Telemetry/Battery.h"
+#include "../Discovery/Config.h"
+#if HAS_WIFI && defined(TCP_TRANSPORT)
+#include "../TCPTransport.h"
+#endif
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
@@ -713,6 +717,15 @@ namespace Web {
       on_json_post("/api/radio",         handle_radio_set);
       on_json_post("/api/radio/reset",   handle_radio_reset);
       on_json_post("/api/radio/airtime", handle_radio_airtime);
+      // Discovery / TCP-client endpoints. List + add are bearer-only;
+      // the per-row PATCH is identity-code-gated only when the
+      // requested change ENABLES discovery (per the privacy-by-design
+      // rule — disabling / making private doesn't need physical
+      // presence). DELETE is bearer-only.
+      server.on("/api/transport/tcp_clients",    HTTP_GET,    handle_tcp_clients_list);
+      on_json_post("/api/transport/tcp_clients", handle_tcp_clients_add);
+      server.on(uri("/api/transport/tcp_clients/{}"), HTTP_DELETE, handle_tcp_clients_remove);
+      on_json_post("/api/transport/tcp_clients/{}/patch", handle_tcp_clients_patch);
     }
 
     static void handle_spa(AsyncWebServerRequest* req) {
@@ -2724,6 +2737,183 @@ namespace Web {
       doc["limits"]["cr_max"]  = 8;
       doc["limits"]["txp_max"] = 22;
       send_json(req, 200, doc);
+    }
+
+    // -------------- TCP client endpoint CRUD (Discovery commit 5) --------------
+    //
+    // /reticulum/interfaces.json (managed by Discovery::Config) is the
+    // source of truth for outbound TCP client interface definitions.
+    // TCPTransport keeps the live runtime — its add_client / remove_client
+    // construct or tear down the actual TCPClientInterface and register
+    // it with RNS::Transport. These endpoints coordinate both: every
+    // write to a tcp_client entry here also adjusts the runtime, and
+    // every list read pulls live `online` from the runtime.
+
+    static void handle_tcp_clients_list(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+#if HAS_WIFI && defined(TCP_TRANSPORT)
+      Web::PsramJsonDocument doc;
+      JsonArray arr = doc["clients"].to<JsonArray>();
+      // Walk the in-memory Discovery::Config map. For each tcp_client
+      // entry, look up its runtime status (online + slot) from
+      // TCPTransport so the UI can show whether the connection is up.
+      for (const auto& kv : Discovery::Config::all()) {
+        if (kv.second.type != Discovery::Config::Type::TcpClient) continue;
+        JsonObject o = arr.add<JsonObject>();
+        o["name"]          = kv.first;
+        o["host"]          = kv.second.host;
+        o["port"]          = kv.second.port;
+        o["discoverable"]  = kv.second.discoverable;
+        const int slot = TCPTransport::find_client_slot(kv.first.c_str());
+        o["slot"]          = slot;
+        o["online"]        = (slot >= 0)
+            && TCPTransport::client_impls[slot]
+            && TCPTransport::client_impls[slot]->connected();
+      }
+      doc["capacity"]    = TCPTransport::client_capacity();
+      doc["live_count"]  = TCPTransport::live_client_count();
+      send_json(req, 200, doc);
+#else
+      send_error_with_message(req, 503, "tcp_transport_disabled",
+        "This firmware build does not include TCP transport support.");
+#endif
+    }
+
+    static void handle_tcp_clients_add(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+#if HAS_WIFI && defined(TCP_TRANSPORT)
+      std::string name = (const char*)(body["name"] | "");
+      std::string host = (const char*)(body["host"] | "");
+      int port         = (int)(body["port"] | 0);
+      bool discoverable= (bool)(body["discoverable"] | false);
+      if (name.empty() || host.empty() || port <= 0 || port > 65535) {
+        send_error_with_message(req, 400, "invalid_args",
+          "Body must include `name`, `host`, and 1<=`port`<=65535.");
+        return;
+      }
+      // Adding an interface that will be marked discoverable on
+      // creation requires identity-code physical presence — per the
+      // privacy gate (anything that ENABLES discoverability must be
+      // intentional). Non-discoverable adds are bearer-only.
+      if (discoverable && !require_physical_auth(req, body)) return;
+      if (Discovery::Config::get(name)) {
+        send_error_with_message(req, 409, "name_exists",
+          "An interface with this name already exists.");
+        return;
+      }
+      if (!TCPTransport::add_client(name.c_str(), host.c_str(), (uint16_t)port)) {
+        send_error_with_message(req, 503, "tcp_clients_full",
+          "All TCP client slots are in use. Remove one before adding another.");
+        return;
+      }
+      Discovery::Config::Entry e;
+      e.type         = Discovery::Config::Type::TcpClient;
+      e.host         = host;
+      e.port         = port;
+      e.discoverable = discoverable;
+      if (!Discovery::Config::upsert(name, e)) {
+        // Persist failed — roll back the runtime side so we don't
+        // leave an unconfigured interface registered.
+        TCPTransport::remove_client(name.c_str());
+        send_error_with_message(req, 500, "persist_failed",
+          "Could not persist interface config to /reticulum/interfaces.json.");
+        return;
+      }
+      Web::PsramJsonDocument doc;
+      doc["status"]       = "created";
+      doc["name"]         = name;
+      doc["host"]         = host;
+      doc["port"]         = port;
+      doc["discoverable"] = discoverable;
+      send_json(req, 201, doc);
+#else
+      send_error_with_message(req, 503, "tcp_transport_disabled",
+        "This firmware build does not include TCP transport support.");
+#endif
+    }
+
+    static void handle_tcp_clients_remove(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+#if HAS_WIFI && defined(TCP_TRANSPORT)
+      const std::string name = std::string(req->pathArg(0).c_str());
+      Discovery::Config::Entry e;
+      if (!Discovery::Config::get(name, &e) || e.type != Discovery::Config::Type::TcpClient) {
+        send_error_with_message(req, 404, "not_found",
+          "No TCP client with that name is configured.");
+        return;
+      }
+      TCPTransport::remove_client(name.c_str());
+      Discovery::Config::remove(name);
+      Web::PsramJsonDocument doc;
+      doc["status"] = "removed";
+      doc["name"]   = name;
+      send_json(req, 200, doc);
+#else
+      send_error_with_message(req, 503, "tcp_transport_disabled",
+        "This firmware build does not include TCP transport support.");
+#endif
+    }
+
+    static void handle_tcp_clients_patch(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+#if HAS_WIFI && defined(TCP_TRANSPORT)
+      const std::string name = std::string(req->pathArg(0).c_str());
+      Discovery::Config::Entry e;
+      if (!Discovery::Config::get(name, &e) || e.type != Discovery::Config::Type::TcpClient) {
+        send_error_with_message(req, 404, "not_found",
+          "No TCP client with that name is configured.");
+        return;
+      }
+      // Track whether this PATCH ENABLES discoverable. Only that
+      // direction needs identity-code. Disabling / changing host/port
+      // alone is bearer-only.
+      bool wants_enable_discovery = false;
+      if (body["discoverable"].is<bool>()) {
+        const bool new_d = body["discoverable"].as<bool>();
+        if (new_d && !e.discoverable) wants_enable_discovery = true;
+      }
+      if (wants_enable_discovery && !require_physical_auth(req, body)) return;
+
+      bool host_port_changed = false;
+      if (body["host"].is<const char*>()) {
+        const std::string nh = (const char*)(body["host"] | "");
+        if (!nh.empty() && nh != e.host) { e.host = nh; host_port_changed = true; }
+      }
+      if (body["port"].is<int>()) {
+        const int np = body["port"].as<int>();
+        if (np > 0 && np <= 65535 && np != e.port) { e.port = np; host_port_changed = true; }
+      }
+      if (body["discoverable"].is<bool>()) {
+        e.discoverable = body["discoverable"].as<bool>();
+      }
+      if (!Discovery::Config::upsert(name, e)) {
+        send_error_with_message(req, 500, "persist_failed",
+          "Could not persist interface config update.");
+        return;
+      }
+      // If host or port changed, we have to rebuild the runtime
+      // interface so the new endpoint is used. The slot stays the
+      // same because add_client puts it back into the first free
+      // slot (which the just-removed one becomes).
+      if (host_port_changed) {
+        TCPTransport::remove_client(name.c_str());
+        TCPTransport::add_client(name.c_str(), e.host.c_str(), (uint16_t)e.port);
+      }
+      Web::PsramJsonDocument doc;
+      doc["status"]       = "updated";
+      doc["name"]         = name;
+      doc["host"]         = e.host;
+      doc["port"]         = e.port;
+      doc["discoverable"] = e.discoverable;
+      send_json(req, 200, doc);
+#else
+      send_error_with_message(req, 503, "tcp_transport_disabled",
+        "This firmware build does not include TCP transport support.");
+#endif
     }
 
     static void handle_radio_telemetry(AsyncWebServerRequest* req) {

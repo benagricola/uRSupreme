@@ -483,6 +483,12 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elev);
+  /* Non-scrolling parts of .modal-tall must not get squeezed by the
+     body's content. Without flex-shrink: 0, a tall tab-panel ends up
+     compressing the header + tab-bar instead of the body's internal
+     scroller absorbing the overflow — visible on landscape phones
+     where the modal is height-constrained. */
+  flex-shrink: 0;
 }
 .modal-header h3 { flex: 1; margin: 0; font-size: 15px; font-weight: 600; }
 .modal-body {
@@ -516,6 +522,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   border-bottom: 1px solid var(--border);
   background: var(--bg-elev);
   overflow-x: auto;
+  flex-shrink: 0;            /* see .modal-header rule above */
 }
 .tab-bar .tab {
   background: transparent; border: none;
@@ -604,7 +611,15 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   font-weight: 600;
   user-select: none;
   position: relative;
+  /* Flex so the row-level toggle (Discoverable) can sit on the right
+     edge without colliding with the ▸ caret. Caret is positioned
+     absolute so flex doesn't reflow it. */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 32px;  /* reserve room for the absolute caret */
 }
+.cn-section > summary .cn-title { flex: 0 0 auto; }
 .cn-section > summary::-webkit-details-marker { display: none; }
 .cn-section > summary::after {
   content: '▸';
@@ -617,6 +632,28 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .cn-section[open] > summary::after { transform: translateY(-50%) rotate(90deg); }
 .cn-section[open] > summary { border-bottom: 1px solid var(--bg-elev-2); }
 .cn-section-body { padding: 12px; }
+
+/* Row-level toggle on a `<summary>` — used for "Discoverable" on the
+   LoRa accordion so the user can flip the broadcast on/off without
+   expanding the radio config panel. Sits flush-right of the title.
+   The accordion-toggle click is suppressed in JS so clicking the
+   switch doesn't also open/close the section. */
+.cn-section > summary .cn-row-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-mute);
+  font-weight: 500;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.cn-section > summary .cn-row-toggle:hover { background: var(--bg-elev-2); }
+.cn-section > summary .cn-row-toggle input {
+  width: auto; min-height: auto; margin: 0;
+}
 
 /* ============================== STATUS INDICATOR + POPOVER ============================== */
 /* Small coloured dot in the bottom-right of the radio antenna icon
@@ -982,16 +1019,25 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   }
 }
 
-/* Landscape mobile + tablet: free up horizontal space in the thread
-   header by hiding the retention + clear icons and surfacing them via
-   the per-row ⋮ menu instead. Desktop (>960px) and portrait phones
-   keep the existing thread-header icons. Right-click and long-press
-   continue to open the menu in all modes so touch-screen laptops have
-   a usable entry point even without the visible icon. */
-@media (max-width: 960px) and (orientation: landscape) {
+/* Landscape mobile + tablet: surface the row's actions via the per-
+   row ⋮ menu, drop the redundant thread header where the conv list
+   alongside already provides context + navigation. Right-click and
+   long-press continue to open the row menu in all modes so touch-
+   screen laptops still have an entry point.
+
+   Two rules — broader scope for the ⋮ icon (any landscape
+   phone/tablet) and a narrower scope for the full thread-header
+   hide (split-pane only — at ≤720 the conv list is hidden when a
+   chat is open and the thread header is the only way to navigate
+   back). Boundary is `max-width: 1279px` so a 1280×800 laptop
+   stays in the desktop layout (where the header is wanted). */
+@media (max-width: 1279px) and (orientation: landscape) {
   #thread-header #btn-conv-retention,
   #thread-header #btn-clear-conv { display: none; }
   .conv-row .row-menu-btn { display: inline-flex; }
+}
+@media (min-width: 721px) and (max-width: 1279px) and (orientation: landscape) {
+  #thread-header { display: none; }
 }
 
 /* Identity picker */
@@ -1626,14 +1672,18 @@ summary:hover { color: var(--text); }
         <div class="warn" style="margin:0 0 12px">⚠ Connectivity settings are <strong>device-wide</strong> — they apply to every identity stored on this device. Changing radio params reboots the device and may interrupt active conversations.</div>
 
         <details class="cn-section" data-cn="radio" open>
-          <summary>LoRa Radio <span class="cn-dot" id="cn-dot-radio" hidden></span></summary>
-          <div class="cn-section-body">
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0">
-              <input type="checkbox" id="rd-discoverable" style="width:auto;min-height:auto">
-              <span>Publicly advertise this interface</span>
+          <summary>
+            <span class="cn-title">LoRa Radio</span>
+            <span class="cn-dot" id="cn-dot-radio" hidden></span>
+            <label class="cn-row-toggle" title="Periodically announce this interface so other Reticulum nodes can find it">
+              <input type="checkbox" id="rd-discoverable">
+              <span>Discoverable</span>
             </label>
-            <div class="muted" style="margin:4px 0 14px">
-              Periodically sends an <code>rnstransport.discovery.interface</code>
+          </summary>
+          <div class="cn-section-body">
+            <div class="muted" style="margin:0 0 14px">
+              The <strong>Discoverable</strong> toggle on the row controls whether
+              this interface periodically emits an <code>rnstransport.discovery.interface</code>
               announce over LoRa. The announce contains this device's identity
               hash, radio parameters (frequency, bandwidth, SF, coding rate),
               and approximate location (if GPS has a fix) so other Reticulum
@@ -6467,6 +6517,14 @@ async function populateRadioTab() {
     radio.have_conf ? 'err' : 'warn');
 }
 
+// Toggle lives on the accordion summary row — without these the
+// click bubbles to the <summary> and opens/closes the section.
+(() => {
+  const toggle = $('rd-discoverable').closest('.cn-row-toggle');
+  if (toggle) {
+    toggle.addEventListener('click', (ev) => ev.stopPropagation());
+  }
+})();
 $('rd-discoverable').addEventListener('change', (ev) => {
   const cb = ev.target;
   const wantOn = cb.checked;

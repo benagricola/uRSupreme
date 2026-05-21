@@ -675,17 +675,6 @@ namespace Web {
       // a Failed outbox entry. Resets the auto-retry budget.
       server.on(uri("/api/identities/{}/outbox/{}/retry"),
                 HTTP_POST, handle_outbox_retry);
-      // GET /api/identities/{id}/{outbox|inbox}/{seq}/body — stream the
-      // message body bytes straight from the spill file via a chunked
-      // response that reads disk → small scratch → TCP. Used by the SPA
-      // when a record's `body_size > 0 && body` is empty in the list
-      // response (body lives on disk, not in RAM). Returns text/plain;
-      // body bytes are whatever the original sender provided (UTF-8 in
-      // practice). Returns 404 if the file is missing.
-      server.on(uri("/api/identities/{}/outbox/{}/body"),
-                HTTP_GET, handle_message_body_outbox);
-      server.on(uri("/api/identities/{}/inbox/{}/body"),
-                HTTP_GET, handle_message_body_inbox);
       server.on(uri("/api/identities/{}/state"),    HTTP_GET,  handle_state);
       server.on(uri("/api/identities/{}/conversations/{}"),
                 HTTP_DELETE, handle_clear_conversation);
@@ -2105,9 +2094,15 @@ namespace Web {
       send_json(req, 200, doc);
     }
 
+    // Filter predicate: true → emit, false → skip. Used by the inbox /
+    // outbox endpoints to surface either "most recent N" or "all
+    // records with seq > since" without copying the underlying deque.
+    using MessageFilter = std::function<bool(const LXMF::MessageRecord&)>;
     static void emit_messages_array(JsonArray arr,
-                                    const std::vector<LXMF::MessageRecord>& msgs) {
-      for (const auto& m : msgs) {
+                                    const std::deque<LXMF::MessageRecord>& ring,
+                                    const MessageFilter& include) {
+      for (const auto& m : ring) {
+        if (!include(m)) continue;
         JsonObject obj = arr.add<JsonObject>();
         obj["seq"]         = m.seq;
         obj["ts"]          = m.ts;
@@ -2115,16 +2110,13 @@ namespace Web {
         obj["received_ms"] = m.received_ms;
         obj["peer"]        = m.peer_hash.toHex();
         obj["title"]       = m.title;
-        // Body delivery: small bodies inline (content held in RAM by
-        // the MessageRecord); large bodies omitted from the list
-        // response — the SPA fetches them lazily via the streaming
-        // /body endpoint when it actually wants to render them.
-        // body_size is always authoritative (whether inline or on disk).
-        if (m.body_on_disk) {
-          obj["body"]      = "";
-        } else {
-          obj["body"]      = m.content;
-        }
+        // Body delivery: always inline. Body sizes are capped at
+        // LXMF_MAX_BODY_BYTES (4 KiB) on the send path so this is
+        // bounded RAM. The earlier body_on_disk spill + lazy /body
+        // endpoint was dead infrastructure (the SPA never called the
+        // endpoint) and added complexity to every code path that
+        // touched MessageRecord.
+        obj["body"]        = m.content;
         obj["body_size"]   = m.body_size;
         obj["sig_ok"]      = m.signature_ok;
         obj["status"]      = LXMF::outbox_status_name(m.status);
@@ -2160,10 +2152,21 @@ namespace Web {
       uint32_t since = (uint32_t)req->arg("since").toInt();
       size_t   limit = (size_t)req->arg("limit").toInt();
       if (limit == 0 || limit > 50) limit = 50;
-      auto msgs = since > 0 ? a->inbox->since(since) : a->inbox->recent(limit);
       Web::PsramJsonDocument doc;
       JsonArray arr = doc["messages"].to<JsonArray>();
-      emit_messages_array(arr, msgs);
+      // Iterate the deque oldest→newest. For "since" pagination emit
+      // every record whose seq exceeds the cursor; for the default
+      // "most recent N" view emit the trailing slice. No vector copy.
+      const auto& ring = a->inbox->ring();
+      if (since > 0) {
+        emit_messages_array(arr, ring,
+          [since](const LXMF::MessageRecord& m){ return m.seq > since; });
+      } else {
+        const size_t skip = (ring.size() > limit) ? (ring.size() - limit) : 0;
+        size_t idx = 0;
+        emit_messages_array(arr, ring,
+          [skip, &idx](const LXMF::MessageRecord&){ return idx++ >= skip; });
+      }
       doc["next_since"] = a->inbox->next_seq();
       send_json(req, 200, doc);
     }
@@ -2179,90 +2182,20 @@ namespace Web {
       uint32_t since = (uint32_t)req->arg("since").toInt();
       size_t   limit = (size_t)req->arg("limit").toInt();
       if (limit == 0 || limit > 50) limit = 50;
-      auto msgs = since > 0 ? a->outbox->since(since) : a->outbox->recent(limit);
       Web::PsramJsonDocument doc;
       JsonArray arr = doc["messages"].to<JsonArray>();
-      emit_messages_array(arr, msgs);
+      const auto& ring = a->outbox->ring();
+      if (since > 0) {
+        emit_messages_array(arr, ring,
+          [since](const LXMF::MessageRecord& m){ return m.seq > since; });
+      } else {
+        const size_t skip = (ring.size() > limit) ? (ring.size() - limit) : 0;
+        size_t idx = 0;
+        emit_messages_array(arr, ring,
+          [skip, &idx](const LXMF::MessageRecord&){ return idx++ >= skip; });
+      }
       doc["next_since"] = a->outbox->next_seq();
       send_json(req, 200, doc);
-    }
-
-    // GET /api/identities/{id}/{outbox|inbox}/{seq}/body — stream the
-    // body bytes from disk into the response in chunks. Reads disk →
-    // small SRAM scratch (managed by ESPAsyncWebServer's TCP buffer)
-    // → TCP. Never materialises the full body in RAM. The chunked
-    // response's filler callback runs per TCP segment; each call
-    // reads up to maxLen bytes at the current offset. body_size on
-    // the MessageRecord is the authoritative Content-Length.
-    //
-    // For inline bodies (body_size <= BODY_SPILL_THRESHOLD ≈ 319 B),
-    // the SPA already has the content in the list response — these
-    // endpoints don't apply. We still serve inline bodies by writing
-    // m.content directly into the chunked response, so the SPA can
-    // use a single fetch path regardless of size. Same shape, smaller
-    // cost.
-    static void handle_message_body_outbox(AsyncWebServerRequest* req) {
-      handle_message_body_impl(req, /*outbox=*/true);
-    }
-    static void handle_message_body_inbox(AsyncWebServerRequest* req) {
-      handle_message_body_impl(req, /*outbox=*/false);
-    }
-    static void handle_message_body_impl(AsyncWebServerRequest* req, bool outbox) {
-      RnsLockGuard _g;
-      LXMF::IdentityId caller = require_auth(req);
-      if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
-      const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
-      if (!a || !a->outbox || !a->inbox) {
-        send_error(req, 404, "unknown_identity"); return;
-      }
-      const uint32_t seq = (uint32_t)atoi(req->pathArg(1).c_str());
-      auto* mailbox = outbox ? a->outbox.get() : a->inbox.get();
-      // recent() clamps to the ring's actual size, so SIZE_MAX-equivalent
-      // just returns the whole ring — exactly what we want for a seq
-      // lookup with no a-priori upper bound.
-      auto msgs = mailbox->recent(static_cast<size_t>(-1));
-      const LXMF::MessageRecord* rec = nullptr;
-      for (const auto& m : msgs) {
-        if (m.seq == seq) { rec = &m; break; }
-      }
-      if (!rec) { send_error(req, 404, "seq_not_found"); return; }
-      const uint32_t total = rec->body_size;
-      if (total == 0) {
-        // No body at all — empty response, content-length 0.
-        AsyncWebServerResponse* response =
-          req->beginResponse(200, "text/plain", "");
-        req->send(response);
-        return;
-      }
-      if (!rec->body_on_disk) {
-        // Inline path. We can't safely move out of rec->content (it
-        // belongs to the in-RAM ring); copy the bytes into a heap
-        // String — but only for SMALL inline bodies, which by
-        // construction are < BODY_SPILL_THRESHOLD ≈ 319 B. Negligible.
-        AsyncWebServerResponse* response =
-          req->beginResponse(200, "text/plain",
-                             String(rec->content.c_str(), rec->content.size()));
-        req->send(response);
-        return;
-      }
-      // Disk-backed body. Stream via beginResponse(contentLength, filler):
-      // ESPAsyncWebServer drives the filler whenever it can write to TCP.
-      // We capture the path + chunk reader by value into the lambda; the
-      // mailbox object outlives the response (identity-scoped, lives
-      // until factory_reset), so the chunk_reader reference is stable.
-      const std::string path = mailbox->body_path_for(seq);
-      const auto& chunk_reader = mailbox->body_chunk_reader();
-      if (!chunk_reader) {
-        send_error(req, 500, "no_body_chunk_reader"); return;
-      }
-      AsyncWebServerResponse* response = req->beginResponse(
-        "text/plain", total,
-        [path, &chunk_reader](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
-          return chunk_reader(path, index, buf, maxLen);
-        });
-      req->send(response);
     }
 
     // POST /api/identities/{id}/outbox/{seq}/retry — manually re-queue
@@ -2279,14 +2212,8 @@ namespace Web {
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a || !a->outbox) { send_error(req, 404, "unknown_identity"); return; }
       const uint32_t seq = (uint32_t)atoi(req->pathArg(1).c_str());
-      // Find the outbox record. We pull a window large enough to cover
-      // anything the SPA might be looking at — outbox ring is bounded
-      // (see LXMFInbox::MAX_RAM_RING).
-      auto msgs = a->outbox->recent(64);
-      const LXMF::MessageRecord* rec = nullptr;
-      for (const auto& m : msgs) {
-        if (m.seq == seq) { rec = &m; break; }
-      }
+      // Direct seq lookup into the deque — no copy, no window guess.
+      const LXMF::MessageRecord* rec = a->outbox->find_by_seq(seq);
       if (!rec) {
         send_error_with_message(req, 404, "outbox_seq_not_found",
           "No outbox entry with that sequence number was found in the recent window.");
@@ -2344,6 +2271,21 @@ namespace Web {
       // The SPA sends `content`; legacy / external clients may still send
       // `body`. Accept either, preferring `content`.
       std::string content = (const char*)(body["content"] | (body["body"] | ""));
+      // Cap body length to LXMF_MAX_BODY_BYTES (4 KiB). Matches the
+      // WhatsApp/Telegram convention; well above any reasonable typed
+      // text but below anything that'd stress the LoRa airtime budget
+      // or the on-device ring. Reject loudly so the SPA can show the
+      // user a useful "message too long" warning rather than silently
+      // truncating.
+      if (content.size() > LXMF::LXMF_MAX_BODY_BYTES) {
+        char msg[160];
+        snprintf(msg, sizeof(msg),
+                 "Message body too long: %u characters, cap is %u.",
+                 (unsigned)content.size(),
+                 (unsigned)LXMF::LXMF_MAX_BODY_BYTES);
+        send_error_with_message(req, 413, "body_too_long", msg);
+        return;
+      }
       RNS::Bytes to = hex_to_bytes(to_hex, LXMF::HASH_LEN);
       if (to.size() != LXMF::HASH_LEN) {
         char msg[120];
@@ -2490,8 +2432,21 @@ namespace Web {
         }
         convs_list.push_back({ph, {m}});
       };
-      if (a->inbox)  for (const auto& m : a->inbox->recent(64))  upsert(m);
-      if (a->outbox) for (const auto& m : a->outbox->recent(64)) upsert(m);
+      // Iterate the deques directly + take the trailing 64-record
+      // window. Tail slice rather than a vector copy of the entire
+      // ring — the conversations endpoint fires on every page load.
+      auto take_tail = [](const std::deque<LXMF::MessageRecord>& ring,
+                           const std::function<void(const LXMF::MessageRecord&)>& fn) {
+        constexpr size_t W = 64;
+        const size_t skip = (ring.size() > W) ? (ring.size() - W) : 0;
+        size_t idx = 0;
+        for (const auto& m : ring) {
+          if (idx++ < skip) continue;
+          fn(m);
+        }
+      };
+      if (a->inbox)  take_tail(a->inbox->ring(),  upsert);
+      if (a->outbox) take_tail(a->outbox->ring(), upsert);
       // Order by (boot_epoch, received_ms) — see LXMFTypes.h. boot_epoch
       // makes the tuple monotonic across reboots; received_ms breaks
       // ties within a boot. ts is for display only.

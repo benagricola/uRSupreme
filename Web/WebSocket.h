@@ -136,17 +136,12 @@ namespace WS {
     msg["received_ms"]     = m.received_ms;
     msg["peer"]            = m.peer_hash.toHex();
     msg["title"]           = m.title;
-    // Body delivery mirrors the HTTP outbox/inbox JSON contract (#172):
-    // small bodies inline, large bodies (body_on_disk) omitted so the
-    // SPA fetches lazily via /api/identities/{id}/inbox/{seq}/body.
-    // body_size is authoritative regardless of inline vs disk. Sending
-    // a 50 KiB body inline here would re-introduce the multi-KiB heap
-    // churn the streaming JSON + lazy load was meant to remove.
-    if (m.body_on_disk) {
-      msg["body"]          = "";
-    } else {
-      msg["body"]          = m.content;
-    }
+    // Bodies are always inline now (capped at LXMF_MAX_BODY_BYTES on
+    // the send path). The earlier body_on_disk spill + lazy /body
+    // fetch was dead infrastructure — the SPA never called the
+    // endpoint, so large bodies stayed unreadable from the UI even
+    // though the bytes were on disk.
+    msg["body"]            = m.content;
     msg["body_size"]       = m.body_size;
     msg["sig_ok"]          = m.signature_ok;
     if (!m.attachments.empty()) {

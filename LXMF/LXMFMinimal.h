@@ -290,6 +290,14 @@ namespace LXMF {
   static constexpr size_t LXMF_OPPORTUNISTIC_MAX   = 295;
   static constexpr size_t LXMF_LINK_PACKET_MAX     = 319;
 
+  // Per-message body-content cap. Matches the WhatsApp/Telegram
+  // convention (4 KiB / ~4096 chars) — comfortably above the
+  // longest text someone would reasonably type into a chat, well
+  // below anything that'd stress LoRa airtime or the on-device
+  // ring. Anything beyond opportunistic-max triggers a Link+Resource
+  // transfer; a 4 KiB body at SF5/BW250 ≈ 1-2 s airtime, fine.
+  static constexpr size_t LXMF_MAX_BODY_BYTES      = 4096;
+
   class LXMFMinimal {
   public:
     using DeliveryCallback = std::function<void(const MessageRecord&)>;

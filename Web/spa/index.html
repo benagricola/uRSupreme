@@ -1097,7 +1097,11 @@ summary:hover { color: var(--text); }
       <input id="attach-file" type="file" hidden>
       <div id="compose-mid">
         <div id="attach-tray" hidden></div>
-        <textarea id="compose-text" placeholder="Message…" rows="1"></textarea>
+        <textarea id="compose-text" placeholder="Message…" rows="1" maxlength="4096"></textarea>
+        <!-- Live character counter — appears only when the user is
+             approaching the cap. The firmware rejects >4096 with 413,
+             so we surface the limit visually before they hit send. -->
+        <div id="compose-counter" class="muted" hidden style="font-size:11px;text-align:right;margin-top:2px"></div>
       </div>
       <button class="icon" id="btn-send" title="Send" style="background:var(--accent-2);border-color:var(--accent-3);color:var(--text)">
         <!-- arrow up -->
@@ -5697,10 +5701,28 @@ $('compose-text').addEventListener('keydown', (e) => {
   const send = state.prefs.enterSends ? !e.shiftKey : e.shiftKey;
   if (send) { e.preventDefault(); sendMessage(); }
 });
+// Body cap matches the firmware's LXMF_MAX_BODY_BYTES. The textarea's
+// maxlength attribute is the hard stop in browser UI; this counter
+// gives the user a visual heads-up as they approach it.
+const COMPOSE_MAX_CHARS = 4096;
 $('compose-text').addEventListener('input', (e) => {
   // Auto-grow textarea.
   e.target.style.height = 'auto';
   e.target.style.height = Math.min(120, e.target.scrollHeight) + 'px';
+  // Counter: hidden when there's plenty of room; muted at ≥75 %;
+  // warn-coloured at ≥95 %. Avoids permanent UI noise for the
+  // common case of short messages.
+  const c = $('compose-counter');
+  const len = e.target.value.length;
+  if (len < COMPOSE_MAX_CHARS * 0.75) {
+    c.hidden = true;
+  } else {
+    c.hidden = false;
+    c.textContent = len + ' / ' + COMPOSE_MAX_CHARS;
+    c.style.color = (len >= COMPOSE_MAX_CHARS * 0.95)
+      ? 'var(--warn, #d29922)'
+      : 'var(--text-mute)';
+  }
 });
 $('btn-emoji').addEventListener('click', (ev) => {
   ev.stopPropagation();

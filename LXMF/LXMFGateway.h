@@ -227,7 +227,10 @@ namespace LXMF {
       // <dir>/attachments/<filename> stays forever.
       auto unlink_atts = [&](const LXMFInbox* box) {
         if (!box) return;
-        for (const auto& rec : box->recent(SIZE_MAX)) {
+        // Iterate the deque directly — no vector copy. The old
+        // recent(SIZE_MAX) call duplicated the entire ring just to
+        // walk it once.
+        for (const auto& rec : box->ring()) {
           for (const auto& att : rec.attachments) {
             if (att.filename.empty()) continue;
             const std::string full = a->dir() + "/attachments/" + att.filename;
@@ -464,125 +467,12 @@ namespace LXMF {
       // away but the file under <dir>/attachments/<filename> stays
       // forever and flash fills up.
       const std::string adir = a.dir();
-      // Shared body-storage callbacks: SD first, flash fallback. The
-      // path argument is the absolute filesystem path the inbox wants
-      // to use (e.g. "/lxmf/<id>/inbox/<seq>.body"); the same path is
-      // tried against SD via the SDCard helpers and falls back to
-      // microStore::filesystem if SD is absent or fails. Matches the
-      // attachment-write pattern at line 488-547 above.
-      LXMFInbox::BodyWriter body_writer = [](const std::string& path,
-                                              const std::string& content) -> bool {
-        // Make parent dir on whichever backend gets the write.
-        if (Storage::SDCard::present()) {
-          const size_t w = Storage::SDCard::write_file(
-              path.c_str(), reinterpret_cast<const uint8_t*>(content.data()),
-              content.size());
-          if (w == content.size()) return true;
-          WARNINGF("LXMFInbox: SD body write short (%u/%u) — falling back to flash",
-                   (unsigned)w, (unsigned)content.size());
-        }
-        // Flash fallback. Make sure the directory exists (microStore
-        // creates the file but not the parent dir).
-        const size_t slash = path.find_last_of('/');
-        if (slash != std::string::npos) {
-          const std::string dir = path.substr(0, slash);
-          if (!filesystem.isDirectory(dir.c_str())) {
-            filesystem.mkdir(dir.c_str());
-          }
-        }
-        const size_t w = filesystem.writeFile(
-            path.c_str(), reinterpret_cast<const uint8_t*>(content.data()),
-            content.size());
-        return w == content.size();
-      };
-      LXMFInbox::BodyReader body_reader = [](const std::string& path,
-                                              std::string& out_content) -> bool {
-        // Try SD first (the same path may live on either backend).
-        if (Storage::SDCard::present() && Storage::SDCard::exists(path.c_str())) {
-          auto f = Storage::SDCard::open_read(path.c_str());
-          if (f) {
-            const size_t sz = f.size();
-            out_content.resize(sz);
-            const size_t r = f.read(reinterpret_cast<uint8_t*>(&out_content[0]), sz);
-            f.close();
-            if (r == sz) return true;
-            out_content.clear();
-          }
-        }
-        // Flash fallback.
-        if (!filesystem.exists(path.c_str())) return false;
-        const size_t sz = (size_t)filesystem.size(path.c_str());
-        out_content.resize(sz);
-        microStore::File f = filesystem.open(path.c_str(),
-                                              microStore::File::ModeRead, false);
-        if (!f) { out_content.clear(); return false; }
-        const size_t r = f.read(reinterpret_cast<uint8_t*>(&out_content[0]), sz);
-        f.close();
-        if (r != sz) { out_content.clear(); return false; }
-        return true;
-      };
-      LXMFInbox::BodyRemover body_remover = [](const std::string& path) {
-        if (Storage::SDCard::present() && Storage::SDCard::exists(path.c_str())) {
-          SD.remove(path.c_str());
-        }
-        if (filesystem.exists(path.c_str())) filesystem.remove(path.c_str());
-      };
-      a.inbox->set_body_storage(body_writer, body_reader, body_remover);
-      a.outbox->set_body_storage(body_writer, body_reader, body_remover);
-
-      // body_size_reader — returns the on-disk body file's size in
-      // bytes without reading its content. Used at boot to recover
-      // body_size for legacy records persisted before that field
-      // existed (no per-record full body read). Single stat() per file.
-      LXMFInbox::BodySizeReader body_size_reader = [](const std::string& path) -> uint32_t {
-        if (Storage::SDCard::present() && Storage::SDCard::exists(path.c_str())) {
-          auto f = Storage::SDCard::open_read(path.c_str());
-          if (f) {
-            const size_t sz = f.size();
-            f.close();
-            return (uint32_t)sz;
-          }
-        }
-        if (filesystem.exists(path.c_str())) {
-          return (uint32_t)filesystem.size(path.c_str());
-        }
-        return 0;
-      };
-      a.inbox->set_body_size_reader(body_size_reader);
-      a.outbox->set_body_size_reader(body_size_reader);
-
-      // body_chunk_reader — slices a window out of the on-disk body
-      // file for the streaming /body endpoint. Each call opens the
-      // file, seeks to `offset`, reads up to `max_len` bytes, closes.
-      // LittleFS open is cheap (no syscall round-trip); SD is more
-      // expensive but still well under one TCP RTT. Keeping no
-      // persistent FILE* simplifies lifetime — the streaming response
-      // can outlive any single handler invocation, and we don't want
-      // to leak file handles if the client disconnects mid-stream.
-      LXMFInbox::BodyChunkReader body_chunk_reader = [](const std::string& path,
-                                                         size_t offset,
-                                                         uint8_t* buf,
-                                                         size_t max_len) -> size_t {
-        if (Storage::SDCard::present() && Storage::SDCard::exists(path.c_str())) {
-          auto f = Storage::SDCard::open_read(path.c_str());
-          if (f) {
-            f.seek(offset);
-            const size_t r = f.read(buf, max_len);
-            f.close();
-            return r;
-          }
-        }
-        if (!filesystem.exists(path.c_str())) return 0;
-        microStore::File f = filesystem.open(path.c_str(),
-                                              microStore::File::ModeRead, false);
-        if (!f) return 0;
-        if (offset > 0) f.seek((uint32_t)offset, microStore::SeekModeSet);
-        const size_t r = f.read(buf, max_len);
-        f.close();
-        return r;
-      };
-      a.inbox->set_body_chunk_reader(body_chunk_reader);
-      a.outbox->set_body_chunk_reader(body_chunk_reader);
+      // Body-spill machinery removed — bodies are always inline in
+      // the JSONL ring (capped at LXMF_MAX_BODY_BYTES on the send
+      // path). The earlier per-message spill files + lazy /body
+      // endpoint were dead infrastructure: the SPA never called the
+      // endpoint, so large bodies were silently inaccessible from
+      // the UI even though the bytes were on disk.
 
       auto on_remove = [adir, p = &a](const MessageRecord& rec) {
         for (const auto& att : rec.attachments) {

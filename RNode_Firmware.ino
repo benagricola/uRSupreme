@@ -43,6 +43,7 @@
 #include "Sensors/Motion/QMI8658.h"
 #include "Telemetry/Battery.h"
 #include "Sensors/Config.h"
+#include "Discovery/Identity.h"
 #endif
 
 #include <Arduino.h>
@@ -1262,6 +1263,15 @@ void setup() {
       RNS::Destination destination(identity, RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
 #endif
       RNS::Destination destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
+
+      // Per-device network identity — generated on first boot and
+      // persisted to /lxmf/network_identity.bin. Independent of any
+      // LXMF chat identity (survives factory_reset of an LXMF
+      // identity, isolates chat keys from network-feature keys).
+      // First use will be the discovery-announcer (Discovery::Announcer)
+      // in an upcoming commit, but every cross-cutting network
+      // feature should share this identity.
+      Discovery::Identity::ensure();
 
 #if defined(HAS_LXMF_GATEWAY)
       HEAD("Initializing LXMF gateway...", RNS::LOG_TRACE);

@@ -2673,7 +2673,7 @@ function _renderConversationsBody(wrap) {
     return;
   }
 
-  const makeRow = (peer, name, sub, when, active) => {
+  const makeRow = (peer, name, sub, when, active, xfer) => {
     // Cross-reference state.announces to derive a "last-seen" indicator.
     // Online (green dot + bold "now") if heard within the last 60s,
     // otherwise the age string. Peers we've never heard a real
@@ -2688,6 +2688,16 @@ function _renderConversationsBody(wrap) {
       el('div', { class: 'last', text: sub }),
     );
     if (seenStr) middle.appendChild(el('div', { class: 'seen' + (isOnline ? ' online' : ''), text: seenStr }));
+    // Active transfer (inbound OR outbound) — render the same inline
+    // progress bar the synthetic Incoming row uses, so the conv row
+    // visually mirrors what's happening on the link.
+    if (xfer && xfer.bytes_total) {
+      const pct = Math.max(2, Math.min(100, Math.floor(100 * xfer.bytes_done / xfer.bytes_total)));
+      middle.appendChild(
+        el('div', { style: 'height:3px;margin-top:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden' },
+          el('div', { style: 'height:100%;width:' + pct + '%;background:var(--accent);transition:width 200ms ease-out' })),
+      );
+    }
     // No per-row onclick handler: the conv-list container has a
     // single delegated click handler (see boot wiring below). If an
     // SSE event happens to rerender the list between mousedown and
@@ -2789,7 +2799,8 @@ function _renderConversationsBody(wrap) {
         nameFor(c.peer),
         sub,
         relTime(c.last_ts),
-        c.peer === state.openPeer));
+        c.peer === state.openPeer,
+        xfer));
     }
   }
 

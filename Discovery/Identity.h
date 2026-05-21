@@ -73,8 +73,8 @@ inline void ensure() {
     RNS::Identity migrating = RNS::Identity::from_file(LEGACY_PATH);
     if (migrating && migrating.to_file(PERSIST_PATH)) {
       filesystem.remove(LEGACY_PATH);
-      NOTICEF("Discovery: migrated network identity from %s to %s",
-              LEGACY_PATH, PERSIST_PATH);
+      NOTICEF("Discovery: migrated network identity (hash=%s) from %s to %s",
+              migrating.hash().toHex().c_str(), LEGACY_PATH, PERSIST_PATH);
     }
   }
   RNS::Identity loaded = RNS::Identity::from_file(PERSIST_PATH);

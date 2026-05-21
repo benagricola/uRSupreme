@@ -155,6 +155,19 @@ namespace LXMF {
       return true;
     }
 
+    // Update the LXMF announcement label and persist. Pushes the new
+    // name into the live LXMFMinimal so the next announce() carries it
+    // — does NOT trigger an announce here (the caller fires one off
+    // separately so peers re-learn the label).
+    static bool set_display_name(const IdentityId& iden_id, const std::string& name) {
+      LXMFIdentity* a = identity_by_id_mut(iden_id);
+      if (!a) return false;
+      a->display_name = name;
+      a->lxmf.set_display_name(name.c_str());
+      write_meta(*a);
+      return true;
+    }
+
     // Generate a fresh identity + password hash, persist, instantiate.
     // Returns the new identity_id, or empty string on failure / cap /
     // password too short.

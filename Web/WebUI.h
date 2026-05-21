@@ -2198,9 +2198,28 @@ namespace Web {
           return;
         }
       }
+      if (body["display_name"].is<JsonVariant>()) {
+        // Trim leading/trailing whitespace; reject empty so peers always
+        // see a meaningful label. The 96-byte clamp keeps the encoded
+        // announce inside the 128-byte LXMFMinimal announce buffer.
+        std::string n = (const char*)(body["display_name"] | "");
+        size_t s = n.find_first_not_of(" \t\r\n");
+        size_t e = n.find_last_not_of(" \t\r\n");
+        n = (s == std::string::npos) ? std::string() : n.substr(s, e - s + 1);
+        if (n.empty()) {
+          send_error_with_message(req, 400, "invalid", "display_name must not be empty");
+          return;
+        }
+        if (n.size() > 96) n.resize(96);
+        if (!LXMF::LXMFGateway::set_display_name(requested, n)) {
+          send_error(req, 404, "unknown_identity");
+          return;
+        }
+      }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       Common::PsramJsonDocument doc;
       doc["id"]                            = requested;
+      doc["display_name"]                  = a ? a->display_name : std::string();
       doc["announce_interval_ms"]          = a ? a->announce_interval_ms : 0;
       doc["persist_outbound_attachments"]  = a ? a->persist_outbound_attachments : true;
       send_json(req, 200, doc);

@@ -267,6 +267,13 @@ namespace LXMF {
     // index 2 to explicitly tell peers NOT to compress outgoing
     // messages to us. Without this, stock LXMF peers would auto-bz2
     // long messages and we'd reject them with RESOURCE_RCL.
+    // Update the announcement label. Takes effect on the next announce()
+    // call — does NOT trigger one. Callers (e.g. LXMFGateway) typically
+    // emit one immediately after a rename so peers re-learn the label.
+    void set_display_name(const char* name) {
+      if (name) _display_name = name;
+    }
+
     void announce() {
       if (!_initialized) return;
       uint8_t buf[128];

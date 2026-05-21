@@ -1556,10 +1556,13 @@ summary:hover { color: var(--text); }
           <div class="list-row" style="display:flex;align-items:center;gap:10px">
             <span class="idc" id="id-modal-idc"></span>
             <div style="min-width:0;flex:1">
-              <div><strong id="id-display-name"></strong></div>
-              <div class="muted mono" id="id-address"></div>
+              <input type="text" id="id-display-name" maxlength="96"
+                     style="font-weight:600;width:100%;min-height:auto;padding:4px 6px"
+                     autocomplete="off" spellcheck="false">
+              <div class="muted mono" id="id-address" style="margin-top:4px"></div>
             </div>
           </div>
+          <div class="muted" style="margin-top:4px">The label peers see in your identity announce. Changes take effect on the next announce — press the megaphone after editing to re-broadcast immediately.</div>
           <label style="margin-top:12px">Auto-announce</label>
           <select id="id-announce-interval"></select>
           <div class="muted" style="margin-top:4px">How often this identity automatically broadcasts an announce so peers can find and route to it. Manual announces via the megaphone icon work regardless of this setting.</div>
@@ -6323,7 +6326,9 @@ async function populateIdentityTab() {
   try {
     const me = await state.transport.getIdentity(state.identityId);
     state.self = Object.assign({}, state.self || {}, me);
-    $('id-display-name').textContent = me.display_name || me.id;
+    const nameInput = $('id-display-name');
+    nameInput.value             = me.display_name || '';
+    nameInput.dataset.lastSaved = me.display_name || '';
     $('id-address').textContent      = me.address || me.id;
     $('id-modal-idc').innerHTML      = identicon(me.address || me.id, 40);
     const ms = Number(me.announce_interval_ms || 0);
@@ -6910,6 +6915,40 @@ $('id-announce-interval').addEventListener('change', async (e) => {
     toast('Could not update setting: ' + (err.message || err), 'error');
   }
 });
+
+// Save the display name on blur (or Enter). No save on every keystroke
+// — peers don't see the new label until the next announce anyway, so
+// per-keystroke API calls would just churn the meta.json write.
+(() => {
+  const inp = $('id-display-name');
+  const commit = async () => {
+    const desired = inp.value.trim();
+    const last    = inp.dataset.lastSaved || '';
+    if (desired === last) return;
+    if (!desired) {
+      inp.value = last;  // refuse empty; restore prior
+      toast('Display name cannot be empty', 'error');
+      return;
+    }
+    try {
+      const resp = await state.transport.setIdentitySettings(
+        state.identityId, { display_name: desired });
+      inp.dataset.lastSaved = resp.display_name || desired;
+      inp.value             = resp.display_name || desired;
+      if (state.self) state.self.display_name = resp.display_name || desired;
+      $('self-name').textContent = inp.value;
+      toast('Display name updated', 'success');
+    } catch (err) {
+      inp.value = last;
+      toast('Could not update display name: ' + (err.message || err), 'error');
+    }
+  };
+  inp.addEventListener('blur', commit);
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+    else if (e.key === 'Escape') { inp.value = inp.dataset.lastSaved || ''; inp.blur(); }
+  });
+})();
 
 $('id-persist-outbound').addEventListener('change', async (e) => {
   const on = !!e.target.checked;

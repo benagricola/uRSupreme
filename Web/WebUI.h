@@ -2458,9 +2458,37 @@ namespace Web {
                                 err ? err : "Send failed for an unknown reason.");
         return;
       }
+      // The 202 response returns the full server-authoritative shape
+      // of the just-created outbox record so the SPA's optimistic
+      // entry can be inserted with the same identifiers the firmware
+      // uses. Without packet_hash here, subsequent outbox_status
+      // events (queued → sent → delivered) can't match by link hash
+      // and the status pill stays stuck on "queued". Without
+      // server-authoritative ts/boot_epoch/received_ms, the optimistic
+      // record sorts in the wrong place when the device clock differs
+      // from the browser. Without the persisted attachments array,
+      // the bubble's inline preview can't be rendered because the
+      // SPA only knows the user-supplied filename, not the
+      // hash-based on-disk filename.
       Web::PsramJsonDocument doc;
-      doc["queued_seq"] = rec.seq;
-      doc["status"]     = LXMF::outbox_status_name(rec.status);
+      doc["queued_seq"]  = rec.seq;
+      doc["status"]      = LXMF::outbox_status_name(rec.status);
+      doc["ts"]          = rec.ts;
+      doc["boot_epoch"]  = rec.boot_epoch;
+      doc["received_ms"] = rec.received_ms;
+      if (rec.packet_hash.size() > 0) doc["packet_hash"] = rec.packet_hash.toHex();
+      if (!rec.attachments.empty()) {
+        JsonArray atts = doc["attachments"].to<JsonArray>();
+        for (const auto& a : rec.attachments) {
+          JsonObject o = atts.add<JsonObject>();
+          o["tag"]          = a.tag;
+          o["size"]         = a.size;
+          o["filename"]     = a.filename;
+          if (!a.display_name.empty()) o["display_name"] = a.display_name;
+          if (!a.mime.empty())         o["mime"]         = a.mime;
+          if (!a.backend.empty())      o["backend"]      = a.backend;
+        }
+      }
       send_json(req, 202, doc);
       if (diag_send) {
         NOTICEF("handle_send[EXIT] seq=%u status=%s dma_free=%u dma_largest=%u sram_free=%u",

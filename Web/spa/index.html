@@ -3567,47 +3567,39 @@ async function sendMessage() {
       if (a.ext) e.ext = a.ext;
       return e;
     });
-    // Server returns { queued_seq, status }. Mirror status in the
-    // optimistic local copy so the bubble doesn't say "queued forever".
+    // /send returns the full server-authoritative shape of the new
+    // outbox record — seq, status, ts, boot_epoch, received_ms,
+    // packet_hash, and the persisted attachments (with hash-based
+    // filenames). Plug those directly into the optimistic record so
+    // it has identifiers matching what the firmware will broadcast
+    // via subsequent outbox_status events.
     const r = await state.transport.send(state.identityId, state.openPeer, '', text, attachments);
-    // Compute (boot_epoch, received_ms) so the optimistic record sorts
-    // to the bottom of the thread (most recent). Two sources, in
-    // priority order:
-    //   1. clockAnchor — set from the last /state fetch; gives the
-    //      best estimate of the device's millis() and current boot.
-    //   2. Fallback — sort just after the conversation's tail. Used
-    //      when the page is fresh and /state hasn't completed yet,
-    //      or when the cached anchor is from a prior boot epoch.
-    // Whatever we pick will be overwritten by upsertMessage when the
-    // device's authoritative record arrives via /state or SSE.
-    const anchor = state.clockAnchor;
-    const conv = state.conversations.get(state.openPeer);
-    const tail = conv && conv.msgs.length ? conv.msgs[conv.msgs.length - 1] : null;
-    let boot_epoch, received_ms;
-    if (anchor && typeof anchor.deviceNowMs === 'number' && typeof anchor.localWallMs === 'number') {
-      boot_epoch  = anchor.currentBootEpoch || (tail && tail.boot_epoch) || 1;
-      received_ms = anchor.deviceNowMs + (Date.now() - anchor.localWallMs);
-    } else if (tail) {
-      boot_epoch  = tail.boot_epoch || 1;
-      received_ms = (tail.received_ms || 0) + 1;
-    } else {
-      boot_epoch  = 1;
-      received_ms = 1;
-    }
+    // Prefer server-side attachments (hash filenames, persisted
+    // backend, server-canonical display_name) so the bubble can
+    // render an inline preview immediately. Fall back to local
+    // metadata only if the server didn't persist any (e.g. the
+    // identity has persist_outbound_attachments off).
+    const optimisticAttachments = (Array.isArray(r.attachments) && r.attachments.length > 0)
+      ? r.attachments.map(a => ({
+          tag: a.tag, size: a.size, filename: a.filename,
+          display_name: a.display_name, mime: a.mime, backend: a.backend,
+        }))
+      : state.pendingAttachments.map(a => ({
+          tag: a.tag, size: a.bytes.length, filename: a.filename, mime: a.mime,
+        }));
     upsertMessage({
       peer: state.openPeer,
-      seq: r.queued_seq || -Date.now(),
-      ts: Date.now() / 1000,
-      boot_epoch:  boot_epoch,
-      received_ms: received_ms,
+      seq: r.queued_seq,
+      ts: r.ts ?? (Date.now() / 1000),
+      boot_epoch:  r.boot_epoch  || 0,
+      received_ms: r.received_ms || 0,
       title: '',
       body: text,
       in: false,
       sig_ok: true,
       status: r.status || 'sent',
-      attachments: state.pendingAttachments.map(a => ({
-        tag: a.tag, size: a.bytes.length, filename: a.filename, mime: a.mime,
-      })),
+      packet_hash: r.packet_hash || '',
+      attachments: optimisticAttachments,
     });
     $('compose-text').value = '';
     state.pendingAttachments = [];

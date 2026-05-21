@@ -202,24 +202,6 @@ inline bool ensure_parent_dirs(const char* path) {
 }
 
 // Write `data` to `path` atomically-ish. Returns bytes written, or
-// 0 on failure. Mirrors microStore::FileSystem::writeFile semantics.
-// Failure paths run verify_or_disable() so an ejected card is
-// detected lazily and the caller can fall back to flash.
-inline size_t write_file(const char* path, const uint8_t* data, size_t len) {
-  if (!_detail::present_ref()) return 0;
-  if (!ensure_parent_dirs(path)) { verify_or_disable(); return 0; }
-  File f = SD.open(path, FILE_WRITE);
-  if (!f) {
-    WARNINGF("SDCard: open(WRITE) failed: %s", path);
-    verify_or_disable();
-    return 0;
-  }
-  size_t wrote = f.write(data, len);
-  f.close();
-  if (wrote != len) verify_or_disable();
-  return wrote;
-}
-
 // Path existence. Returns false uniformly whether the file is
 // genuinely absent or the card has been pulled, so the caller can't
 // tell those cases apart from the bool alone — but on a probe that

@@ -8,6 +8,7 @@
 #include <microStore/FileSystem.h>
 #include "../Storage/SDCard.h"
 #include "../Storage/OutboundStaging.h"
+#include "../Storage/Streaming.h"
 #include <SD.h>
 
 #include <memory>
@@ -597,9 +598,8 @@ namespace LXMF {
               std::string backend = "flash";
               RNS::Utilities::OS::reset_watchdog();
               if (use_sd) {
-                // Try SD first. On failure, fall back to LittleFS so the
-                // user doesn't lose the attachment due to a flaky card.
-                const size_t w = Storage::SDCard::write_file(full.c_str(), f.raw, f.raw_len);
+                const size_t w = Storage::Streaming::write_from_buffer(
+                    full.c_str(), /*use_sd=*/true, f.raw, f.raw_len);
                 if (w == f.raw_len) { wrote_ok = true; backend = "sd"; }
                 else {
                   WARNINGF("LXMF: SD attachment write short (wrote %u/%u for %s) — falling back to flash",
@@ -607,7 +607,8 @@ namespace LXMF {
                 }
               }
               if (!wrote_ok) {
-                const size_t w = filesystem.writeFile(full.c_str(), f.raw, f.raw_len);
+                const size_t w = Storage::Streaming::write_from_buffer(
+                    full.c_str(), /*use_sd=*/false, f.raw, f.raw_len);
                 if (w == f.raw_len) wrote_ok = true;
                 else WARNINGF("LXMF: flash attachment write short (wrote %u/%u) for %s",
                               (unsigned)w, (unsigned)f.raw_len, on_disk);
@@ -663,64 +664,36 @@ namespace LXMF {
               // attachment doesn't need to materialise twice in RAM.
               // The destination file is built up chunk by chunk
               // (truncate first, then append-write).
-              if (filesystem.exists(full.c_str())) filesystem.remove(full.c_str());
               bool wrote_ok = false;
               std::string backend = "flash";
-              std::vector<uint8_t> chunk;
-              chunk.reserve(4096);
-              size_t off = 0;
-              auto next_chunk = [&](uint8_t* buf, size_t want) -> size_t {
+              // Reader pulls bytes from either OutboundStaging (PSRAM /
+              // SD-staging backed) or the inline a.data vector. Both
+              // are random-access by offset, so we can be called more
+              // than once across SD-then-flash fallback without
+              // re-priming any cursor state.
+              auto next_chunk = [&a](uint8_t* dst, size_t off, size_t want) -> size_t {
                 if (a.staging_id) {
-                  return Storage::OutboundStaging::read(a.staging_id, off, want, buf);
+                  return Storage::OutboundStaging::read(a.staging_id, off, want, dst);
                 }
                 const size_t avail = a.data.size() > off ? a.data.size() - off : 0;
                 const size_t take = std::min(want, avail);
-                if (take) memcpy(buf, a.data.data() + off, take);
+                if (take) memcpy(dst, a.data.data() + off, take);
                 return take;
               };
               if (use_sd) {
-                File f = SD.open(full.c_str(), FILE_WRITE);
-                if (f) {
-                  size_t written = 0;
-                  uint8_t buf[1024];
-                  while (off < total) {
-                    const size_t want = std::min((size_t)sizeof(buf), total - off);
-                    const size_t got = next_chunk(buf, want);
-                    if (got == 0) break;
-                    const size_t w = f.write(buf, got);
-                    if (w != got) break;
-                    off += got;
-                    written += w;
-                    RNS::Utilities::OS::reset_watchdog();
-                  }
-                  f.close();
-                  if (written == total) { wrote_ok = true; backend = "sd"; }
-                  else WARNINGF("LXMF: SD outbound write short (%u/%u) for %s — fallback to flash",
-                                (unsigned)written, (unsigned)total, on_disk);
-                }
+                const size_t w = Storage::Streaming::write_streamed(
+                    full.c_str(), /*use_sd=*/true, total, next_chunk);
+                if (w == total) { wrote_ok = true; backend = "sd"; }
+                else WARNINGF("LXMF: SD outbound write short (%u/%u) for %s — fallback to flash",
+                              (unsigned)w, (unsigned)total, on_disk);
                 if (!wrote_ok && SD.exists(full.c_str())) SD.remove(full.c_str());
               }
               if (!wrote_ok) {
-                // Buffer the whole thing on the heap for the flash
-                // writeFile API. Outbound persistence on flash is best-
-                // effort: it'll fail silently for multi-MB images on
-                // an 8 MB part, which is fine — that's why the user
-                // bought an SD card.
-                std::vector<uint8_t> all(total);
-                size_t roff = 0;
-                while (roff < total) {
-                  const size_t want = std::min((size_t)4096, total - roff);
-                  const size_t got = next_chunk(all.data() + roff, want);
-                  if (got == 0) break;
-                  roff += got;
-                  off  += got;
-                }
-                if (roff == total) {
-                  const size_t w = filesystem.writeFile(full.c_str(), all.data(), all.size());
-                  if (w == total) wrote_ok = true;
-                  else WARNINGF("LXMF: flash outbound write short (%u/%u) for %s",
-                                (unsigned)w, (unsigned)total, on_disk);
-                }
+                const size_t w = Storage::Streaming::write_streamed(
+                    full.c_str(), /*use_sd=*/false, total, next_chunk);
+                if (w == total) wrote_ok = true;
+                else WARNINGF("LXMF: flash outbound write short (%u/%u) for %s",
+                              (unsigned)w, (unsigned)total, on_disk);
               }
               if (!wrote_ok) continue;
               out[i].tag      = a.tag;

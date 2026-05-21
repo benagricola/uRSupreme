@@ -155,21 +155,57 @@ namespace LXMF {
       size_t file_size = filesystem.size(_path.c_str());
       if (file_size == 0) return;
 
-      // Buffer the whole file then split on newline. Keeping it simple at
-      // the cost of memory; sized to roughly the JSONL spool max.
-      std::vector<uint8_t> buf;
-      if (filesystem.readFile(_path.c_str(), buf) == 0) return;
-      buf.push_back('\n');
+      // Stream the spool in fixed-size chunks. Lines are assembled in
+      // a reusable scratch buffer that grows only as large as the
+      // longest single line in the file — so the peak working set is
+      // O(longest line) rather than O(whole file). Lines longer than
+      // MAX_LINE_BYTES are discarded (and a warning is logged) rather
+      // than blowing memory on a malformed record.
+      microStore::File f = filesystem.open(_path.c_str(), microStore::File::ModeRead);
+      if (!f) return;
 
-      size_t line_count = 0;
-      size_t start = 0;
-      for (size_t i = 0; i < buf.size(); ++i) {
-        if (buf[i] != '\n') continue;
-        if (i > start) {
-          parse_line(reinterpret_cast<const char*>(&buf[start]), i - start);
-          line_count++;
+      uint8_t  chunk[1024];
+      std::vector<char> line;
+      line.reserve(2048);
+      size_t line_count   = 0;
+      size_t dropped_long = 0;
+      bool   line_overflow = false;
+      while (true) {
+        const size_t got = f.read(chunk, sizeof(chunk));
+        if (got == 0) break;
+        for (size_t i = 0; i < got; ++i) {
+          const uint8_t c = chunk[i];
+          if (c == '\n') {
+            if (!line.empty() && !line_overflow) {
+              parse_line(line.data(), line.size());
+              line_count++;
+            } else if (line_overflow) {
+              dropped_long++;
+            }
+            line.clear();
+            line_overflow = false;
+            continue;
+          }
+          if (line_overflow) continue;
+          if (line.size() >= MAX_LINE_BYTES) {
+            line_overflow = true;
+            line.clear();
+            continue;
+          }
+          line.push_back((char)c);
         }
-        start = i + 1;
+      }
+      // Trailing line with no terminating newline.
+      if (!line.empty() && !line_overflow) {
+        parse_line(line.data(), line.size());
+        line_count++;
+      } else if (line_overflow) {
+        dropped_long++;
+      }
+      f.close();
+      if (dropped_long) {
+        WARNINGF("LXMFInbox: dropped %u line(s) over %u bytes from %s",
+                 (unsigned)dropped_long, (unsigned)MAX_LINE_BYTES, _path.c_str());
       }
 
       // If the file had more lines than the RAM ring kept, those older

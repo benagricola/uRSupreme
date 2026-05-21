@@ -87,7 +87,14 @@ namespace _detail {
   inline bool build_for_interface(Announce::Builder& b,
                                   const RNS::Interface& iface,
                                   const Config::Entry& cfg) {
-    const std::string nm = const_cast<RNS::Interface&>(iface).name();
+    // Announcement label: prefer the user-supplied advertised_name
+    // (from the Discovery tab), fall back to the raw interface name
+    // when empty. The interface name is the technical identifier
+    // ("LoRaInterface") which isn't a great label on rmap.world.
+    const std::string user_name = State::current().advertised_name;
+    const std::string nm = !user_name.empty()
+        ? user_name
+        : const_cast<RNS::Interface&>(iface).name();
     b.name(nm);
     b.transport_enabled(RNS::Reticulum::transport_enabled());
     b.transport_id(RNS::Transport::identity().hash());

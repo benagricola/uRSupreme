@@ -2881,8 +2881,10 @@ namespace Web {
       doc["enabled"]              = s.enabled;
       doc["default_interval_min"] = s.default_interval_min;
       doc["default_stamp_cost"]   = s.default_stamp_cost;
+      doc["advertised_name"]      = s.advertised_name;
       doc["min_interval_min"]     = Discovery::State::MIN_INTERVAL_MIN;
       doc["max_interval_min"]     = Discovery::State::MAX_INTERVAL_MIN;
+      doc["max_advertised_name_bytes"] = (uint32_t)Discovery::State::MAX_ADVERTISED_NAME_BYTES;
       // Runtime view of the announcer's progress since boot. Lets the
       // SPA tell the user "device last advertised N seconds ago" and
       // confirm the announcer is alive without needing serial access.
@@ -2922,6 +2924,15 @@ namespace Web {
       if (body["default_stamp_cost"].is<int>()) {
         Discovery::State::set_default_stamp_cost(
             (uint32_t)body["default_stamp_cost"].as<int>());
+      }
+      if (body["advertised_name"].is<const char*>()) {
+        std::string name = (const char*)body["advertised_name"];
+        if (name.size() > Discovery::State::MAX_ADVERTISED_NAME_BYTES) {
+          send_error_with_message(req, 413, "name_too_long",
+            "Advertisement name exceeds the configured limit.");
+          return;
+        }
+        Discovery::State::set_advertised_name(name);
       }
       handle_discovery_state_get(req);
     }

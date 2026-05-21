@@ -34,10 +34,21 @@ inline constexpr uint32_t MIN_INTERVAL_MIN         = 5;     // upstream-enforced
 inline constexpr uint32_t MAX_INTERVAL_MIN         = 1440;  // 24 h UI cap
 inline constexpr uint32_t DEFAULT_STAMP_COST       = 0;     // PoW deferred — see Announce.h
 
+// Cap on the user-set advertisement label. The on-air announce
+// app_data carries this as the interface's `name` field. Sideband-
+// shape consumers (rmap.world, other RNS nodes) treat it as a
+// human-readable label, so anything in the 32-64 char range is
+// reasonable; 64 covers most "MyNode in the garden shed" use.
+inline constexpr size_t MAX_ADVERTISED_NAME_BYTES = 64;
+
 struct Master {
-  bool     enabled            = false;                  // privacy-by-design default
-  uint32_t default_interval_min = DEFAULT_INTERVAL_MIN;
-  uint32_t default_stamp_cost   = DEFAULT_STAMP_COST;
+  bool        enabled            = false;                  // privacy-by-design default
+  uint32_t    default_interval_min = DEFAULT_INTERVAL_MIN;
+  uint32_t    default_stamp_cost   = DEFAULT_STAMP_COST;
+  // User-set label included in every announce. Empty string means
+  // "use the interface name" — the default fallback the Announcer
+  // applies when this is unset.
+  std::string advertised_name;
 };
 
 namespace _detail {
@@ -67,6 +78,10 @@ inline void load() {
   m.enabled              = doc["enabled"]              | false;
   m.default_interval_min = doc["default_interval_min"] | DEFAULT_INTERVAL_MIN;
   m.default_stamp_cost   = doc["default_stamp_cost"]   | DEFAULT_STAMP_COST;
+  m.advertised_name      = (const char*)(doc["advertised_name"] | "");
+  if (m.advertised_name.size() > MAX_ADVERTISED_NAME_BYTES) {
+    m.advertised_name.resize(MAX_ADVERTISED_NAME_BYTES);
+  }
   // Clamp interval to the documented range.
   if (m.default_interval_min < MIN_INTERVAL_MIN) m.default_interval_min = MIN_INTERVAL_MIN;
   if (m.default_interval_min > MAX_INTERVAL_MIN) m.default_interval_min = MAX_INTERVAL_MIN;
@@ -79,6 +94,7 @@ inline bool save() {
   doc["enabled"]              = m.enabled;
   doc["default_interval_min"] = m.default_interval_min;
   doc["default_stamp_cost"]   = m.default_stamp_cost;
+  doc["advertised_name"]      = m.advertised_name;
   std::string out;
   serializeJson(doc, out);
   const size_t w = filesystem.writeFile(PERSIST_PATH,
@@ -106,6 +122,13 @@ inline bool set_default_interval_min(uint32_t m) {
 inline bool set_default_stamp_cost(uint32_t c) {
   if (!_detail::loaded_ref()) load();
   _detail::slot().default_stamp_cost = c;
+  return save();
+}
+inline bool set_advertised_name(const std::string& n) {
+  if (!_detail::loaded_ref()) load();
+  std::string clipped = n;
+  if (clipped.size() > MAX_ADVERTISED_NAME_BYTES) clipped.resize(MAX_ADVERTISED_NAME_BYTES);
+  _detail::slot().advertised_name = clipped;
   return save();
 }
 

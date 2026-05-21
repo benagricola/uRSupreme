@@ -293,6 +293,13 @@ namespace WS {
     Common::PsramJsonDocument doc;
     doc["type"] = "radio_telemetry";
     Telemetry::Radio::encode(s, doc.as<JsonObject>());
+    // Cumulative packet counters tagged onto the live frame (not the
+    // history fill — those samples are frozen in time). Lets the
+    // status popover update the "RX 686 / TX 662 pkt" line and the
+    // chart simultaneously, without depending on the open-popover
+    // /api/info refresh that previously gated those numbers.
+    doc["rx_packets"] = (uint32_t)RNS::Transport::packets_received();
+    doc["tx_packets"] = (uint32_t)RNS::Transport::packets_sent();
     broadcast(doc);
   }
 

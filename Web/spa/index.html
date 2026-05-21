@@ -1693,6 +1693,13 @@ summary:hover { color: var(--text); }
           <div class="muted" style="margin-top:4px">When on, each interface marked as discoverable on the Connectivity tab will emit a periodic announce. Enabling requires the identity code on the device's display.</div>
         </div>
         <div class="card" style="margin-top:12px">
+          <strong>Advertised name</strong>
+          <label style="margin-top:8px">Public label shown to other Reticulum nodes</label>
+          <input id="disc-advertised-name" type="text" placeholder="(uses interface name if empty)">
+          <div class="muted" style="margin-top:4px">Carried inside every discovery announce. Defaults to the interface name (e.g. <code>LoRaInterface</code>); set a friendlier label here if you want this device to show up as something specific on rmap.world / similar listeners.</div>
+          <div class="muted" id="disc-name-status" style="margin-top:4px;font-size:11px"></div>
+        </div>
+        <div class="card" style="margin-top:12px">
           <strong>Cadence</strong>
           <label style="margin-top:8px">Default interval</label>
           <select id="disc-interval">
@@ -1709,12 +1716,18 @@ summary:hover { color: var(--text); }
           <strong>Stamp cost</strong>
           <label style="margin-top:8px">PoW difficulty (leading zero bits)</label>
           <select id="disc-stamp-cost">
-            <option value="0">0 — no proof-of-work (default)</option>
+            <option value="0">0 — no proof-of-work</option>
             <option value="8">8 bits</option>
             <option value="12">12 bits</option>
+            <option value="14">14 bits (upstream default)</option>
             <option value="16">16 bits</option>
           </select>
-          <div class="muted" style="margin-top:4px">Higher values raise the CPU cost of announcing — useful where a listener (e.g. rmap.world) requires a minimum stamp. Generation runs once per announce.</div>
+          <div class="warn" style="margin-top:6px">
+            <strong>Currently not enforced.</strong> The firmware emits a 32-zero-byte
+            stamp regardless of this setting. Strict listeners (rmap.world
+            uses required_value=14 by default) will drop announces until
+            PoW is implemented.
+          </div>
         </div>
         <div class="muted" id="disc-status" style="margin-top:8px;font-size:11px"></div>
       </div>
@@ -5305,19 +5318,29 @@ function dispatchEvent(ev) {
     return;
   }
   if (ev.type === 'radio_telemetry') {
-    // 1Hz push from the firmware. Fields live flat alongside `type`
-    // (no `s` wrapper) to match the wire shape of the other light WS
-    // frames. Append the sample to the local ring, drop the oldest if
-    // over capacity, repaint the chart + CSMA line only if the
-    // popover is currently open.
+    // 1 Hz push from the firmware. Sample fields populate the local
+    // ring for the chart; cumulative rx_packets/tx_packets are tagged
+    // onto every live frame (not the history fill) so the popover's
+    // RX/TX stat line can tick without waiting for the open-popover
+    // /api/info refresh.
     if (typeof ev.ts === 'number') {
       const rt = state.radioTlm;
-      const { type, ...s } = ev;   // strip `type`, keep the sample fields
+      const { type, rx_packets, tx_packets, ...s } = ev;
       rt.samples.push(s);
       while (rt.samples.length > rt.cap) rt.samples.shift();
+      // Patch cumulative counters into the cached info snapshot so
+      // both the popover's textual fact line and renderStatusPopover's
+      // delta calculation stay current.
+      if (state.lastInfo && state.lastInfo.radio && state.lastInfo.radio.stats) {
+        if (typeof rx_packets === 'number') state.lastInfo.radio.stats.rx_packets = rx_packets;
+        if (typeof tx_packets === 'number') state.lastInfo.radio.stats.tx_packets = tx_packets;
+      }
       if (!$('popover-status').hidden) {
         renderRadioChart();
         renderRadioCsmaLine();
+        // Repaint the RX/TX text line. Cheap — renderStatusPopover
+        // is just textContent updates, no /api/info round-trip.
+        renderStatusPopover();
       }
     }
     return;
@@ -7093,6 +7116,9 @@ async function populateDiscoveryTab() {
     const scSel = $('disc-stamp-cost');
     scSel.value = String(s.default_stamp_cost ?? 0);
     if (scSel.selectedIndex === -1) scSel.value = '0';
+    const nameInp = $('disc-advertised-name');
+    nameInp.value = s.advertised_name || '';
+    if (s.max_advertised_name_bytes) nameInp.maxLength = s.max_advertised_name_bytes;
     $('disc-identity-hash').textContent = id.ready ? id.hash : 'not generated yet';
   } catch (e) {
     if (status) status.textContent = 'Could not load: ' + (e.message || e);
@@ -7135,6 +7161,27 @@ $('disc-interval').addEventListener('change', async (ev) => {
 });
 $('disc-stamp-cost').addEventListener('change', async (ev) => {
   await saveDiscoveryField({ default_stamp_cost: parseInt(ev.target.value, 10) || 0 });
+});
+// Advertised name: persist on blur or Enter so we don't write on
+// every keystroke. Trim whitespace; empty value = "fall back to the
+// interface name" on the firmware side.
+async function saveAdvertisedName() {
+  const v = ($('disc-advertised-name').value || '').trim();
+  const status = $('disc-name-status');
+  try {
+    await state.transport._req('/api/discovery/state',
+      { method: 'POST', body: { advertised_name: v } });
+    if (status) {
+      status.textContent = v ? 'Saved.' : 'Cleared — falls back to interface name.';
+      setTimeout(() => { status.textContent = ''; }, 2000);
+    }
+  } catch (e) {
+    if (status) status.textContent = 'Save failed: ' + (e.message || e);
+  }
+}
+$('disc-advertised-name').addEventListener('blur',   saveAdvertisedName);
+$('disc-advertised-name').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') { ev.preventDefault(); ev.target.blur(); }
 });
 
 // ============================== IDENTITY CODE MODAL ==============================

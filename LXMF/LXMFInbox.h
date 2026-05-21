@@ -45,11 +45,6 @@ namespace LXMF {
     // calibrated local clock — the prune is a no-op while uncalibrated.
     static constexpr size_t DEFAULT_RAM_CAPACITY = 200;
     static constexpr size_t UNLIMITED_CAPACITY   = SIZE_MAX;
-    // Per-line cap for the JSONL spool reader. A single record is the
-    // 4096-char body cap + title + status + multi-attachment metadata
-    // + JSON envelope/escaping, so well above 4 KB. 16 KB leaves
-    // headroom and stays cheap on the chunked read path.
-    static constexpr size_t MAX_LINE_BYTES       = 16384;
     // Bodies whose wire size needed Link+Resource transport (i.e. >319
     LXMFInbox(const std::string& identity_dir,
               const char* filename,
@@ -145,7 +140,7 @@ namespace LXMF {
     // entries older than that have effectively been dropped from RAM
     // anyway. Rewriting the spool here turns "newest 32 in RAM, all
     // history on flash" into "newest 32 in both", which bounds flash
-    // usage at ~32 * MAX_LINE_BYTES ≈ 24 KiB per identity per mailbox.
+    // usage at ~32 records per identity per mailbox.
     //
     // Stopgap until proper wall-clock-anchored TTL eviction (which
     // needs a persistent RTC or a synced device clock — neither exists
@@ -156,68 +151,52 @@ namespace LXMF {
       _ring.clear();
       _next_seq = 0;
       if (!filesystem.exists(_path.c_str())) return;
-      size_t file_size = filesystem.size(_path.c_str());
-      if (file_size == 0) return;
+      if (filesystem.size(_path.c_str()) == 0) return;
 
-      // Stream the spool in fixed-size chunks. Lines are assembled in
-      // a reusable scratch buffer that grows only as large as the
-      // longest single line in the file — so the peak working set is
-      // O(longest line) rather than O(whole file). Lines longer than
-      // MAX_LINE_BYTES are discarded (and a warning is logged) rather
-      // than blowing memory on a malformed record.
+      // microStore::File inherits from Arduino's Stream, which means
+      // ArduinoJson can read one self-delimited JSON document at a
+      // time directly from the file — JSON's matching braces tell
+      // it when one record ends. No manual line accumulator, no
+      // per-line size cap. Records are bounded purely by the field-
+      // level caps applied at the trust boundary (title, body,
+      // attachment count + name + mime).
       microStore::File f = filesystem.open(_path.c_str(), microStore::File::ModeRead);
       if (!f) return;
 
-      uint8_t  chunk[1024];
-      std::vector<char> line;
-      line.reserve(2048);
-      size_t line_count   = 0;
-      size_t dropped_long = 0;
-      bool   line_overflow = false;
-      while (true) {
-        const size_t got = f.read(chunk, sizeof(chunk));
-        if (got == 0) break;
-        for (size_t i = 0; i < got; ++i) {
-          const uint8_t c = chunk[i];
-          if (c == '\n') {
-            if (!line.empty() && !line_overflow) {
-              parse_line(line.data(), line.size());
-              line_count++;
-            } else if (line_overflow) {
-              dropped_long++;
-            }
-            line.clear();
-            line_overflow = false;
-            continue;
-          }
-          if (line_overflow) continue;
-          if (line.size() >= MAX_LINE_BYTES) {
-            line_overflow = true;
-            line.clear();
-            continue;
-          }
-          line.push_back((char)c);
+      size_t parsed = 0;
+      size_t errors = 0;
+      while (f.available() > 0) {
+        // Skip any inter-record whitespace (typically just '\n').
+        int peek;
+        while ((peek = f.peek()) != -1
+               && (peek == '\n' || peek == '\r' || peek == ' ' || peek == '\t')) {
+          f.read();
         }
-      }
-      // Trailing line with no terminating newline.
-      if (!line.empty() && !line_overflow) {
-        parse_line(line.data(), line.size());
-        line_count++;
-      } else if (line_overflow) {
-        dropped_long++;
+        if (f.peek() == -1) break;
+
+        Web::PsramJsonDocument doc;
+        DeserializationError err = deserializeJson(doc, f);
+        if (err) {
+          // Malformed record — scan to the next newline and resume.
+          // Doesn't drop subsequent records, just the corrupt one.
+          errors++;
+          int c;
+          while (f.available() > 0 && (c = f.read()) != '\n' && c != -1) {}
+          continue;
+        }
+        apply_doc_to_ring(doc);
+        parsed++;
       }
       f.close();
-      if (dropped_long) {
-        WARNINGF("LXMFInbox: dropped %u line(s) over %u bytes from %s",
-                 (unsigned)dropped_long, (unsigned)MAX_LINE_BYTES, _path.c_str());
+      if (errors) {
+        WARNINGF("LXMFInbox: %u parse error(s) in %s — corrupt records skipped",
+                 (unsigned)errors, _path.c_str());
       }
 
-      // If the file had more lines than the RAM ring kept, those older
-      // entries are now lost — rewrite the spool to match so flash
-      // stops growing.
-      if (line_count > _ring.size()) {
+      // Compact if the disk had more records than the RAM ring kept.
+      if (parsed > _ring.size()) {
         NOTICEF("LXMFInbox: compacting %s (disk=%u, ram=%u)",
-                _path.c_str(), (unsigned)line_count, (unsigned)_ring.size());
+                _path.c_str(), (unsigned)parsed, (unsigned)_ring.size());
         rewrite_spool();
       }
     }
@@ -231,61 +210,25 @@ namespace LXMF {
     bool append(MessageRecord& rec) {
       if (rec.seq == 0) rec.seq = ++_next_seq;
       else if (rec.seq > _next_seq) _next_seq = rec.seq;
+      rec.body_size = (uint32_t)rec.content.size();
 
       Web::PsramJsonDocument doc;
-      doc["seq"]     = rec.seq;
-      doc["ts"]      = rec.ts;
-      doc["boot"]    = rec.boot_epoch;
-      doc["recv_ms"] = rec.received_ms;
-      doc["peer"]    = rec.peer_hash.toHex();
-      doc["title"]   = rec.title;
-      // Body is always inline now (capped on the send path at
-      // LXMF_MAX_BODY_BYTES = 4 KiB). The earlier spill machinery
-      // moved bytes above a per-LXMF-packet threshold to per-message
-      // files but the SPA never wired up the lazy-fetch path, so
-      // those bodies were silently inaccessible.
-      const uint32_t body_size = (uint32_t)rec.content.size();
-      doc["body"]      = rec.content;
-      doc["body_size"] = body_size;
-      rec.body_size    = body_size;
-      doc["in"]      = rec.incoming;
-      doc["sig"]     = rec.signature_ok;
-      doc["status"]  = outbox_status_name(rec.status);
-      if (rec.packet_hash.size() > 0) doc["pkt"] = rec.packet_hash.toHex();
-      // Attachment metadata (file references — the bytes live on
-      // disk under <identity_dir>/attachments/). Omitted entirely
-      // when the record has none, to keep typical chat-message
-      // lines well under MAX_LINE_BYTES.
-      if (!rec.attachments.empty()) {
-        JsonArray arr = doc["att"].to<JsonArray>();
-        for (const auto& a : rec.attachments) {
-          JsonObject o = arr.add<JsonObject>();
-          o["t"] = a.tag;
-          o["s"] = a.size;
-          o["f"] = a.filename;
-          if (!a.display_name.empty()) o["d"] = a.display_name;
-          if (!a.mime.empty()) o["m"] = a.mime;
-          if (!a.backend.empty()) o["b"] = a.backend;
-        }
-      }
-
-      auto line = std::make_unique<char[]>(MAX_LINE_BYTES);
-      size_t n = serializeJson(doc, line.get(), MAX_LINE_BYTES - 1);
-      if (n == 0 || n >= MAX_LINE_BYTES - 1) {
-        ERROR("LXMFInbox: append serialization failed or oversize");
-        return false;
-      }
-      line[n] = '\n';
+      record_to_doc(rec, doc);
 
       microStore::File f = filesystem.open(_path.c_str(), microStore::File::ModeAppend, true);
       if (!f) {
         ERRORF("LXMFInbox: cannot open %s for append", _path.c_str());
         return false;
       }
-      size_t written = f.write(reinterpret_cast<const uint8_t*>(line.get()), n + 1);
+      // Stream the JSON directly to the file via Arduino's Print
+      // interface (microStore::File : public Stream). No intermediate
+      // contiguous buffer — record size is bounded by the field caps
+      // already enforced at the trust boundary.
+      const size_t n = serializeJson(doc, f);
+      const size_t nl = f.write((uint8_t)'\n');
       f.close();
-      if (written != n + 1) {
-        ERRORF("LXMFInbox: short write to %s (%u of %u)", _path.c_str(), (unsigned)written, (unsigned)(n + 1));
+      if (n == 0 || nl != 1) {
+        ERRORF("LXMFInbox: short write to %s", _path.c_str());
         return false;
       }
 
@@ -392,10 +335,9 @@ namespace LXMF {
     }
 
   private:
-    void parse_line(const char* p, size_t n) {
-      Web::PsramJsonDocument doc;
-      if (deserializeJson(doc, p, n) != DeserializationError::Ok) return;
-      MessageRecord rec;
+    // Decode a parsed JsonDocument into a MessageRecord. Used by load()
+    // for each streamed record from the JSONL spool.
+    static void doc_to_record(const JsonDocument& doc, MessageRecord& rec) {
       rec.seq         = (uint32_t)(doc["seq"]    | 0);
       rec.ts          = (double)(doc["ts"]       | 0.0);
       rec.boot_epoch  = (uint32_t)(doc["boot"]    | 0);
@@ -403,13 +345,6 @@ namespace LXMF {
       std::string peer_hex = doc["peer"]    | "";
       rec.peer_hash.assignHex(peer_hex.c_str());
       rec.title    = (const char*)(doc["title"] | "");
-      // Legacy records persisted under the old spill format had
-      // `body_disk: true` + empty `body`. Skip the spilled body file
-      // contents (they're inaccessible without the removed reader)
-      // and present the record with an empty content + the stored
-      // body_size so the SPA can show "(body unavailable, please
-      // reinstall to regenerate)" UX if it wants to. For fresh
-      // records (always inline now), just read body + body_size.
       rec.content   = (const char*)(doc["body"]  | "");
       rec.body_size = (uint32_t)(doc["body_size"] | (uint32_t)rec.content.size());
       rec.incoming = (bool)(doc["in"]  | false);
@@ -431,56 +366,68 @@ namespace LXMF {
           m.filename     = (const char*)(o["f"] | "");
           m.display_name = (const char*)(o["d"] | "");
           m.mime         = (const char*)(o["m"] | "");
-          m.backend      = (const char*)(o["b"] | "flash");  // pre-#122 records default to flash
+          m.backend      = (const char*)(o["b"] | "flash");
           rec.attachments.push_back(m);
         }
       }
+    }
 
+    // Encode a MessageRecord into a JsonDocument. Used by append() and
+    // rewrite_spool() to share one serialization layout.
+    static void record_to_doc(const MessageRecord& rec, JsonDocument& doc) {
+      doc["seq"]       = rec.seq;
+      doc["ts"]        = rec.ts;
+      doc["boot"]      = rec.boot_epoch;
+      doc["recv_ms"]   = rec.received_ms;
+      doc["peer"]      = rec.peer_hash.toHex();
+      doc["title"]     = rec.title;
+      doc["body"]      = rec.content;
+      doc["body_size"] = rec.body_size > 0 ? rec.body_size : (uint32_t)rec.content.size();
+      doc["in"]        = rec.incoming;
+      doc["sig"]       = rec.signature_ok;
+      doc["status"]    = outbox_status_name(rec.status);
+      if (rec.packet_hash.size() > 0) doc["pkt"] = rec.packet_hash.toHex();
+      if (!rec.attachments.empty()) {
+        JsonArray arr = doc["att"].to<JsonArray>();
+        for (const auto& a : rec.attachments) {
+          JsonObject o = arr.add<JsonObject>();
+          o["t"] = a.tag;
+          o["s"] = a.size;
+          o["f"] = a.filename;
+          if (!a.display_name.empty()) o["d"] = a.display_name;
+          if (!a.mime.empty())         o["m"] = a.mime;
+          if (!a.backend.empty())      o["b"] = a.backend;
+        }
+      }
+    }
+
+    // load()-side post-deserialise step: build a MessageRecord and add
+    // it to the in-RAM ring, with seq + capacity bookkeeping.
+    void apply_doc_to_ring(const JsonDocument& doc) {
+      MessageRecord rec;
+      doc_to_record(doc, rec);
       if (rec.seq > _next_seq) _next_seq = rec.seq;
-      _ring.push_back(rec);
+      _ring.push_back(std::move(rec));
       while (_ring.size() > _ram_capacity) _ring.pop_front();
     }
 
     void rewrite_spool() {
       filesystem.remove(_path.c_str());
-      for (const auto& rec : _ring) {
-        MessageRecord copy = rec;
-        copy.seq = rec.seq;  // keep existing seq
-        // Inline a single-shot append without re-bumping _next_seq.
-        Web::PsramJsonDocument doc;
-        doc["seq"]     = copy.seq;
-        doc["ts"]      = copy.ts;
-        doc["boot"]    = copy.boot_epoch;
-        doc["recv_ms"] = copy.received_ms;
-        doc["peer"]    = copy.peer_hash.toHex();
-        doc["title"]   = copy.title;
-        // Body is always inline (bounded by LXMF_MAX_BODY_BYTES on the
-        // send path). The earlier spill branch has been removed.
-        doc["body"]      = copy.content;
-        doc["body_size"] = copy.body_size > 0 ? copy.body_size : (uint32_t)copy.content.size();
-        doc["in"]      = copy.incoming;
-        doc["sig"]     = copy.signature_ok;
-        doc["status"]  = outbox_status_name(copy.status);
-        if (copy.packet_hash.size() > 0) doc["pkt"] = copy.packet_hash.toHex();
-        if (!copy.attachments.empty()) {
-          JsonArray arr = doc["att"].to<JsonArray>();
-          for (const auto& a : copy.attachments) {
-            JsonObject o = arr.add<JsonObject>();
-            o["t"] = a.tag;
-            o["s"] = a.size;
-            o["f"] = a.filename;
-            if (!a.mime.empty()) o["m"] = a.mime;
-          }
-        }
-        auto line = std::make_unique<char[]>(MAX_LINE_BYTES);
-        size_t n = serializeJson(doc, line.get(), MAX_LINE_BYTES - 1);
-        if (n == 0 || n >= MAX_LINE_BYTES - 1) continue;
-        line[n] = '\n';
-        microStore::File f = filesystem.open(_path.c_str(), microStore::File::ModeAppend, true);
-        if (!f) return;
-        f.write(reinterpret_cast<const uint8_t*>(line.get()), n + 1);
-        f.close();
+      // Open the spool once for the whole batch; one file handle per
+      // record (the old shape) was ~3× slower and produced extra
+      // wear on flash with no benefit.
+      microStore::File f = filesystem.open(_path.c_str(), microStore::File::ModeAppend, true);
+      if (!f) {
+        ERRORF("LXMFInbox: cannot open %s for rewrite", _path.c_str());
+        return;
       }
+      for (const auto& rec : _ring) {
+        Web::PsramJsonDocument doc;
+        record_to_doc(rec, doc);
+        if (serializeJson(doc, f) == 0) continue;
+        f.write((uint8_t)'\n');
+      }
+      f.close();
     }
 
     // Read-only accessors for /api/inbox_config to surface state.

@@ -45,7 +45,8 @@ namespace LXMF {
   // Attachment metadata persisted alongside a MessageRecord. The actual
   // bytes live at <a->dir()>/attachments/<filename> — we just store a
   // pointer so the inbox JSONL line stays small (the body itself is
-  // capped at MAX_LINE_BYTES per LXMFInbox.h).
+  // capped at LXMF_MAX_BODY_BYTES per LXMFMinimal.h, and per-attachment
+  // name + mime are capped via LXMF_MAX_ATTACHMENT_NAME / _MIME).
   //
   // tag matches the LXMF FIELD_* constant. filename is the on-disk stem
   // ("<msg_hash_hex>_<tag>_<n>.bin") generated at receive time — used

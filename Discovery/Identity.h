@@ -1,5 +1,5 @@
 // Network-level identity — a per-device RNS::Identity persisted to
-// /lxmf/network_identity.bin and reused across boots.
+// /reticulum/network_identity.bin and reused across boots.
 //
 // This is the analogue of upstream Reticulum's `network_identity`
 // config — a single stable keypair the device uses for cross-cutting
@@ -11,17 +11,20 @@
 // discovery, etc.) can share it without entangling the user's
 // per-conversation chat identities.
 //
-// Generated at first boot when /lxmf/network_identity.bin doesn't
-// exist; loaded from that file on every subsequent boot. The hash
-// is exposed as a hex string so the SPA can show "Network ID: …"
-// in the Discovery tab and the user has a stable handle to point
-// at if they need to whitelist their device on a downstream
-// consumer like rmap.world.
+// Generated at first boot when /reticulum/network_identity.bin
+// doesn't exist; loaded from that file on every subsequent boot.
+// The hash is exposed as a hex string so the SPA can show
+// "Network ID: …" in the Discovery tab and the user has a stable
+// handle to point at if they need to whitelist their device on a
+// downstream consumer like rmap.world.
 //
-// Storage path is fixed at /lxmf/network_identity.bin (not under
-// the per-LXMF-identity dirs) so it survives a per-identity factory
-// reset — the user can rotate any LXMF chat identity without
-// breaking their device's discovery presence.
+// Storage path is under /reticulum/ rather than /lxmf/ because this
+// is a Reticulum-level concern, not an LXMF concern (LXMF sits on
+// top of Reticulum). Survives a per-LXMF-identity factory reset —
+// the user can rotate any chat identity without breaking their
+// device's network presence. One-shot migration moves the file
+// from the historical /lxmf/network_identity.bin location on first
+// boot of this firmware.
 
 #pragma once
 
@@ -30,11 +33,15 @@
 #include <Identity.h>
 #include <Bytes.h>
 #include <Log.h>
+#include <microStore/FileSystem.h>
+
+extern microStore::FileSystem filesystem;
 
 namespace Discovery {
 namespace Identity {
 
-inline constexpr const char* PERSIST_PATH = "/lxmf/network_identity.bin";
+inline constexpr const char* PERSIST_PATH = "/reticulum/network_identity.bin";
+inline constexpr const char* LEGACY_PATH  = "/lxmf/network_identity.bin";
 
 namespace _detail {
   inline RNS::Identity& slot() {
@@ -44,13 +51,32 @@ namespace _detail {
   inline bool& ready_ref() { static bool v = false; return v; }
 }
 
-// Idempotent. Loads the persisted identity if /lxmf/network_identity.bin
-// exists; otherwise generates a fresh keypair and persists it. Logs
-// the destination hash (NOT the secret) on first generation so the
-// user has a record. Safe to call from setup() once the filesystem
-// is mounted; second + calls return immediately.
+// Idempotent. Loads the persisted identity from
+// /reticulum/network_identity.bin (migrating from the historical
+// /lxmf/network_identity.bin path on first run if found); otherwise
+// generates a fresh keypair and persists it. Logs the destination
+// hash (NOT the secret) on generation/migration so the user has a
+// record. Safe to call from setup() once the filesystem is mounted;
+// subsequent calls return immediately.
 inline void ensure() {
   if (_detail::ready_ref()) return;
+  // Make sure /reticulum/ exists — microStore creates files but not
+  // their parent dirs. Idempotent.
+  if (!filesystem.isDirectory("/reticulum")) {
+    filesystem.mkdir("/reticulum");
+  }
+  // Path migration: an earlier revision parked the identity at
+  // /lxmf/network_identity.bin. Pull it forward to the canonical
+  // /reticulum/ location once, then delete the old file so this
+  // branch never re-runs.
+  if (!filesystem.exists(PERSIST_PATH) && filesystem.exists(LEGACY_PATH)) {
+    RNS::Identity migrating = RNS::Identity::from_file(LEGACY_PATH);
+    if (migrating && migrating.to_file(PERSIST_PATH)) {
+      filesystem.remove(LEGACY_PATH);
+      NOTICEF("Discovery: migrated network identity from %s to %s",
+              LEGACY_PATH, PERSIST_PATH);
+    }
+  }
   RNS::Identity loaded = RNS::Identity::from_file(PERSIST_PATH);
   if (loaded) {
     _detail::slot() = loaded;

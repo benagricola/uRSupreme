@@ -1,11 +1,11 @@
-// Global inbox capacity + TTL config, persisted at /lxmf/inbox_config.json.
+// Global default retention applied to NEW chats. Persisted at
+// /lxmf/inbox_config.json.
 //
-// One config applies to every identity's inbox + outbox. Loaded once
-// at LXMFGateway::activate() time (so it lands before the inboxes
-// replay their JSONL spools, ensuring on-boot prune of any over-cap
-// or expired entries). The /api/inbox_config endpoint POSTs an
-// updated config and immediately re-applies it across every active
-// identity's inbox and outbox.
+// The default is snapshotted onto each peer the first time we see
+// a message from / to them (LXMFInbox::ensure_peer_retention).
+// Changing the default later DOES NOT touch existing chats — that's
+// the whole point of "default for new chats" semantics. Users edit
+// individual chats via the per-conversation retention modal.
 
 #pragma once
 
@@ -15,6 +15,7 @@
 #include <microStore/FileSystem.h>
 
 #include "LXMFInbox.h"
+#include "LXMFTypes.h"
 
 extern microStore::FileSystem filesystem;
 
@@ -24,13 +25,7 @@ namespace InboxConfig {
 inline constexpr const char* CONFIG_PATH = "/lxmf/inbox_config.json";
 
 struct Config {
-  // Default is unlimited: with body-spill landing on disk, in-RAM
-  // records are only ~200 B each (metadata + inline-short-body), so
-  // 10k records cost ~2 MiB of PSRAM — fine. Age-based TTL is the
-  // intended eviction policy. The constant is still exposed for
-  // niche cases where someone explicitly wants a count cap.
-  size_t   ram_capacity = LXMFInbox::UNLIMITED_CAPACITY;     // SIZE_MAX = unlimited
-  uint32_t ttl_seconds  = 0;                                  // 0 = TTL off
+  Retention default_retention;   // Kind::None by default = keep forever
 };
 
 namespace _detail {
@@ -41,44 +36,34 @@ inline const Config& current() { return _detail::current_ref(); }
 
 inline void load(microStore::FileSystem& fs) {
   Config& c = _detail::current_ref();
-  c = Config{};   // reset to defaults
+  c = Config{};
   if (!fs.exists(CONFIG_PATH)) return;
   std::vector<uint8_t> data;
   if (fs.readFile(CONFIG_PATH, data) == 0) return;
   Common::PsramJsonDocument doc;
   if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
-  // ram_capacity: a SIZE_MAX sentinel encodes as a large JSON number.
-  // Treat anything ≥ 0xFFFFFFFE as "unlimited" so we never accidentally
-  // truncate it on round-trip via SPA -> server -> JSON.
-  if (doc["ram_capacity"].is<uint32_t>()) {
-    uint32_t v = doc["ram_capacity"].as<uint32_t>();
-    c.ram_capacity = (v >= 0xFFFFFFFEu) ? LXMFInbox::UNLIMITED_CAPACITY : (size_t)v;
-  }
-  if (doc["ttl_seconds"].is<uint32_t>()) {
-    c.ttl_seconds = doc["ttl_seconds"].as<uint32_t>();
+  JsonObjectConst r = doc["default_retention"].as<JsonObjectConst>();
+  if (!r.isNull()) {
+    c.default_retention.kind  = retention_kind_from_str(r["kind"] | "none");
+    c.default_retention.value = (uint32_t)(r["value"] | 0);
   }
 }
 
 inline void persist(microStore::FileSystem& fs) {
   const Config& c = _detail::current_ref();
   Common::PsramJsonDocument doc;
-  doc["ram_capacity"] = (c.ram_capacity >= 0xFFFFFFFEu)
-      ? (uint32_t)0xFFFFFFFFu : (uint32_t)c.ram_capacity;
-  doc["ttl_seconds"]  = c.ttl_seconds;
-  String out;
+  JsonObject r = doc["default_retention"].to<JsonObject>();
+  r["kind"]  = retention_kind_name(c.default_retention.kind);
+  r["value"] = c.default_retention.value;
+  std::string out;
   serializeJson(doc, out);
   fs.writeFile(CONFIG_PATH,
                reinterpret_cast<const uint8_t*>(out.c_str()),
                out.length());
 }
 
-// Apply incoming { ram_capacity, ttl_seconds } and persist. ram_capacity
-// of 0 is treated as "unlimited" since "no inbox at all" isn't useful.
-inline void set(microStore::FileSystem& fs, uint32_t ram_capacity, uint32_t ttl_seconds) {
-  Config& c = _detail::current_ref();
-  c.ram_capacity = (ram_capacity == 0 || ram_capacity >= 0xFFFFFFFEu)
-      ? LXMFInbox::UNLIMITED_CAPACITY : (size_t)ram_capacity;
-  c.ttl_seconds  = ttl_seconds;
+inline void set_default_retention(microStore::FileSystem& fs, Retention r) {
+  _detail::current_ref().default_retention = r;
   persist(fs);
 }
 

@@ -2884,6 +2884,20 @@ void loop() {
   // limited to once a minute regardless of caller cadence; master
   // toggle off short-circuits immediately).
   Discovery::Announcer::tick();
+
+  // Retention prune. Time-based expirations fire even when no fresh
+  // messages are arriving — without this, an idle device with TTL-
+  // based retention would let expired records linger until something
+  // triggered append(). Run at a low cadence (60 s) since prune is
+  // cheap on the no-op path but does a full ring walk otherwise.
+  {
+    static uint32_t last_prune_ms = 0;
+    const uint32_t now_ms = millis();
+    if (now_ms - last_prune_ms >= 60UL * 1000UL) {
+      last_prune_ms = now_ms;
+      LXMF::LXMFGateway::prune_all();
+    }
+  }
 #endif
 
   if (radio_online) {

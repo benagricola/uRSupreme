@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <stdint.h>
+#include <string.h>
 
 namespace LXMF {
 
@@ -23,6 +24,37 @@ namespace LXMF {
 
   // Identity identifier — the first 16 hex chars of an Identity's hexhash.
   using IdentityId = std::string;
+
+  // Per-peer retention policy. Two shapes:
+  //   Time:  keep messages newer than `value` seconds. value=0 invalid.
+  //   Count: keep the newest `value` messages from this peer. value=0 invalid.
+  //   None:  no expiry / no per-peer cap (effectively "keep forever",
+  //          bounded only by the LXMFInbox-wide ring capacity).
+  //
+  // The global LXMFInbox default is snapshotted onto each peer the
+  // first time we see a message from / to them, so subsequent changes
+  // to the default don't retroactively touch existing chats. Per-peer
+  // overrides are set via the SPA's per-chat retention modal.
+  struct Retention {
+    enum class Kind : uint8_t { None = 0, Time = 1, Count = 2 };
+    Kind     kind  = Kind::None;
+    uint32_t value = 0;
+    bool operator==(const Retention& o) const { return kind == o.kind && value == o.value; }
+    bool operator!=(const Retention& o) const { return !(*this == o); }
+  };
+  inline const char* retention_kind_name(Retention::Kind k) {
+    switch (k) {
+      case Retention::Kind::Time:  return "time";
+      case Retention::Kind::Count: return "count";
+      default:                     return "none";
+    }
+  }
+  inline Retention::Kind retention_kind_from_str(const char* s) {
+    if (!s) return Retention::Kind::None;
+    if (strcmp(s, "time")  == 0) return Retention::Kind::Time;
+    if (strcmp(s, "count") == 0) return Retention::Kind::Count;
+    return Retention::Kind::None;
+  }
 
   // Outbound message status, tracked per send.
   enum class OutboxStatus : uint8_t {

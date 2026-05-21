@@ -1460,14 +1460,14 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== CONVERSATION RETENTION MODAL ===================== -->
-<!-- Per-conversation TTL override. Three choices:
-       - Use default (inherits the identity-wide ttl_seconds)
-       - Keep forever (explicit "never expire this chat")
-       - Expire after N (a custom TTL in the unit the user picks)
-     The identity-wide default is surfaced as the "default" label so the
-     user can see what they'd inherit. -->
+<!-- Per-chat retention. Four modes:
+       - default: inherits the identity-wide default (snapshotted when
+         the user first interacts with this peer)
+       - forever: keep all messages from this peer forever
+       - time:    expire records older than N units of time
+       - count:   keep only the newest N messages from this peer -->
 <div id="modal-conv-retention" class="modal-bg" hidden style="z-index:260">
-  <div class="modal" style="max-width:440px">
+  <div class="modal" style="max-width:460px">
     <h3>Retention for this chat</h3>
     <p class="muted" style="margin-bottom:14px">
       Older messages are pruned according to the chosen retention.
@@ -1482,14 +1482,20 @@ summary:hover { color: var(--text); }
       <span>Keep forever</span>
     </label>
     <label class="cr-option cr-option-custom">
-      <input type="radio" name="cr-mode" value="custom" id="cr-mode-custom">
+      <input type="radio" name="cr-mode" value="time" id="cr-mode-time">
       <span>Expire after</span>
-      <input type="number" id="cr-custom-n" min="1" step="1" value="7" class="cr-num">
-      <select id="cr-custom-unit" class="cr-unit">
+      <input type="number" id="cr-time-n" min="1" step="1" value="7" class="cr-num">
+      <select id="cr-time-unit" class="cr-unit">
         <option value="60">minutes</option>
         <option value="3600">hours</option>
         <option value="86400" selected>days</option>
       </select>
+    </label>
+    <label class="cr-option cr-option-custom">
+      <input type="radio" name="cr-mode" value="count" id="cr-mode-count">
+      <span>Keep last</span>
+      <input type="number" id="cr-count-n" min="1" max="200" step="1" value="200" class="cr-num">
+      <span class="cr-unit">messages</span>
     </label>
     <div class="row" style="margin-top:14px">
       <button class="secondary" id="cr-cancel">Cancel</button>
@@ -1776,23 +1782,22 @@ summary:hover { color: var(--text); }
           <button class="secondary" disabled title="Only one transport is wired up so far">Switch transport…</button>
         </div>
         <div class="card" style="margin-top:14px">
-          <strong>Inbox retention</strong>
-          <div class="muted" style="margin-top:4px;margin-bottom:10px">Caps how many messages each identity keeps. Oldest are pruned when either limit is hit. Applies to every identity's inbox and outbox.</div>
-          <label>Message limit</label>
-          <select id="inbox-cap" style="margin-bottom:8px">
-            <option value="0">Unlimited (default)</option>
-            <option value="200">200 messages</option>
-            <option value="500">500 messages</option>
-            <option value="1000">1000 messages</option>
-            <option value="5000">5000 messages</option>
-          </select>
-          <label>Wall-clock TTL</label>
-          <select id="inbox-ttl">
-            <option value="0">Off — don't prune by age</option>
-            <option value="604800">Last 7 days</option>
-            <option value="2592000">Last 30 days</option>
-            <option value="7776000">Last 90 days</option>
-            <option value="31536000">Last year</option>
+          <strong>Default retention for new chats</strong>
+          <div class="muted" style="margin-top:4px;margin-bottom:10px">
+            Snapshotted onto each chat the first time you receive or
+            send a message with that peer. Changing this here does not
+            touch existing chats — edit those individually from the
+            retention icon in the conversation.
+          </div>
+          <label>Pick one</label>
+          <select id="inbox-default-retention">
+            <option value="none:0">No expiry — keep everything</option>
+            <option value="time:604800">Last 7 days</option>
+            <option value="time:2592000">Last 30 days</option>
+            <option value="time:7776000">Last 90 days</option>
+            <option value="time:31536000">Last year</option>
+            <option value="count:50">Last 50 messages</option>
+            <option value="count:200">Last 200 messages</option>
           </select>
           <div class="muted" id="inbox-config-status" style="margin-top:6px;font-size:11px"></div>
         </div>
@@ -5873,6 +5878,16 @@ function ttlLabel(secs) {
   return s + ' seconds';
 }
 
+// Render a Retention object {kind, value} as a human-readable label
+// for the "Use identity default (X)" inline.
+function retentionLabel(r) {
+  if (!r || r.kind === 'none' || !r.value) return 'no expiry';
+  if (r.kind === 'count') {
+    return 'last ' + r.value + ' message' + (r.value === 1 ? '' : 's');
+  }
+  return 'last ' + ttlLabel(r.value);
+}
+
 // Open the retention modal for `peerHex` and return when the user
 // either cancels or saves. Save POSTs the new override to the device.
 async function openRetentionModal(identityId, peerHex) {
@@ -5884,26 +5899,30 @@ async function openRetentionModal(identityId, peerHex) {
     return;
   }
   const modal = $('modal-conv-retention');
-  const defaultTtl = Number(cfg.default_ttl_seconds || 0);
+  const defaultR = cfg.default_retention || { kind: 'none', value: 0 };
   $('cr-default-line').textContent =
-      defaultTtl > 0
-        ? 'Identity default: ' + ttlLabel(defaultTtl) + '.'
-        : 'Identity default: no expiry.';
+      'Identity default: ' + retentionLabel(defaultR) + '.';
   $('cr-mode-default-label').textContent =
-      'Use identity default (' + ttlLabel(defaultTtl) + ')';
-  // Populate the form to reflect the current stored state.
-  const override = cfg.ttl_seconds;   // null | 0 | uint
-  if (override === null || override === undefined) {
+      'Use identity default (' + retentionLabel(defaultR) + ')';
+  // Populate the form from the current per-peer override (null when
+  // none is set — the SPA shows "Use identity default" in that case).
+  const r = cfg.retention;
+  if (!r) {
     $('cr-mode-default').checked = true;
-  } else if (Number(override) === 0) {
+  } else if (r.kind === 'none' || !r.value) {
     $('cr-mode-forever').checked = true;
+  } else if (r.kind === 'time') {
+    $('cr-mode-time').checked = true;
+    const s = Number(r.value);
+    if (s % 86400 === 0)     { $('cr-time-n').value = s / 86400; $('cr-time-unit').value = '86400'; }
+    else if (s % 3600 === 0) { $('cr-time-n').value = s / 3600;  $('cr-time-unit').value = '3600';  }
+    else if (s % 60 === 0)   { $('cr-time-n').value = s / 60;    $('cr-time-unit').value = '60';    }
+    else                      { $('cr-time-n').value = s;         $('cr-time-unit').value = '60';    }
+  } else if (r.kind === 'count') {
+    $('cr-mode-count').checked = true;
+    $('cr-count-n').value = String(r.value);
   } else {
-    $('cr-mode-custom').checked = true;
-    const s = Number(override);
-    if (s % 86400 === 0)      { $('cr-custom-n').value = s / 86400; $('cr-custom-unit').value = '86400'; }
-    else if (s % 3600 === 0)  { $('cr-custom-n').value = s / 3600;  $('cr-custom-unit').value = '3600';  }
-    else if (s % 60 === 0)    { $('cr-custom-n').value = s / 60;    $('cr-custom-unit').value = '60';    }
-    else                       { $('cr-custom-n').value = s;         $('cr-custom-unit').value = '60';    }
+    $('cr-mode-default').checked = true;
   }
   modal.hidden = false;
 
@@ -5919,16 +5938,25 @@ async function openRetentionModal(identityId, peerHex) {
     const onSave = async () => {
       const mode = (document.querySelector('input[name="cr-mode"]:checked') || {}).value;
       let body;
-      if (mode === 'default')      body = { ttl_seconds: null };
-      else if (mode === 'forever') body = { ttl_seconds: 0 };
-      else {
-        const n = parseInt($('cr-custom-n').value, 10);
-        const unit = parseInt($('cr-custom-unit').value, 10);
+      if (mode === 'default')       body = { retention: null };
+      else if (mode === 'forever')  body = { retention: { kind: 'none',  value: 0 } };
+      else if (mode === 'time') {
+        const n = parseInt($('cr-time-n').value, 10);
+        const unit = parseInt($('cr-time-unit').value, 10);
         if (!Number.isFinite(n) || n <= 0) {
           toast('Enter a positive number.', 'error');
           return;
         }
-        body = { ttl_seconds: n * unit };
+        body = { retention: { kind: 'time', value: n * unit } };
+      } else if (mode === 'count') {
+        const n = parseInt($('cr-count-n').value, 10);
+        if (!Number.isFinite(n) || n <= 0) {
+          toast('Enter a positive number.', 'error');
+          return;
+        }
+        body = { retention: { kind: 'count', value: n } };
+      } else {
+        body = { retention: null };
       }
       try {
         await withBusy($('cr-save'), async () => {
@@ -6908,25 +6936,20 @@ async function populateInboxConfig() {
   status.textContent = '';
   try {
     const cfg = await state.transport._req('/api/inbox_config');
-    // Snap to the nearest dropdown option; if the device has a
-    // value outside our presets, the dropdown stays on its closest
-    // option but we surface the raw number in the status line.
-    const capSel = $('inbox-cap');
-    const ttlSel = $('inbox-ttl');
-    capSel.value = String(cfg.ram_capacity ?? 0);
-    if (capSel.selectedIndex === -1) capSel.value = '0';
-    ttlSel.value = String(cfg.ttl_seconds ?? 0);
-    if (ttlSel.selectedIndex === -1) ttlSel.value = '0';
+    const r = cfg.default_retention || { kind: 'none', value: 0 };
+    const key = r.kind + ':' + (r.value || 0);
+    const sel = $('inbox-default-retention');
+    sel.value = key;
+    if (sel.selectedIndex === -1) sel.value = 'none:0';
   } catch (e) {
     status.textContent = 'Could not load: ' + (e.message || e);
   }
 }
 async function saveInboxConfig() {
   const status = $('inbox-config-status');
-  const body = {
-    ram_capacity: parseInt($('inbox-cap').value, 10) || 0,
-    ttl_seconds:  parseInt($('inbox-ttl').value, 10) || 0,
-  };
+  const raw = $('inbox-default-retention').value || 'none:0';
+  const [kind, vStr] = raw.split(':');
+  const body = { default_retention: { kind, value: parseInt(vStr, 10) || 0 } };
   try {
     await state.transport._req('/api/inbox_config', { method: 'POST', body });
     status.textContent = 'Saved.';
@@ -6935,8 +6958,7 @@ async function saveInboxConfig() {
     status.textContent = 'Save failed: ' + (e.message || e);
   }
 }
-$('inbox-cap').addEventListener('change', saveInboxConfig);
-$('inbox-ttl').addEventListener('change', saveInboxConfig);
+$('inbox-default-retention').addEventListener('change', saveInboxConfig);
 
 // Storage transfer caps — two sliders bound to the device's current
 // effective_max_* (clamped to backing-store free space + protocol

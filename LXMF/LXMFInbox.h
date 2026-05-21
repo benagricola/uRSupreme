@@ -37,98 +37,161 @@ namespace LXMF {
     // typical chat-sized message, 200 entries = ~60 KB / identity /
     // mailbox — comfortable on the LittleFS partition.
     //
-    // Configurable globally via /lxmf/inbox_config.json:
-    //   - ram_capacity: 200 (default) / 500 / 1000 / 5000 / UNLIMITED
-    //   - ttl_seconds:  0 (off)       / 86400×N for "last N days"
-    // Both checks run on each append() and at load(). TTL pruning
-    // uses the LXMF `ts` field (sender wall-clock); requires a
-    // calibrated local clock — the prune is a no-op while uncalibrated.
+    // Retention model:
+    //   * _ram_capacity is the per-identity-per-mailbox SAFETY bound on
+    //     the in-RAM ring. Not user-configurable today; defends against
+    //     unbounded growth.
+    //   * _default_retention is the per-peer retention applied to NEW
+    //     chats. The Retention struct picks between "keep N seconds"
+    //     (Time), "keep N messages" (Count), or no per-peer cap (None).
+    //   * _peer_retention[peer_hex] is the per-peer policy. Snapshotted
+    //     from _default_retention at first encounter, then user-editable
+    //     via the per-chat retention modal — subsequent changes to the
+    //     global default don't retroactively touch existing chats.
+    //
+    // TTL/Time pruning uses the LXMF `ts` field (sender wall-clock);
+    // requires a calibrated local clock — the prune is a no-op while
+    // uncalibrated.
     static constexpr size_t DEFAULT_RAM_CAPACITY = 200;
     static constexpr size_t UNLIMITED_CAPACITY   = SIZE_MAX;
-    // Bodies whose wire size needed Link+Resource transport (i.e. >319
     LXMFInbox(const std::string& identity_dir,
               const char* filename,
               size_t ram_capacity = DEFAULT_RAM_CAPACITY,
-              uint32_t ttl_seconds = 0)
+              Retention default_retention = Retention{})
       : _path(identity_dir + "/" + filename),
         _ram_capacity(ram_capacity),
-        _ttl_seconds(ttl_seconds),
+        _default_retention(default_retention),
         _next_seq(0)
     {
-      // mailbox_stem retained for any future per-mailbox subdir use
-      // (attachment storage already uses the parent identity dir).
       std::string f = filename;
       const size_t dot = f.find_last_of('.');
       _mailbox_stem = (dot != std::string::npos) ? f.substr(0, dot) : f;
     }
 
-    // Runtime overrides. set_capacity rewrites the spool if it
-    // tightens the bound below the current ring size. set_ttl_seconds
-    // prunes anything older than `now - ttl` if `ttl > 0`.
     void set_capacity(size_t cap) {
       _ram_capacity = cap;
       bool changed = false;
       while (_ring.size() > _ram_capacity) { _ring.pop_front(); changed = true; }
       if (changed) rewrite_spool();
     }
-    void set_ttl_seconds(uint32_t ttl) {
-      _ttl_seconds = ttl;
-      prune_expired();
+    // Default retention applied to NEW peers (snapshot-at-first-encounter).
+    // Changing this DOES NOT touch peers that already have an override.
+    void set_default_retention(Retention r) {
+      _default_retention = r;
     }
-    // Per-conversation TTL override. Three semantic states:
-    //   - absent from map     → inherit default (_ttl_seconds)
-    //   - present with value 0 → keep forever for this peer
-    //   - present with value N → expire after N seconds
-    // Caller passes peer_hex (destination hash, lowercase hex) so the
-    // map is owner-agnostic and round-trips cleanly through the
-    // persistence layer. set_peer_ttl_override returns true if the
-    // override map actually changed.
-    bool set_peer_ttl_override(const std::string& peer_hex, uint32_t ttl) {
-      auto it = _peer_ttl.find(peer_hex);
-      if (it != _peer_ttl.end() && it->second == ttl) return false;
-      _peer_ttl[peer_hex] = ttl;
-      prune_expired();
-      return true;
-    }
-    bool clear_peer_ttl_override(const std::string& peer_hex) {
-      if (_peer_ttl.erase(peer_hex) == 0) return false;
+    Retention default_retention() const { return _default_retention; }
+
+    // Per-conversation retention override. Two cases:
+    //   - absent from map: peer hasn't received a message yet (will be
+    //     snapshotted from _default_retention via ensure_peer_retention
+    //     on the next append).
+    //   - present:         this peer's per-chat setting (may be None,
+    //     Time, or Count).
+    // Returns true if the map actually changed.
+    bool set_peer_retention(const std::string& peer_hex, Retention r) {
+      auto it = _peer_retention.find(peer_hex);
+      if (it != _peer_retention.end() && it->second == r) return false;
+      _peer_retention[peer_hex] = r;
       prune_expired();
       return true;
     }
-    void clear_all_peer_ttl_overrides() { _peer_ttl.clear(); }
-    // Returns the effective TTL applied to records from `peer_hex`,
-    // taking the override map into account. 0 means "no expiry".
-    uint32_t effective_ttl_for(const std::string& peer_hex) const {
-      auto it = _peer_ttl.find(peer_hex);
-      if (it != _peer_ttl.end()) return it->second;
-      return _ttl_seconds;
+    bool clear_peer_retention(const std::string& peer_hex) {
+      if (_peer_retention.erase(peer_hex) == 0) return false;
+      prune_expired();
+      return true;
     }
-    const std::unordered_map<std::string, uint32_t>& peer_ttl_overrides() const {
-      return _peer_ttl;
+    void clear_all_peer_retention() { _peer_retention.clear(); }
+
+    // Returns the effective retention for `peer_hex`: the per-peer
+    // override if present, else _default_retention.
+    Retention effective_retention_for(const std::string& peer_hex) const {
+      auto it = _peer_retention.find(peer_hex);
+      if (it != _peer_retention.end()) return it->second;
+      return _default_retention;
+    }
+    const std::unordered_map<std::string, Retention>& peer_retention_overrides() const {
+      return _peer_retention;
     }
 
-    // Prune entries with ts older than (now_epoch - ttl). Per-record:
-    // an override on the peer wins over the default _ttl_seconds. When
-    // _peer_ttl is empty and _ttl_seconds is 0 there's no work to do.
+    // Snapshot _default_retention onto a peer that doesn't have an
+    // override yet. No-op when the peer already has one. Called by
+    // append() on every record so the per-chat retention pin point is
+    // "when the user first interacts with this peer", not "when the
+    // user opens the conv settings modal".
+    bool ensure_peer_retention(const std::string& peer_hex) {
+      if (_peer_retention.find(peer_hex) != _peer_retention.end()) return false;
+      _peer_retention[peer_hex] = _default_retention;
+      return true;
+    }
+
+    // Apply both time-based and count-based retention to the ring.
+    // Time pruning runs first (records older than the cutoff for their
+    // peer drop out); count pruning then keeps only the newest N
+    // messages per peer where the peer's Retention is Count. Hard
+    // _ram_capacity cap remains the outer safety bound.
     void prune_expired() {
-      if (_ttl_seconds == 0 && _peer_ttl.empty()) return;
-      // Late binding so we don't pull TimeManager.h here — caller
-      // (LXMFGateway) sets the clock-source once after the inbox is
-      // created. We just compare ts values.
+      if (_peer_retention.empty()
+          && _default_retention.kind == Retention::Kind::None) {
+        // Still enforce the hard cap even when no policy is set, since
+        // append() relies on prune to keep ring growth bounded over
+        // very long uptimes.
+        while (_ring.size() > _ram_capacity) _ring.pop_front();
+        return;
+      }
       const double now = _now_epoch();
-      if (now <= 0.0) return;   // clock not calibrated
       const size_t before = _ring.size();
-      for (auto it = _ring.begin(); it != _ring.end(); ) {
-        const uint32_t ttl = effective_ttl_for(it->peer_hash.toHex());
-        if (ttl == 0 || it->ts <= 0.0) { ++it; continue; }
-        const double cutoff = now - (double)ttl;
-        if (it->ts < cutoff) {
-          if (_on_remove) _on_remove(*it);
-          it = _ring.erase(it);
-        } else {
-          ++it;
+
+      // Pass 1: Time-based eviction. Skipped if clock isn't calibrated
+      // (no wall-clock anchor, no way to compute age).
+      if (now > 0.0) {
+        for (auto it = _ring.begin(); it != _ring.end(); ) {
+          const Retention r = effective_retention_for(it->peer_hash.toHex());
+          if (r.kind != Retention::Kind::Time || r.value == 0 || it->ts <= 0.0) {
+            ++it;
+            continue;
+          }
+          const double cutoff = now - (double)r.value;
+          if (it->ts < cutoff) {
+            if (_on_remove) _on_remove(*it);
+            it = _ring.erase(it);
+          } else {
+            ++it;
+          }
         }
       }
+
+      // Pass 2: Count-based eviction per peer. Walk the ring (oldest →
+      // newest), bucket indices by peer. For peers with Kind::Count,
+      // drop the oldest entries until the bucket fits in the cap.
+      // Pass operates from oldest to newest because deque is amortised-
+      // constant for pop_front; an erase-by-index pass is simpler than
+      // tracking iterators across mutations.
+      std::unordered_map<std::string, std::vector<size_t>> by_peer;
+      by_peer.reserve(_peer_retention.size());
+      for (size_t i = 0; i < _ring.size(); ++i) {
+        by_peer[_ring[i].peer_hash.toHex()].push_back(i);
+      }
+      std::vector<size_t> drop;
+      drop.reserve(8);
+      for (auto& kv : by_peer) {
+        const Retention r = effective_retention_for(kv.first);
+        if (r.kind != Retention::Kind::Count || r.value == 0) continue;
+        if (kv.second.size() <= r.value) continue;
+        const size_t excess = kv.second.size() - r.value;
+        for (size_t k = 0; k < excess; ++k) drop.push_back(kv.second[k]);
+      }
+      if (!drop.empty()) {
+        std::sort(drop.begin(), drop.end(), std::greater<size_t>());
+        for (size_t idx : drop) {
+          if (idx < _ring.size()) {
+            if (_on_remove) _on_remove(_ring[idx]);
+            _ring.erase(_ring.begin() + idx);
+          }
+        }
+      }
+
+      // Outer safety bound — always enforced.
+      while (_ring.size() > _ram_capacity) _ring.pop_front();
       if (_ring.size() != before) rewrite_spool();
     }
     static void set_now_epoch_provider(double (*fn)()) { _now_epoch_provider() = fn; }
@@ -233,17 +296,18 @@ namespace LXMF {
       }
 
       _ring.push_back(rec);
-      // Capacity eviction. UNLIMITED_CAPACITY (SIZE_MAX) makes the
-      // comparison effectively always-false. Pruning the spool here
-      // is fine — it just trims oldest entries off the front of the
-      // ring; rewrite happens on the next state-mutating call.
+      // Snapshot the default retention onto this peer if we haven't
+      // seen them before. No-op for existing peers.
+      ensure_peer_retention(rec.peer_hash.toHex());
+      // Outer safety cap: keep the ring under _ram_capacity regardless
+      // of retention. UNLIMITED_CAPACITY (SIZE_MAX) makes this a no-op.
       while (_ring.size() > _ram_capacity) {
         if (_on_remove) _on_remove(_ring.front());
         _ring.pop_front();
       }
-      // Wall-clock TTL eviction. Cheap when ttl_seconds==0 (no-op).
-      // The append flow is the natural place to run it — it bounds
-      // disk + RAM growth without an extra timer.
+      // Per-peer retention pass (time + count). Cheap when nothing
+      // is configured; the append flow is the natural place to run
+      // it so disk + RAM growth stay bounded without an extra timer.
       prune_expired();
       return true;
     }
@@ -430,9 +494,8 @@ namespace LXMF {
       f.close();
     }
 
-    // Read-only accessors for /api/inbox_config to surface state.
-    size_t   ram_capacity() const { return _ram_capacity; }
-    uint32_t ttl_seconds()  const { return _ttl_seconds; }
+    // Read-only accessors for the SPA / API.
+    size_t ram_capacity() const { return _ram_capacity; }
 
   private:
     static double (*&_now_epoch_provider())() {
@@ -447,8 +510,8 @@ namespace LXMF {
     std::string                _path;
     std::string                _mailbox_stem;  // "inbox" or "outbox"
     size_t                     _ram_capacity;
-    uint32_t                   _ttl_seconds = 0;
-    std::unordered_map<std::string, uint32_t> _peer_ttl;  // peer_hex → ttl_seconds
+    Retention                  _default_retention;
+    std::unordered_map<std::string, Retention> _peer_retention;
     uint32_t                   _next_seq;
     std::deque<MessageRecord>  _ring;
     std::function<void(const MessageRecord&)> _on_remove;

@@ -320,20 +320,29 @@ namespace LXMF {
     }
 
     // Apply the current InboxConfig to every active identity's
-    // inbox + outbox. Called by /api/inbox_config POST after the
-    // new config is persisted.
+    // inbox + outbox. The default retention is propagated; per-peer
+    // overrides ARE NOT touched here — by design, changing the
+    // global default after a chat already exists doesn't retroactively
+    // touch that chat.
     static void apply_inbox_config_to_all() {
       const auto& cfg = InboxConfig::current();
       for (auto& a : identities_storage()) {
         if (!a.active) continue;
-        if (a.inbox) {
-          a.inbox->set_capacity(cfg.ram_capacity);
-          a.inbox->set_ttl_seconds(cfg.ttl_seconds);
-        }
-        if (a.outbox) {
-          a.outbox->set_capacity(cfg.ram_capacity);
-          a.outbox->set_ttl_seconds(cfg.ttl_seconds);
-        }
+        if (a.inbox)  a.inbox ->set_default_retention(cfg.default_retention);
+        if (a.outbox) a.outbox->set_default_retention(cfg.default_retention);
+      }
+    }
+
+    // Run prune_expired() on every active identity's inbox + outbox.
+    // Called from the main loop at a low cadence so time-based
+    // expirations fire even when no fresh messages are arriving.
+    // Cheap on the no-op path (LXMFInbox::prune_expired returns
+    // immediately when no retention policies are configured).
+    static void prune_all() {
+      for (auto& a : identities_storage()) {
+        if (!a.active) continue;
+        if (a.inbox)  a.inbox ->prune_expired();
+        if (a.outbox) a.outbox->prune_expired();
       }
     }
 
@@ -407,14 +416,15 @@ namespace LXMF {
       if (!ps.empty()) a.password_salt.assignHex(ps.c_str());
     }
 
-    // Per-conversation TTL overrides persistence. Schema:
-    //   { "peer_ttl": { "<peer_hex>": ttl_seconds_uint, ... } }
-    // ttl_seconds == 0 in the map means "keep forever" for that peer
-    // (explicit choice, distinct from "no override, use default"). The
-    // map is loaded into both inbox + outbox at activate() time so the
-    // first prune_expired pass honours the user's choice.
+    // Per-conversation retention overrides persistence. Schema:
+    //   { "peer_retention": {
+    //       "<peer_hex>": { "kind": "time"|"count"|"none", "value": N },
+    //       ...
+    //   } }
+    // The map is loaded into both inbox + outbox at activate() time
+    // so the initial prune honours the user's saved choices.
     static void read_conversation_config(const LXMFIdentity& a,
-                                          std::unordered_map<std::string, uint32_t>& out) {
+                                          std::unordered_map<std::string, Retention>& out) {
       out.clear();
       const std::string path = a.conversation_config_path();
       if (!filesystem.exists(path.c_str())) return;
@@ -422,18 +432,26 @@ namespace LXMF {
       if (filesystem.readFile(path.c_str(), data) == 0) return;
       Common::PsramJsonDocument doc;
       if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
-      JsonObject ttl = doc["peer_ttl"].as<JsonObject>();
-      if (ttl.isNull()) return;
-      for (JsonPair kv : ttl) {
-        if (!kv.value().is<uint32_t>()) continue;
-        out[std::string(kv.key().c_str())] = kv.value().as<uint32_t>();
+      JsonObject pr = doc["peer_retention"].as<JsonObject>();
+      if (pr.isNull()) return;
+      for (JsonPair kv : pr) {
+        JsonObjectConst entry = kv.value().as<JsonObjectConst>();
+        if (entry.isNull()) continue;
+        Retention r;
+        r.kind  = retention_kind_from_str(entry["kind"] | "none");
+        r.value = (uint32_t)(entry["value"] | 0);
+        out[std::string(kv.key().c_str())] = r;
       }
     }
     static void write_conversation_config(const LXMFIdentity& a,
-                                           const std::unordered_map<std::string, uint32_t>& peer_ttl) {
+                                           const std::unordered_map<std::string, Retention>& peer_retention) {
       Common::PsramJsonDocument doc;
-      JsonObject ttl = doc["peer_ttl"].to<JsonObject>();
-      for (const auto& kv : peer_ttl) ttl[kv.first.c_str()] = kv.second;
+      JsonObject pr = doc["peer_retention"].to<JsonObject>();
+      for (const auto& kv : peer_retention) {
+        JsonObject o = pr[kv.first.c_str()].to<JsonObject>();
+        o["kind"]  = retention_kind_name(kv.second.kind);
+        o["value"] = kv.second.value;
+      }
       String body;
       serializeJson(doc, body);
       filesystem.writeFile(a.conversation_config_path().c_str(),
@@ -443,23 +461,21 @@ namespace LXMF {
 
     static void activate(LXMFIdentity& a) {
       a.active = true;
-      // Inbox + outbox capacity/TTL come from the global config
-      //. Default state when no config file exists keeps the
-      // historical 200-entry FIFO behaviour.
       const auto& cfg = InboxConfig::current();
       a.inbox  = std::unique_ptr<LXMFInbox>(new LXMFInbox(a.dir(), "inbox.jsonl",
-                                                         cfg.ram_capacity, cfg.ttl_seconds));
+                                                         LXMFInbox::DEFAULT_RAM_CAPACITY,
+                                                         cfg.default_retention));
       a.outbox = std::unique_ptr<LXMFInbox>(new LXMFInbox(a.dir(), "outbox.jsonl",
-                                                         cfg.ram_capacity, cfg.ttl_seconds));
-      // Per-conversation TTL overrides — load from disk and apply to
-      // both mailboxes before they replay their JSONL spools so the
-      // initial prune honours the user's saved choices.
+                                                         LXMFInbox::DEFAULT_RAM_CAPACITY,
+                                                         cfg.default_retention));
+      // Load per-peer retention overrides from disk so the initial
+      // prune respects existing user choices.
       {
-        std::unordered_map<std::string, uint32_t> peer_ttl;
-        read_conversation_config(a, peer_ttl);
-        for (const auto& kv : peer_ttl) {
-          a.inbox->set_peer_ttl_override(kv.first, kv.second);
-          a.outbox->set_peer_ttl_override(kv.first, kv.second);
+        std::unordered_map<std::string, Retention> peer_retention;
+        read_conversation_config(a, peer_retention);
+        for (const auto& kv : peer_retention) {
+          a.inbox->set_peer_retention(kv.first, kv.second);
+          a.outbox->set_peer_retention(kv.first, kv.second);
         }
       }
       // Delete the on-disk attachment bytes when their owning record is
@@ -765,14 +781,14 @@ namespace LXMF {
     }
 
   public:
-    // Persist per-conversation TTL overrides for `a`. Called from the
-    // WebUI handler after it has applied a change via
-    // LXMFInbox::set/clear_peer_ttl_override(). Delegates to the
+    // Persist per-conversation retention overrides for `a`. Called from
+    // the WebUI handler after it has applied a change via
+    // LXMFInbox::set/clear_peer_retention(). Delegates to the
     // private write_conversation_config so the persistence layer
     // stays in one place but the call site can sit in WebUI.h.
     static void persist_conversation_config(const LXMFIdentity& a,
-                                             const std::unordered_map<std::string, uint32_t>& peer_ttl) {
-      write_conversation_config(a, peer_ttl);
+                                             const std::unordered_map<std::string, Retention>& peer_retention) {
+      write_conversation_config(a, peer_retention);
     }
 
     // Called from the Destination::announce patch via the C bridge.

@@ -1493,36 +1493,49 @@ namespace Web {
       }
     }
 
-    // GET /api/inbox_config — current capacity + TTL. ram_capacity is
-    // emitted as 0 for "unlimited" so the SPA dropdown can render it
-    // explicitly; the server-side sentinel is SIZE_MAX.
+    // GET /api/inbox_config — default retention for NEW chats. The
+    // server's source of truth for newly-discovered peers; existing
+    // peers' overrides live in /api/identities/{id}/conversations/{peer}/config.
     static void handle_inbox_config_get(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
       const auto& cfg = LXMF::InboxConfig::current();
       Common::PsramJsonDocument doc;
-      doc["ram_capacity"] = (cfg.ram_capacity >= 0xFFFFFFFEu)
-          ? (uint32_t)0 : (uint32_t)cfg.ram_capacity;
-      doc["ttl_seconds"]  = cfg.ttl_seconds;
+      JsonObject r = doc["default_retention"].to<JsonObject>();
+      r["kind"]  = LXMF::retention_kind_name(cfg.default_retention.kind);
+      r["value"] = cfg.default_retention.value;
       send_json(req, 200, doc);
     }
 
-    // POST /api/inbox_config — body = {"ram_capacity":uint, "ttl_seconds":uint}.
-    // ram_capacity 0 means unlimited. ttl_seconds 0 means TTL off.
-    // Applies + persists across all active identity inboxes.
+    // POST /api/inbox_config — body = { "default_retention": { "kind", "value" } }.
+    // kind: "none" | "time" | "count". value: seconds (time), messages (count),
+    // ignored (none). 10-year TTL ceiling for sanity; count is capped to the
+    // hard ring size.
     static void handle_inbox_config_post(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
-      const uint32_t cap = body["ram_capacity"] | (uint32_t)LXMF::LXMFInbox::DEFAULT_RAM_CAPACITY;
-      const uint32_t ttl = body["ttl_seconds"]  | (uint32_t)0;
-      // Sanity caps: 10 years TTL max, no ram_capacity ceiling here
-      // because 0/SIZE_MAX is the "unlimited" sentinel.
-      if (ttl > 10UL * 365UL * 86400UL) {
-        send_error_with_message(req, 400, "ttl_too_large",
-          "TTL must be no more than 10 years.");
+      JsonObjectConst r = body["default_retention"].as<JsonObjectConst>();
+      if (r.isNull()) {
+        send_error_with_message(req, 400, "missing_default_retention",
+          "Body must include default_retention: { kind, value }.");
         return;
       }
-      LXMF::InboxConfig::set(filesystem, cap, ttl);
+      LXMF::Retention next;
+      next.kind  = LXMF::retention_kind_from_str(r["kind"] | "none");
+      next.value = (uint32_t)(r["value"] | 0);
+      if (next.kind == LXMF::Retention::Kind::Time
+          && next.value > 10UL * 365UL * 86400UL) {
+        send_error_with_message(req, 400, "ttl_too_large",
+          "Retention time must be no more than 10 years.");
+        return;
+      }
+      if (next.kind == LXMF::Retention::Kind::Count
+          && next.value > LXMF::LXMFInbox::DEFAULT_RAM_CAPACITY) {
+        send_error_with_message(req, 400, "count_too_large",
+          "Per-chat message count cannot exceed the per-identity ring capacity.");
+        return;
+      }
+      LXMF::InboxConfig::set_default_retention(filesystem, next);
       LXMF::LXMFGateway::apply_inbox_config_to_all();
       handle_inbox_config_get(req);
     }
@@ -1684,18 +1697,10 @@ namespace Web {
     // GET /api/identities/{id}/conversations/{peer_hex}/config
     //
     // Returns the per-conversation TTL override (if any) plus the
-    // *effective* TTL that's currently being applied to records from
-    // this peer. Semantics:
-    //   - ttl_seconds: the override the user has saved, or null if
-    //     no override exists (i.e. "use identity default").
-    //   - effective_ttl_seconds: what actually applies right now —
-    //     either the override or, if none, the identity-wide default
-    //     (LXMF::InboxConfig::current().ttl_seconds).
-    //   - default_ttl_seconds: the identity-wide default, surfaced
-    //     so the SPA can label "Use default (X days)" without a
-    //     second round-trip.
-    // ttl_seconds == 0 in either field means "no expiry" (keep
-    // forever).
+    // Per-chat retention surface. Returns the per-peer override plus
+    // the identity-wide default so the SPA can label "Use default
+    // (X days)" / "Use default (N messages)" without a second
+    // round-trip.
     static void handle_conversation_config_get(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
@@ -1711,28 +1716,39 @@ namespace Web {
       }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a || !a->inbox) { send_error(req, 404, "unknown_identity"); return; }
-      const auto& overrides = a->inbox->peer_ttl_overrides();
+      const auto& overrides = a->inbox->peer_retention_overrides();
       auto it = overrides.find(peer_hex);
       const bool has_override = (it != overrides.end());
-      const uint32_t default_ttl = LXMF::InboxConfig::current().ttl_seconds;
-      const uint32_t effective   = has_override ? it->second : default_ttl;
+      const LXMF::Retention default_r = LXMF::InboxConfig::current().default_retention;
+      const LXMF::Retention effective = has_override ? it->second : default_r;
       Common::PsramJsonDocument doc;
-      if (has_override) doc["ttl_seconds"] = it->second;
-      else              doc["ttl_seconds"] = nullptr;
-      doc["effective_ttl_seconds"] = effective;
-      doc["default_ttl_seconds"]   = default_ttl;
+      if (has_override) {
+        JsonObject o = doc["retention"].to<JsonObject>();
+        o["kind"]  = LXMF::retention_kind_name(it->second.kind);
+        o["value"] = it->second.value;
+      } else {
+        doc["retention"] = nullptr;
+      }
+      {
+        JsonObject o = doc["effective_retention"].to<JsonObject>();
+        o["kind"]  = LXMF::retention_kind_name(effective.kind);
+        o["value"] = effective.value;
+      }
+      {
+        JsonObject o = doc["default_retention"].to<JsonObject>();
+        o["kind"]  = LXMF::retention_kind_name(default_r.kind);
+        o["value"] = default_r.value;
+      }
       send_json(req, 200, doc);
     }
 
     // POST /api/identities/{id}/conversations/{peer_hex}/config
     //
-    // Body: { "ttl_seconds": <uint32|null> }
-    //   - null      → clear the override (inherit identity default)
-    //   - 0         → keep forever for this peer
-    //   - N         → expire records older than N seconds
-    // Persists the updated map to <identity_dir>/conversation_config.json
-    // and applies it live to both inbox and outbox so the next
-    // prune_expired pass honours it.
+    // Body: { "retention": { "kind", "value" } | null }
+    //   - null          → clear the override (inherit identity default)
+    //   - kind:"none"   → keep forever for this peer
+    //   - kind:"time"   → expire records older than value seconds
+    //   - kind:"count"  → keep newest value messages from this peer
     static void handle_conversation_config_post(AsyncWebServerRequest* req,
                                                  JsonVariant& body) {
       RnsLockGuard _g;
@@ -1749,23 +1765,34 @@ namespace Web {
       }
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a || !a->inbox || !a->outbox) { send_error(req, 404, "unknown_identity"); return; }
-      JsonVariant v = body["ttl_seconds"];
+      JsonVariant v = body["retention"];
       if (v.isNull()) {
-        a->inbox->clear_peer_ttl_override(peer_hex);
-        a->outbox->clear_peer_ttl_override(peer_hex);
-      } else if (v.is<uint32_t>()) {
-        const uint32_t ttl = v.as<uint32_t>();
-        a->inbox->set_peer_ttl_override(peer_hex, ttl);
-        a->outbox->set_peer_ttl_override(peer_hex, ttl);
+        a->inbox->clear_peer_retention(peer_hex);
+        a->outbox->clear_peer_retention(peer_hex);
+      } else if (v.is<JsonObject>()) {
+        LXMF::Retention r;
+        r.kind  = LXMF::retention_kind_from_str(v["kind"] | "none");
+        r.value = (uint32_t)(v["value"] | 0);
+        if (r.kind == LXMF::Retention::Kind::Time
+            && r.value > 10UL * 365UL * 86400UL) {
+          send_error_with_message(req, 400, "ttl_too_large",
+            "Retention time must be no more than 10 years.");
+          return;
+        }
+        if (r.kind == LXMF::Retention::Kind::Count
+            && r.value > LXMF::LXMFInbox::DEFAULT_RAM_CAPACITY) {
+          send_error_with_message(req, 400, "count_too_large",
+            "Per-chat message count cannot exceed the per-identity ring capacity.");
+          return;
+        }
+        a->inbox->set_peer_retention(peer_hex, r);
+        a->outbox->set_peer_retention(peer_hex, r);
       } else {
-        send_error_with_message(req, 400, "invalid_ttl",
-                                "ttl_seconds must be null or a non-negative integer.");
+        send_error_with_message(req, 400, "invalid_retention",
+                                "retention must be null or { kind, value }.");
         return;
       }
-      LXMF::LXMFGateway::persist_conversation_config(*a, a->inbox->peer_ttl_overrides());
-      NOTICEF("WebUI: conversation TTL for %s <-> %s -> %s",
-              requested.c_str(), peer_hex.c_str(),
-              v.isNull() ? "default" : std::to_string(v.as<uint32_t>()).c_str());
+      LXMF::LXMFGateway::persist_conversation_config(*a, a->inbox->peer_retention_overrides());
       handle_conversation_config_get(req);
     }
 

@@ -267,6 +267,41 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .conv-row .last { color: var(--text-mute); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conv-row .meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .conv-row .when { color: var(--text-dim); font-size: 11px; }
+/* Per-row ⋮ hamburger button. Hidden by default; the landscape mobile
+   + tablet media query at the bottom of the stylesheet flips it on.
+   Right-click + long-press still open the menu on any viewport — only
+   the always-visible icon is breakpoint-gated. Smaller hit-area than
+   the 44px topbar icons so it doesn't blow out the row height. */
+.conv-row .row-menu-btn {
+  display: none;
+  width: 32px; height: 32px; min-width: 32px; min-height: 32px;
+  background: transparent; border: none; padding: 0;
+}
+.conv-row .row-menu-btn svg { width: 18px; height: 18px; }
+.conv-row .row-menu-btn:hover { background: var(--bg-elev-2); }
+
+/* Floating row context menu. Anchored at runtime by openRowMenu(). */
+.row-menu {
+  position: fixed;
+  z-index: 270;
+  min-width: 180px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+  padding: 4px;
+  font-size: 13px;
+}
+.row-menu-item {
+  display: block; width: 100%;
+  text-align: left;
+  background: transparent; border: none; color: var(--text);
+  padding: 8px 12px; border-radius: 4px;
+  cursor: pointer; font: inherit;
+}
+.row-menu-item:hover { background: var(--bg-elev-2); }
+.row-menu-item.destructive { color: var(--danger, #e57373); }
+.row-menu-item.destructive:hover { background: rgba(229,115,115,0.12); }
 .conv-row .unread {
   background: var(--accent); color: var(--bg);
   font-size: 10px; font-weight: 600;
@@ -945,6 +980,18 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
     top: calc(48px + env(safe-area-inset-top));
     max-height: calc(100dvh - 56px - env(safe-area-inset-top));
   }
+}
+
+/* Landscape mobile + tablet: free up horizontal space in the thread
+   header by hiding the retention + clear icons and surfacing them via
+   the per-row ⋮ menu instead. Desktop (>960px) and portrait phones
+   keep the existing thread-header icons. Right-click and long-press
+   continue to open the menu in all modes so touch-screen laptops have
+   a usable entry point even without the visible icon. */
+@media (max-width: 960px) and (orientation: landscape) {
+  #thread-header #btn-conv-retention,
+  #thread-header #btn-clear-conv { display: none; }
+  .conv-row .row-menu-btn { display: inline-flex; }
 }
 
 /* Identity picker */
@@ -2713,7 +2760,7 @@ function _renderConversationsBody(wrap) {
     return;
   }
 
-  const makeRow = (peer, name, sub, when, active, xfer) => {
+  const makeRow = (peer, name, sub, when, active, xfer, discovered) => {
     // Cross-reference state.announces to derive a "last-seen" indicator.
     // Online (green dot + bold "now") if heard within the last 60s,
     // otherwise the age string. Peers we've never heard a real
@@ -2743,14 +2790,29 @@ function _renderConversationsBody(wrap) {
     // SSE event happens to rerender the list between mousedown and
     // mouseup, this approach still routes the click correctly
     // because the handler is on the container, not the row.
+    // Discovered peers (no chat history yet) get no row menu — there's
+    // nothing to retain or clear, and rename is already on the inline
+    // .name click. Block / mute / pin would extend this gate when added.
+    const meta = el('div', { class: 'meta' }, el('div', { class: 'when', text: when }));
+    if (!discovered) {
+      const menuBtn = el('button', {
+        class: 'icon row-menu-btn',
+        title: 'Conversation actions',
+        'aria-label': 'Conversation actions',
+        onclick: (ev) => { ev.stopPropagation(); openRowMenu(peer, ev.currentTarget); },
+      });
+      menuBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>';
+      meta.appendChild(menuBtn);
+    }
     const row = el('div', {
       class: 'conv-row' + (active ? ' active' : ''),
       'data-peer': peer,
     },
       idc,
       middle,
-      el('div', { class: 'meta' }, el('div', { class: 'when', text: when })),
+      meta,
     );
+    if (discovered) row.setAttribute('data-discovered', '1');
     _convRowEls.set(peer, row);
     return row;
   };
@@ -2840,7 +2902,8 @@ function _renderConversationsBody(wrap) {
         sub,
         relTime(c.last_ts),
         c.peer === state.openPeer,
-        xfer));
+        xfer,
+        /*discovered*/ false));
     }
   }
 
@@ -2873,7 +2936,9 @@ function _renderConversationsBody(wrap) {
         a.display_name || nameFor(a.dest),
         ageLabel,
         a.aspect && a.aspect !== 'lxmf.delivery' ? a.aspect : '',
-        a.dest === state.openPeer));
+        a.dest === state.openPeer,
+        /*xfer*/ null,
+        /*discovered*/ true));
     }
     wrap.appendChild(det);
   }
@@ -5843,24 +5908,131 @@ $('conv-list').addEventListener('click', (ev) => {
   selectConversation(peer);
 });
 
+// ============== ROW CONTEXT MENU ==============
+// Per-row hamburger menu for retention + clear. Visible always-on as
+// the `⋮` icon on landscape mobile + tablet (CSS media query); right-
+// click and long-press also open it on any viewport so touch-screen
+// laptops + Surface-style devices have a usable entry point even when
+// the icon isn't rendered. Discovered rows (data-discovered="1") are
+// excluded — they have nothing to retain or clear.
+let _rowMenuEl = null;
+function closeRowMenu() {
+  if (_rowMenuEl) { _rowMenuEl.remove(); _rowMenuEl = null; }
+}
+function openRowMenu(peer, anchor) {
+  closeRowMenu();
+  if (!peer) return;
+  const items = [
+    { label: 'Rename peer…',    fn: () => renamePeerFlow(peer) },
+    { label: 'Retention…',      fn: () => openRetentionModal(state.identityId, peer) },
+    { label: 'Clear messages…', fn: () => clearConversationFlow(peer), destructive: true },
+  ];
+  const menu = el('div', { class: 'row-menu' });
+  for (const it of items) {
+    menu.appendChild(el('button', {
+      class: 'row-menu-item' + (it.destructive ? ' destructive' : ''),
+      onclick: (ev) => { ev.stopPropagation(); closeRowMenu(); it.fn(); },
+    }, it.label));
+  }
+  document.body.appendChild(menu);
+  _rowMenuEl = menu;
+
+  // Anchor near the trigger. anchor is either a DOM element (button)
+  // or a {x, y} for cursor / touch-point. Clamp to viewport so the
+  // menu doesn't get clipped off the bottom or right edge.
+  const rect = (anchor && anchor.getBoundingClientRect)
+      ? anchor.getBoundingClientRect()
+      : { left: anchor.x, right: anchor.x, top: anchor.y, bottom: anchor.y };
+  const menuW = menu.offsetWidth  || 200;
+  const menuH = menu.offsetHeight || 130;
+  let left = Math.min(rect.right - menuW, window.innerWidth - menuW - 8);
+  let top  = rect.bottom + 4;
+  if (top + menuH > window.innerHeight - 8) top = Math.max(8, rect.top - menuH - 4);
+  if (left < 8) left = 8;
+  menu.style.left = left + 'px';
+  menu.style.top  = top  + 'px';
+}
+// Close on outside click / Esc / scroll. Captured at the document
+// level so any tap outside the menu — including taps on a conv-row —
+// dismisses it before the row's own click handler runs.
+document.addEventListener('mousedown', (ev) => {
+  if (_rowMenuEl && !_rowMenuEl.contains(ev.target)) closeRowMenu();
+}, true);
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') closeRowMenu();
+});
+window.addEventListener('scroll', closeRowMenu, true);
+
+// Right-click on a conv row opens the menu at the cursor. preventDefault
+// so the browser's native context menu doesn't show.
+$('conv-list').addEventListener('contextmenu', (ev) => {
+  const row = ev.target.closest('[data-peer]');
+  if (!row) return;
+  if (row.getAttribute('data-discovered') === '1') return;
+  const peer = row.getAttribute('data-peer');
+  if (!peer) return;
+  ev.preventDefault();
+  openRowMenu(peer, { x: ev.clientX, y: ev.clientY });
+});
+
+// Long-press on touch: 500ms hold opens the menu at the touch point.
+// Cancelled on touchmove / touchend / scroll. Only fires for non-
+// discovered rows — same rule as right-click.
+(() => {
+  let timer = null;
+  let cancelled = false;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } cancelled = true; };
+  $('conv-list').addEventListener('touchstart', (ev) => {
+    const row = ev.target.closest('[data-peer]');
+    if (!row) return;
+    if (row.getAttribute('data-discovered') === '1') return;
+    const peer = row.getAttribute('data-peer');
+    if (!peer) return;
+    const t = ev.touches[0];
+    if (!t) return;
+    cancelled = false;
+    const x = t.clientX, y = t.clientY;
+    timer = setTimeout(() => {
+      if (cancelled) return;
+      // Suppress the click that the touchend will fire — we don't want
+      // selectConversation to run alongside the menu open.
+      row._suppressNextClick = true;
+      openRowMenu(peer, { x, y });
+    }, 500);
+  }, { passive: true });
+  $('conv-list').addEventListener('touchmove',   cancel, { passive: true });
+  $('conv-list').addEventListener('touchcancel', cancel, { passive: true });
+  $('conv-list').addEventListener('touchend',    cancel, { passive: true });
+})();
+// Swallow the post-long-press click so it doesn't select the
+// conversation while the menu is opening.
+$('conv-list').addEventListener('click', (ev) => {
+  const row = ev.target.closest('[data-peer]');
+  if (row && row._suppressNextClick) {
+    row._suppressNextClick = false;
+    ev.stopPropagation();
+    ev.preventDefault();
+  }
+}, true);
+
 $('btn-back').addEventListener('click', () => { state.openPeer = null; renderThread(); });
 
 // Click the chat header name to rename the contact (or assign one for
 // the first time). Stores locally to state.contacts, same backing
 // store as the Identity → Contacts list in Settings.
-$('thread-name').addEventListener('click', async () => {
-  const peer = state.openPeer;
+// Reusable rename/clear flows so the per-row context menu (landscape
+// mobile + tablet) and the thread-header buttons (desktop) share one
+// implementation. Both take an explicit peer arg — neither reaches
+// for state.openPeer, since the row menu acts on the row's peer which
+// may not be the currently-open conversation.
+async function renamePeerFlow(peer) {
   if (!peer) return;
   const current = state.contacts[peer] || '';
   const r = await showConfirm({
     title: 'Rename chat',
     body: 'Set the display name shown for this peer. Saved locally on this browser only.',
     okLabel: 'Save',
-    needsInput: {
-      label: 'Display name',
-      value: current,
-      placeholder: 'Their name',
-    },
+    needsInput: { label: 'Display name', value: current, placeholder: 'Their name' },
   });
   if (!r) return;
   const name = (r.value || '').trim();
@@ -5870,7 +6042,30 @@ $('thread-name').addEventListener('click', async () => {
   renderContacts();
   renderConversations();
   renderThread();
-});
+}
+async function clearConversationFlow(peer) {
+  if (!peer) return;
+  const display = nameFor(peer);
+  const ok = await showConfirm({
+    title: 'Clear conversation?',
+    body: 'Clear all messages with ' + display + ' on this device?\n\nThe peer keeps their copy; only this device\'s inbox + outbox entries for this conversation are removed.',
+    okLabel: 'Clear',
+    destructive: true,
+  });
+  if (!ok) return;
+  try {
+    await state.transport.clearConversation(state.identityId, peer);
+    state.conversations.delete(peer);
+    if (state.openPeer === peer) state.openPeer = null;
+    renderConversations();
+    renderThread();
+    toast('Conversation cleared', 'ok');
+  } catch (e) {
+    toast('Clear failed: ' + (e.message || e), 'error');
+  }
+}
+
+$('thread-name').addEventListener('click', () => renamePeerFlow(state.openPeer));
 // Format a TTL in seconds as a human-friendly label, choosing the
 // coarsest unit that comes out whole (minutes → hours → days). 0 is
 // rendered as "no expiry" so it's never ambiguous with "0 seconds".
@@ -5981,35 +6176,11 @@ async function openRetentionModal(identityId, peerHex) {
 }
 
 $('btn-conv-retention').addEventListener('click', () => {
-  const peer = state.openPeer;
-  if (!peer) return;
-  openRetentionModal(state.identityId, peer);
+  if (state.openPeer) openRetentionModal(state.identityId, state.openPeer);
 });
-
-$('btn-clear-conv').addEventListener('click', async () => {
-  const peer = state.openPeer;
-  if (!peer) return;
-  const display = nameFor(peer);
-  const ok = await showConfirm({
-    title: 'Clear conversation?',
-    body: 'Clear all messages with ' + display + ' on this device?\n\nThe peer keeps their copy; only this device\'s inbox + outbox entries for this conversation are removed.',
-    okLabel: 'Clear',
-    destructive: true,
-  });
-  if (!ok) return;
-  await withBusy($('btn-clear-conv'), async () => {
-    try {
-      await state.transport.clearConversation(state.identityId, peer);
-      state.conversations.delete(peer);
-      state.openPeer = null;
-      renderConversations();
-      renderThread();
-      toast('Conversation cleared', 'ok');
-    } catch (e) {
-      toast('Clear failed: ' + (e.message || e), 'error');
-    }
-  }, { label: 'Clearing…' });
-});
+$('btn-clear-conv').addEventListener('click', () => withBusy($('btn-clear-conv'),
+  () => clearConversationFlow(state.openPeer),
+  { label: 'Clearing…' }));
 $('btn-announce-top').addEventListener('click', forceAnnounce);
 $('btn-radio-save').addEventListener('click', () => withBusy($('btn-radio-save'), async () => {
   try {

@@ -76,19 +76,23 @@ namespace LXMF {
   // persisted via Web::BootCounter) makes the tuple globally monotonic
   // across reboots. `ts` is the LXMF wire timestamp; it depends on
   // peer clocks and is not reliable for sorting.
+  // Scalar fields default-initialised so a stack-allocated record never
+  // carries garbage into append(). LXMFInbox::append relies on seq==0
+  // to allocate a fresh seq, so an uninitialised seq turns into the
+  // garbage stack value and short-circuits the auto-assignment.
   struct MessageRecord {
-    uint32_t      seq;            // Monotonic per-identity-per-mailbox sequence number (inbox and outbox have independent counters).
-    double        ts;             // LXMF timestamp (peer's clock for incoming, local for outgoing). Display-only; not reliable for ordering when peer clocks aren't synced.
-    uint32_t      boot_epoch;     // Web::BootCounter value at append time. Combined with received_ms forms (boot_epoch, received_ms) — a tuple monotonic across reboots.
-    uint32_t      received_ms;    // millis() at the moment this record was appended to its inbox/outbox. Monotonic only within boot_epoch.
-    RNS::Bytes    peer_hash;      // Remote LXMF address (16 bytes). For incoming: source. For outgoing: destination.
-    std::string   title;          // LXMF title field (often empty).
-    std::string   content;        // Plaintext message content, always inline. Bounded at LXMF_MAX_BODY_BYTES (4 KiB) by the send path.
-    uint32_t      body_size = 0;  // Total body size in bytes (== content.size()). Kept as a separate field for wire-shape stability with the SPA's body_size === content.length check, and so per-record size queries don't have to count the std::string each time.
-    bool          incoming;       // True for received, false for sent.
-    bool          signature_ok;   // For incoming: did the Ed25519 signature verify against a known identity? For outgoing: always true.
-    OutboxStatus  status;         // Only meaningful for outgoing messages; Delivered for incoming.
-    RNS::Bytes    packet_hash;    // RNS packet hash, used to correlate delivery receipts.
+    uint32_t      seq         = 0;       // Monotonic per-identity-per-mailbox sequence number (inbox and outbox have independent counters).
+    double        ts          = 0.0;     // LXMF timestamp (peer's clock for incoming, local for outgoing). Display-only; not reliable for ordering when peer clocks aren't synced.
+    uint32_t      boot_epoch  = 0;       // Web::BootCounter value at append time. Combined with received_ms forms (boot_epoch, received_ms) — a tuple monotonic across reboots.
+    uint32_t      received_ms = 0;       // millis() at the moment this record was appended to its inbox/outbox. Monotonic only within boot_epoch.
+    RNS::Bytes    peer_hash;             // Remote LXMF address (16 bytes). For incoming: source. For outgoing: destination.
+    std::string   title;                 // LXMF title field (often empty).
+    std::string   content;               // Plaintext message content, always inline. Bounded at LXMF_MAX_BODY_BYTES (4 KiB) by the send path.
+    uint32_t      body_size   = 0;       // Total body size in bytes (== content.size()). Kept as a separate field for wire-shape stability with the SPA's body_size === content.length check, and so per-record size queries don't have to count the std::string each time.
+    bool          incoming    = false;   // True for received, false for sent.
+    bool          signature_ok = false;  // For incoming: did the Ed25519 signature verify against a known identity? For outgoing: always true.
+    OutboxStatus  status      = OutboxStatus::Delivered;  // Only meaningful for outgoing messages; Delivered for incoming.
+    RNS::Bytes    packet_hash;           // RNS packet hash, used to correlate delivery receipts.
     std::vector<AttachmentMeta> attachments;  // Empty for messages without LXMF fields.
   };
 

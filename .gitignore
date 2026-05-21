@@ -13,6 +13,8 @@ Debug*
 
 # Local development / test runtime artifacts
 logcat.log
+tasks.md
+tasks.json
 tools/kiss-test/.token
 tools/kiss-test/.lr-token
 tools/kiss-test/.lr-addr

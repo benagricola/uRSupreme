@@ -228,13 +228,15 @@ namespace Web {
       // runs at ~50 Hz on the main task (shared with reticulum.loop and
       // the radio modem), so any allocation here is hot-path cost.
       if (Web::WS::any_subscribers()) {
-        // Sensor change publish. taken_ms is read via a cheap accessor
-        // (no JSON allocation on the no-op path); only an actual change
-        // triggers the build-and-broadcast.
-        publish_sensor_if_changed("gps",          _last_pub_gps_ms);
-        publish_sensor_if_changed("environment",  _last_pub_bme_ms);
-        publish_sensor_if_changed("magnetometer", _last_pub_mag_ms);
-        publish_sensor_if_changed("imu",          _last_pub_imu_ms);
+        // Coalesced sensor publish. Runs at most once per second (the
+        // floor of the user-configurable per-sensor interval). Each
+        // pass walks the sensor kinds; any that have a fresh reading
+        // since the last drain land in a single multi-kind frame.
+        // Nothing changes → nothing sent.
+        if (now - _last_sensor_drain >= SENSOR_DRAIN_PERIOD_MS) {
+          _last_sensor_drain = now;
+          drain_sensor_updates();
+        }
         // Full system snapshot every 30 s — battery decay, storage
         // usage drift, outbound_caps shifts on SD insert/eject. Cheap
         // (one client typical; ~1 KB payload). Hello carries the
@@ -257,15 +259,38 @@ namespace Web {
       if (strcmp(kind, "imu")          == 0) return Sensors::QMI8658::last_reading().taken_ms;
       return 0;
     }
-    static void publish_sensor_if_changed(const char* kind, uint32_t& last_pub_ms) {
-      const uint32_t taken = sensor_taken_ms(kind);
-      if (taken == 0 || taken == last_pub_ms) return;  // no allocation on the no-op path
-      last_pub_ms = taken;
-      Web::WS::publish_sensor(kind, [kind](JsonObject v) {
-        Common::PsramJsonDocument tmp;
-        JsonObject root = tmp.to<JsonObject>();
-        fill_sensor_block(root, kind);
-        for (JsonPair kv : root[kind].as<JsonObject>()) v[kv.key()] = kv.value();
+    // Walk every sensor kind, find the ones whose taken_ms advanced
+    // since their last published value, and emit a single multi-kind
+    // WS frame carrying all of them. Skips entirely when nothing
+    // changed (no allocation on the no-op path — important because
+    // this runs every SENSOR_DRAIN_PERIOD_MS while any client is
+    // connected).
+    static void drain_sensor_updates() {
+      static constexpr const char* KINDS[]  = { "gps", "environment", "magnetometer", "imu" };
+      uint32_t* const last_pub[] = { &_last_pub_gps_ms, &_last_pub_bme_ms,
+                                     &_last_pub_mag_ms, &_last_pub_imu_ms };
+      // First pass: detect changes without allocating.
+      bool any = false;
+      uint32_t fresh[sizeof(KINDS)/sizeof(KINDS[0])] = {0};
+      for (size_t i = 0; i < sizeof(KINDS)/sizeof(KINDS[0]); ++i) {
+        const uint32_t taken = sensor_taken_ms(KINDS[i]);
+        if (taken == 0 || taken == *last_pub[i]) continue;
+        fresh[i] = taken;
+        any = true;
+      }
+      if (!any) return;
+      // Second pass: build the multi-kind frame.
+      Web::WS::publish_sensors_update([&](JsonObject values) {
+        for (size_t i = 0; i < sizeof(KINDS)/sizeof(KINDS[0]); ++i) {
+          if (fresh[i] == 0) continue;
+          *last_pub[i] = fresh[i];
+          Common::PsramJsonDocument tmp;
+          JsonObject root = tmp.to<JsonObject>();
+          fill_sensor_block(root, KINDS[i]);
+          JsonObject src = root[KINDS[i]].as<JsonObject>();
+          JsonObject dst = values[KINDS[i]].to<JsonObject>();
+          for (JsonPair kv : src) dst[kv.key()] = kv.value();
+        }
       });
     }
 
@@ -3380,16 +3405,23 @@ namespace Web {
   private:
     static inline bool     _started = false;
     static inline uint32_t _last_sweep = 0;
-    // Per-sensor `taken_ms` snapshots, used by publish_sensor_if_changed
+    // Drain cadence for the multi-kind sensors_update WS frame.
+    // Matches the floor of the per-sensor interval the user can pick
+    // in the SPA, so the SPA never sees a fresh sensor reading sit
+    // for longer than one drain period before getting through to it.
+    static constexpr uint32_t SENSOR_DRAIN_PERIOD_MS = 1000;
+
+    // Per-sensor `taken_ms` snapshots, used by drain_sensor_updates
     // to dedupe WS broadcasts. Reading a sensor twice per second when
     // it hasn't pumped is fine — the underlying Bme280::last_reading
     // etc are cached; we just don't want to flood the WS channel.
-    static inline uint32_t _last_pub_gps_ms = 0;
-    static inline uint32_t _last_pub_bme_ms = 0;
-    static inline uint32_t _last_pub_mag_ms = 0;
-    static inline uint32_t _last_pub_imu_ms = 0;
-    static inline uint32_t _last_system_push = 0;
-    static inline uint32_t _last_radio_tlm   = 0;
+    static inline uint32_t _last_pub_gps_ms   = 0;
+    static inline uint32_t _last_pub_bme_ms   = 0;
+    static inline uint32_t _last_pub_mag_ms   = 0;
+    static inline uint32_t _last_pub_imu_ms   = 0;
+    static inline uint32_t _last_sensor_drain = 0;
+    static inline uint32_t _last_system_push  = 0;
+    static inline uint32_t _last_radio_tlm    = 0;
   };
 
   // Free function the LXMF gateway calls to publish a Resource-transfer

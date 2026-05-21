@@ -5284,12 +5284,17 @@ function dispatchEvent(ev) {
     }
     return;
   }
-  if (ev.type === 'sensor_update') {
-    // Patch the cached sensor block in place so the periodic
-    // system_update doesn't drop fine-grained state in between pushes.
-    if (state.system && ev.kind && ev.value) {
+  if (ev.type === 'sensors_update') {
+    // Multi-kind sensor update. Patch each kind into the cached
+    // snapshot so the periodic system_update doesn't drop fine-
+    // grained state in between pushes. ev.values is a {kind: data}
+    // object, one entry per sensor that had a fresh reading in the
+    // last drain window.
+    if (state.system && ev.values && typeof ev.values === 'object') {
       state.system.sensors = state.system.sensors || {};
-      state.system.sensors[ev.kind] = ev.value;
+      for (const kind in ev.values) {
+        state.system.sensors[kind] = ev.values[kind];
+      }
     }
     return;
   }

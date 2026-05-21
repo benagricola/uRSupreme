@@ -13,7 +13,7 @@
 //     containing the most recent state markers so the SPA can resync.
 //   * Server then streams typed events as they occur:
 //       incoming, outbox_status, message_progress, message_complete,
-//       announce_seen, path_seen, sensor_update, time_update,
+//       announce_seen, path_seen, sensors_update, time_update,
 //       identity_code_available, heartbeat
 //   * Client may send `{"type":"ping"}` at any time; server replies
 //     `{"type":"pong"}`. Used to keep middleboxes from idling the
@@ -89,7 +89,7 @@ namespace WS {
   // Arduino String (resizing via repeated realloc) and once per client
   // for AsyncWebSocket's internal makeSharedBuffer std::vector copy.
   // Both landed in internal SRAM at the same size range
-  // (~200–2 KiB) and at high frequency (sensor_update + system_update
+  // (~200–2 KiB) and at high frequency (sensors_update + system_update
   // + message_progress) — exactly the size range the ESP-IDF WiFi
   // driver's `esf_buf_alloc_dynamic` needs (1626 B for 802.11 TX frames),
   // so app-side churn fragmented region 1 of internal SRAM and starved
@@ -207,17 +207,19 @@ namespace WS {
     broadcast(doc);
   }
 
-  // Sensor update — broadcast a fresh reading for one sensor kind.
-  // The `fill` callback shapes the JSON exactly as the
-  // /api/system_status sensors[kind] block, so the SPA can patch
-  // its cached snapshot in place from this event.
-  inline void publish_sensor(const char* kind,
-                             const std::function<void(JsonObject)>& fill) {
+  // Multi-kind sensor update — one frame carrying every sensor that
+  // produced a fresh reading in the last drain window. The `fill`
+  // callback receives the `values` object; it adds one nested object
+  // per kind (gps, environment, magnetometer, imu, ...) shaped the
+  // same way /api/system_status sensors[kind] is. The SPA patches
+  // each kind into its cached snapshot in turn.
+  //
+  // Shape: { type: "sensors_update", values: { gps: {...}, imu: {...} } }
+  inline void publish_sensors_update(const std::function<void(JsonObject)>& fill) {
     Common::PsramJsonDocument doc;
-    doc["type"] = "sensor_update";
-    doc["kind"] = kind;
-    JsonObject v = doc["value"].to<JsonObject>();
-    fill(v);
+    doc["type"] = "sensors_update";
+    JsonObject values = doc["values"].to<JsonObject>();
+    fill(values);
     broadcast(doc);
   }
 

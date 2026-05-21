@@ -75,6 +75,21 @@ namespace LXMF {
   // transfer; a 4 KiB body at SF5/BW250 ≈ 1-2 s airtime, fine.
   static constexpr size_t LXMF_MAX_BODY_BYTES      = 4096;
 
+  // Per-record trust-boundary caps. Every string field that crosses
+  // either the SPA→firmware boundary or the peer→firmware boundary
+  // gets a length cap so a single malicious or buggy peer can't
+  // exhaust RAM with a multi-MB title or mime string. The on-disk
+  // JSONL line size is bounded as a *consequence* of these caps —
+  // there is no separate line-length cap any more.
+  //
+  // Exposed to the SPA via /api/info → `limits` so the compose UI
+  // can enforce the same numbers client-side and give immediate
+  // feedback when the user types past the cap.
+  static constexpr size_t LXMF_MAX_TITLE_BYTES        = 256;   // Email-subject convention (RFC 2822); well above any chat-title use.
+  static constexpr size_t LXMF_MAX_ATTACHMENTS        = 10;    // Per message. Sideband-style; covers realistic image+audio+files.
+  static constexpr size_t LXMF_MAX_ATTACHMENT_NAME    = 256;   // Per-attachment display_name (sender-supplied).
+  static constexpr size_t LXMF_MAX_ATTACHMENT_MIME    = 128;   // Per-attachment mime type. RFC 6838 type/subtype rarely > 80.
+
   class LXMFMinimal {
   public:
     using DeliveryCallback = std::function<void(const MessageRecord&)>;
@@ -1414,12 +1429,21 @@ namespace LXMF {
                               const std::vector<FieldBlob>& fields,
                               std::vector<AttachmentMeta>& out) {
       if (fields.empty()) return;
+      // Cap inbound attachment count at the trust boundary. A peer
+      // could send arbitrarily many fields; we truncate before any
+      // persistence work so a flood can't exhaust storage or RAM.
+      std::vector<FieldBlob> capped_fields = fields;
+      if (capped_fields.size() > LXMF_MAX_ATTACHMENTS) {
+        WARNINGF("LXMF: peer attachments %u exceeds cap %u, dropping extras",
+                 (unsigned)capped_fields.size(), (unsigned)LXMF_MAX_ATTACHMENTS);
+        capped_fields.resize(LXMF_MAX_ATTACHMENTS);
+      }
       if (!_persist_attachments_fn) {
         // No persist hook wired — surface metadata without on-disk
         // storage so the SPA at least knows attachments arrived. The
         // bytes are dropped on the floor; this only happens before
         // LXMFGateway::activate runs (i.e. never in normal operation).
-        for (const auto& f : fields) {
+        for (const auto& f : capped_fields) {
           AttachmentMeta m;
           m.tag = f.tag;
           m.size = (uint32_t)f.raw_len;
@@ -1427,7 +1451,7 @@ namespace LXMF {
         }
         return;
       }
-      out = _persist_attachments_fn(msg_hash, fields);
+      out = _persist_attachments_fn(msg_hash, capped_fields);
     }
 
     bool _parse_lxmf_payload(const uint8_t* data, size_t len,
@@ -1455,13 +1479,25 @@ namespace LXMF {
       }
       if (!Common::MsgPack::skip_element(data, len, off)) return false;
 
-      // Element 1: title
+      // Element 1: title. Truncate at the trust boundary — a peer
+      // could send a multi-MB title and we'd otherwise carry it
+      // through into the inbox spool, the WS broadcast, and the SPA.
       std::string title = Common::MsgPack::read_bin_or_str(data, len, off);
+      if (title.size() > LXMF_MAX_TITLE_BYTES) {
+        WARNINGF("LXMF: peer title %u B exceeds cap %u, truncating",
+                 (unsigned)title.size(), (unsigned)LXMF_MAX_TITLE_BYTES);
+        title.resize(LXMF_MAX_TITLE_BYTES);
+      }
       if (out_title) *out_title = title;
 
-      // Element 2: content
+      // Element 2: content. Same trust-boundary truncation as title.
       std::string content = Common::MsgPack::read_bin_or_str(data, len, off);
       if (content.empty()) return false;
+      if (content.size() > LXMF_MAX_BODY_BYTES) {
+        WARNINGF("LXMF: peer body %u B exceeds cap %u, truncating",
+                 (unsigned)content.size(), (unsigned)LXMF_MAX_BODY_BYTES);
+        content.resize(LXMF_MAX_BODY_BYTES);
+      }
       if (out_content) *out_content = content;
 
       // Element 3: fields dict (optional — may be nil, may be omitted).

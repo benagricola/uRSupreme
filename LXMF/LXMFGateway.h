@@ -629,6 +629,13 @@ namespace LXMF {
               } else if (f.tag == LXMF::FIELD_FILE_ATTACHMENTS) {
                 meta.display_name = f.filename;
               }
+              // Trust-boundary truncation: both display_name and the
+              // sender-supplied filename feed into the same field
+              // here. Cap at the configured limit so a malicious peer
+              // can't grow the inbox JSONL line with megabyte names.
+              if (meta.display_name.size() > LXMF::LXMF_MAX_ATTACHMENT_NAME) {
+                meta.display_name.resize(LXMF::LXMF_MAX_ATTACHMENT_NAME);
+              }
               out.push_back(meta);
               NOTICEF("LXMF: persisted attachment %s (%u B, backend=%s, display='%s')",
                       on_disk, (unsigned)f.raw_len,

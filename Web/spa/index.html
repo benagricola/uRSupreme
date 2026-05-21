@@ -3971,6 +3971,22 @@ async function openImageResizePicker(file) {
 }
 
 async function stagePendingAttachment(att) {
+  // Enforce the server's per-message attachment cap up front so the
+  // user can't queue up a send that's guaranteed to be rejected.
+  const limits = (state.info && state.info.limits) || {};
+  const maxAtt = limits.max_attachments || 10;
+  if (state.pendingAttachments.length >= maxAtt) {
+    toast(`Max ${maxAtt} attachments per message`, 'warn');
+    return;
+  }
+  const maxName = limits.max_attachment_name_bytes || 256;
+  const maxMime = limits.max_attachment_mime_bytes || 128;
+  if (att.filename && att.filename.length > maxName) {
+    att.filename = att.filename.slice(0, maxName);
+  }
+  if (att.mime && att.mime.length > maxMime) {
+    att.mime = att.mime.slice(0, maxMime);
+  }
   // Estimate ETA against the current peer so the tray chip shows it
   // before send. Failures are silent — tray still renders.
   let eta_ms = null, kind = null;
@@ -4107,6 +4123,20 @@ async function forceAnnounce() {
   }
 }
 
+// Apply firmware-published trust-boundary caps to the compose UI. The
+// firmware exports its enforced limits via /api/info.limits; mirror
+// them onto input attributes so the browser blocks input past the
+// cap (matching the firmware's accept/reject behaviour) and surface
+// a counter to the user.
+function applyServerLimits(limits) {
+  const ct = $('compose-text');
+  if (ct && limits.max_body_bytes) {
+    ct.maxLength = limits.max_body_bytes;
+  }
+  // attachment count / name / mime are enforced inside
+  // stagePendingAttachment() at queue time.
+}
+
 // ============================== STATUS INDICATOR ==============================
 // Topbar antenna icon's coloured dot reflects radio + transport state.
 // Click opens a popover with live config and a transport toggle.
@@ -4116,6 +4146,12 @@ async function refreshStatus() {
   try {
     const info = await state.transport.getInfo();
     state.lastInfo = info;
+    state.info = info;
+    // Apply server-published limits to the compose UI. /api/info.limits
+    // is the single source of truth; we mirror the values onto input
+    // attributes so the browser enforces them without a round-trip,
+    // matching the firmware's accept/reject behaviour.
+    applyServerLimits(info.limits || {});
     // Cache identity-code TTL so the hint text reflects the firmware's
     // actual compile-time IDENTITY_CODE_TTL_MS (currently 60 s) rather
     // than whatever number the SPA happened to ship with. Refresh any
@@ -5425,6 +5461,7 @@ async function boot() {
   try { info = await state.transport.getInfo(); }
   catch (e) { console.warn('getInfo failed:', e); info = null; }
   state.info = info;
+  if (info && info.limits) applyServerLimits(info.limits);
   state.identities = (info && info.identities) || [];
   // Snapshot the identity-code TTL before any pre-auth view renders so
   // the hint text on the bootstrap / identity-picker screens shows

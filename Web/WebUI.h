@@ -916,6 +916,18 @@ namespace Web {
         // anyone seeing the bootstrap network on their phone.
         wifi["auth"]        = "open";
       }
+      // Server-enforced limits. The SPA mirrors these to its compose
+      // UI so the user gets immediate feedback when they hit a cap,
+      // and the firmware doesn't have to send 413s for typos. Single
+      // source of truth lives in LXMFMinimal.h; this block exports
+      // it to the client.
+      JsonObject limits = doc["limits"].to<JsonObject>();
+      limits["max_body_bytes"]            = (uint32_t)LXMF::LXMF_MAX_BODY_BYTES;
+      limits["max_title_bytes"]           = (uint32_t)LXMF::LXMF_MAX_TITLE_BYTES;
+      limits["max_attachments"]           = (uint32_t)LXMF::LXMF_MAX_ATTACHMENTS;
+      limits["max_attachment_name_bytes"] = (uint32_t)LXMF::LXMF_MAX_ATTACHMENT_NAME;
+      limits["max_attachment_mime_bytes"] = (uint32_t)LXMF::LXMF_MAX_ATTACHMENT_MIME;
+
       // Build-time transport capabilities. The SPA hides config UI for
       // any transport that reports false so users never see knobs that
       // can't take effect on this firmware.
@@ -2332,6 +2344,25 @@ namespace Web {
         send_error_with_message(req, 413, "body_too_long", msg);
         return;
       }
+      if (title.size() > LXMF::LXMF_MAX_TITLE_BYTES) {
+        char msg[160];
+        snprintf(msg, sizeof(msg),
+                 "Title too long: %u characters, cap is %u.",
+                 (unsigned)title.size(),
+                 (unsigned)LXMF::LXMF_MAX_TITLE_BYTES);
+        send_error_with_message(req, 413, "title_too_long", msg);
+        return;
+      }
+      if (body["attachments"].is<JsonArrayConst>()
+          && body["attachments"].as<JsonArrayConst>().size() > LXMF::LXMF_MAX_ATTACHMENTS) {
+        char msg[160];
+        snprintf(msg, sizeof(msg),
+                 "Too many attachments: %u, cap is %u per message.",
+                 (unsigned)body["attachments"].as<JsonArrayConst>().size(),
+                 (unsigned)LXMF::LXMF_MAX_ATTACHMENTS);
+        send_error_with_message(req, 413, "too_many_attachments", msg);
+        return;
+      }
       RNS::Bytes to = hex_to_bytes(to_hex, LXMF::HASH_LEN);
       if (to.size() != LXMF::HASH_LEN) {
         char msg[120];
@@ -2379,6 +2410,16 @@ namespace Web {
           oa.staging_total_bytes  = Storage::OutboundStaging::total_bytes(sid);
           oa.filename             = a["filename"] | "";
           oa.mime                 = a["mime"]     | "";
+          if (oa.filename.size() > LXMF::LXMF_MAX_ATTACHMENT_NAME) {
+            send_error_with_message(req, 413, "attachment_filename_too_long",
+              "Attachment filename exceeds the configured limit.");
+            return;
+          }
+          if (oa.mime.size() > LXMF::LXMF_MAX_ATTACHMENT_MIME) {
+            send_error_with_message(req, 413, "attachment_mime_too_long",
+              "Attachment mime type exceeds the configured limit.");
+            return;
+          }
           // Per Sideband convention, FIELD_IMAGE carries an `ext` string
           // (e.g. "webp"). Derive from mime "image/xyz" if the SPA didn't
           // send an explicit ext, else fall back to the filename suffix

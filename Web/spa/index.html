@@ -653,6 +653,23 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   margin-top: 2px;
 }
 .popover-subline:first-of-type { margin-top: 4px; }
+/* Units displayed in measurement lines: rendered slightly smaller
+   and dimmer than the value text, with no whitespace separating
+   them from the value. Matches phone-app style ("23.4°C" not
+   "23.4 °C") while still visually grouping the unit as secondary
+   information. Used by both .popover-value (bright primary fact)
+   and .popover-subline (already-dimmed secondary line); on the
+   subline it still reads as ~10% smaller than the value digits. */
+.unit {
+  font-size: 0.85em;
+  color: var(--text-dim);
+  margin-left: 1px;
+}
+.popover-subline .unit {
+  /* Subline text is already var(--text-dim); fade the unit one step
+     further so the value↔unit contrast is preserved. */
+  opacity: 0.85;
+}
 
 /* Inline radio-telemetry chart in #popover-status. Two y-axes (left
    = utilisation %, right = RSSI dBm) drawn in pure SVG so we don't
@@ -4593,6 +4610,14 @@ function deviceMillisNow() {
   return a.deviceNowMs + (performance.now() - (a.localPerfMs || 0));
 }
 
+// Format a numeric value + its unit as HTML, with the unit wrapped
+// in <span class="unit"> so the popover CSS can render it slightly
+// smaller and dimmer. No whitespace between value and unit — matches
+// the "23.4°C" convention rather than the "23.4 °C" one.
+function vu(value, unit) {
+  return value + '<span class="unit">' + unit + '</span>';
+}
+
 // "Last read Xs ago (MODEL)" from a raw device-millis snapshot.
 // Re-running this each tick advances the seconds count without a
 // refetch. taken_ms == -1 or missing => "never received" → empty
@@ -4749,10 +4774,10 @@ function renderSystemPopover(s) {
   if (env.available) {
     const envState = renderSensorState($('sys-env-line'), env.enabled, env.valid);
     if (envState === 'live') {
-      $('sys-env-values').textContent =
-        env.temp_c.toFixed(1) + ' °C · ' +
-        env.humidity_pct.toFixed(0) + ' %RH · ' +
-        (env.pressure_pa / 100).toFixed(1) + ' hPa';
+      $('sys-env-values').innerHTML =
+        vu(env.temp_c.toFixed(1), '°C') + ' · ' +
+        vu(env.humidity_pct.toFixed(0), '%RH') + ' · ' +
+        vu((env.pressure_pa / 100).toFixed(1), 'hPa');
     } else {
       $('sys-env-values').textContent = '';
     }
@@ -4765,9 +4790,9 @@ function renderSystemPopover(s) {
   if (mg.available) {
     const mState = renderSensorState($('sys-mag-line'), mg.enabled, mg.valid);
     if (mState === 'live') {
-      $('sys-mag-values').textContent =
-        'Heading ' + mg.heading_deg.toFixed(0) + '° · ' +
-        mg.x_uT.toFixed(1) + ' / ' + mg.y_uT.toFixed(1) + ' / ' + mg.z_uT.toFixed(1) + ' µT';
+      $('sys-mag-values').innerHTML =
+        'Heading ' + vu(mg.heading_deg.toFixed(0), '°') + ' · ' +
+        vu(mg.x_uT.toFixed(1) + ' / ' + mg.y_uT.toFixed(1) + ' / ' + mg.z_uT.toFixed(1), 'µT');
     } else {
       $('sys-mag-values').textContent = '';
     }
@@ -4780,11 +4805,11 @@ function renderSystemPopover(s) {
   if (im.available) {
     const iState = renderSensorState($('sys-imu-line'), im.enabled, im.valid);
     if (iState === 'live') {
-      $('sys-imu-accel').textContent = 'Accel ' +
-        im.accel_x_g.toFixed(2) + ' / ' + im.accel_y_g.toFixed(2) + ' / ' + im.accel_z_g.toFixed(2) + ' g';
-      $('sys-imu-gyro').textContent = 'Gyro  ' +
-        im.gyro_x_dps.toFixed(1) + ' / ' + im.gyro_y_dps.toFixed(1) + ' / ' + im.gyro_z_dps.toFixed(1) + ' °/s · ' +
-        im.temp_c.toFixed(1) + ' °C';
+      $('sys-imu-accel').innerHTML = 'Accel ' +
+        vu(im.accel_x_g.toFixed(2) + ' / ' + im.accel_y_g.toFixed(2) + ' / ' + im.accel_z_g.toFixed(2), 'g');
+      $('sys-imu-gyro').innerHTML = 'Gyro  ' +
+        vu(im.gyro_x_dps.toFixed(1) + ' / ' + im.gyro_y_dps.toFixed(1) + ' / ' + im.gyro_z_dps.toFixed(1), '°/s') + ' · ' +
+        vu(im.temp_c.toFixed(1), '°C');
     } else {
       $('sys-imu-accel').textContent = '';
       $('sys-imu-gyro').textContent = '';
@@ -4915,19 +4940,19 @@ function renderPowerPopover(sys) {
               : 'Unknown';
   line.appendChild(el('span', { class: sclass }, label));
   const parts = [];
-  if (typeof b.voltage_v === 'number') parts.push(b.voltage_v.toFixed(2) + ' V');
-  if (typeof sum.percent === 'number' && sum.percent >= 0) parts.push(sum.percent + '%');
-  if (b.vbus_present) parts.push('USB ' + (b.vbus_voltage_v || 0).toFixed(2) + ' V');
-  $('pw-battery-values').textContent = parts.join(' · ');
+  if (typeof b.voltage_v === 'number') parts.push(vu(b.voltage_v.toFixed(2), 'V'));
+  if (typeof sum.percent === 'number' && sum.percent >= 0) parts.push(vu(sum.percent, '%'));
+  if (b.vbus_present) parts.push('USB ' + vu((b.vbus_voltage_v || 0).toFixed(2), 'V'));
+  $('pw-battery-values').innerHTML = parts.join(' · ');
   const slope = [];
   if (typeof b.slope_mv_per_min === 'number') {
     const sign = b.slope_mv_per_min < 0 ? '' : '+';
     const win  = Math.round((b.slope_window_ms || 0) / 60000);
-    slope.push('Slope ' + sign + b.slope_mv_per_min.toFixed(1) + ' mV/min (' + win + ' min)');
+    slope.push('Slope ' + sign + vu(b.slope_mv_per_min.toFixed(1), 'mV/min') + ' (' + win + ' min)');
   }
-  if (typeof b.discharge_ma === 'number') slope.push('Draw ' + b.discharge_ma.toFixed(0) + ' mA');
-  if (typeof b.pmu_temp_c   === 'number') slope.push('PMU ' + b.pmu_temp_c.toFixed(1) + ' °C');
-  $('pw-battery-slope').textContent = slope.join(' · ');
+  if (typeof b.discharge_ma === 'number') slope.push('Draw ' + vu(b.discharge_ma.toFixed(0), 'mA'));
+  if (typeof b.pmu_temp_c   === 'number') slope.push('PMU ' + vu(b.pmu_temp_c.toFixed(1), '°C'));
+  $('pw-battery-slope').innerHTML = slope.join(' · ');
 }
 let _pwTicker = null;
 async function openPowerPopover() {

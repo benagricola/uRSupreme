@@ -302,6 +302,15 @@ inline void reset_backoff() {
 inline PowerMode target_mode() {
   const auto& cfg = Web::TimeManager::get_config(Web::TimeManager::Source::GPS);
   if (!cfg.enabled)                              return PowerMode::Off;
+  // interval_s == 0 → "boot-only": power on long enough to acquire one
+  // fix + report it to TimeManager, then power down and stay off until
+  // reboot. Without this the AlwaysOn branch below catches 0 (since
+  // 0 < PULSE_THRESHOLD_S) and the L76K would burn battery indefinitely
+  // while the line-parser silently throws away every subsequent fix.
+  if (cfg.interval_s == 0) {
+    return (_detail::last_report_ms_ref() != 0) ? PowerMode::Off
+                                                : PowerMode::AlwaysOn;
+  }
   if (cfg.interval_s < PULSE_THRESHOLD_S)        return PowerMode::AlwaysOn;
   return PowerMode::Pulsed;
 }

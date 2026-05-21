@@ -78,6 +78,12 @@ inline void pump() {
   if (!_detail::enabled_ref())                  return;
   const uint32_t now = millis();
   const auto& last = _detail::last_ref();
+  // interval_ms == 0 means "boot-read only": take one reading on the
+  // first pump() after boot, then never again until reboot. Without
+  // this, the SPA's "At boot only" preset (which sends interval_s=0)
+  // would cause the sensor to read every main-loop iteration because
+  // `(now - taken_ms) < 0` is always false for uint32_t.
+  if (_detail::interval_ms_ref() == 0 && last.taken_ms != 0) return;
   if (last.taken_ms != 0 && (now - last.taken_ms) < _detail::interval_ms_ref()) return;
 
   Reading r;

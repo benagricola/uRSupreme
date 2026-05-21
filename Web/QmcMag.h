@@ -75,6 +75,9 @@ inline void pump() {
   if (!_detail::enabled_ref()) return;
   const uint32_t now = millis();
   const auto& last = _detail::last_ref();
+  // interval_ms == 0 → "boot-read only" (single read, then idle until
+  // reboot). See Bme280.h pump() for the same handling.
+  if (_detail::interval_ms_ref() == 0 && last.taken_ms != 0) return;
   if (last.taken_ms != 0 && (now - last.taken_ms) < _detail::interval_ms_ref()) return;
 
   Polar p;

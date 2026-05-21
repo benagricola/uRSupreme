@@ -1453,6 +1453,7 @@ summary:hover { color: var(--text); }
     <div class="tab-bar" id="settings-tabs">
       <button class="tab" data-tab="identity">Identity</button>
       <button class="tab" data-tab="connectivity">Connectivity</button>
+      <button class="tab" data-tab="discovery">Discovery</button>
       <button class="tab" data-tab="time">Time</button>
       <button class="tab" data-tab="ui">App</button>
       <button class="tab" data-tab="network">Activity</button>
@@ -1562,6 +1563,52 @@ summary:hover { color: var(--text); }
           </div>
         </details>
 
+      </div>
+
+      <!-- ============== Discovery tab ============== -->
+      <div class="tab-panel" data-panel="discovery">
+        <div class="warn" style="margin:0 0 12px">⚠ Discovery announces this device's interfaces to other nodes that can hear it. Off by default for privacy — only turn it on if you want to be findable.</div>
+        <div class="card">
+          <strong>Network identity</strong>
+          <div class="muted" style="margin-top:4px;margin-bottom:6px">A device-wide long-lived keypair signs every discovery announce so other nodes can recognise this device across boots.</div>
+          <div class="list-row">
+            <div>Identity hash</div>
+            <div id="disc-identity-hash" class="muted" style="font-family:ui-monospace,monospace;font-size:11px">—</div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <strong>Master toggle</strong>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:10px 0 0">
+            <input type="checkbox" id="disc-enabled" style="width:auto;min-height:auto">
+            <span>Announce discoverable interfaces</span>
+          </label>
+          <div class="muted" style="margin-top:4px">When on, each interface marked as discoverable on the Connectivity tab will emit a periodic announce. Enabling requires the identity code on the device's display.</div>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <strong>Cadence</strong>
+          <label style="margin-top:8px">Default interval</label>
+          <select id="disc-interval">
+            <option value="5">5 minutes (debug)</option>
+            <option value="15">15 minutes</option>
+            <option value="60">1 hour</option>
+            <option value="360">6 hours (default)</option>
+            <option value="720">12 hours</option>
+            <option value="1440">24 hours</option>
+          </select>
+          <div class="muted" style="margin-top:4px">How often each discoverable interface re-announces. Lower values mean other nodes find this device sooner but use more airtime.</div>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <strong>Stamp cost</strong>
+          <label style="margin-top:8px">PoW difficulty (leading zero bits)</label>
+          <select id="disc-stamp-cost">
+            <option value="0">0 — no proof-of-work (default)</option>
+            <option value="8">8 bits</option>
+            <option value="12">12 bits</option>
+            <option value="16">16 bits</option>
+          </select>
+          <div class="muted" style="margin-top:4px">Higher values raise the CPU cost of announcing — useful where a listener (e.g. rmap.world) requires a minimum stamp. Generation runs once per announce.</div>
+        </div>
+        <div class="muted" id="disc-status" style="margin-top:8px;font-size:11px"></div>
       </div>
 
       <!-- ============== Time tab ============== -->
@@ -6035,6 +6082,7 @@ function selectSettingsTab(tabId) {
   if (tabId !== 'time') stopTimeTicker();
   // Lazy-populate per-tab data so the modal opens snappily.
   if (tabId === 'connectivity') { populateRadioTab(); populateWifiTab(); populateDiagTab(); }
+  if (tabId === 'discovery')    { populateDiscoveryTab(); }
   if (tabId === 'time')         { populateTimeTab(); }
   if (tabId === 'identity')     populateIdentityTab();
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
@@ -6680,6 +6728,71 @@ $('btn-logout').addEventListener('click', () => withBusy($('btn-logout'), async 
   if (_unsubscribe) { _unsubscribe(); _unsubscribe = null; }
   location.reload();
 }));
+
+// ============================== DISCOVERY SETTINGS ==============================
+// Mirrors GET/POST /api/discovery/state. Enabling the master toggle
+// puts the device on-air with periodic announces, so the firmware
+// gates that direction behind the identity-code physical-presence
+// check. The dropdowns auto-save on change; the master toggle saves
+// after collecting the identity code (and reverts on cancel).
+async function populateDiscoveryTab() {
+  const status = $('disc-status');
+  if (status) status.textContent = '';
+  try {
+    const [s, id] = await Promise.all([
+      state.transport._req('/api/discovery/state'),
+      state.transport._req('/api/discovery/identity'),
+    ]);
+    $('disc-enabled').checked = !!s.enabled;
+    const ivSel = $('disc-interval');
+    ivSel.value = String(s.default_interval_min ?? 360);
+    if (ivSel.selectedIndex === -1) ivSel.value = '360';
+    const scSel = $('disc-stamp-cost');
+    scSel.value = String(s.default_stamp_cost ?? 0);
+    if (scSel.selectedIndex === -1) scSel.value = '0';
+    $('disc-identity-hash').textContent = id.ready ? id.hash : 'not generated yet';
+  } catch (e) {
+    if (status) status.textContent = 'Could not load: ' + (e.message || e);
+  }
+}
+async function saveDiscoveryField(body) {
+  const status = $('disc-status');
+  try {
+    const updated = await state.transport._req('/api/discovery/state', { method: 'POST', body });
+    if (status) {
+      status.textContent = 'Saved.';
+      setTimeout(() => { status.textContent = ''; }, 2000);
+    }
+    return updated;
+  } catch (e) {
+    if (status) status.textContent = 'Save failed: ' + (e.message || e);
+    throw e;
+  }
+}
+$('disc-enabled').addEventListener('change', async (ev) => {
+  const cb = ev.target;
+  const wantOn = cb.checked;
+  if (!wantOn) {
+    // Disable path: bearer-only, no prompt.
+    try { await saveDiscoveryField({ enabled: false }); }
+    catch { cb.checked = true; }
+    return;
+  }
+  // Enable path: collect identity code, then save. Revert the checkbox
+  // if the user cancels or the save fails.
+  state.pendingIdCodeAction = async (code) => {
+    if (!code) { cb.checked = false; return; }
+    try { await saveDiscoveryField({ enabled: true, identity_code: code }); }
+    catch { cb.checked = false; }
+  };
+  openIdCodeModal();
+});
+$('disc-interval').addEventListener('change', async (ev) => {
+  await saveDiscoveryField({ default_interval_min: parseInt(ev.target.value, 10) || 360 });
+});
+$('disc-stamp-cost').addEventListener('change', async (ev) => {
+  await saveDiscoveryField({ default_stamp_cost: parseInt(ev.target.value, 10) || 0 });
+});
 
 // ============================== IDENTITY CODE MODAL ==============================
 function openIdCodeModal() {

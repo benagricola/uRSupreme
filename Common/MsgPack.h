@@ -13,13 +13,10 @@
 // the WiFi/lwIP fragmentation we worked to clear. Until the library
 // supports a custom allocator (or we fork+patch one), the
 // hand-rolled encoder lets us pre-allocate the destination buffer
-// in PSRAM and pack into it directly. See task "Revisit
-// hideakitai/MsgPack adoption when allocator-pluggable".
+// in PSRAM and pack into it directly.
 //
-// Originally lived inline in LXMF/LXMFMinimal.h::RawMsgPack (PR #17);
-// extracted here so Discovery and any other downstream code share
-// the same encoder. Single source of truth for msgpack across the
-// project.
+// Single source of truth for msgpack encoding across the project —
+// used by LXMF wire-format builders and by Discovery announces.
 //
 // What's here:
 //   reads  — read_bin_or_str, skip_element

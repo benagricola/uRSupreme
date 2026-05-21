@@ -38,6 +38,8 @@
 #include "../Storage/Migration.h"
 #include "../Telemetry/Battery.h"
 #include "../Discovery/Config.h"
+#include "../Discovery/State.h"
+#include "../Discovery/Identity.h"
 #if HAS_WIFI && defined(TCP_TRANSPORT)
 #include "../TCPTransport.h"
 #endif
@@ -717,15 +719,26 @@ namespace Web {
       on_json_post("/api/radio",         handle_radio_set);
       on_json_post("/api/radio/reset",   handle_radio_reset);
       on_json_post("/api/radio/airtime", handle_radio_airtime);
-      // Discovery / TCP-client endpoints. List + add are bearer-only;
-      // the per-row PATCH is identity-code-gated only when the
-      // requested change ENABLES discovery (per the privacy-by-design
-      // rule — disabling / making private doesn't need physical
-      // presence). DELETE is bearer-only.
+      // TCP-client endpoint CRUD. Registered only when the build
+      // actually includes the TCP transport — otherwise the routes
+      // don't exist at all, and the SPA learns that from the
+      // transports.tcp_client flag on /api/info.
+      // List + add are bearer-only; per-row PATCH requires the
+      // identity code only when enabling discovery on the entry.
+      // DELETE is bearer-only.
+#if HAS_WIFI && defined(TCP_TRANSPORT)
       server.on("/api/transport/tcp_clients",    HTTP_GET,    handle_tcp_clients_list);
       on_json_post("/api/transport/tcp_clients", handle_tcp_clients_add);
       server.on(uri("/api/transport/tcp_clients/{}"), HTTP_DELETE, handle_tcp_clients_remove);
       on_json_post("/api/transport/tcp_clients/{}/patch", handle_tcp_clients_patch);
+#endif
+      // Discovery master state (toggle, default interval, default stamp
+      // cost) + persistent network identity. Enabling the master toggle
+      // requires identity-code physical presence; reads + disable are
+      // bearer-only.
+      server.on("/api/discovery/state",          HTTP_GET,  handle_discovery_state_get);
+      on_json_post("/api/discovery/state",                  handle_discovery_state_set);
+      server.on("/api/discovery/identity",       HTTP_GET,  handle_discovery_identity_get);
     }
 
     static void handle_spa(AsyncWebServerRequest* req) {
@@ -897,6 +910,20 @@ namespace Web {
         // anyone seeing the bootstrap network on their phone.
         wifi["auth"]        = "open";
       }
+      // Build-time transport capabilities. The SPA hides config UI for
+      // any transport that reports false so users never see knobs that
+      // can't take effect on this firmware.
+      JsonObject transports = doc["transports"].to<JsonObject>();
+      transports["lora"]        = true;
+#if HAS_WIFI && defined(TCP_TRANSPORT)
+      transports["tcp_client"]  = true;
+      transports["tcp_server"]  = true;
+#else
+      transports["tcp_client"]  = false;
+      transports["tcp_server"]  = false;
+#endif
+      transports["udp"]         = false;
+      transports["bluetooth"]   = false;
       // /api/info is the lightweight always-polled endpoint covering
       // radio + transport + WiFi + a battery summary (percent+state
       // for the topbar icon). Storage / sensors / outbound caps and
@@ -2739,8 +2766,65 @@ namespace Web {
       send_json(req, 200, doc);
     }
 
-    // -------------- TCP client endpoint CRUD (Discovery commit 5) --------------
-    //
+    // Discovery::State holds the persistent master toggle, default
+    // announce interval, and default stamp cost (/reticulum/discovery.json).
+    // Discovery::Identity holds the long-lived keypair that signs every
+    // announce (/reticulum/network_identity.bin). These three handlers
+    // are read/write surfaces for the Discovery settings tab.
+
+    static void handle_discovery_state_get(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      const Discovery::State::Master& s = Discovery::State::current();
+      Web::PsramJsonDocument doc;
+      doc["enabled"]              = s.enabled;
+      doc["default_interval_min"] = s.default_interval_min;
+      doc["default_stamp_cost"]   = s.default_stamp_cost;
+      doc["min_interval_min"]     = Discovery::State::MIN_INTERVAL_MIN;
+      doc["max_interval_min"]     = Discovery::State::MAX_INTERVAL_MIN;
+      send_json(req, 200, doc);
+    }
+
+    static void handle_discovery_state_set(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      const Discovery::State::Master& cur = Discovery::State::current();
+      // Identity-code gate on the only direction that puts the device
+      // ON-AIR: turning enabled false→true. Disabling, interval change,
+      // and stamp cost change are bearer-only — they can never broaden
+      // emission.
+      bool wants_enable = false;
+      if (body["enabled"].is<bool>()) {
+        wants_enable = body["enabled"].as<bool>() && !cur.enabled;
+      }
+      if (wants_enable && !require_physical_auth(req, body)) return;
+
+      if (body["enabled"].is<bool>()) {
+        Discovery::State::set_enabled(body["enabled"].as<bool>());
+      }
+      if (body["default_interval_min"].is<int>()) {
+        Discovery::State::set_default_interval_min(
+            (uint32_t)body["default_interval_min"].as<int>());
+      }
+      if (body["default_stamp_cost"].is<int>()) {
+        Discovery::State::set_default_stamp_cost(
+            (uint32_t)body["default_stamp_cost"].as<int>());
+      }
+      handle_discovery_state_get(req);
+    }
+
+    static void handle_discovery_identity_get(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      Web::PsramJsonDocument doc;
+      doc["ready"] = Discovery::Identity::ready();
+      if (Discovery::Identity::ready()) {
+        doc["hash"] = Discovery::Identity::address_hex();
+      }
+      send_json(req, 200, doc);
+    }
+
+#if HAS_WIFI && defined(TCP_TRANSPORT)
     // /reticulum/interfaces.json (managed by Discovery::Config) is the
     // source of truth for outbound TCP client interface definitions.
     // TCPTransport keeps the live runtime — its add_client / remove_client
@@ -2752,7 +2836,6 @@ namespace Web {
     static void handle_tcp_clients_list(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
-#if HAS_WIFI && defined(TCP_TRANSPORT)
       Web::PsramJsonDocument doc;
       JsonArray arr = doc["clients"].to<JsonArray>();
       // Walk the in-memory Discovery::Config map. For each tcp_client
@@ -2774,16 +2857,11 @@ namespace Web {
       doc["capacity"]    = TCPTransport::client_capacity();
       doc["live_count"]  = TCPTransport::live_client_count();
       send_json(req, 200, doc);
-#else
-      send_error_with_message(req, 503, "tcp_transport_disabled",
-        "This firmware build does not include TCP transport support.");
-#endif
     }
 
     static void handle_tcp_clients_add(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
-#if HAS_WIFI && defined(TCP_TRANSPORT)
       std::string name = (const char*)(body["name"] | "");
       std::string host = (const char*)(body["host"] | "");
       int port         = (int)(body["port"] | 0);
@@ -2828,16 +2906,11 @@ namespace Web {
       doc["port"]         = port;
       doc["discoverable"] = discoverable;
       send_json(req, 201, doc);
-#else
-      send_error_with_message(req, 503, "tcp_transport_disabled",
-        "This firmware build does not include TCP transport support.");
-#endif
     }
 
     static void handle_tcp_clients_remove(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
-#if HAS_WIFI && defined(TCP_TRANSPORT)
       const std::string name = std::string(req->pathArg(0).c_str());
       Discovery::Config::Entry e;
       if (!Discovery::Config::get(name, &e) || e.type != Discovery::Config::Type::TcpClient) {
@@ -2851,16 +2924,11 @@ namespace Web {
       doc["status"] = "removed";
       doc["name"]   = name;
       send_json(req, 200, doc);
-#else
-      send_error_with_message(req, 503, "tcp_transport_disabled",
-        "This firmware build does not include TCP transport support.");
-#endif
     }
 
     static void handle_tcp_clients_patch(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
-#if HAS_WIFI && defined(TCP_TRANSPORT)
       const std::string name = std::string(req->pathArg(0).c_str());
       Discovery::Config::Entry e;
       if (!Discovery::Config::get(name, &e) || e.type != Discovery::Config::Type::TcpClient) {
@@ -2910,11 +2978,8 @@ namespace Web {
       doc["port"]         = e.port;
       doc["discoverable"] = e.discoverable;
       send_json(req, 200, doc);
-#else
-      send_error_with_message(req, 503, "tcp_transport_disabled",
-        "This firmware build does not include TCP transport support.");
-#endif
     }
+#endif  // HAS_WIFI && TCP_TRANSPORT
 
     static void handle_radio_telemetry(AsyncWebServerRequest* req) {
       if (require_auth(req).empty()) return;

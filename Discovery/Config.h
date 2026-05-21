@@ -23,9 +23,9 @@
 //   }
 //
 // Master discovery state (master_enabled, default_interval_min,
-// default_stamp_cost) lives in a SEPARATE file (/reticulum/
-// discovery.json, landing in commit 4) so this file is purely the
-// per-interface registry.
+// default_stamp_cost) lives in a SEPARATE file (/reticulum/discovery.json,
+// owned by Discovery::State) so this file is purely the per-interface
+// registry.
 
 #pragma once
 

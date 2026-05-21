@@ -1410,7 +1410,7 @@ summary:hover { color: var(--text); }
       </div>
       <div>
         <label>Port</label>
-        <input id="cn-tcp-port" type="number" min="1" max="65535" value="4965">
+        <input id="cn-tcp-port" type="number" min="1" max="65535" value="4242">
       </div>
     </div>
     <p class="muted" style="margin:8px 0 0;font-size:11px">
@@ -1572,12 +1572,11 @@ summary:hover { color: var(--text); }
         <details class="cn-section" data-cn="radio" open>
           <summary>LoRa Radio <span class="cn-dot" id="cn-dot-radio" hidden></span></summary>
           <div class="cn-section-body">
-            <p class="muted" id="rd-intro">Pick the region preset that matches your local LoRa community. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.</p>
             <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0">
               <input type="checkbox" id="rd-discoverable" style="width:auto;min-height:auto">
               <span>Publicly advertise this interface</span>
             </label>
-            <div class="muted" style="margin:4px 0 12px">
+            <div class="muted" style="margin:4px 0 14px">
               Periodically sends an <code>rnstransport.discovery.interface</code>
               announce over LoRa. The announce contains this device's identity
               hash, radio parameters (frequency, bandwidth, SF, coding rate),
@@ -1588,6 +1587,7 @@ summary:hover { color: var(--text); }
               can plot the device on a map.
             </div>
             <label>Region preset</label>
+            <p class="muted" id="rd-intro" style="margin:4px 0 6px">Pick the region preset that matches your local LoRa community. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.</p>
             <select id="rd-preset" style="margin-bottom:6px"></select>
             <div class="muted" id="rd-preset-note" style="margin-bottom:14px;min-height:14px"></div>
             <div id="rd-raw">
@@ -6230,8 +6230,14 @@ async function populateRadioTab() {
   try {
     const d = await state.transport._req('/api/transport/lora/discoverable');
     $('rd-discoverable').checked = !!d.discoverable;
-    setConnectivityDot('cn-dot-radio', d.discoverable ? 'ok' : '');
   } catch { /* leave checkbox in last state */ }
+  // Header dot reflects the radio's live state, not the discoverable
+  // flag — "is the LoRa interface up and able to send/receive?", not
+  // "are we advertising it?".
+  const radio = (state.lastInfo && state.lastInfo.radio) || {};
+  setConnectivityDot('cn-dot-radio',
+    radio.online ? 'ok' :
+    radio.have_conf ? 'err' : 'warn');
 }
 
 $('rd-discoverable').addEventListener('change', (ev) => {
@@ -6243,7 +6249,6 @@ $('rd-discoverable').addEventListener('change', (ev) => {
     try {
       await state.transport._req('/api/transport/lora/discoverable',
         { method: 'POST', body });
-      setConnectivityDot('cn-dot-radio', wantOn ? 'ok' : '');
       toast('LoRa interface ' + (wantOn ? 'is now publicly advertised' : 'is no longer advertised'));
     } catch (e) {
       cb.checked = !wantOn;
@@ -6339,7 +6344,16 @@ async function populateTcpClientsList() {
     const clients = r.clients || [];
     const cap     = r.capacity   ?? 0;
     const live    = r.live_count ?? 0;
-    setConnectivityDot('cn-dot-tcp', live > 0 ? 'ok' : (clients.length ? 'warn' : ''));
+    // Header dot: green if every configured client is connected,
+    // yellow if some are, red if none are. Hidden when no clients
+    // are configured (no failure state to communicate).
+    let headerCls = '';
+    if (clients.length > 0) {
+      headerCls = live === clients.length ? 'ok'
+                : live > 0                ? 'warn'
+                : 'err';
+    }
+    setConnectivityDot('cn-dot-tcp', headerCls);
     if (clients.length === 0) {
       wrap.innerHTML = '<p class="muted">No TCP clients configured.</p>';
       return;
@@ -6348,9 +6362,16 @@ async function populateTcpClientsList() {
     for (const c of clients) {
       const row = el('div', { class: 'cn-tcp-row' });
       const info = el('div', { class: 'cn-tcp-info' });
-      info.append(el('div', { text: c.name }));
+      // Per-row dot: green when this client's link is live, red
+      // otherwise. Sits next to the name so a row's state is
+      // visible at a glance without parsing the subline text.
+      const nameRow = el('div', { style: 'display:flex;align-items:center;gap:6px' },
+        el('span', { class: 'cn-dot ' + (c.online ? 'ok' : 'err') }),
+        el('span', { text: c.name }),
+      );
+      info.append(nameRow);
       info.append(el('div', { class: 'muted',
-        text: `${c.host}:${c.port} — ${c.online ? 'connected' : 'offline'}` }));
+        text: `${c.host}:${c.port}` }));
       row.append(info);
       const rmBtn = el('button', { class: 'secondary', text: '✕',
         title: 'Remove this TCP client', style: 'padding:4px 8px;margin:0' });
@@ -6394,7 +6415,7 @@ async function onTcpRemove(client) {
 function openAddTcpModal() {
   $('cn-tcp-name').value = '';
   $('cn-tcp-host').value = '';
-  $('cn-tcp-port').value = '4965';
+  $('cn-tcp-port').value = '4242';
   $('cn-tcp-status').textContent = '';
   $('modal-tcp-add').hidden = false;
 }

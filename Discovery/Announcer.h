@@ -121,12 +121,10 @@ namespace _detail {
       b.lat(fix.latitude_deg);
       b.lon(fix.longitude_deg);
     }
-    // Upstream always emits HEIGHT (defaults to 0.0 if unset). We
-    // don't have a barometric sensor wired up to derive altitude
-    // and the GPS module doesn't surface it through our driver yet,
-    // so send 0.0 as a parity marker — matches what an unconfigured
-    // upstream node sends.
-    b.height(0.0);
+    // HEIGHT: GPS altitude in metres when we have a GGA-derived fix,
+    // 0.0 otherwise. Matches upstream's "always emit, default to 0.0
+    // if unknown" convention.
+    b.height(fix.altitude_valid ? fix.altitude_m : 0.0);
     switch (cfg.type) {
       case Config::Type::Lora:
         b.interface_type(TYPE_LORA);

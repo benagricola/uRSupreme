@@ -1328,6 +1328,7 @@ namespace Web {
         o["valid"]        = f.valid;
         o["latitude"]     = f.latitude_deg;
         o["longitude"]    = f.longitude_deg;
+        if (f.altitude_valid) o["altitude_m"] = f.altitude_m;
         o["speed_knots"]  = f.speed_knots;
         o["heading"]      = f.heading_deg;
         o["unix_ms"]      = (uint64_t)(f.unix_epoch * 1000.0);

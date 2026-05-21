@@ -53,6 +53,11 @@ struct Fix {
   bool     valid           = false;  // RMC status flag = 'A'
   double   latitude_deg    = 0.0;    // signed decimal degrees
   double   longitude_deg   = 0.0;    // signed decimal degrees
+  double   altitude_m      = 0.0;    // Mean-sea-level altitude in metres (from GGA).
+                                     // Updated independently from lat/lon — GGA arrives
+                                     // separately from RMC each second.
+  bool     altitude_valid  = false;  // True once we've seen at least one GGA with
+                                     // fix_quality >= 1 since boot (or since last fix lost).
   double   speed_knots     = 0.0;
   double   heading_deg     = 0.0;
   double   unix_epoch      = 0.0;    // UTC seconds since 1970
@@ -191,20 +196,44 @@ namespace _detail {
     if (len && *p == '$') { ++p; --len; }
     while (len && (p[len - 1] == '\r' || p[len - 1] == '\n')) --len;
     if (!checksum_ok(p - 1, len + 1) && !checksum_ok(p, len)) return;
-    // Only care about RMC sentences. Talker IDs vary by constellation
-    // (GP, GN, GL, GA, BD); match suffix.
+    // Talker IDs vary by constellation (GP, GN, GL, GA, BD); match
+    // the suffix three chars. Two sentence types are handled here:
+    //   RMC — time + lat/lon + speed + heading
+    //   GGA — altitude (and a redundant lat/lon we ignore)
     if (len < 5) return;
-    if (p[2] != 'R' || p[3] != 'M' || p[4] != 'C') return;
+    const bool is_rmc = (p[2] == 'R' && p[3] == 'M' && p[4] == 'C');
+    const bool is_gga = (p[2] == 'G' && p[3] == 'G' && p[4] == 'A');
+    if (!is_rmc && !is_gga) return;
     // Cut at the '*' before checksum so split_fields doesn't include it.
     char* star = (char*)memchr(p, '*', len);
     if (star) { *star = '\0'; len = (size_t)(star - p); }
-    // Drop the talker prefix + "RMC" + comma. Fields[0..] are the
-    // RMC body.
+    // Drop the talker prefix + sentence type + comma. fields[0..] are
+    // the sentence body.
     char* body = (char*)memchr(p, ',', len);
     if (!body) return;
     ++body;
     char* fields[16] = {nullptr};
     const size_t nfields = split_fields(body, len - (body - p), fields, 16);
+    if (is_gga) {
+      // GGA body fields:
+      //   [0] UTC time, [1] lat ddmm.mmmm, [2] N/S, [3] lon dddmm.mmmm,
+      //   [4] E/W, [5] fix quality (0=no fix, 1=GPS, 2=DGPS, ...),
+      //   [6] num sats, [7] HDOP, [8] altitude, [9] altitude units (M),
+      //   [10] geoid separation, [11] geoid units, ...
+      // Use altitude only when fix_quality >= 1.
+      if (nfields < 10) return;
+      const int fq = fields[5] ? atoi(fields[5]) : 0;
+      Fix& f = fix_ref();
+      if (fq <= 0) {
+        f.altitude_valid = false;
+        return;
+      }
+      if (fields[8] && fields[8][0] != '\0') {
+        f.altitude_m     = atof(fields[8]);
+        f.altitude_valid = true;
+      }
+      return;
+    }
     if (nfields < 10) return;
     Fix& f = fix_ref();
     f.valid = (fields[1] && fields[1][0] == 'A');

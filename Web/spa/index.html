@@ -453,6 +453,12 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .modal-body {
   flex: 1; overflow-y: auto; padding: 14px;
   display: flex; flex-direction: column;
+  /* Flex items default to `min-height: auto`, which refuses to shrink
+     below intrinsic content size. Without `min-height: 0` here, a
+     tall tab-panel would grow .modal-body past the parent's max-height
+     and push the tab bar off the top of the modal instead of giving
+     this scroller a scrollbar. */
+  min-height: 0;
 }
 .modal-body .card {
   background: var(--bg);
@@ -528,6 +534,33 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   margin-bottom: 10px;
   overflow: hidden;
 }
+/* Small status dot shown in each accordion header. Colour comes from
+   the per-section JS — green when the transport is active and a peer
+   is connected, amber when configured-but-down, red on error. Hidden
+   by default; populateConnectivityTab toggles `hidden` + sets style. */
+.cn-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-left: 6px;
+  vertical-align: middle;
+  background: var(--text-mute);
+}
+.cn-dot.ok   { background: #4ade80; }
+.cn-dot.warn { background: #fbbf24; }
+.cn-dot.err  { background: #f87171; }
+/* TCP-client list row inside the Connectivity panel. */
+.cn-tcp-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--bg-elev-2);
+  font-size: 13px;
+}
+.cn-tcp-row:last-child { border-bottom: none; }
+.cn-tcp-row .cn-tcp-info { flex: 1; min-width: 0; }
+.cn-tcp-row .cn-tcp-info .muted { font-size: 11px; }
+.cn-tcp-row label { display: flex; align-items: center; gap: 4px; font-size: 11px; margin: 0; }
+.cn-tcp-row label input { width: auto; min-height: auto; }
 .cn-section > summary {
   list-style: none;
   cursor: pointer;
@@ -1346,6 +1379,38 @@ summary:hover { color: var(--text); }
   </div>
 </div>
 
+<!-- ===================== ADD TCP CLIENT MODAL ===================== -->
+<div id="modal-tcp-add" class="modal-bg" hidden style="z-index:260">
+  <div class="modal" style="max-width:460px">
+    <h3>Add a TCP client</h3>
+    <p class="muted" style="margin-bottom:10px">Connect outbound to another Reticulum node by hostname or IP. The link comes up immediately and persists across reboots.</p>
+    <label>Name</label>
+    <input id="cn-tcp-name" placeholder="e.g. amsterdam-hub" maxlength="32" style="margin-bottom:8px">
+    <div class="row" style="margin-bottom:8px">
+      <div>
+        <label>Host</label>
+        <input id="cn-tcp-host" placeholder="hub.example.org" style="font-family:ui-monospace,monospace">
+      </div>
+      <div>
+        <label>Port</label>
+        <input id="cn-tcp-port" type="number" min="1" max="65535" value="4965">
+      </div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:8px 0 0">
+      <input type="checkbox" id="cn-tcp-discoverable" style="width:auto;min-height:auto">
+      <span>Announce this connection on discovery</span>
+    </label>
+    <p class="muted" id="cn-tcp-code-hint" style="margin:6px 0 0;font-size:11px" hidden>Enabling discoverable requires the identity code shown on the device's display.</p>
+    <label id="cn-tcp-code-label" style="margin-top:8px" hidden>Identity code</label>
+    <input id="cn-tcp-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:12px" hidden>
+    <div class="row" style="margin-top:12px">
+      <button class="secondary" id="cn-tcp-cancel">Cancel</button>
+      <button id="cn-tcp-save">Add</button>
+    </div>
+    <div class="muted" id="cn-tcp-status" style="margin-top:8px;font-size:11px"></div>
+  </div>
+</div>
+
 <!-- ===================== IMAGE VIEWER MODAL ===================== -->
 <!-- Full-screen image preview opened by clicking any inline-rendered
      image attachment in a chat bubble. Tap the image to toggle between
@@ -1487,9 +1552,13 @@ summary:hover { color: var(--text); }
         <div class="warn" style="margin:0 0 12px">⚠ Connectivity settings are <strong>device-wide</strong> — they apply to every identity stored on this device. Changing radio params reboots the device and may interrupt active conversations.</div>
 
         <details class="cn-section" data-cn="radio" open>
-          <summary>LoRa Radio</summary>
+          <summary>LoRa Radio <span class="cn-dot" id="cn-dot-radio" hidden></span></summary>
           <div class="cn-section-body">
             <p class="muted" id="rd-intro">Pick the region preset that matches your local LoRa community. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.</p>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0 0 12px">
+              <input type="checkbox" id="rd-discoverable" style="width:auto;min-height:auto">
+              <span>Announce this radio on discovery — let other Reticulum nodes find this device on the air</span>
+            </label>
             <label>Region preset</label>
             <select id="rd-preset" style="margin-bottom:6px"></select>
             <div class="muted" id="rd-preset-note" style="margin-bottom:14px;min-height:14px"></div>
@@ -1535,13 +1604,24 @@ summary:hover { color: var(--text); }
         </details>
 
         <details class="cn-section" data-cn="wifi">
-          <summary>WiFi</summary>
+          <summary>WiFi <span class="cn-dot" id="cn-dot-wifi" hidden></span></summary>
           <div class="cn-section-body">
             <p class="muted" style="margin-bottom:10px">Networks this device has credentials for. Forgetting one wipes the SSID + password from the device and reboots into softAP for reconfiguration.</p>
             <div id="cn-wifi-saved-list" style="margin-bottom:10px">
               <p class="muted">Loading…</p>
             </div>
             <button class="secondary" id="btn-wifi-add" style="width:100%">Add a network…</button>
+          </div>
+        </details>
+
+        <details class="cn-section" data-cn="tcp" hidden>
+          <summary>TCP clients <span class="cn-dot" id="cn-dot-tcp" hidden></span></summary>
+          <div class="cn-section-body">
+            <p class="muted" style="margin-bottom:10px">Outbound TCP links to other Reticulum nodes. Useful for joining a remote network over the internet, or for a wired LAN bridge. Each entry connects on boot and reconnects automatically if dropped.</p>
+            <div id="cn-tcp-list" style="margin-bottom:10px">
+              <p class="muted">Loading…</p>
+            </div>
+            <button class="secondary" id="btn-tcp-add" style="width:100%">Add a TCP client…</button>
           </div>
         </details>
 
@@ -6050,7 +6130,39 @@ async function populateRadioTab() {
   } catch (e) {
     toast('Could not read radio state: ' + (e.message || e), 'error');
   }
+  try {
+    const d = await state.transport._req('/api/transport/lora/discoverable');
+    $('rd-discoverable').checked = !!d.discoverable;
+    setConnectivityDot('cn-dot-radio', d.discoverable ? 'ok' : '');
+  } catch { /* leave checkbox in last state */ }
 }
+
+$('rd-discoverable').addEventListener('change', (ev) => {
+  const cb = ev.target;
+  const wantOn = cb.checked;
+  const apply = async (code) => {
+    const body = { discoverable: wantOn };
+    if (code) body.identity_code = code;
+    try {
+      await state.transport._req('/api/transport/lora/discoverable',
+        { method: 'POST', body });
+      setConnectivityDot('cn-dot-radio', wantOn ? 'ok' : '');
+      toast('LoRa discoverable ' + (wantOn ? 'enabled' : 'disabled'));
+    } catch (e) {
+      cb.checked = !wantOn;
+      toast('Could not save: ' + (e.message || e), 'error');
+    }
+  };
+  if (wantOn) {
+    state.pendingIdCodeAction = (code) => {
+      if (!code) { cb.checked = false; return; }
+      apply(code);
+    };
+    openIdCodeModal();
+  } else {
+    apply();
+  }
+});
 
 async function populateIdentityTab() {
   try {
@@ -6081,7 +6193,7 @@ function selectSettingsTab(tabId) {
   // restarts it when we re-enter.
   if (tabId !== 'time') stopTimeTicker();
   // Lazy-populate per-tab data so the modal opens snappily.
-  if (tabId === 'connectivity') { populateRadioTab(); populateWifiTab(); populateDiagTab(); }
+  if (tabId === 'connectivity') { applyTransportCapabilities(); populateRadioTab(); populateWifiTab(); populateTcpClientsList(); populateDiagTab(); }
   if (tabId === 'discovery')    { populateDiscoveryTab(); }
   if (tabId === 'time')         { populateTimeTab(); }
   if (tabId === 'identity')     populateIdentityTab();
@@ -6099,6 +6211,165 @@ function populateDiagTab() {
   if (!cb) return;
   cb.checked = !!(state.lastInfo && state.lastInfo.kiss_serial_output);
 }
+
+// Hide/show Connectivity accordion sections based on what the firmware
+// was actually built with. The transports capability dict comes from
+// /api/info → transports.{lora,tcp_client,tcp_server,udp,bluetooth}.
+// Sections for absent transports are hidden so users can't open
+// configuration that can't take effect.
+function applyTransportCapabilities() {
+  const t = (state.lastInfo && state.lastInfo.transports) || {};
+  const setVisible = (selector, visible) => {
+    document.querySelectorAll(selector).forEach(el => { el.hidden = !visible; });
+  };
+  setVisible('details[data-cn="radio"]', t.lora !== false);
+  setVisible('details[data-cn="tcp"]',   !!t.tcp_client);
+  setVisible('details[data-cn="bt"]',    !!t.bluetooth);
+}
+
+// Render the TCP-clients list inside the Connectivity tab. Each row
+// shows host:port, an online dot, a discoverable checkbox, and a
+// remove button. Online dot mirrors the firmware's per-client
+// runtime status from /api/transport/tcp_clients.
+async function populateTcpClientsList() {
+  const wrap = $('cn-tcp-list');
+  if (!wrap) return;
+  const t = (state.lastInfo && state.lastInfo.transports) || {};
+  if (!t.tcp_client) return;
+  wrap.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const r = await state.transport._req('/api/transport/tcp_clients');
+    const clients = r.clients || [];
+    const cap     = r.capacity   ?? 0;
+    const live    = r.live_count ?? 0;
+    setConnectivityDot('cn-dot-tcp', live > 0 ? 'ok' : (clients.length ? 'warn' : ''));
+    if (clients.length === 0) {
+      wrap.innerHTML = '<p class="muted">No TCP clients configured.</p>';
+      return;
+    }
+    wrap.innerHTML = '';
+    for (const c of clients) {
+      const row = el('div', { class: 'cn-tcp-row' });
+      const info = el('div', { class: 'cn-tcp-info' });
+      info.append(el('div', { text: c.name }));
+      info.append(el('div', { class: 'muted',
+        text: `${c.host}:${c.port} — ${c.online ? 'connected' : 'offline'}` }));
+      row.append(info);
+      const discLabel = el('label', { title: 'Announce this connection on discovery' });
+      const discCb = el('input', { type: 'checkbox' });
+      discCb.checked = !!c.discoverable;
+      discCb.addEventListener('change', () => onTcpDiscoverableToggle(c, discCb));
+      discLabel.append(discCb, el('span', { text: 'discover' }));
+      row.append(discLabel);
+      const rmBtn = el('button', { class: 'secondary', text: '✕',
+        title: 'Remove this TCP client', style: 'padding:4px 8px;margin:0' });
+      rmBtn.addEventListener('click', () => onTcpRemove(c));
+      row.append(rmBtn);
+      wrap.append(row);
+    }
+    if (cap && live >= cap) {
+      const note = el('p', { class: 'muted',
+        text: `All ${cap} TCP client slots in use — remove one before adding another.` });
+      wrap.append(note);
+    }
+  } catch (e) {
+    wrap.innerHTML = `<p class="muted">Could not load: ${e.message || e}</p>`;
+  }
+}
+function setConnectivityDot(id, cls) {
+  const dot = $(id);
+  if (!dot) return;
+  dot.classList.remove('ok','warn','err');
+  if (cls) { dot.classList.add(cls); dot.hidden = false; }
+  else      { dot.hidden = true; }
+}
+async function onTcpDiscoverableToggle(client, cb) {
+  const wantOn = cb.checked;
+  const body = { discoverable: wantOn };
+  const apply = async () => {
+    try {
+      await state.transport._req(
+        '/api/transport/tcp_clients/' + encodeURIComponent(client.name) + '/patch',
+        { method: 'POST', body });
+      toast('Discoverable ' + (wantOn ? 'enabled' : 'disabled'));
+    } catch (e) {
+      cb.checked = !wantOn;
+      toast('Could not save: ' + (e.message || e), 'error');
+    }
+  };
+  if (wantOn) {
+    state.pendingIdCodeAction = (code) => {
+      if (!code) { cb.checked = false; return; }
+      body.identity_code = code;
+      apply();
+    };
+    openIdCodeModal();
+  } else {
+    apply();
+  }
+}
+async function onTcpRemove(client) {
+  const ok = await showConfirm({
+    title: 'Remove TCP client?',
+    body: `Disconnect and forget ${client.name} (${client.host}:${client.port})?`,
+    okLabel: 'Remove', destructive: true,
+  });
+  if (!ok) return;
+  try {
+    await state.transport._req(
+      '/api/transport/tcp_clients/' + encodeURIComponent(client.name),
+      { method: 'DELETE' });
+    populateTcpClientsList();
+  } catch (e) {
+    toast('Remove failed: ' + (e.message || e), 'error');
+  }
+}
+
+function openAddTcpModal() {
+  $('cn-tcp-name').value = '';
+  $('cn-tcp-host').value = '';
+  $('cn-tcp-port').value = '4965';
+  $('cn-tcp-discoverable').checked = false;
+  $('cn-tcp-code').value = '';
+  updateTcpCodeVisibility();
+  $('cn-tcp-status').textContent = '';
+  $('modal-tcp-add').hidden = false;
+}
+function updateTcpCodeVisibility() {
+  const need = $('cn-tcp-discoverable').checked;
+  $('cn-tcp-code-hint').hidden  = !need;
+  $('cn-tcp-code-label').hidden = !need;
+  $('cn-tcp-code').hidden       = !need;
+}
+$('btn-tcp-add').addEventListener('click', openAddTcpModal);
+$('cn-tcp-cancel').addEventListener('click', () => { $('modal-tcp-add').hidden = true; });
+$('cn-tcp-discoverable').addEventListener('change', updateTcpCodeVisibility);
+$('cn-tcp-save').addEventListener('click', async () => {
+  const name = $('cn-tcp-name').value.trim();
+  const host = $('cn-tcp-host').value.trim();
+  const port = parseInt($('cn-tcp-port').value, 10);
+  const discoverable = $('cn-tcp-discoverable').checked;
+  const code = $('cn-tcp-code').value.trim();
+  const status = $('cn-tcp-status');
+  if (!name || !host || !(port > 0 && port < 65536)) {
+    status.textContent = 'Name, host, and a valid port (1–65535) are required.';
+    return;
+  }
+  if (discoverable && !code) {
+    status.textContent = 'Identity code is required to mark this connection discoverable.';
+    return;
+  }
+  const body = { name, host, port, discoverable };
+  if (discoverable) body.identity_code = code;
+  try {
+    await state.transport._req('/api/transport/tcp_clients', { method: 'POST', body });
+    $('modal-tcp-add').hidden = true;
+    populateTcpClientsList();
+    toast('TCP client added');
+  } catch (e) {
+    status.textContent = 'Failed: ' + (e.message || e);
+  }
+});
 
 // ============================== TIME SETTINGS ==============================
 // LXMF needs a real wall clock for the message-timestamp field. The

@@ -739,6 +739,12 @@ namespace Web {
       server.on("/api/discovery/state",          HTTP_GET,  handle_discovery_state_get);
       on_json_post("/api/discovery/state",                  handle_discovery_state_set);
       server.on("/api/discovery/identity",       HTTP_GET,  handle_discovery_identity_get);
+      // Per-built-in-interface discoverable toggle. The LoRa interface
+      // is always present on supreme; this endpoint reads/writes its
+      // Discovery::Config entry. Enabling requires identity-code; the
+      // disable / read paths are bearer-only.
+      server.on("/api/transport/lora/discoverable", HTTP_GET, handle_lora_discoverable_get);
+      on_json_post("/api/transport/lora/discoverable",         handle_lora_discoverable_set);
     }
 
     static void handle_spa(AsyncWebServerRequest* req) {
@@ -2811,6 +2817,37 @@ namespace Web {
             (uint32_t)body["default_stamp_cost"].as<int>());
       }
       handle_discovery_state_get(req);
+    }
+
+    static constexpr const char* LORA_IFACE_NAME = "LoRaInterface";
+
+    static void handle_lora_discoverable_get(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      Web::PsramJsonDocument doc;
+      Discovery::Config::Entry e;
+      const bool have = Discovery::Config::get(LORA_IFACE_NAME, &e);
+      doc["name"]         = LORA_IFACE_NAME;
+      doc["discoverable"] = have && e.discoverable;
+      send_json(req, 200, doc);
+    }
+
+    static void handle_lora_discoverable_set(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      const bool want = (bool)(body["discoverable"] | false);
+      Discovery::Config::Entry e;
+      const bool have = Discovery::Config::get(LORA_IFACE_NAME, &e);
+      const bool enabling = want && !(have && e.discoverable);
+      if (enabling && !require_physical_auth(req, body)) return;
+      e.type         = Discovery::Config::Type::Lora;
+      e.discoverable = want;
+      if (!Discovery::Config::upsert(LORA_IFACE_NAME, e)) {
+        send_error_with_message(req, 500, "persist_failed",
+          "Could not persist LoRa discoverable flag.");
+        return;
+      }
+      handle_lora_discoverable_get(req);
     }
 
     static void handle_discovery_identity_get(AsyncWebServerRequest* req) {

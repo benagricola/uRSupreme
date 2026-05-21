@@ -1154,12 +1154,27 @@ summary:hover { color: var(--text); }
 .iden-card:hover { background: var(--bg-elev-2); }
 .iden-card .name { font-weight: 600; }
 .iden-card .addr { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-dim); }
+
+/* Hide Alpine-bound elements until the framework has booted and
+   evaluated their x-show / x-if bindings, so we don't see a flash
+   of the wrong state on first paint. The defer'd <script> at the
+   end of <head> guarantees Alpine starts after DOMContentLoaded. */
+[x-cloak] { display: none !important; }
 </style>
 <script src="/alpine.min.js" defer></script>
 </head>
 <body>
 
-<div id="toast-reconnect" hidden>Reconnecting…</div>
+<!-- Alpine.js proof-of-concept: the reconnect toast is the simplest
+     real reactive element in the SPA. The shape we want for the full
+     migration: a single $store.X object backs each cross-cutting
+     concern, and templates bind via $store.X.field. The legacy
+     dispatchEvent / WS code keeps mutating its source-of-truth value
+     (here, `state.connected`) and Alpine renders. -->
+<div id="toast-reconnect"
+     x-data
+     x-show="$store.net && !$store.net.connected"
+     x-cloak>Reconnecting…</div>
 <div id="toast-stack"></div>
 
 <!-- ===================== BOOTSTRAP WIFI SETUP ===================== -->
@@ -2050,6 +2065,16 @@ summary:hover { color: var(--text); }
 <script>
 'use strict';
 
+// ============================== ALPINE STORES ==============================
+// Stand up Alpine reactive stores before Alpine boots. The defer'd
+// /alpine.min.js script will pick these up via the alpine:init event.
+// Tiny PoC: just network status, behind $store.net. The legacy code
+// keeps setting state.connected (already its own boolean); the store
+// mirrors it via a setter shim below.
+document.addEventListener('alpine:init', () => {
+  Alpine.store('net', { connected: true });
+});
+
 // ============================== STATE ==============================
 const LS = {
   TOKEN:    'urlxmf.token',
@@ -2694,7 +2719,7 @@ class UReticulumHTTPTransport extends Transport {
       reconnectAttempts = 0;
       if (state.reconnectStart) {
         state.reconnectStart = 0;
-        $('toast-reconnect').hidden = true;
+        if (window.Alpine) Alpine.store('net').connected = true;
       }
       // App-level keepalive (every 25 s) so middleboxes that idle
       // out silent WS connections still see traffic.
@@ -2712,7 +2737,7 @@ class UReticulumHTTPTransport extends Transport {
       // Show "Reconnecting…" if disconnected > 5 s.
       setTimeout(() => {
         if (state.reconnectStart && Date.now() - state.reconnectStart > 5000) {
-          $('toast-reconnect').hidden = false;
+          if (window.Alpine) Alpine.store('net').connected = false;
         }
       }, 5200);
       // Exponential backoff capped at 30 s. Tell the app to resync

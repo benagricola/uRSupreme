@@ -44,6 +44,7 @@
 #include "Telemetry/Battery.h"
 #include "Sensors/Config.h"
 #include "Discovery/Identity.h"
+#include "Discovery/Config.h"
 #endif
 
 #include <Arduino.h>
@@ -1272,6 +1273,16 @@ void setup() {
       // in an upcoming commit, but every cross-cutting network
       // feature should share this identity.
       Discovery::Identity::ensure();
+
+      // Load the per-interface discoverable config from
+      // /reticulum/interfaces.json into Discovery's in-memory map.
+      // Discovery::Announcer will consult that map when iterating
+      // RNS::Transport::get_interfaces() at announce time — no
+      // mirroring onto the interface objects themselves, single
+      // source of truth. Privacy-by-design: empty file / missing
+      // file = nothing discoverable.
+      Discovery::Config::load();
+      Discovery::Config::log_summary();
 
 #if defined(HAS_LXMF_GATEWAY)
       HEAD("Initializing LXMF gateway...", RNS::LOG_TRACE);

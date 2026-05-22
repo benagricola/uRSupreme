@@ -1274,8 +1274,7 @@ summary:hover { color: var(--text); }
 
 <!-- ===================== APP (split-pane chat) ===================== -->
 <div id="view-app" x-data x-show="$store.s.view === 'view-app'" :class="{ 'thread-open': $store.s.openPeer }" x-cloak>
-  <header id="topbar" x-data
-          x-effect="$store.s.system && $store.s.system.battery && renderTopbarBattery()">
+  <header id="topbar">
     <span class="idc" id="self-idc"
           x-data
           x-html="$store.s.self ? identicon($store.s.self.address || $store.s.self.id, 32) : ''"></span>
@@ -1298,18 +1297,23 @@ summary:hover { color: var(--text); }
       <!-- antenna -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M7.76 7.76a6 6 0 0 0 0 8.48"/><path d="M16.24 7.76a6 6 0 0 1 0 8.48"/><circle cx="12" cy="12" r="2"/></svg>
     </button>
-    <button class="icon icon-with-label" id="btn-power" title="Battery + power"
-            x-show="$store.s.system && $store.s.system.battery && $store.s.system.battery.state !== 'absent'"
+    <button class="icon icon-with-label" id="btn-power"
+            x-data="batteryBtnData()"
+            x-show="visible"
             x-cloak
+            :title="'Battery ' + pct + '% · ' + batteryState"
             @click="onClickPowerBtn()">
-      <!-- battery glyph; SVG mutates with percent + charge state via JS -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="2" y="7" width="18" height="10" rx="1.5"/>
         <line x1="22" y1="11" x2="22" y2="13"/>
-        <rect id="btn-power-fill" x="4" y="9" width="0" height="6" fill="currentColor" stroke="none"/>
-        <path id="btn-power-bolt" d="M11 9.5 L8.5 13 L11 13 L10 16 L13 12.5 L10.5 12.5 Z" fill="currentColor" stroke="none" hidden/>
+        <rect id="btn-power-fill" x="4" y="9" height="6" stroke="none"
+              :width="String((pct / 100) * 14)"
+              :fill="colour"/>
+        <path id="btn-power-bolt" d="M11 9.5 L8.5 13 L11 13 L10 16 L13 12.5 L10.5 12.5 Z" stroke="none"
+              x-show="charging" x-cloak
+              :fill="colour"/>
       </svg>
-      <span class="icon-label" id="btn-power-pct"></span>
+      <span class="icon-label" id="btn-power-pct" x-text="pct + '%'"></span>
     </button>
     <button class="icon" id="btn-system" title="System status" @click="onClickSystemBtn()">
       <!-- chip / cpu -->
@@ -1323,7 +1327,11 @@ summary:hover { color: var(--text); }
       <!-- logout: door + arrow -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
     </button>
-    <div id="topbar-progress" aria-hidden="true"><div class="bar"></div></div>
+    <div id="topbar-progress" aria-hidden="true"
+         x-data="topbarProgressData()"
+         :class="{ 'is-active': active, 'is-indeterminate': indeterminate }">
+      <div class="bar" :style="indeterminate ? '' : ('width:' + barPct + '%')"></div>
+    </div>
   </header>
   <aside id="pane-list">
     <header id="list-header">
@@ -2428,6 +2436,10 @@ let state = {
   // Active tab in the Settings modal. Drives :class="{ active: ... }"
   // on every #settings-tabs > .tab and #modal-settings .tab-panel.
   settingsTab: 'identity',
+  // Background-task registry. Keyed by an arbitrary string id. Mirrors
+  // the legacy bgTasks Map but as a plain object so Alpine reactivity
+  // tracks add / remove / update on the topbar progress strip.
+  bgTasks: {},
   info: null,
   transport: null,
   token: localStorage.getItem(LS.TOKEN) || null,
@@ -2626,71 +2638,65 @@ async function withBusy(btn, asyncFn, opts = {}) {
 // The bar is determinate when every active source carries a
 // {done, total} pair, indeterminate otherwise (e.g. a single
 // "reboot pending" task without a meaningful percent).
-const bgTasks = new Map();
+// Plain object keyed by task id so Alpine reactivity tracks mutations.
+// The topbar progress strip's data binding observes state.bgTasks.
 function startBgTask(id, opts = {}) {
-  bgTasks.set(id, {
-    label:        opts.label || id,
-    done:         (typeof opts.done  === 'number') ? opts.done  : 0,
-    total:        (typeof opts.total === 'number') ? opts.total : 0,
-  });
-  renderTopbarProgress();
+  state.bgTasks[id] = {
+    label: opts.label || id,
+    done:  (typeof opts.done  === 'number') ? opts.done  : 0,
+    total: (typeof opts.total === 'number') ? opts.total : 0,
+  };
 }
 function updateBgTask(id, opts = {}) {
-  const t = bgTasks.get(id);
+  const t = state.bgTasks[id];
   if (!t) return;
   if (typeof opts.label === 'string') t.label = opts.label;
   if (typeof opts.done  === 'number') t.done  = opts.done;
   if (typeof opts.total === 'number') t.total = opts.total;
-  renderTopbarProgress();
 }
 function endBgTask(id) {
-  if (bgTasks.delete(id)) renderTopbarProgress();
+  delete state.bgTasks[id];
 }
 // Render aggregate progress across transfers + bgTasks. If everything
 // active has a known total, render a determinate fill. Otherwise
 // indeterminate (the sliding 30% strip). When nothing is active,
 // hide.
-function renderTopbarProgress() {
-  const strip = $('topbar-progress');
-  if (!strip) return;
-  const bar = strip.querySelector('.bar');
-  let total = 0, done = 0, any = false, anyUnknown = false;
-  if (state.transfers && Object.keys(state.transfers).length > 0) {
-    for (const t of Object.values(state.transfers)) {
-      // Inbound transfers already surface as a synthetic "Incoming
-      // attachment" row in the conversation list with its own inline
-      // progress bar — double-billing them on the topbar strip is
-      // redundant and (because the firmware doesn't emit
-      // message_complete for inbound) was leaving the strip stuck on
-      // forever. Only count outbound here.
-      if (t.incoming) continue;
-      any = true;
-      if (typeof t.bytes_total === 'number' && t.bytes_total > 0) {
-        total += t.bytes_total; done += Math.min(t.bytes_done || 0, t.bytes_total);
-      } else { anyUnknown = true; }
-    }
-  }
-  for (const t of bgTasks.values()) {
-    any = true;
-    if (t.total > 0) { total += t.total; done += Math.min(t.done, t.total); }
-    else             { anyUnknown = true; }
-  }
-  if (!any) {
-    strip.classList.remove('is-active', 'is-indeterminate');
-    bar.style.width = '0%';
-    return;
-  }
-  strip.classList.add('is-active');
-  if (anyUnknown || total === 0) {
-    strip.classList.add('is-indeterminate');
-    // Width controlled by the CSS keyframe; leave style untouched.
-    bar.style.width = '';
-  } else {
-    strip.classList.remove('is-indeterminate');
-    const pct = Math.max(2, Math.min(100, Math.round((done / total) * 100)));
-    bar.style.width = pct + '%';
-  }
+// Reactive data backing the topbar progress strip. Sums outbound
+// transfers + bgTasks → determinate/indeterminate bar.
+function topbarProgressData() {
+  return {
+    get _agg() {
+      let total = 0, done = 0, any = false, anyUnknown = false;
+      // Touch reactive collections so Alpine re-evaluates on mutation.
+      const tfs = this.$store.s.transfers || {};
+      for (const k of Object.keys(tfs)) {
+        const t = tfs[k];
+        if (t.incoming) continue;            // inbound has its own conv-row bar
+        any = true;
+        if (typeof t.bytes_total === 'number' && t.bytes_total > 0) {
+          total += t.bytes_total;
+          done  += Math.min(t.bytes_done || 0, t.bytes_total);
+        } else { anyUnknown = true; }
+      }
+      for (const t of Object.values(this.$store.s.bgTasks || {})) {
+        any = true;
+        if (t.total > 0) { total += t.total; done += Math.min(t.done, t.total); }
+        else             { anyUnknown = true; }
+      }
+      return { total, done, any, anyUnknown };
+    },
+    get active()        { return this._agg.any; },
+    get indeterminate() { return this._agg.any && (this._agg.anyUnknown || this._agg.total === 0); },
+    get barPct() {
+      const { total, done } = this._agg;
+      if (total === 0) return 0;
+      return Math.max(2, Math.min(100, Math.round((done / total) * 100)));
+    },
+  };
 }
+// Stub kept for callers (bgTasks add/end). Alpine reactivity drives
+// the actual repaint via topbarProgressData.
+function renderTopbarProgress() { /* no-op */ }
 
 // ============================== TOAST ==============================
 // Non-blocking notification. Replaces alert() throughout. Kinds:
@@ -4530,7 +4536,7 @@ async function refreshStatus() {
       fillIdCodeHints();
     }
     applyStatusToButton(info);
-    applyBatteryToButton(info);
+    // Battery icon is reactive on state.lastInfo / state.system.
     // Popover content is fully reactive against $store.s.lastInfo —
     // no imperative render call.
   } catch (e) {
@@ -4565,41 +4571,29 @@ function applyStatusToButton(info) {
 // shows when charging. Fill colour conveys remaining charge at a
 // glance (green / amber / red) so the icon stays meaningful on mobile
 // where the numeric percent is hidden via the @media rule above.
-function applyBatteryToButton(info) {
-  const btn  = $('btn-power');
-  const b    = info && info.battery;
-  if (!b || b.state === 'absent') { btn.hidden = true; return; }
-  btn.hidden = false;
-  const fill = $('btn-power-fill');
-  const bolt = $('btn-power-bolt');
-  const lbl  = $('btn-power-pct');
-  const pct  = Math.max(0, Math.min(100, Number(b.percent) || 0));
-  // Inner rectangle is x=4..18 (width 14). Map pct to width.
-  fill.setAttribute('width', String((pct / 100) * 14));
-  // Colour banding. Charging always reads as healthy regardless of
-  // pct so a low-but-charging cell doesn't flash red while plugged in.
-  let colour;
-  if (b.state === 'charging' || b.state === 'charged') colour = '#3fb950';
-  else if (pct >= 50) colour = '#3fb950';
-  else if (pct >= 20) colour = '#d29922';
-  else                colour = '#f85149';
-  fill.setAttribute('fill', colour);
-  bolt.setAttribute('fill', colour);
-  bolt.hidden = b.state !== 'charging';
-  lbl.textContent = pct + '%';
-  btn.title = 'Battery ' + pct + '% · ' + b.state;
-}
-
-// Re-render the topbar battery icon from cached state. Called from the
-// WS hello + system_update dispatchers (which carry battery in the
-// system snapshot) so the icon updates live, not only on the periodic
-// /api/info poll. Pulls from state.system first (WS-authoritative),
-// falls back to state.lastInfo (the polling snapshot) if WS hasn't
-// settled yet.
-function renderTopbarBattery() {
-  const sysB  = (state.system   && state.system.battery)   || null;
-  const infoB = (state.lastInfo && state.lastInfo.battery) || null;
-  applyBatteryToButton({ battery: sysB || infoB });
+// Reactive data backing the topbar battery icon. Reads from the
+// WS-authoritative snapshot (state.system) and falls back to the
+// polling snapshot (state.lastInfo) so the icon updates live.
+function batteryBtnData() {
+  return {
+    get _b() {
+      const sysB  = (this.$store.s.system   && this.$store.s.system.battery)   || null;
+      const infoB = (this.$store.s.lastInfo && this.$store.s.lastInfo.battery) || null;
+      return sysB || infoB || {};
+    },
+    get visible()      { return !!this._b && this._b.state && this._b.state !== 'absent'; },
+    get batteryState() { return this._b.state || 'unknown'; },
+    get charging()     { return this._b.state === 'charging'; },
+    get pct() { return Math.max(0, Math.min(100, Number(this._b.percent) || 0)); },
+    get colour() {
+      const st = this._b.state;
+      if (st === 'charging' || st === 'charged') return '#3fb950';
+      const p = this.pct;
+      if (p >= 50) return '#3fb950';
+      if (p >= 20) return '#d29922';
+      return '#f85149';
+    },
+  };
 }
 // Reactive data backing the radio/wifi/transport popover. Every field
 // is computed from $store.s.lastInfo / $store.s.radioTlm.
@@ -5566,7 +5560,7 @@ function dispatchEvent(ev) {
       outbound_caps: ev.outbound_caps || {},
       rtc:           ev.rtc           || {},
     };
-    if (typeof renderTopbarBattery === 'function') renderTopbarBattery();
+    // Battery icon binds reactively to state.system.battery.
     return;
   }
   if (ev.type === 'system_update') {

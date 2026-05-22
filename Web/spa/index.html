@@ -59,7 +59,7 @@
     <h2>First-time setup</h2>
     <p class="muted">This device hasn't been configured for a WiFi network yet. Configure home WiFi so you can reach it from any device on your network — or skip and use it directly from this softAP for standalone / off-grid operation.</p>
     <div class="row mb-2" >
-      <select id="bs-ssid">
+      <select id="bs-ssid" x-model="$store.s.forms.bootstrap.ssid">
         <option value=""
                 x-text="$store.s.wifiScanState === 'scanning' ? '— scanning… —'
                        : $store.s.wifiScanState === 'error' ? '(scan failed)'
@@ -68,17 +68,19 @@
           <option :value="n.ssid" x-text="n.ssid + (n.secure ? ' 🔒' : '')"></option>
         </template>
       </select>
-      <button class="secondary" id="bs-rescan">Rescan</button>
+      <button class="secondary" id="bs-rescan" @click="bsRescan()">Rescan</button>
     </div>
     <label>Password</label>
-    <input class="mb-10" id="bs-psk" type="password" placeholder="WiFi password">
+    <input class="mb-10" id="bs-psk" type="password" placeholder="WiFi password" x-model="$store.s.forms.bootstrap.psk">
     <p class="muted id-code-hint mt-14" x-data x-html="idCodeHintHtml()"></p>
     <label>Identity code</label>
-    <input class="font-mono-inline mb-10" id="bs-code" maxlength="6" placeholder="abc123">
-    <button class="w-full" id="bs-save">Save WiFi & reboot</button>
+    <input class="font-mono-inline mb-10" id="bs-code" maxlength="6" placeholder="abc123" x-model="$store.s.forms.bootstrap.code">
+    <button class="w-full" id="bs-save"
+            :disabled="!!$store.s.busyButtons['bs-save']"
+            @click="onClickBsSave($event.currentTarget)">Save WiFi & reboot</button>
     <p class="muted mt-10" >Tip: leave the password empty for an open network.</p>
     <hr class="border-color-default mt-14 mb-14">
-    <button class="secondary w-full" id="bs-skip" >Skip — use chat from this softAP</button>
+    <button class="secondary w-full" id="bs-skip" @click="onClickBsSkip()">Skip — use chat from this softAP</button>
     <p class="muted mt-2" >Standalone mode: don't join a WiFi network at all; stay on this device's softAP. You can join a network later from the settings menu.</p>
   </div>
 </div>
@@ -110,7 +112,8 @@
       <p class="muted">Factory reset wipes <em>every</em> identity on this device — inboxes, sent messages, auth tokens, the lot. Required if every password is forgotten.</p>
       <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
       <label>Identity code</label>
-      <input class="font-mono-inline mb-2" id="fr-code" maxlength="6" placeholder="abc123">
+      <input class="font-mono-inline mb-2" id="fr-code" maxlength="6" placeholder="abc123"
+             x-model="$store.s.forms.factoryReset.code">
       <button class="danger w-full" id="btn-factory-reset"  @click="onClickFactoryReset()">Factory reset</button>
     </details>
   </div>
@@ -121,14 +124,15 @@
   <div class="card">
     <h2>Create identity</h2>
     <label>Display name</label>
-    <input class="mb-10" id="cr-name" placeholder="Your name">
+    <input class="mb-10" id="cr-name" placeholder="Your name" x-model="$store.s.forms.createIdent.name">
     <label>Password (≥8 chars)</label>
-    <input class="mb-2" id="cr-pw1" type="password">
+    <input class="mb-2" id="cr-pw1" type="password" x-model="$store.s.forms.createIdent.pw1">
     <label>Confirm password</label>
-    <input class="mb-10" id="cr-pw2" type="password">
+    <input class="mb-10" id="cr-pw2" type="password" x-model="$store.s.forms.createIdent.pw2">
     <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
     <label>Identity code</label>
-    <input class="font-mono-inline mb-10" id="cr-code" maxlength="6" placeholder="abc123">
+    <input class="font-mono-inline mb-10" id="cr-code" maxlength="6" placeholder="abc123"
+           x-model="$store.s.forms.createIdent.code">
     <div class="row">
       <button class="secondary" id="btn-create-cancel" @click="enterIdentityPicker()">Back</button>
       <button id="btn-create-go" @click="onClickCreateGo()">Create</button>
@@ -139,13 +143,16 @@
 <!-- ===================== LOGIN ===================== -->
 <div id="view-login" class="page" x-data x-show="$store.s.view === 'view-login'" x-cloak>
   <div class="card">
-    <h2 id="login-title">Login</h2>
+    <h2 id="login-title" x-text="$store.s.ui.loginTitle">Login</h2>
     <p class="muted">Enter the password you set when this identity was created. No physical-presence proof is needed for login — the password is the only key.</p>
     <label>Password</label>
-    <input class="mb-3" id="login-pw" type="password">
+    <input class="mb-3" id="login-pw" type="password" x-model="$store.s.forms.login.pw"
+           @keydown.enter.prevent="onClickLoginGo($refs.loginGo)">
     <div class="row">
       <button class="secondary" id="btn-login-back" @click="enterIdentityPicker()">Back</button>
-      <button id="btn-login-go" @click="onClickLoginGo($event.currentTarget)">Login</button>
+      <button id="btn-login-go" x-ref="loginGo"
+              :disabled="!!$store.s.busyButtons['btn-login-go']"
+              @click="onClickLoginGo($event.currentTarget)">Login</button>
     </div>
   </div>
 </div>
@@ -166,16 +173,25 @@
       <div class="addr" id="self-addr"
            x-text="$store.s.self ? ($store.s.self.address || $store.s.self.id) : ''"></div>
     </div>
-    <button class="icon" id="btn-announce-top" title="Announce me — refresh peers' path to this identity" @click="forceAnnounce()">
+    <button class="icon" id="btn-announce-top"
+            :data-state="$store.s.ui.announceState"
+            :title="$store.s.ui.announceTitle"
+            :disabled="!!$store.s.busyButtons['btn-announce-top']"
+            @click="forceAnnounce()">
       <!-- megaphone -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>
     </button>
-    <span id="announce-countdown" class="muted" hidden></span>
+    <span id="announce-countdown" class="muted"
+          x-show="!!$store.s.ui.announceLabelText"
+          x-text="$store.s.ui.announceLabelText"></span>
     <div class="spacer"></div>
     <!-- Radio + transport status indicator. Colored dot overlay shows
          online (green) / offline (red) / not-configured (grey). Click
          to open the status popover below. -->
-    <button class="icon" id="btn-status" title="Radio status" data-state="unknown" @click="onClickStatusBtn()">
+    <button class="icon" id="btn-status"
+            :data-state="$store.s.radioStatus.state"
+            :title="$store.s.radioStatus.title"
+            @click="onClickStatusBtn()">
       <!-- antenna -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M7.76 7.76a6 6 0 0 0 0 8.48"/><path d="M16.24 7.76a6 6 0 0 1 0 8.48"/><circle cx="12" cy="12" r="2"/></svg>
     </button>
@@ -217,7 +233,8 @@
   </header>
   <aside id="pane-list">
     <header id="list-header">
-      <input class="flex-1" id="search" placeholder="Search chats and contacts">
+      <input class="flex-1" id="search" placeholder="Search chats and contacts"
+             x-model="$store.s.searchQuery">
       <button class="icon" id="btn-new-conv" title="New conversation" @click="openNewConvModal()">
         <!-- new chat: pencil-square -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h7"/><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L13 14l-4 1 1-4 8.5-8.5z"/></svg>
@@ -262,7 +279,8 @@
       </template>
       <template x-for="c in convListData()" :key="c.peer">
         <div :class="'conv-row' + (c.peer === $store.s.openPeer ? ' active' : '')"
-             :data-peer="c.peer">
+             :data-peer="c.peer"
+             x-show="convRowMatchesSearch(c)">
           <span class="idc"
                 :data-online="isPeerOnline(c.peer) ? '' : null"
                 x-html="identicon(c.peer, 44)"></span>
@@ -301,6 +319,7 @@
           <template x-for="a in discoveredListData()" :key="a.dest">
             <div :class="'conv-row' + (a.dest === $store.s.openPeer ? ' active' : '')"
                  :data-peer="a.dest"
+                 x-show="convRowMatchesSearchDiscovered(a)"
                  data-discovered="1">
               <span class="idc"
                     :data-online="isPeerOnline(a.dest) ? '' : null"
@@ -450,8 +469,10 @@
             <div class="bmeta" x-text="msgMeta(m)"></div>
           </template>
           <template x-if="!m.in && m.status === 'failed'">
-            <button class="ghost mt-1 text-xs" 
-                    @click="retryFailedMessage(m, $event.currentTarget)">Retry</button>
+            <button class="ghost mt-1 text-xs"
+                    :disabled="!!$store.s.busyButtons['retry-' + m.seq]"
+                    x-text="$store.s.busyButtons['retry-' + m.seq] ? 'Retrying…' : 'Retry'"
+                    @click="retryFailedMessage(m)"></button>
           </template>
         </div>
       </template>
@@ -476,11 +497,13 @@
         <!-- paperclip -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
-      <button class="icon" id="btn-mic" title="Record audio" @click="onClickMic()">
+      <button class="icon" id="btn-mic" title="Record audio"
+              :class="{ recording: $store.s.ui.micRecording }"
+              @click="onClickMic()">
         <!-- microphone -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
       </button>
-      <input id="attach-file" type="file" hidden>
+      <input id="attach-file" type="file" hidden @change="onChangeAttachFile($event)">
       <div id="compose-mid">
         <div id="attach-tray" x-data="attachTrayData()" x-show="visible" x-cloak>
           <template x-if="recording">
@@ -503,11 +526,17 @@
             </div>
           </template>
         </div>
-        <textarea id="compose-text" placeholder="Message…" rows="1" maxlength="4096"></textarea>
+        <textarea id="compose-text" placeholder="Message…" rows="1" maxlength="4096"
+                  x-model="$store.s.forms.compose.text"
+                  @keydown="onComposeKeydown($event)"
+                  @input="onComposeInput($event)"></textarea>
         <!-- Live character counter — appears only when the user is
              approaching the cap. The firmware rejects >4096 with 413,
              so we surface the limit visually before they hit send. -->
-        <div id="compose-counter" class="muted text-xs text-right mt-mini" hidden ></div>
+        <div id="compose-counter" class="muted text-xs text-right mt-mini"
+             x-show="$store.s.ui.composeCounterShown"
+             :class="{ 'text-danger': $store.s.ui.composeCounterDanger }"
+             x-text="$store.s.ui.composeCounter" x-cloak></div>
       </div>
       <button class="icon bg-accent-2 border-color-accent text-default" id="btn-send" title="Send"  @click="sendMessage()">
         <!-- arrow up -->
@@ -623,12 +652,13 @@
         <span :class="clockPillClass" x-text="clockPillLabel"></span>
       </div>
     </div>
-    <div class="popover-value" id="sys-clock-now" x-text="clockNowText"></div>
-    <div class="popover-subline" id="sys-clock-source" x-text="clockSourceText"></div>
+    <div class="popover-value" id="sys-clock-now" x-text="$store.s.ui.sysClockNow"></div>
+    <div class="popover-subline" id="sys-clock-source" x-text="$store.s.ui.sysClockSource"></div>
   </div>
   <div class="popover-section" id="sys-section-gps" data-sensor="gps"
+       :class="{ 'is-open': sectionOpen.gps }"
        x-show="gpsAvailable" x-cloak>
-    <div class="popover-row clickable"  data-role="header">
+    <div class="popover-row clickable" data-role="header" @click="toggleSection('gps')">
       <div class="popover-label">Position</div>
       <div id="sys-gps-line">
         <span :class="gpsPillClass" x-text="gpsPillLabel"></span>
@@ -637,12 +667,13 @@
     </div>
     <div class="popover-value" id="sys-gps-pos" x-text="gpsPosText"></div>
     <div class="popover-subline" id="sys-gps-speed" x-show="gpsHaveFix" x-text="gpsFixTimeText"></div>
-    <div class="popover-subline" id="sys-gps-age" x-text="gpsAgeText"></div>
-    <div class="popover-config" data-role="config" hidden></div>
+    <div class="popover-subline" id="sys-gps-age" x-text="$store.s.ui.sysGpsAge"></div>
+    <div class="popover-config" data-role="config" x-show="sectionOpen.gps" x-cloak></div>
   </div>
   <div class="popover-section" id="sys-section-env" data-sensor="environment"
+       :class="{ 'is-open': sectionOpen.environment }"
        x-show="envAvailable" x-cloak>
-    <div class="popover-row clickable"  data-role="header">
+    <div class="popover-row clickable" data-role="header" @click="toggleSection('environment')">
       <div class="popover-label">Environment</div>
       <div id="sys-env-line">
         <span :class="envState.cls" x-text="envState.label"></span>
@@ -650,8 +681,8 @@
       <span class="popover-chev" data-role="chev">▾</span>
     </div>
     <div class="popover-value" id="sys-env-values" x-html="envValuesHTML"></div>
-    <div class="popover-subline" id="sys-env-age" x-text="envAgeText"></div>
-    <div class="popover-config" data-role="config" hidden>
+    <div class="popover-subline" id="sys-env-age" x-text="$store.s.ui.sysBmeAge"></div>
+    <div class="popover-config" data-role="config" x-show="sectionOpen.environment" x-cloak>
       <label>
         <input type="checkbox" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.environment ? $store.s.system.sensors.environment.enabled : false"
                @change="onSensorConfigChange('environment', $event.target)">
@@ -666,8 +697,9 @@
     </div>
   </div>
   <div class="popover-section" id="sys-section-mag" data-sensor="magnetometer"
+       :class="{ 'is-open': sectionOpen.magnetometer }"
        x-show="magAvailable" x-cloak>
-    <div class="popover-row clickable"  data-role="header">
+    <div class="popover-row clickable" data-role="header" @click="toggleSection('magnetometer')">
       <div class="popover-label">Compass</div>
       <div id="sys-mag-line">
         <span :class="magState.cls" x-text="magState.label"></span>
@@ -675,8 +707,8 @@
       <span class="popover-chev" data-role="chev">▾</span>
     </div>
     <div class="popover-value" id="sys-mag-values" x-html="magValuesHTML"></div>
-    <div class="popover-subline" id="sys-mag-age" x-text="magAgeText"></div>
-    <div class="popover-config" data-role="config" hidden>
+    <div class="popover-subline" id="sys-mag-age" x-text="$store.s.ui.sysMagAge"></div>
+    <div class="popover-config" data-role="config" x-show="sectionOpen.magnetometer" x-cloak>
       <label>
         <input type="checkbox" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.magnetometer ? $store.s.system.sensors.magnetometer.enabled : false"
                @change="onSensorConfigChange('magnetometer', $event.target)">
@@ -691,8 +723,9 @@
     </div>
   </div>
   <div class="popover-section" id="sys-section-imu" data-sensor="imu"
+       :class="{ 'is-open': sectionOpen.imu }"
        x-show="imuAvailable" x-cloak>
-    <div class="popover-row clickable"  data-role="header">
+    <div class="popover-row clickable" data-role="header" @click="toggleSection('imu')">
       <div class="popover-label">Motion</div>
       <div id="sys-imu-line">
         <span :class="imuState.cls" x-text="imuState.label"></span>
@@ -701,8 +734,8 @@
     </div>
     <div class="popover-value" id="sys-imu-accel" x-html="imuAccelHTML"></div>
     <div class="popover-subline" id="sys-imu-gyro" x-html="imuGyroHTML"></div>
-    <div class="popover-subline" id="sys-imu-age" x-text="imuAgeText"></div>
-    <div class="popover-config" data-role="config" hidden>
+    <div class="popover-subline" id="sys-imu-age" x-text="$store.s.ui.sysImuAge"></div>
+    <div class="popover-config" data-role="config" x-show="sectionOpen.imu" x-cloak>
       <label>
         <input type="checkbox" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.imu ? $store.s.system.sensors.imu.enabled : false"
                @change="onSensorConfigChange('imu', $event.target)">
@@ -752,7 +785,7 @@
       </template>
       <template x-for="c in contacts" :key="'c:' + c.addr">
         <div class="iden-card mb-6" 
-             @click="$('nc-addr').value = c.addr; if (c.name) $('nc-name').value = c.name;">
+             @click="$store.s.forms.newConv.addr = c.addr; if (c.name) $store.s.forms.newConv.name = c.name;">
           <span x-html="identicon(c.addr, 36)"></span>
           <div class="min-w-0">
             <div class="name" x-text="c.name || shortHex(c.addr)"></div>
@@ -766,7 +799,7 @@
       </template>
       <template x-for="a in discovered" :key="'d:' + a.dest">
         <div class="iden-card mb-6" 
-             @click="$('nc-addr').value = a.dest; if (a.display_name) $('nc-name').value = a.display_name;">
+             @click="$store.s.forms.newConv.addr = a.dest; if (a.display_name) $store.s.forms.newConv.name = a.display_name;">
           <span x-html="identicon(a.dest, 36)"></span>
           <div class="min-w-0">
             <div class="name" x-text="a.display_name || shortHex(a.dest)"></div>
@@ -779,9 +812,11 @@
       </template>
     </div>
     <label>Or enter address manually (32 hex)</label>
-    <input class="mb-10 font-mono-inline" id="nc-addr" maxlength="32" placeholder="a5104e44225af3db4430f8e749509946">
+    <input class="mb-10 font-mono-inline" id="nc-addr" maxlength="32" placeholder="a5104e44225af3db4430f8e749509946"
+           x-model="$store.s.forms.newConv.addr">
     <label>Contact name (optional, saved locally)</label>
-    <input class="mb-14" id="nc-name" placeholder="Their name">
+    <input class="mb-14" id="nc-name" placeholder="Their name"
+           x-model="$store.s.forms.newConv.name">
     <div class="row">
       <button class="secondary" id="btn-nc-cancel" @click="state.modals.newConv = false">Cancel</button>
       <button id="btn-nc-go" @click="onClickNewConvGo()">Open</button>
@@ -872,7 +907,7 @@
     <h3>Add a WiFi network</h3>
     <p class="muted mb-10" >Pick a network for this device to join. Saving reboots the device. The softAP fallback engages automatically if the saved network isn't reachable on next boot.</p>
     <label>Network</label>
-    <select class="mb-2" id="cn-wifi-ssid">
+    <select class="mb-2" id="cn-wifi-ssid" x-model="$store.s.forms.wifiAdd.ssid">
       <option value=""
               x-text="$store.s.wifiScanState === 'scanning' ? '— scanning… —'
                      : $store.s.wifiScanState === 'error' ? '(scan failed)'
@@ -883,10 +918,12 @@
     </select>
     <button class="secondary mb-3" id="cn-wifi-scan"  @click="scanIntoWifiModal()">Rescan networks</button>
     <label>Password</label>
-    <input class="mb-2" id="cn-wifi-psk" type="password" placeholder="(leave blank for open networks)">
+    <input class="mb-2" id="cn-wifi-psk" type="password" placeholder="(leave blank for open networks)"
+           x-model="$store.s.forms.wifiAdd.psk">
     <p class="muted id-code-hint mb-2" x-data x-html="idCodeHintHtml()"></p>
     <label>Identity code</label>
-    <input class="font-mono-inline mb-3" id="cn-wifi-code" maxlength="6" placeholder="abc123">
+    <input class="font-mono-inline mb-3" id="cn-wifi-code" maxlength="6" placeholder="abc123"
+           x-model="$store.s.forms.wifiAdd.code">
     <div class="row">
       <button class="secondary" id="cn-wifi-cancel" @click="state.modals.wifiAdd = false">Cancel</button>
       <button id="cn-wifi-save" @click="onClickWifiSave($event.currentTarget)">Save &amp; reboot</button>
@@ -900,15 +937,18 @@
     <h3>Add a TCP client</h3>
     <p class="muted mb-10" >Connect outbound to another Reticulum node by hostname or IP. The link comes up immediately and persists across reboots.</p>
     <label>Name</label>
-    <input class="mb-2" id="cn-tcp-name" placeholder="e.g. amsterdam-hub" maxlength="32">
+    <input class="mb-2" id="cn-tcp-name" placeholder="e.g. amsterdam-hub" maxlength="32"
+           x-model="$store.s.forms.tcpAdd.name">
     <div class="row mb-2" >
       <div>
         <label>Host</label>
-        <input class="font-mono-inline" id="cn-tcp-host" placeholder="hub.example.org">
+        <input class="font-mono-inline" id="cn-tcp-host" placeholder="hub.example.org"
+               x-model="$store.s.forms.tcpAdd.host">
       </div>
       <div>
         <label>Port</label>
-        <input id="cn-tcp-port" type="number" min="1" max="65535" value="4242">
+        <input id="cn-tcp-port" type="number" min="1" max="65535"
+               x-model.number="$store.s.forms.tcpAdd.port">
       </div>
     </div>
     <p class="muted mt-2 text-xs" >
@@ -920,7 +960,7 @@
       <button class="secondary" id="cn-tcp-cancel" @click="state.modals.tcpAdd = false">Cancel</button>
       <button id="cn-tcp-save" @click="onClickTcpSave($event.currentTarget)">Add</button>
     </div>
-    <div class="muted mt-2 text-xs" id="cn-tcp-status" ></div>
+    <div class="muted mt-2 text-xs" id="cn-tcp-status" x-text="$store.s.ui.cnTcpStatus"></div>
   </div>
 </div>
 
@@ -1014,7 +1054,7 @@
 <!-- ===================== IDENTITY CODE MODAL ===================== -->
 <div id="modal-id-code" class="modal-bg z-280" x-data x-show="$store.s.modals.idCode" x-cloak>
   <div class="modal">
-    <h3 id="id-code-modal-title">Identity code required</h3>
+    <h3 id="id-code-modal-title" x-text="$store.s.ui.idCodeModalTitle">Identity code required</h3>
     <!-- Two opening paths: (1) the device button was pressed and the
          firmware fired identity_code_available — we got here from the
          WS event handler, so a code is already on the OLED; (2) the
@@ -1023,12 +1063,14 @@
          first. id-code-modal-hint carries whichever context applies;
          the .id-code-hint span below has the full "how to generate"
          instructions. -->
-    <p class="muted"><span id="id-code-modal-hint"></span></p>
+    <p class="muted"><span id="id-code-modal-hint" x-text="$store.s.ui.idCodeModalHint"></span></p>
     <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
-    <input class="mb-3 font-mono-inline" id="idc-input" maxlength="6" placeholder="abc123">
+    <input class="mb-3 font-mono-inline" id="idc-input" maxlength="6" placeholder="abc123"
+           x-model="$store.s.forms.idCode.input"
+           @keydown.enter.prevent="onClickIdcOk()">
     <div class="row">
       <button class="secondary" id="btn-idc-cancel" @click="state.modals.idCode = false">Dismiss</button>
-      <button id="btn-idc-ok">OK</button>
+      <button id="btn-idc-ok" @click="onClickIdcOk()">OK</button>
     </div>
   </div>
 </div>
@@ -1038,11 +1080,14 @@
      below. Opens via the gear icon (default tab: Identity) or the
      radio icon (Radio tab). Boot-time first-run forces the Radio tab
      and hides the others until a config is saved. -->
-<div id="modal-settings" class="modal-bg" x-data x-show="$store.s.modals.settings" x-cloak>
+<div id="modal-settings" class="modal-bg" x-data x-show="$store.s.modals.settings" x-cloak
+     @click.self="closeSettingsModal()">
   <div class="modal modal-tall">
     <header class="modal-header">
-      <h3 id="settings-title">Settings</h3>
-      <button class="icon" id="btn-close-settings" title="Close" @click="state.modals.settings = false">
+      <h3 id="settings-title" x-text="$store.s.ui.settingsTitle">Settings</h3>
+      <button class="icon" id="btn-close-settings" title="Close"
+              x-show="$store.s.ui.showCloseSettings"
+              @click="closeSettingsModal()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
       </button>
     </header>
@@ -1066,21 +1111,28 @@
             <div class="flex-1-min0">
               <input type="text" id="id-display-name" maxlength="96"
                      class="font-bold w-full min-h-auto py-1 px-6"
-                     autocomplete="off" spellcheck="false">
+                     autocomplete="off" spellcheck="false"
+                     x-model="$store.s.forms.identity.displayName"
+                     @blur="onBlurIdName()"
+                     @keydown.enter.prevent="$event.target.blur()">
               <div class="muted mono mt-1" id="id-address"
                    x-text="$store.s.self ? ($store.s.self.address || $store.s.self.id) : ''"></div>
             </div>
           </div>
           <div class="muted mt-1" >The label peers see in your identity announce. Changes take effect on the next announce — press the megaphone after editing to re-broadcast immediately.</div>
           <label class="mt-3">Auto-announce</label>
-          <select id="id-announce-interval">
+          <select id="id-announce-interval"
+                  x-model="$store.s.forms.identity.announceInterval"
+                  @change="onChangeAnnounceInterval()">
             <template x-for="i in ANNOUNCE_INTERVALS" :key="i.ms">
               <option :value="String(i.ms)" x-text="i.label"></option>
             </template>
           </select>
           <div class="muted mt-1" >How often this identity automatically broadcasts an announce so peers can find and route to it. Manual announces via the megaphone icon work regardless of this setting.</div>
           <label class="toggle-row mt-4">
-            <input class="input-inline" type="checkbox" id="id-persist-outbound">
+            <input class="input-inline" type="checkbox" id="id-persist-outbound"
+                   x-model="$store.s.forms.identity.persistOutbound"
+                   @change="onChangePersistOutbound()">
             <span>Keep a copy of attachments I send</span>
           </label>
           <div class="muted mt-1" >Lets the chat history show an inline preview of images and audio you've sent. Off saves storage at the cost of preview.</div>
@@ -1091,15 +1143,19 @@
       <div class="tab-panel" data-panel="connectivity" :class="{ active: $store.s.settingsTab === 'connectivity' }">
         <div class="warn mx-0 mt-0">⚠ Connectivity settings are <strong>device-wide</strong> — they apply to every identity stored on this device. Changing radio params reboots the device and may interrupt active conversations.</div>
 
-        <details class="cn-section" data-cn="radio" open>
+        <details class="cn-section" data-cn="radio" open x-show="$store.s.ui.showRadioSection">
           <summary>
             <span class="cn-title">LoRa Radio</span>
-            <span class="cn-dot" id="cn-dot-radio" hidden></span>
-            <label class="cn-row-toggle">
+            <span class="cn-dot" id="cn-dot-radio"
+                  :class="$store.s.ui.cnDotRadio"
+                  x-show="!!$store.s.ui.cnDotRadio"></span>
+            <label class="cn-row-toggle" @click.stop>
               <span>Discoverable</span>
               <button type="button" class="info-icon" data-info="When on, this interface periodically emits an <code>rnstransport.discovery.interface</code> announce over LoRa. The announce contains this device's identity hash, radio parameters (frequency, bandwidth, SF, coding rate), and approximate location (if GPS has a fix) so other Reticulum nodes hearing it can decide whether they're configured to reach this device, and apps like <a href='https://rmap.world/info.html' target='_blank' rel='noopener'>rmap.world</a> can plot the device on a map.">i</button>
               <span class="switch">
-                <input type="checkbox" id="rd-discoverable">
+                <input type="checkbox" id="rd-discoverable"
+                       x-model="$store.s.forms.radio.discoverable"
+                       @change="onChangeRdDiscoverable()">
                 <span class="switch-slider"></span>
               </span>
             </label>
@@ -1110,57 +1166,61 @@
                x-html="$store.s.settingsFirstRun
                  ? `Before this device can talk to other LoRa nodes, it needs to know which region to operate in. Pick the preset for your local mesh — both ends of a conversation must use the <em>same</em> region settings, or they won't hear each other.`
                  : `Pick the region preset that matches your local mesh. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.`"></p>
-            <select class="mb-6" id="rd-preset">
+            <select class="mb-6" id="rd-preset" x-model="$store.s.forms.radio.preset" @change="applyRadioPreset()">
               <option value="__empty">— Pick a region —</option>
               <template x-for="p in RADIO_PRESETS" :key="p.id">
                 <option :value="p.id" x-text="p.label"></option>
               </template>
               <option value="__custom">Custom (manual)</option>
             </select>
-            <div class="muted mb-14 min-h-14" id="rd-preset-note" ></div>
-            <div id="rd-raw">
+            <div class="muted mb-14 min-h-14" id="rd-preset-note" x-text="$store.s.ui.rdPresetNote"></div>
+            <div id="rd-raw" x-show="$store.s.forms.radio.preset === '__custom'">
               <div class="row mb-2" >
                 <div>
                   <label>Frequency (Hz)</label>
-                  <input id="rd-freq" type="number">
+                  <input id="rd-freq" type="number" x-model.number="$store.s.forms.radio.freq">
                 </div>
                 <div>
                   <label>Bandwidth (Hz)</label>
-                  <input id="rd-bw" type="number">
+                  <input id="rd-bw" type="number" x-model.number="$store.s.forms.radio.bw">
                 </div>
               </div>
               <div class="row mb-2" >
                 <div>
                   <label>Spreading factor</label>
-                  <input id="rd-sf" type="number" min="6" max="12">
+                  <input id="rd-sf" type="number" min="6" max="12" x-model.number="$store.s.forms.radio.sf">
                 </div>
                 <div>
                   <label>Coding rate</label>
-                  <input id="rd-cr" type="number" min="5" max="8">
+                  <input id="rd-cr" type="number" min="5" max="8" x-model.number="$store.s.forms.radio.cr">
                 </div>
                 <div>
                   <label>TX power (dBm)</label>
-                  <input id="rd-tx" type="number" min="0" max="22">
+                  <input id="rd-tx" type="number" min="0" max="22" x-model.number="$store.s.forms.radio.tx">
                 </div>
               </div>
               <div class="row mb-2" >
                 <div>
                   <label title="Instantaneous duty-cycle ceiling; 0 = no limit">Airtime cap (% short-term)</label>
-                  <input id="rd-airtime" type="number" min="0" max="99">
+                  <input id="rd-airtime" type="number" min="0" max="99" x-model.number="$store.s.forms.radio.airtime">
                 </div>
                 <div>
                   <label title="Long-term (averaged) duty-cycle ceiling — what regulators care about">Airtime cap (% long-term)</label>
-                  <input id="rd-airtime-lt" type="number" min="0" max="99">
+                  <input id="rd-airtime-lt" type="number" min="0" max="99" x-model.number="$store.s.forms.radio.airtimeLt">
                 </div>
               </div>
               <p class="muted mb-14" >SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom — useful for long links.<br><strong>Airtime caps are regulatory limits</strong> — picking a region preset sets a sane default; 0 disables (only use where allowed).</p>
             </div>
-            <button class="w-full" id="btn-radio-save" @click="onClickRadioSave($event.currentTarget)">Save &amp; reboot</button>
+            <button class="w-full" id="btn-radio-save"
+                    :disabled="$store.s.forms.radio.preset === '__empty' || !!$store.s.busyButtons['btn-radio-save']"
+                    @click="onClickRadioSave($event.currentTarget)">Save &amp; reboot</button>
           </div>
         </details>
 
         <details class="cn-section" data-cn="wifi">
-          <summary>WiFi <span class="cn-dot" id="cn-dot-wifi" hidden></span></summary>
+          <summary>WiFi <span class="cn-dot" id="cn-dot-wifi"
+                                :class="$store.s.ui.cnDotWifi"
+                                x-show="!!$store.s.ui.cnDotWifi"></span></summary>
           <div class="cn-section-body">
             <p class="muted mb-10" >Networks this device has credentials for. Forgetting one wipes the SSID + password from the device and reboots into softAP for reconfiguration.</p>
             <div class="mb-10" id="cn-wifi-saved-list" x-data>
@@ -1185,8 +1245,10 @@
           </div>
         </details>
 
-        <details class="cn-section" data-cn="tcp" hidden>
-          <summary>TCP clients <span class="cn-dot" id="cn-dot-tcp" hidden></span></summary>
+        <details class="cn-section" data-cn="tcp" x-show="$store.s.ui.showTcpSection" x-cloak>
+          <summary>TCP clients <span class="cn-dot" id="cn-dot-tcp"
+                                      :class="$store.s.ui.cnDotTcp"
+                                      x-show="!!$store.s.ui.cnDotTcp"></span></summary>
           <div class="cn-section-body">
             <p class="muted mb-10" >Outbound TCP links to other Reticulum nodes. Useful for joining a remote network over the internet, or for a wired LAN bridge. Each entry connects on boot and reconnects automatically if dropped.</p>
             <div class="mb-10" id="cn-tcp-list" x-data>
@@ -1219,7 +1281,7 @@
           </div>
         </details>
 
-        <details class="cn-section" data-cn="bt">
+        <details class="cn-section" data-cn="bt" x-show="$store.s.ui.showBtSection" x-cloak>
           <summary>Bluetooth</summary>
           <div class="cn-section-body">
             <p class="muted">Not configurable from the SPA yet. The hardware supports it; this section will gain pairing / on-off controls in a future release.</p>
@@ -1230,7 +1292,9 @@
           <summary>Serial / diagnostics</summary>
           <div class="cn-section-body">
             <label class="toggle-row">
-              <input class="input-inline" type="checkbox" id="cn-kiss-out">
+              <input class="input-inline" type="checkbox" id="cn-kiss-out"
+                     x-model="$store.s.forms.diag.kissOut"
+                     @change="onChangeKissOut()">
               <span>KISS-frame radio traffic on USB serial</span>
             </label>
             <div class="muted text-xs mt-6" >Turn OFF if you're reading the USB serial with <code>pio device monitor</code> or similar — KISS-framed binary bytes are otherwise interleaved with the diagnostic text log. Leave ON if you're using the device as a KISS host for tools like rnsd or MeshChat. Persists across reboots.</div>
@@ -1247,13 +1311,16 @@
           <div class="muted mt-1 mb-6" >A device-wide long-lived keypair signs every discovery announce so other nodes can recognise this device across boots.</div>
           <div class="list-row">
             <div>Identity hash</div>
-            <div id="disc-identity-hash" class="muted font-mono-inline text-xs" >—</div>
+            <div id="disc-identity-hash" class="muted font-mono-inline text-xs"
+                 x-text="$store.s.ui.discIdentityHash">—</div>
           </div>
         </div>
         <div class="card mt-3" >
           <strong>Master toggle</strong>
           <label class="toggle-row mt-10">
-            <input class="input-inline" type="checkbox" id="disc-enabled">
+            <input class="input-inline" type="checkbox" id="disc-enabled"
+                   x-model="$store.s.forms.discovery.enabled"
+                   @change="onChangeDiscEnabled()">
             <span>Announce discoverable interfaces</span>
           </label>
           <div class="muted mt-1" >When on, each interface marked as discoverable on the Connectivity tab will emit a periodic announce. Enabling requires the identity code on the device's display.</div>
@@ -1261,14 +1328,19 @@
         <div class="card mt-3" >
           <strong>Advertised name</strong>
           <label class="mt-2">Public label shown to other Reticulum nodes</label>
-          <input id="disc-advertised-name" type="text" placeholder="(uses interface name if empty)">
+          <input id="disc-advertised-name" type="text" placeholder="(uses interface name if empty)"
+                 x-model="$store.s.forms.discovery.advertisedName"
+                 @blur="onBlurDiscName()"
+                 @keydown.enter.prevent="$event.target.blur()">
           <div class="muted mt-1" >Carried inside every discovery announce. Defaults to the interface name (e.g. <code>LoRaInterface</code>); set a friendlier label here if you want this device to show up as something specific on rmap.world / similar listeners.</div>
-          <div class="muted mt-1 text-xs" id="disc-name-status" ></div>
+          <div class="muted mt-1 text-xs" id="disc-name-status" x-text="$store.s.ui.discNameStatus"></div>
         </div>
         <div class="card mt-3" >
           <strong>Cadence</strong>
           <label class="mt-2">Default interval</label>
-          <select id="disc-interval">
+          <select id="disc-interval"
+                  x-model="$store.s.forms.discovery.interval"
+                  @change="onChangeDiscInterval()">
             <option value="5">5 minutes (debug)</option>
             <option value="15">15 minutes</option>
             <option value="60">1 hour</option>
@@ -1281,21 +1353,18 @@
         <div class="card mt-3" >
           <strong>Stamp cost</strong>
           <label class="mt-2">PoW difficulty (leading zero bits)</label>
-          <select id="disc-stamp-cost">
+          <select id="disc-stamp-cost"
+                  x-model="$store.s.forms.discovery.stampCost"
+                  @change="onChangeDiscStampCost()">
             <option value="0">0 — no proof-of-work</option>
             <option value="8">8 bits</option>
             <option value="12">12 bits</option>
             <option value="14">14 bits (upstream default)</option>
             <option value="16">16 bits</option>
           </select>
-          <div class="warn mt-6" >
-            <strong>Currently not enforced.</strong> The firmware emits a 32-zero-byte
-            stamp regardless of this setting. Strict listeners (rmap.world
-            uses required_value=14 by default) will drop announces until
-            PoW is implemented.
-          </div>
+          <div class="muted mt-6" >Strict listeners (rmap.world uses required_value=14 by default) will drop announces below their threshold. Set to 0 to disable PoW entirely.</div>
         </div>
-        <div class="muted mt-2 text-xs" id="disc-status" ></div>
+        <div class="muted mt-2 text-xs" id="disc-status" x-text="$store.s.ui.discStatus"></div>
       </div>
 
       <!-- ============== Time tab ============== -->
@@ -1304,10 +1373,10 @@
           <p class="muted mt-0" >The highest-priority enabled source that's reported a value wins.</p>
           <div class="row mb-14 items-center gap-12" >
             <div class="flex-1-min0">
-              <div><strong id="tm-current">—</strong></div>
-              <div class="muted text-xs" id="tm-source" >no source has reported yet</div>
+              <div><strong id="tm-current" x-text="$store.s.ui.tmCurrent">—</strong></div>
+              <div class="muted text-xs" id="tm-source" x-text="$store.s.ui.tmSource">no source has reported yet</div>
             </div>
-            <button class="m-0" id="btn-tm-browser-sync">Sync to browser time</button>
+            <button class="m-0" id="btn-tm-browser-sync" @click="onClickTmBrowserSync($event.currentTarget)">Sync to browser time</button>
           </div>
         </div>
         <div class="card mt-3" >
@@ -1351,7 +1420,7 @@
               </div>
             </template>
           </div>
-          <button class="w-full mt-10" id="btn-tm-save">Save time-source config</button>
+          <button class="w-full mt-10" id="btn-tm-save" @click="onClickTmSave($event.currentTarget)">Save time-source config</button>
         </div>
       </div>
 
@@ -1360,12 +1429,16 @@
         <div class="card">
           <strong>UI preferences</strong>
           <label class="toggle-row mt-10">
-            <input class="input-inline" type="checkbox" id="pref-enter-sends">
+            <input class="input-inline" type="checkbox" id="pref-enter-sends"
+                   x-model="$store.s.forms.prefs.enterSends"
+                   @change="savePrefs()">
             <span>Press <kbd>Enter</kbd> to send (Shift+Enter for newline)</span>
           </label>
           <div class="muted mt-1" >When off: Enter inserts a newline, Shift+Enter sends.</div>
           <label class="toggle-row mt-14">
-            <input class="input-inline" type="checkbox" id="pref-auto-download-attachments">
+            <input class="input-inline" type="checkbox" id="pref-auto-download-attachments"
+                   x-model="$store.s.forms.prefs.autoDownloadAttachments"
+                   @change="savePrefs()">
             <span>Automatically download attachments</span>
           </label>
           <div class="muted mt-1" >When off: inbound images and audio show as click-to-load chips.</div>
@@ -1374,7 +1447,7 @@
           <strong>Transport</strong>
           <div class="list-row">
             <div id="tp-name">uR device (HTTP)</div>
-            <div class="muted font-mono-inline" id="tp-endpoint" ></div>
+            <div class="muted font-mono-inline" id="tp-endpoint" x-text="$store.s.ui.tpEndpoint"></div>
           </div>
           <button class="secondary" disabled title="Only one transport is wired up so far">Switch transport…</button>
         </div>
@@ -1389,7 +1462,9 @@
             conversation's retention icon.
           </div>
           <label>Pick one</label>
-          <select id="inbox-default-retention">
+          <select id="inbox-default-retention"
+                  x-model="$store.s.forms.prefs.inboxDefaultRetention"
+                  @change="onChangeInboxDefaultRetention()">
             <option value="none:0">No expiry — keep everything</option>
             <option value="time:604800">Last 7 days</option>
             <option value="time:2592000">Last 30 days</option>
@@ -1398,18 +1473,24 @@
             <option value="count:50">Last 50 messages</option>
             <option value="count:200">Last 200 messages</option>
           </select>
-          <div class="muted mt-6 text-xs" id="inbox-config-status" ></div>
+          <div class="muted mt-6 text-xs" id="inbox-config-status" x-text="$store.s.ui.inboxConfigStatus"></div>
         </div>
         <div class="card mt-14" >
           <strong>Transfer limits</strong>
           <div class="muted mt-1 mb-10" >Maximum outbound message size you can send, and maximum inbound size accepted from peers. The slider's upper bound tracks your device's available storage live — values above your current free space are disabled. Pull / re-insert the SD card to see the range change.</div>
           <label>Max send</label>
-          <input class="mb-1" type="range" id="storage-max-send" min="65536" step="65536">
-          <div class="muted mb-10 text-xs" id="storage-max-send-label" ></div>
+          <input class="mb-1" type="range" id="storage-max-send" min="65536" step="65536"
+                 :max="$store.s.ui.storageMaxSendMax"
+                 x-model.number="$store.s.forms.storage.maxSend"
+                 @change="onChangeStorageSlider()">
+          <div class="muted mb-10 text-xs" id="storage-max-send-label" x-text="$store.s.ui.storageMaxSendLabel"></div>
           <label>Max receive</label>
-          <input class="mb-1" type="range" id="storage-max-recv" min="65536" step="65536">
-          <div class="muted mb-6 text-xs" id="storage-max-recv-label" ></div>
-          <div class="muted mt-6 text-xs" id="storage-config-status" ></div>
+          <input class="mb-1" type="range" id="storage-max-recv" min="65536" step="65536"
+                 :max="$store.s.ui.storageMaxRecvMax"
+                 x-model.number="$store.s.forms.storage.maxRecv"
+                 @change="onChangeStorageSlider()">
+          <div class="muted mb-6 text-xs" id="storage-max-recv-label" x-text="$store.s.ui.storageMaxRecvLabel"></div>
+          <div class="muted mt-6 text-xs" id="storage-config-status" x-text="$store.s.ui.storageStatus"></div>
         </div>
         <div class="card mt-14" >
           <strong>Contacts</strong>
@@ -1431,10 +1512,12 @@
             </template>
           </div>
           <label class="mt-2">Address</label>
-          <input class="font-mono-inline mb-6" id="ct-addr" maxlength="32">
+          <input class="font-mono-inline mb-6" id="ct-addr" maxlength="32"
+                 x-model="$store.s.forms.contactRename.addr">
           <label>Name</label>
-          <input class="mb-2" id="ct-name">
-          <button class="secondary" id="btn-ct-save">Save contact</button>
+          <input class="mb-2" id="ct-name"
+                 x-model="$store.s.forms.contactRename.name">
+          <button class="secondary" id="btn-ct-save" @click="onClickContactSave()">Save contact</button>
         </div>
       </div>
 
@@ -1485,15 +1568,16 @@
         <div class="card">
           <strong>Delete this identity</strong>
           <p class="muted">Permanently delete this identity from the device. Inbox, outbox, and identity material are removed. Only affects the currently logged-in identity.</p>
-          <button class="danger" id="btn-delete-self">Delete this identity</button>
+          <button class="danger" id="btn-delete-self" @click="onClickDeleteSelf($event.currentTarget)">Delete this identity</button>
         </div>
         <div class="card mt-14" >
           <strong>Factory reset device</strong>
           <p class="muted">Wipes <em>every</em> identity on this device. Only escape if all passwords are lost.</p>
           <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
           <label>Identity code</label>
-          <input class="font-mono-inline mb-6" id="fr2-code" maxlength="6" placeholder="abc123">
-          <button class="danger" id="btn-fr2">Factory reset device</button>
+          <input class="font-mono-inline mb-6" id="fr2-code" maxlength="6" placeholder="abc123"
+                 x-model="$store.s.forms.factoryReset2.code">
+          <button class="danger" id="btn-fr2" @click="onClickFr2()">Factory reset device</button>
         </div>
       </div>
 
@@ -1738,10 +1822,102 @@ let state = {
   // Server-side raw is preserved either way; this is purely a render
   // knob the SPA controls.
   radioTlm: { samples: [], cap: 120, seeded: false, periodMs: 1000, cwMax: 4, smoothing: 3 },
+  // Live filter typed into #search; conv rows x-show against it.
+  searchQuery: '',
+
   // Identity-code TTL in ms. Defaulted to the firmware's current value
   // (60 s) for the first-render fallback; replaced from /api/info's
   // identity_code_ttl_ms once that lands.
   idCodeTtlMs: 60_000,
+
+  // ============================== FORM STATE ==============================
+  // Every user-facing form binds its inputs into one of these sub-objects
+  // via x-model. Populate-from-server handlers assign whole objects
+  // (Object.assign(state.forms.x, server_values)); submit handlers read
+  // straight off state.forms.x; clear-form is Object.assign(state.forms.x,
+  // FORM_DEFAULTS.x). No more $('input-id').value = '' across the file.
+  forms: {
+    bootstrap:       { ssid: '', psk: '', code: '' },
+    createIdent:     { name: '', pw1: '', pw2: '', code: '' },
+    login:           { pw: '' },
+    factoryReset:    { code: '' },           // bottom of identity-picker
+    factoryReset2:   { code: '' },
+    diag:            { kissOut: false },           // settings → Reset tab
+    newConv:         { addr: '', name: '' },
+    compose:         { text: '' },
+    idCode:          { input: '' },          // physical-presence modal
+    contactRename:   { addr: '', name: '' },
+    identity:        { displayName: '', announceInterval: '', persistOutbound: false },
+    wifiAdd:         { ssid: '', psk: '', code: '' },
+    tcpAdd:          { name: '', host: '', port: 4242 },
+    radio:           { discoverable: false, preset: '__empty',
+                       freq: 0, bw: 0, sf: 0, cr: 0, tx: 0,
+                       airtime: 0, airtimeLt: 0 },
+    discovery:       { enabled: false, advertisedName: '', interval: '360', stampCost: '14' },
+    prefs:           { enterSends: false, autoDownloadAttachments: false,
+                       inboxDefaultRetention: '' },
+    storage:         { maxSend: 65536, maxRecv: 65536 },
+  },
+
+  // Set of busy-button IDs. withBusy(buttonId, fn) adds the id while fn
+  // is in flight; markup uses :disabled="!!$store.s.busyButtons[id]" and
+  // :class="{ 'is-busy': $store.s.busyButtons[id] }". Plain object so
+  // Alpine sees mutations.
+  busyButtons: {},
+
+  // Radio-status badge on the topbar. {state, title} drives :data-state
+  // and :title on #btn-status. state ∈ 'unknown'|'on'|'off'|'no-config'.
+  radioStatus: { state: 'unknown', title: 'Loading…' },
+
+  // Various live-state surfaces previously written via .textContent =:
+  ui: {
+    selfName: '',                    // mirror of state.self.display_name
+    selfAddr: '',                    // mirror of state.self.address
+    loginTitle: 'Login',             // login view header
+    rdPresetNote: '',                // dynamic blurb beneath the preset select
+    discNameStatus: '',              // "saved" / "saving…" caption
+    discStatus: '',                  // master status caption on discovery tab
+    discIdentityHash: '—',           // hash printed in the Discovery tab
+    storageStatus: '',               // status caption on storage sliders
+    storageMaxSendLabel: '',         // KB readout next to the send slider
+    storageMaxRecvLabel: '',         // KB readout next to the recv slider
+    tmCurrent: '—',                  // time-master current value
+    tmSource:  '',                   // time-master source label
+    settingsTitle: 'Settings',       // h3 above the tab bar in #modal-settings
+    tpEndpoint:    '',               // transport endpoint URL in App tab
+    announceState: 'none',           // data-state on #btn-announce-top: none|sent|auto
+    announceLabelText: '',           // countdown label text (empty => label hidden)
+    announceTitle: 'Announce me',    // title attr on #btn-announce-top
+    micRecording:  false,            // adds .recording class to #btn-mic
+    showCloseSettings: true,         // x-show on the X button in #modal-settings
+    sysClockNow: '',                 // wall-clock display in system popover
+    sysClockSource: '',              // "Source: X" / "Last calibrated …"
+    sysGpsAge: '',                   // sensor-age strings in system popover
+    sysBmeAge: '',
+    sysMagAge: '',
+    sysImuAge: '',
+    rbStatus:  '',                   // reboot banner text
+    composeCounter: '',              // composer character/byte counter
+    composeCounterShown: false,      // toggles composer counter visibility
+    composeCounterDanger: false,     // colour the counter red near the cap
+    idAddress: '',                   // address line in Settings → Identity
+    idNameStatus: '',                // saved/saving caption next to name input
+    idCodeModalHint: '',             // per-call context line in #modal-id-code
+    idCodeModalTitle: 'Identity code required',  // h3 in #modal-id-code
+    inboxConfigStatus: '',           // saved/error caption under retention select
+    cnTcpStatus: '',                 // saved/error caption under tcp-add modal
+    storageMaxSendMax: 1048576,      // live max bytes for the send slider
+    storageMaxRecvMax: 1048576,      // live max bytes for the recv slider
+    showRadioSection: true,          // Connectivity tab — toggled by
+    showTcpSection:   true,          //   applyTransportCapabilities()
+    showBtSection:    true,          //   based on /api/info → transports
+    btnStatus: { state: 'unknown', title: 'Loading…' },  // top-bar radio button
+    cnDotRadio: 'hidden',            // connectivity dots (hidden|ok|warn|err)
+    cnDotWifi:  'hidden',
+    cnDotTcp:   'hidden',
+    cnDotBle:   'hidden',
+    cnDotSerial:'hidden',
+  },
 };
 
 // Shared copy for the identity-code hint, displayed everywhere a hex
@@ -1811,6 +1987,14 @@ function nameFor(peerHex) {
 async function withBusy(btn, asyncFn, opts = {}) {
   if (!btn || btn.dataset.busy) return;
   btn.dataset.busy = '1';
+  // Buttons whose markup carries :disabled / :class /
+  // x-text="busyButtons[id] ? 'Saving…' : 'Save'" bindings get a
+  // declarative busy state from this set. Buttons that don't yet have
+  // those bindings still get the imperative DOM manipulation below
+  // (originalText swap, disabled, .is-busy class) so the visual state
+  // works either way.
+  const id = btn.id || null;
+  if (id) state.busyButtons[id] = true;
   const originalText = btn.textContent;
   if (opts.label) btn.textContent = opts.label;
   btn.classList.add('is-busy');
@@ -1824,7 +2008,7 @@ async function withBusy(btn, asyncFn, opts = {}) {
   // saves), not every <100 ms click.
   let bgId = null;
   if (opts.bgTaskLabel) {
-    bgId = 'busy:' + (btn.id || Math.random().toString(36).slice(2));
+    bgId = 'busy:' + (id || Math.random().toString(36).slice(2));
     startBgTask(bgId, { label: opts.bgTaskLabel });
   }
   try {
@@ -1835,6 +2019,7 @@ async function withBusy(btn, asyncFn, opts = {}) {
     btn.textContent = originalText;
     btn.classList.remove('is-busy');
     delete btn.dataset.busy;
+    if (id) state.busyButtons[id] = false;
     if (bgId) endBgTask(bgId);
   }
 }
@@ -2813,10 +2998,10 @@ async function selectConversation(peer) {
 }
 
 async function sendMessage() {
-  const text = $('compose-text').value.trim();
+  const text = (state.forms.compose.text || '').trim();
   if (!state.openPeer) return;
   if (!text && state.pendingAttachments.length === 0) return;
-  $('btn-send').disabled = true;
+  state.busyButtons['btn-send'] = true;
   try {
     // Upload each pending attachment's bytes ahead of the JSON /send
     // call (#130). Skip ones that already carry a staging_id from a
@@ -2886,7 +3071,8 @@ async function sendMessage() {
       packet_hash: r.packet_hash || '',
       attachments: optimisticAttachments,
     });
-    $('compose-text').value = '';
+    state.forms.compose.text = '';
+    state.ui.composeCounterShown = false;
     state.pendingAttachments = [];
     renderAttachTray();
     renderThread();
@@ -2894,7 +3080,7 @@ async function sendMessage() {
   } catch (e) {
     toast('Send failed: ' + (e.message || e), 'error');
   } finally {
-    $('btn-send').disabled = false;
+    state.busyButtons['btn-send'] = false;
   }
 }
 
@@ -2903,11 +3089,12 @@ async function sendMessage() {
 // the send. Flip the message back to "queued" optimistically so the
 // bubble updates immediately; the device's outbox-status SSE event
 // will eventually confirm Delivered / Failed.
-async function retryFailedMessage(msg, button) {
+async function retryFailedMessage(msg) {
   if (!msg || msg.in) return;
   const seq = msg.seq;
   if (!Number.isFinite(seq)) return;
-  if (button) { button.disabled = true; button.textContent = 'Retrying…'; }
+  const key = 'retry-' + seq;
+  state.busyButtons[key] = true;
   try {
     await state.transport.retryOutbox(state.identityId, seq);
     msg.status = 'queued';
@@ -2918,10 +3105,7 @@ async function retryFailedMessage(msg, button) {
     const msgText = (e && e.message) ? e.message : String(e);
     toast('Retry failed: ' + msgText, 'error');
   } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = 'Retry';
-    }
+    state.busyButtons[key] = false;
   }
 }
 
@@ -3071,7 +3255,7 @@ async function startRecording() {
     const blob = new Blob(state.recorderChunks, { type: mime || 'audio/webm' });
     state.recorder = null;
     state.recorderChunks = [];
-    $('btn-mic').classList.remove('recording');
+    state.ui.micRecording = false;
     renderAttachTray();
     if (state.recorderStopReason === 'cancel' || blob.size === 0) return;
     const cap = attachMaxBytes();
@@ -3091,7 +3275,7 @@ async function startRecording() {
     });
   };
   rec.start();
-  $('btn-mic').classList.add('recording');
+  state.ui.micRecording = true;
   renderAttachTray();   // surfaces the live "Recording 0:03 [Stop] [Cancel]" chip
 }
 
@@ -3105,7 +3289,10 @@ function onClickMic() {
   if (state.recorder) stopRecording(true);
   else                startRecording();
 }
-$('attach-file').addEventListener('change', async (ev) => {
+// Bound via @change on the #attach-file file picker. Dispatches by mime:
+// images go through the in-browser resize picker; everything else is
+// staged at native size up to the device-reported attachment cap.
+async function onChangeAttachFile(ev) {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;
   if (file.type.startsWith('image/')) {
@@ -3113,7 +3300,10 @@ $('attach-file').addEventListener('change', async (ev) => {
   } else {
     await stageNonImageAttachment(file);
   }
-});
+  // Reset the input so picking the same file twice in a row still fires
+  // change; otherwise the browser dedupes and the second pick is silent.
+  ev.target.value = '';
+}
 
 async function stageNonImageAttachment(file) {
   const cap = attachMaxBytes();
@@ -3341,8 +3531,7 @@ function popoverDismissibleClick(ev, popoverId, anchorBtnId) {
 }
 
 async function forceAnnounce() {
-  const btn = $('btn-announce-top');
-  if (btn) btn.disabled = true;
+  state.busyButtons['btn-announce-top'] = true;
   try {
     await state.transport.announceNow(state.identityId);
     toast('Announce sent', 'success');
@@ -3356,7 +3545,7 @@ async function forceAnnounce() {
   } catch (e) {
     toast('Announce failed: ' + (e.message || e), 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    state.busyButtons['btn-announce-top'] = false;
   }
 }
 
@@ -3416,8 +3605,8 @@ async function refreshStatus() {
     // Popover content is fully reactive against $store.s.lastInfo —
     // no imperative render call.
   } catch (e) {
-    $('btn-status').setAttribute('data-state', 'unknown');
-    $('btn-status').title = 'Status unknown: ' + (e.message || e);
+    state.radioStatus.state = 'unknown';
+    state.radioStatus.title = 'Status unknown: ' + (e.message || e);
   }
   // System snapshot (storage / outbound_caps / battery / sensors) is
   // now WS-pushed. Read straight from the cache populated by the
@@ -3432,14 +3621,13 @@ async function refreshStatus() {
   }
 }
 function applyStatusToButton(info) {
-  const btn = $('btn-status');
   const r = info && info.radio;
-  if (!r)                  { btn.setAttribute('data-state', 'unknown'); btn.title = 'Radio status unknown'; return; }
-  if (!r.have_conf)        { btn.setAttribute('data-state', 'unconf');  btn.title = 'Radio not configured — open Settings → Radio'; return; }
-  if (r.online)            { btn.setAttribute('data-state', 'online');
-                             btn.title = 'Radio online · ' + (r.frequency/1e6).toFixed(3) + ' MHz'; return; }
-  btn.setAttribute('data-state', 'offline');
-  btn.title = 'Radio configured but offline';
+  if (!r)            { state.radioStatus.state = 'unknown'; state.radioStatus.title = 'Radio status unknown'; return; }
+  if (!r.have_conf)  { state.radioStatus.state = 'unconf';  state.radioStatus.title = 'Radio not configured — open Settings → Radio'; return; }
+  if (r.online)      { state.radioStatus.state = 'online';
+                       state.radioStatus.title = 'Radio online · ' + (r.frequency/1e6).toFixed(3) + ' MHz'; return; }
+  state.radioStatus.state = 'offline';
+  state.radioStatus.title = 'Radio configured but offline';
 }
 // Battery icon in the topbar. Hidden when the device hasn't reported
 // a battery block at all (older firmware / non-PMU boards). The fill
@@ -3843,6 +4031,12 @@ function sensorStateForPill(enabled, valid) {
 // $store.s.system (the WS-pushed system snapshot) plus state.clockAnchor.
 function systemPopoverData() {
   return {
+    // Per-sensor expand/collapse state for the popover's sensor rows.
+    // Keys are the sensor names from data-sensor (gps, environment,
+    // magnetometer, imu). Click on the header toggles; x-show on the
+    // .popover-config div reads from here.
+    sectionOpen: {},
+    toggleSection(name) { this.sectionOpen[name] = !this.sectionOpen[name]; },
     get _sys()  { return this.$store.s.system || {}; },
     get _fl()   { return (this._sys.storage && this._sys.storage.flash) || {}; },
     get _sd()   { return (this._sys.storage && this._sys.storage.sd)    || {}; },
@@ -4010,31 +4204,26 @@ function refreshSensorConfigUI() {
 function tickSystemClock() {
   // 1 Hz pulse that advances every "Last read Xs ago" label and the
   // live device-clock display against the WS-pinned clock anchor.
-  // Does NOT rebuild sensor-config rows (dropdowns) — those keep
-  // their focus / state between paints because we only update
-  // textContent on the age + clock elements.
-  if ($('popover-system').hidden) return;
+  // Writes to state.ui slots; the popover markup binds x-text against
+  // them and re-renders for free.
+  if (!state.popovers.system) return;
   // Device clock. Tick both the primary wall-clock display and the
   // "Last calibrated Xs ago" subline so the age advances live.
   const a = sysPopover.clockAnchor;
   if (a) {
     const nowMs = a.deviceUnixMs + (performance.now() - a.localNowMs);
-    const elc = $('sys-clock-now');
-    if (elc) elc.textContent = new Date(nowMs).toLocaleString();
+    state.ui.sysClockNow = new Date(nowMs).toLocaleString();
   }
   {
     const anchor = state.clockAnchor || {};
     const lastMs = Number(anchor.lastCalibratedMs || 0);
     const dnow   = deviceMillisNow();
     const src    = (anchor.source || 'unknown').toUpperCase();
-    const el     = $('sys-clock-source');
-    if (el) {
-      if (lastMs > 0 && dnow !== null) {
-        const age_s = Math.max(0, Math.round((dnow - lastMs) / 1000));
-        el.textContent = 'Last calibrated ' + compactAgo(age_s) + ' (' + src + ')';
-      } else {
-        el.textContent = 'Source: ' + src;
-      }
+    if (lastMs > 0 && dnow !== null) {
+      const age_s = Math.max(0, Math.round((dnow - lastMs) / 1000));
+      state.ui.sysClockSource = 'Last calibrated ' + compactAgo(age_s) + ' (' + src + ')';
+    } else {
+      state.ui.sysClockSource = 'Source: ' + src;
     }
   }
   // Per-sensor age labels. Same ageLine helper renderSystemPopover
@@ -4043,21 +4232,21 @@ function tickSystemClock() {
   const g = s.gps || {};
   if (g.available) {
     const warming = typeof g.last_byte_ms !== 'number' || g.last_byte_ms < 0;
-    $('sys-gps-age').textContent = ageLine(g.last_byte_ms, g.model || 'GPS', warming);
+    state.ui.sysGpsAge = ageLine(g.last_byte_ms, g.model || 'GPS', warming);
   }
   const env = s.environment || {};
   if (env.available) {
-    $('sys-env-age').textContent = ageLine(env.taken_ms,
+    state.ui.sysBmeAge = ageLine(env.taken_ms,
         env.model || 'environment', env.enabled && !env.valid);
   }
   const mg = s.magnetometer || {};
   if (mg.available) {
-    $('sys-mag-age').textContent = ageLine(mg.taken_ms,
+    state.ui.sysMagAge = ageLine(mg.taken_ms,
         mg.model || 'magnetometer', mg.enabled && !mg.valid);
   }
   const im = s.imu || {};
   if (im.available) {
-    $('sys-imu-age').textContent = ageLine(im.taken_ms,
+    state.ui.sysImuAge = ageLine(im.taken_ms,
         im.model || 'imu', im.enabled && !im.valid);
   }
 }
@@ -4245,20 +4434,10 @@ async function onSensorConfigChange(key, sourceEl) {
   }
 }
 
-function attachSensorConfigToggle(section) {
-  if (section.dataset.toggleWired) return;
-  section.dataset.toggleWired = '1';
-  const header = section.querySelector('[data-role="header"]');
-  const config = section.querySelector('[data-role="config"]');
-  // Chevron rotation is driven by `.popover-section.is-open` in CSS
-  // so we don't hand-roll the style here. Toggling that class flips
-  // both the chev and any other open-state visuals consistently.
-  header.addEventListener('click', () => {
-    const open = !config.hidden;
-    config.hidden = open;
-    section.classList.toggle('is-open', !open);
-  });
-}
+// No-op kept for any external callers; the popover sections now bind
+// open/close declaratively via the sectionOpen map on the popover's
+// Alpine component (header @click toggles, config / .is-open read).
+function attachSensorConfigToggle(_section) { /* declarative */ }
 
 // Each sensor section's .popover-config block now renders its
 // checkbox + interval select declaratively against state.system.
@@ -4328,26 +4507,22 @@ function seedAnnounceCountdown(nextInMs, intervalMs) {
   refreshAnnounceCountdown();
 }
 function refreshAnnounceCountdown() {
-  const btn  = $('btn-announce-top');
-  const lbl  = $('announce-countdown');
-  if (!btn || !lbl) return;
   const interval = Number(state.self && state.self.announce_interval_ms) || 0;
   if (interval <= 0) {
     // No auto-announce. Dot is yellow if the user manually fired one
     // this boot, grey otherwise.
-    btn.setAttribute('data-state', state.announcedThisBoot ? 'sent' : 'none');
-    lbl.hidden = true;
-    btn.title = state.announcedThisBoot
+    state.ui.announceState = state.announcedThisBoot ? 'sent' : 'none';
+    state.ui.announceLabelText = '';
+    state.ui.announceTitle = state.announcedThisBoot
       ? 'Announce me — auto-announce is OFF (manual announce sent this boot)'
       : 'Announce me — auto-announce is OFF for this identity';
     return;
   }
   // Auto-announce on.
-  btn.setAttribute('data-state', 'auto');
+  state.ui.announceState = 'auto';
   const remainMs = Math.max(0, (state.nextAnnounceAtMs || 0) - Date.now());
-  lbl.hidden = false;
-  lbl.textContent = formatCountdown(remainMs);
-  btn.title = 'Announce me. Auto-announce in ' + formatCountdown(remainMs);
+  state.ui.announceLabelText = formatCountdown(remainMs);
+  state.ui.announceTitle = 'Announce me. Auto-announce in ' + formatCountdown(remainMs);
   if (remainMs === 0) {
     // The server should have announced; nudge our local target forward
     // so we don't sit at 0 forever if the server announce is delayed.
@@ -4656,7 +4831,7 @@ function startEventStream() {
 // ============================== BOOT / VIEW FLOW ==============================
 async function boot() {
   state.transport = makeTransportFromStorage();
-  $('tp-endpoint').textContent = state.transport.endpoint || '';
+  state.ui.tpEndpoint = state.transport.endpoint || '';
   await state.transport.connect();
   let info;
   try { info = await state.transport.getInfo(); }
@@ -4709,16 +4884,13 @@ function enterIdentityPicker() {
 }
 function enterCreate() {
   show('view-create');
-  $('cr-name').value = '';
-  $('cr-pw1').value  = '';
-  $('cr-pw2').value  = '';
-  $('cr-code').value = '';
+  Object.assign(state.forms.createIdent, { name: '', pw1: '', pw2: '', code: '' });
 }
 function enterLogin(identity) {
   show('view-login');
   state.identityId = identity.id;
-  $('login-title').textContent = 'Login: ' + (identity.display_name || identity.id);
-  $('login-pw').value = '';
+  state.ui.loginTitle = 'Login: ' + (identity.display_name || identity.id);
+  state.forms.login.pw = '';
   // setTimeout to next tick so focus lands after the view becomes
   // visible; calling focus() while the element is in a hidden parent
   // is a no-op in some browsers.
@@ -4764,24 +4936,27 @@ async function bsRescan() {
     state.wifiScanState = 'error';
   }
 }
-$('bs-rescan').addEventListener('click', bsRescan);
-$('bs-save').addEventListener('click', () => withBusy($('bs-save'), async () => {
-  const ssid = $('bs-ssid').value || '';
-  if (!ssid) { toast('Pick a network first', 'warn'); return; }
-  const code = ($('bs-code').value || '').trim();
-  if (!code) { toast('Enter the identity code from the device OLED', 'warn'); return; }
-  try {
-    await state.transport.wifiConfigure(ssid, $('bs-psk').value, code);
-    waitForDeviceAndReload('Saving WiFi & rebooting…');
-  } catch (e) {
-    toast('Save failed: ' + (e.message || e), 'error');
-  }
-}, { label: 'Saving WiFi…', alsoDisable: ['#bs-ssid', '#bs-psk', '#bs-code', '#bs-rescan', '#bs-skip'] }));
+// Handlers bound via @click in the markup for the bootstrap view.
+function onClickBsSave(btn) {
+  return withBusy(btn, async () => {
+    const f = state.forms.bootstrap;
+    const ssid = f.ssid || '';
+    if (!ssid) { toast('Pick a network first', 'warn'); return; }
+    const code = (f.code || '').trim();
+    if (!code) { toast('Enter the identity code from the device OLED', 'warn'); return; }
+    try {
+      await state.transport.wifiConfigure(ssid, f.psk, code);
+      waitForDeviceAndReload('Saving WiFi & rebooting…');
+    } catch (e) {
+      toast('Save failed: ' + (e.message || e), 'error');
+    }
+  }, { label: 'Saving WiFi…', alsoDisable: ['#bs-ssid', '#bs-psk', '#bs-code', '#bs-rescan', '#bs-skip'] });
+}
 // Skip — let the user proceed into the chat UI without configuring a home
 // WiFi network. Useful for standalone / off-grid operation from the softAP
 // itself. Routes the same way as a normal boot (identity picker if no
 // identities, login if some exist).
-$('bs-skip').addEventListener('click', async () => {
+async function onClickBsSkip() {
   state.skipBootstrap = true;
   try {
     const info = await state.transport.getInfo();
@@ -4794,7 +4969,7 @@ $('bs-skip').addEventListener('click', async () => {
   } catch (e) {
     toast('Failed to leave bootstrap: ' + (e.message || e), 'error');
   }
-});
+}
 
 // ============================== IDENTITY PICKER / CREATE / LOGIN ==============================
 async function onClickFactoryReset() {
@@ -4807,7 +4982,7 @@ async function onClickFactoryReset() {
   if (!ok) return;
   await withBusy($('btn-factory-reset'), async () => {
     try {
-      await state.transport.factoryReset($('fr-code').value);
+      await state.transport.factoryReset(state.forms.factoryReset.code);
       waitForDeviceAndReload('Factory-resetting & rebooting…');
     } catch (e) {
       toast('Reset failed: ' + (e.message || e), 'error');
@@ -4816,17 +4991,18 @@ async function onClickFactoryReset() {
 }
 
 function onClickCreateGo() {
-  if ($('cr-pw1').value !== $('cr-pw2').value) { toast('Passwords do not match', 'warn'); return; }
-  if ($('cr-pw1').value.length < 8) { toast('Password must be at least 8 chars', 'warn'); return; }
+  const f = state.forms.createIdent;
+  if (f.pw1 !== f.pw2)        { toast('Passwords do not match', 'warn'); return; }
+  if ((f.pw1 || '').length < 8) { toast('Password must be at least 8 chars', 'warn'); return; }
   return withBusy($('btn-create-go'), async () => {
     try {
-      const r = await state.transport.createIdentity($('cr-name').value, $('cr-pw1').value, $('cr-code').value);
+      const r = await state.transport.createIdentity(f.name, f.pw1, f.code);
       state.token = r.token;
       state.identityId = r.id;
       localStorage.setItem(LS.TOKEN, r.token);
       localStorage.setItem(LS.IDENTITY, r.id);
       state.identities = ((await state.transport.getInfo()).identities) || [];
-      state.self = state.identities.find(x => x.id === r.id) || { id: r.id, address: r.address, display_name: $('cr-name').value };
+      state.self = state.identities.find(x => x.id === r.id) || { id: r.id, address: r.address, display_name: f.name };
       await refreshState();
       enterApp();
     } catch (e) { toast('Create failed: ' + (e.message || e), 'error'); }
@@ -4836,7 +5012,7 @@ function onClickCreateGo() {
 function onClickLoginGo(btn) {
   return withBusy(btn, async () => {
     try {
-      const r = await state.transport.login(state.identityId, $('login-pw').value);
+      const r = await state.transport.login(state.identityId, state.forms.login.pw);
       state.token = r.token;
       state.identityId = r.identityId;
       localStorage.setItem(LS.TOKEN, r.token);
@@ -4851,14 +5027,9 @@ function onClickLoginGo(btn) {
   }, { label: 'Logging in…', alsoDisable: ['#login-pw', '#btn-login-back'] });
 }
 
-// Enter in the password field should submit, just like a real form.
-$('login-pw').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); $('btn-login-go').click(); }
-});
-
 // ============================== APP WIRING ==============================
 function openNewConvModal() {
-  $('nc-addr').value = ''; $('nc-name').value = '';
+  Object.assign(state.forms.newConv, { addr: '', name: '' });
   renderNewConvPicker();
   state.modals.newConv = true;
 }
@@ -4893,9 +5064,9 @@ function newConvPickerData() {
 // explicitly. The Alpine template now repaints itself reactively.
 function renderNewConvPicker() { /* no-op */ }
 function onClickNewConvGo() {
-  const addr = $('nc-addr').value.trim().toLowerCase();
+  const addr = (state.forms.newConv.addr || '').trim().toLowerCase();
   if (!/^[0-9a-f]{32}$/.test(addr)) { toast('Address must be 32 hex characters', 'warn'); return; }
-  const name = $('nc-name').value.trim();
+  const name = (state.forms.newConv.name || '').trim();
   if (name) { state.contacts[addr] = name; persistContacts(); }
   if (!state.conversations[addr]) state.conversations[addr] = { peer: addr, msgs: [], last_ts: 0 };
   selectConversation(addr);
@@ -5066,7 +5237,8 @@ async function clearConversationFlow(peer) {
   }
 }
 
-$('thread-name').addEventListener('click', () => renamePeerFlow(state.openPeer));
+// #thread-name now has @click="renamePeerFlow($store.s.openPeer)" in
+// the markup directly.
 // Format a TTL in seconds as a human-friendly label, choosing the
 // coarsest unit that comes out whole (minutes → hours → days). 0 is
 // rendered as "no expiry" so it's never ambiguous with "0 seconds".
@@ -5179,14 +5351,15 @@ function onClickRadioSave(btn) {
       // the band params so a region preset's regulatory limits survive a
       // reboot. Old separate /api/radio/airtime endpoint remains for live
       // tweaks without a reboot but isn't part of the user-driven save.
+      const f = state.forms.radio;
       await state.transport.setRadio({
-        frequency: Number($('rd-freq').value),
-        bandwidth: Number($('rd-bw').value),
-        spreading_factor: Number($('rd-sf').value),
-        coding_rate: Number($('rd-cr').value),
-        tx_power: Number($('rd-tx').value),
-        airtime_limit_pct:          Number($('rd-airtime').value),
-        longterm_airtime_limit_pct: Number($('rd-airtime-lt').value),
+        frequency: f.freq,
+        bandwidth: f.bw,
+        spreading_factor: f.sf,
+        coding_rate: f.cr,
+        tx_power: f.tx,
+        airtime_limit_pct:          f.airtime,
+        longterm_airtime_limit_pct: f.airtimeLt,
       });
       waitForDeviceAndReload('Saving radio config & rebooting…');
     } catch (e) {
@@ -5210,13 +5383,12 @@ for (const det of document.querySelectorAll('#modal-settings .cn-section')) {
 // call the bootstrap softAP flow uses.
 function onClickWifiSave(btn) {
   return withBusy(btn, async () => {
-    const ssid = $('cn-wifi-ssid').value;
-    if (!ssid) { toast('Pick a network first.', 'error'); return; }
-    const psk  = $('cn-wifi-psk').value;
-    const code = $('cn-wifi-code').value.trim();
+    const f = state.forms.wifiAdd;
+    if (!f.ssid) { toast('Pick a network first.', 'error'); return; }
+    const code = (f.code || '').trim();
     if (!code) { toast('Identity code required to change WiFi.', 'error'); return; }
     try {
-      await state.transport.wifiConfigure(ssid, psk, code);
+      await state.transport.wifiConfigure(f.ssid, f.psk, code);
       state.modals.wifiAdd = false;
       waitForDeviceAndReload('Saving WiFi & rebooting…');
     } catch (e) {
@@ -5226,8 +5398,7 @@ function onClickWifiSave(btn) {
 }
 
 async function openAddWifiModal() {
-  $('cn-wifi-psk').value = '';
-  $('cn-wifi-code').value = '';
+  Object.assign(state.forms.wifiAdd, { ssid: '', psk: '', code: '' });
   state.modals.wifiAdd = true;
   await scanIntoWifiModal();
 }
@@ -5245,56 +5416,65 @@ async function scanIntoWifiModal() {
   }
 }
 
-$('compose-text').addEventListener('keydown', (e) => {
+// Body cap matches the firmware's LXMF_MAX_BODY_BYTES. The textarea's
+// maxlength attribute is the hard stop in browser UI; the counter below
+// gives the user a visual heads-up as they approach it.
+const COMPOSE_MAX_CHARS = 4096;
+// Keydown handler bound via @keydown on the textarea. Branches on the
+// enter-sends pref so users on either mental model (chat-app / slack)
+// get the behaviour they expect.
+function onComposeKeydown(e) {
   if (e.key !== 'Enter') return;
   // enterSends=true: Enter → send, Shift+Enter → newline (default chat-app)
   // enterSends=false: Shift+Enter → send, Enter → newline (mirror Slack/Discord)
   const send = state.prefs.enterSends ? !e.shiftKey : e.shiftKey;
   if (send) { e.preventDefault(); sendMessage(); }
-});
-// Body cap matches the firmware's LXMF_MAX_BODY_BYTES. The textarea's
-// maxlength attribute is the hard stop in browser UI; this counter
-// gives the user a visual heads-up as they approach it.
-const COMPOSE_MAX_CHARS = 4096;
-$('compose-text').addEventListener('input', (e) => {
-  // Auto-grow textarea.
+}
+// Input handler bound via @input on the textarea. Auto-grows the field
+// up to 120 px and updates the counter substate; the counter element
+// itself is purely declarative (x-show + x-text on $store.s.ui).
+function onComposeInput(e) {
   e.target.style.height = 'auto';
   e.target.style.height = Math.min(120, e.target.scrollHeight) + 'px';
-  // Counter: hidden when there's plenty of room; muted at ≥75 %;
-  // warn-coloured at ≥95 %. Avoids permanent UI noise for the
-  // common case of short messages.
-  const c = $('compose-counter');
-  const len = e.target.value.length;
-  if (len < COMPOSE_MAX_CHARS * 0.75) {
-    c.hidden = true;
-  } else {
-    c.hidden = false;
-    c.textContent = len + ' / ' + COMPOSE_MAX_CHARS;
-    c.style.color = (len >= COMPOSE_MAX_CHARS * 0.95)
-      ? 'var(--warn, #d29922)'
-      : 'var(--text-mute)';
-  }
-});
+  const len = (state.forms.compose.text || '').length;
+  state.ui.composeCounterShown  = len >= COMPOSE_MAX_CHARS * 0.75;
+  state.ui.composeCounterDanger = len >= COMPOSE_MAX_CHARS * 0.95;
+  state.ui.composeCounter       = len + ' / ' + COMPOSE_MAX_CHARS;
+}
 function onClickEmoji(ev) {
   ev.stopPropagation();
   openEmojiPicker(ev.currentTarget, (e) => {
+    // Splicing into a textarea needs the live caret positions, which only
+    // the DOM has — Alpine state mirrors .value but not selectionStart.
     const ta = $('compose-text');
     const start = ta.selectionStart || ta.value.length;
     const end   = ta.selectionEnd   || ta.value.length;
-    ta.value = ta.value.slice(0, start) + e + ta.value.slice(end);
-    ta.focus();
-    ta.selectionStart = ta.selectionEnd = start + e.length;
+    const next  = ta.value.slice(0, start) + e + ta.value.slice(end);
+    state.forms.compose.text = next;     // x-model wakes up
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.selectionStart = ta.selectionEnd = start + e.length;
+    });
   });
 }
 
-$('search').addEventListener('input', (e) => {
-  const q = e.target.value.toLowerCase();
-  const wrap = $('conv-list');
-  for (const child of wrap.children) {
-    const txt = child.textContent.toLowerCase();
-    child.style.display = txt.includes(q) ? '' : 'none';
-  }
-});
+// Search field — writes state.searchQuery; conv-row entries x-show
+// against convRowMatchesSearch() so filtering is declarative. Per-row
+// match keeps the typeahead snappy without rebuilding the list each
+// keystroke.
+function convRowMatchesSearch(c) {
+  const q = (state.searchQuery || '').toLowerCase();
+  if (!q) return true;
+  const name = (c.display_name || nameFor(c.peer) || '').toLowerCase();
+  const last = (c.last_body || '').toLowerCase();
+  return name.includes(q) || (c.peer || '').toLowerCase().includes(q) || last.includes(q);
+}
+function convRowMatchesSearchDiscovered(a) {
+  const q = (state.searchQuery || '').toLowerCase();
+  if (!q) return true;
+  const name = (a.display_name || nameFor(a.dest) || '').toLowerCase();
+  return name.includes(q) || (a.dest || '').toLowerCase().includes(q);
+}
 
 // ============================== RADIO REGION PRESETS ==============================
 // Frequency + bandwidth + SF + CR + TX power per region. The frequency is
@@ -5353,54 +5533,29 @@ const RADIO_PRESETS = [
 // Options are now rendered declaratively via <template x-for> over
 // RADIO_PRESETS inside the #rd-preset markup. No imperative builder
 // needed; kept as a no-op so legacy callers don't NPE.
-function populateRadioPresets() { /* declarative */ }
 function findMatchingPreset() {
-  const freq = Number($('rd-freq').value);
-  const bw   = Number($('rd-bw').value);
-  const sf   = Number($('rd-sf').value);
-  const cr   = Number($('rd-cr').value);
-  const tx   = Number($('rd-tx').value);
-  const at   = Number($('rd-airtime').value);
-  const ltAt = Number($('rd-airtime-lt').value);
+  const f = state.forms.radio;
   return RADIO_PRESETS.find(p =>
-    p.freq === freq && p.bw === bw && p.sf === sf && p.cr === cr && p.tx === tx
-    && p.airtime === at && p.lt_airtime === ltAt
+    p.freq === f.freq && p.bw === f.bw && p.sf === f.sf && p.cr === f.cr && p.tx === f.tx
+    && p.airtime === f.airtime && p.lt_airtime === f.airtimeLt
   );
 }
-function syncPresetSelect() {
-  const match = findMatchingPreset();
-  $('rd-preset').value = match ? match.id : '__custom';
-  $('rd-preset-note').textContent = match ? match.note : '';
-}
-function applyPreset(p) {
-  $('rd-freq').value = p.freq;
-  $('rd-bw').value   = p.bw;
-  $('rd-sf').value   = p.sf;
-  $('rd-cr').value   = p.cr;
-  $('rd-tx').value   = p.tx;
-  $('rd-airtime').value    = p.airtime;
-  $('rd-airtime-lt').value = p.lt_airtime;
-  $('rd-preset-note').textContent = p.note;
-}
-function setRawFieldsVisible(visible) {
-  $('rd-raw').style.display = visible ? '' : 'none';
-  $('btn-radio-save').disabled = !visible;
-}
-populateRadioPresets();
-$('rd-preset').addEventListener('change', (e) => {
-  const id = e.target.value;
-  if (id === '__empty') {
-    $('rd-preset-note').textContent = '';
-    setRawFieldsVisible(false);
-    return;
-  }
-  setRawFieldsVisible(true);
-  if (id === '__custom') { $('rd-preset-note').textContent = ''; return; }
+// Called from @change on #rd-preset. If the user picks a region, copy its
+// params into state.forms.radio so the (hidden) raw fields stay in sync if
+// they later switch to Custom. If they pick Custom, the existing values
+// stay — the form just becomes visible. The "saved" notebook is shown
+// declaratively via x-text on $store.s.ui.rdPresetNote.
+function applyRadioPreset() {
+  const id = state.forms.radio.preset;
+  if (id === '__empty')  { state.ui.rdPresetNote = ''; return; }
+  if (id === '__custom') { state.ui.rdPresetNote = ''; return; }
   const p = RADIO_PRESETS.find(x => x.id === id);
-  if (p) applyPreset(p);
-});
-for (const fld of ['rd-freq', 'rd-bw', 'rd-sf', 'rd-cr', 'rd-tx', 'rd-airtime', 'rd-airtime-lt']) {
-  $(fld).addEventListener('input', syncPresetSelect);
+  if (!p) return;
+  Object.assign(state.forms.radio, {
+    freq: p.freq, bw: p.bw, sf: p.sf, cr: p.cr, tx: p.tx,
+    airtime: p.airtime, airtimeLt: p.lt_airtime,
+  });
+  state.ui.rdPresetNote = p.note;
 }
 
 // ============================== SETTINGS MODAL ==============================
@@ -5409,33 +5564,39 @@ for (const fld of ['rd-freq', 'rd-bw', 'rd-sf', 'rd-cr', 'rd-tx', 'rd-airtime', 
 // radio tab and hides everything else until the radio is saved.
 
 async function populateRadioTab() {
-  // Reset and fill from device.
-  $('rd-freq').value = ''; $('rd-bw').value = '';
-  $('rd-sf').value = '';   $('rd-cr').value = '';   $('rd-tx').value = '';
-  $('rd-airtime').value = ''; $('rd-airtime-lt').value = '';
-  $('rd-preset').value = '__empty';
-  $('rd-preset-note').textContent = '';
-  setRawFieldsVisible(false);
+  // Reset form to "no preset chosen"; raw inputs hide automatically via
+  // x-show on $store.s.forms.radio.preset === '__custom'.
+  Object.assign(state.forms.radio, {
+    preset: '__empty',
+    freq: 0, bw: 0, sf: 0, cr: 0, tx: 0, airtime: 0, airtimeLt: 0,
+  });
+  state.ui.rdPresetNote = '';
   try {
     const r = await state.transport.getRadio();
     if (r.have_conf) {
-      $('rd-freq').value = r.frequency || '';
-      $('rd-bw').value   = r.bandwidth || '';
-      $('rd-sf').value   = r.spreading_factor || '';
-      $('rd-cr').value   = r.coding_rate || '';
-      $('rd-tx').value   = r.tx_power || '';
-      $('rd-airtime').value    = (r.airtime_limit_pct ?? 0);
-      $('rd-airtime-lt').value = (r.longterm_airtime_limit_pct ?? 0);
-      syncPresetSelect();
-      setRawFieldsVisible(true);
+      Object.assign(state.forms.radio, {
+        freq: r.frequency || 0,
+        bw:   r.bandwidth || 0,
+        sf:   r.spreading_factor || 0,
+        cr:   r.coding_rate || 0,
+        tx:   r.tx_power || 0,
+        airtime:   r.airtime_limit_pct ?? 0,
+        airtimeLt: r.longterm_airtime_limit_pct ?? 0,
+      });
+      // If the loaded values match a known preset, select it (which keeps
+      // the raw fields hidden); otherwise drop to Custom so the user can
+      // see exactly what's loaded.
+      const match = findMatchingPreset();
+      state.forms.radio.preset = match ? match.id : '__custom';
+      state.ui.rdPresetNote = match ? match.note : '';
     }
   } catch (e) {
     toast('Could not read radio state: ' + (e.message || e), 'error');
   }
   try {
     const d = await state.transport._req('/api/transport/lora/discoverable');
-    $('rd-discoverable').checked = !!d.discoverable;
-  } catch { /* leave checkbox in last state */ }
+    state.forms.radio.discoverable = !!d.discoverable;
+  } catch { /* leave toggle in last state */ }
   // Header dot reflects the radio's live state, not the discoverable
   // flag — "is the LoRa interface up and able to send/receive?", not
   // "are we advertising it?".
@@ -5444,15 +5605,6 @@ async function populateRadioTab() {
     radio.online ? 'ok' :
     radio.have_conf ? 'err' : 'warn');
 }
-
-// Toggle lives on the accordion summary row — without these the
-// click bubbles to the <summary> and opens/closes the section.
-(() => {
-  const toggle = $('rd-discoverable').closest('.cn-row-toggle');
-  if (toggle) {
-    toggle.addEventListener('click', (ev) => ev.stopPropagation());
-  }
-})();
 
 // ============== INFO ICON / CLICK TOOLTIP ==============
 // Generic explainer popover. Click an `.info-icon` button to set
@@ -5499,9 +5651,11 @@ document.addEventListener('click', (ev) => {
 }, true);
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') _closeInfoTooltip(); });
 window.addEventListener('scroll', _closeInfoTooltip, true);
-$('rd-discoverable').addEventListener('change', (ev) => {
-  const cb = ev.target;
-  const wantOn = cb.checked;
+// Toggle handler for #rd-discoverable. Enabling requires an identity
+// code; disabling just POSTs. On error or cancel we flip the form-state
+// boolean back, which Alpine reflects through x-model.
+function onChangeRdDiscoverable() {
+  const wantOn = state.forms.radio.discoverable;
   const apply = async (code) => {
     const body = { discoverable: wantOn };
     if (code) body.identity_code = code;
@@ -5510,34 +5664,39 @@ $('rd-discoverable').addEventListener('change', (ev) => {
         { method: 'POST', body });
       toast('LoRa interface ' + (wantOn ? 'is now publicly advertised' : 'is no longer advertised'));
     } catch (e) {
-      cb.checked = !wantOn;
+      state.forms.radio.discoverable = !wantOn;
       toast('Could not save: ' + (e.message || e), 'error');
     }
   };
   if (wantOn) {
     state.pendingIdCodeAction = (code) => {
-      if (!code) { cb.checked = false; return; }
+      if (!code) { state.forms.radio.discoverable = false; return; }
       apply(code);
     };
     openIdCodeModal();
   } else {
     apply();
   }
-});
+}
 
 async function populateIdentityTab() {
   try {
     const me = await state.transport.getIdentity(state.identityId);
     state.self = Object.assign({}, state.self || {}, me);
-    const nameInput = $('id-display-name');
-    nameInput.value             = me.display_name || '';
-    nameInput.dataset.lastSaved = me.display_name || '';
     const ms = Number(me.announce_interval_ms || 0);
     const exact = ANNOUNCE_INTERVALS.find(i => i.ms === ms);
-    $('id-announce-interval').value = exact
-      ? String(exact.ms)
-      : String(ANNOUNCE_INTERVALS.reduce((a, b) => Math.abs(b.ms - ms) < Math.abs(a.ms - ms) ? b : a).ms);
-    $('id-persist-outbound').checked = me.persist_outbound_attachments !== false;
+    Object.assign(state.forms.identity, {
+      displayName: me.display_name || '',
+      announceInterval: exact
+        ? String(exact.ms)
+        : String(ANNOUNCE_INTERVALS.reduce((a, b) =>
+            Math.abs(b.ms - ms) < Math.abs(a.ms - ms) ? b : a).ms),
+      persistOutbound: me.persist_outbound_attachments !== false,
+    });
+    // Remember the server-side last-saved name so onBlurIdName can no-op
+    // if the user blurred without actually editing. Stored on the form
+    // object (not in state.ui) because it's submit-state, not display.
+    state.forms.identity._lastSavedDisplayName = me.display_name || '';
     // Resync the topbar's announce-countdown anchor based on this fetch.
     seedAnnounceCountdown(me.next_announce_in_ms || 0, ms);
   } catch (err) {
@@ -5560,7 +5719,11 @@ function selectSettingsTab(tabId) {
   if (tabId === 'time')         { populateTimeTab(); }
   if (tabId === 'identity')     populateIdentityTab();
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
-  if (tabId === 'ui')           { $('pref-enter-sends').checked = !!state.prefs.enterSends; $('pref-auto-download-attachments').checked = !!state.prefs.autoDownloadAttachments; renderContacts(); populateInboxConfig(); populateStorageConfig(); }
+  if (tabId === 'ui')           {
+    state.forms.prefs.enterSends                = !!state.prefs.enterSends;
+    state.forms.prefs.autoDownloadAttachments   = !!state.prefs.autoDownloadAttachments;
+    renderContacts(); populateInboxConfig(); populateStorageConfig();
+  }
 }
 
 async function populateWifiTab() {
@@ -5568,24 +5731,20 @@ async function populateWifiTab() {
 }
 
 function populateDiagTab() {
-  const cb = $('cn-kiss-out');
-  if (!cb) return;
-  cb.checked = !!(state.lastInfo && state.lastInfo.kiss_serial_output);
+  state.forms.diag.kissOut = !!(state.lastInfo && state.lastInfo.kiss_serial_output);
 }
 
 // Hide/show Connectivity accordion sections based on what the firmware
 // was actually built with. The transports capability dict comes from
 // /api/info → transports.{lora,tcp_client,tcp_server,udp,bluetooth}.
 // Sections for absent transports are hidden so users can't open
-// configuration that can't take effect.
+// configuration that can't take effect. Visibility is driven through
+// reactive state — the <details> elements bind x-show against these.
 function applyTransportCapabilities() {
   const t = (state.lastInfo && state.lastInfo.transports) || {};
-  const setVisible = (selector, visible) => {
-    document.querySelectorAll(selector).forEach(el => { el.hidden = !visible; });
-  };
-  setVisible('details[data-cn="radio"]', t.lora !== false);
-  setVisible('details[data-cn="tcp"]',   !!t.tcp_client);
-  setVisible('details[data-cn="bt"]',    !!t.bluetooth);
+  state.ui.showRadioSection = t.lora !== false;
+  state.ui.showTcpSection   = !!t.tcp_client;
+  state.ui.showBtSection    = !!t.bluetooth;
 }
 
 // Render the TCP-clients list inside the Connectivity tab. Each row
@@ -5613,12 +5772,20 @@ async function populateTcpClientsList() {
     toast('Could not load TCP clients: ' + (e.message || e), 'error');
   }
 }
+// Connectivity-tab status dots. Maps each accordion header's <span
+// id="cn-dot-…"> to a key on state.ui (cnDotRadio / cnDotWifi /
+// cnDotTcp / cnDotBle / cnDotSerial). Empty string = hidden.
+const CN_DOT_KEYS = {
+  'cn-dot-radio':  'cnDotRadio',
+  'cn-dot-wifi':   'cnDotWifi',
+  'cn-dot-tcp':    'cnDotTcp',
+  'cn-dot-bt':     'cnDotBle',
+  'cn-dot-serial': 'cnDotSerial',
+};
 function setConnectivityDot(id, cls) {
-  const dot = $(id);
-  if (!dot) return;
-  dot.classList.remove('ok','warn','err');
-  if (cls) { dot.classList.add(cls); dot.hidden = false; }
-  else      { dot.hidden = true; }
+  const key = CN_DOT_KEYS[id];
+  if (!key) return;
+  state.ui[key] = cls || '';
 }
 async function onTcpRemove(client) {
   const ok = await showConfirm({
@@ -5638,19 +5805,17 @@ async function onTcpRemove(client) {
 }
 
 function openAddTcpModal() {
-  $('cn-tcp-name').value = '';
-  $('cn-tcp-host').value = '';
-  $('cn-tcp-port').value = '4242';
-  $('cn-tcp-status').textContent = '';
+  Object.assign(state.forms.tcpAdd, { name: '', host: '', port: 4242 });
+  state.ui.cnTcpStatus = '';
   state.modals.tcpAdd = true;
 }
 async function onClickTcpSave(_btn) {
-  const name = $('cn-tcp-name').value.trim();
-  const host = $('cn-tcp-host').value.trim();
-  const port = parseInt($('cn-tcp-port').value, 10);
-  const status = $('cn-tcp-status');
+  const f = state.forms.tcpAdd;
+  const name = (f.name || '').trim();
+  const host = (f.host || '').trim();
+  const port = Number(f.port);
   if (!name || !host || !(port > 0 && port < 65536)) {
-    status.textContent = 'Name, host, and a valid port (1–65535) are required.';
+    state.ui.cnTcpStatus = 'Name, host, and a valid port (1–65535) are required.';
     return;
   }
   // discoverable is never sent: a TCP client is outbound-only, so an
@@ -5662,7 +5827,7 @@ async function onClickTcpSave(_btn) {
     populateTcpClientsList();
     toast('TCP client added');
   } catch (e) {
-    status.textContent = 'Failed: ' + (e.message || e);
+    state.ui.cnTcpStatus = 'Failed: ' + (e.message || e);
   }
 }
 
@@ -5697,10 +5862,8 @@ const timeTicker = { anchor: null, timer: null };
 function tickTimeClock() {
   const a = timeTicker.anchor;
   if (!a) return;
-  const cur = $('tm-current');
-  if (!cur) return;
   const nowMs = a.deviceUnixMs + (performance.now() - a.localNowMs);
-  cur.textContent = new Date(nowMs).toLocaleString();
+  state.ui.tmCurrent = new Date(nowMs).toLocaleString();
 }
 
 function startTimeTicker() {
@@ -5719,27 +5882,25 @@ async function populateTimeTab() {
     renderTimeSources(t.sources || {});
     startTimeTicker();
   } catch (e) {
-    $('tm-current').textContent = 'unavailable';
-    $('tm-source').textContent = e.message || 'failed to fetch';
+    state.ui.tmCurrent = 'unavailable';
+    state.ui.tmSource  = e.message || 'failed to fetch';
     stopTimeTicker();
   }
 }
 
 function renderTimeStatus(t) {
-  const cur = $('tm-current');
-  const src = $('tm-source');
   if (t && t.calibrated && t.unix_ms) {
     timeTicker.anchor = {
       deviceUnixMs: Number(t.unix_ms),
       localNowMs:   performance.now(),
     };
     const d = new Date(Number(t.unix_ms));
-    cur.textContent = d.toLocaleString();
-    src.textContent = 'from ' + (t.source || 'unknown');
+    state.ui.tmCurrent = d.toLocaleString();
+    state.ui.tmSource  = 'from ' + (t.source || 'unknown');
   } else {
     timeTicker.anchor = null;
-    cur.textContent = 'uncalibrated';
-    src.textContent = 'no source has reported yet';
+    state.ui.tmCurrent = 'uncalibrated';
+    state.ui.tmSource  = 'no source has reported yet';
   }
 }
 
@@ -5825,24 +5986,29 @@ function attachTimeSourceDnD(row) {
   });
 }
 
-$('btn-tm-browser-sync').addEventListener('click', () => withBusy($('btn-tm-browser-sync'), async () => {
-  try {
-    const r = await state.transport._req('/api/time',
-      { method: 'POST', body: { unix_ms: Date.now() } });
-    if (r.adopted) {
-      toast('Device clock set from browser', 'success');
-    } else if (r.calibrated) {
-      toast('Browser time recorded but a higher-priority source is in use (' + r.source + ')', 'info');
-    } else {
-      toast('Browser sync did not take effect — check that Browser is enabled in the source list', 'error');
+// Bound via @click on #btn-tm-browser-sync in the Time tab.
+function onClickTmBrowserSync(btn) {
+  return withBusy(btn, async () => {
+    try {
+      const r = await state.transport._req('/api/time',
+        { method: 'POST', body: { unix_ms: Date.now() } });
+      if (r.adopted) {
+        toast('Device clock set from browser', 'success');
+      } else if (r.calibrated) {
+        toast('Browser time recorded but a higher-priority source is in use (' + r.source + ')', 'info');
+      } else {
+        toast('Browser sync did not take effect — check that Browser is enabled in the source list', 'error');
+      }
+      renderTimeStatus(r);
+    } catch (e) {
+      toast('Sync failed: ' + (e.message || e), 'error');
     }
-    renderTimeStatus(r);
-  } catch (e) {
-    toast('Sync failed: ' + (e.message || e), 'error');
-  }
-}, { label: 'Syncing…' }));
+  }, { label: 'Syncing…' });
+}
 
-$('btn-tm-save').addEventListener('click', () => withBusy($('btn-tm-save'), async () => {
+// Bound via @click on #btn-tm-save in the Time tab.
+function onClickTmSave(btn) {
+  return withBusy(btn, async () => {
   // Walk state.timeSources in its current order — that's the user's
   // preferred priority sequence (drag-and-drop mutates the array).
   // Index = priority (0 = highest).
@@ -5861,21 +6027,24 @@ $('btn-tm-save').addEventListener('click', () => withBusy($('btn-tm-save'), asyn
   } catch (e) {
     toast('Save failed: ' + (e.message || e), 'error');
   }
-}, { label: 'Saving…' }));
+  }, { label: 'Saving…' });
+}
 
-$('cn-kiss-out').addEventListener('change', async (ev) => {
-  const enabled = ev.target.checked;
+// Bound @change on #cn-kiss-out in the Connectivity → Serial/diagnostics
+// section. The checkbox writes state.forms.diag.kissOut via x-model; we
+// then POST and surface a toast, or roll the state back on failure.
+async function onChangeKissOut() {
+  const enabled = state.forms.diag.kissOut;
   try {
     await state.transport._req('/api/system/kiss',
         { method: 'POST', body: { enabled } });
     if (state.lastInfo) state.lastInfo.kiss_serial_output = enabled;
-    toast(enabled ? 'KISS serial output ON' : 'KISS serial output OFF',
-          'success');
+    toast(enabled ? 'KISS serial output ON' : 'KISS serial output OFF', 'success');
   } catch (e) {
-    ev.target.checked = !enabled;   // revert UI on failure
+    state.forms.diag.kissOut = !enabled;  // revert
     toast('Toggle failed: ' + (e.message || e), 'error');
   }
-});
+}
 
 async function populateSavedWifiList() {
   state.wifiSaved = null;
@@ -5909,10 +6078,12 @@ async function forgetSavedNetwork(ssid) {
 // tab, hide the close button, suppress dismissal handlers.
 async function openSettingsModal(initialTab, firstRun) {
   state.modals.settings = true;
-  $('modal-settings').dataset.firstRun = firstRun ? '1' : '';
+  state.settingsFirstRun = !!firstRun;
   // Title + tab visibility
-  $('settings-title').textContent = firstRun ? 'Set up your radio' : 'Settings';
-  $('btn-close-settings').style.display = firstRun ? 'none' : '';
+  state.ui.settingsTitle = firstRun ? 'Set up your radio' : 'Settings';
+  // Close-button visibility is bound x-show on the markup; reflect
+  // firstRun into state so the binding picks it up.
+  state.ui.showCloseSettings = !firstRun;
   // Treat the legacy 'radio' tab name as a synonym for 'connectivity'
   // — callers that open the radio gate still work.
   if (initialTab === 'radio') initialTab = 'connectivity';
@@ -5926,18 +6097,16 @@ async function openSettingsModal(initialTab, firstRun) {
 }
 
 function closeSettingsModal() {
-  if ($('modal-settings').dataset.firstRun === '1') return;  // locked
+  if (state.settingsFirstRun) return;  // locked until radio is saved
   state.modals.settings = false;
   stopTimeTicker();
 }
 
 // Tab-bar click → switch panel. Wiring lives on the Alpine
 // <template x-for> @click in markup.
-// Close button + backdrop click both dismiss (when not first-run).
-$('btn-close-settings').addEventListener('click', closeSettingsModal);
-$('modal-settings').addEventListener('click', (e) => {
-  if (e.target === $('modal-settings')) closeSettingsModal();
-});
+// Close button + backdrop click both dismiss (when not first-run) —
+// both bound declaratively now (@click on #btn-close-settings + the
+// backdrop's @click.self on #modal-settings below in the markup).
 
 // ============================== SETTINGS — auto-announce interval ==============================
 // Sensible auto-announce intervals. 0 disables. The min the server
@@ -5957,8 +6126,13 @@ const ANNOUNCE_INTERVALS = [
 // ANNOUNCE_INTERVALS inside #id-announce-interval. Kept as a no-op
 // for any external callers.
 function populateIntervalSelect() { /* declarative */ }
-$('id-announce-interval').addEventListener('change', async (e) => {
-  const ms = Number(e.target.value);
+
+// Settings → Identity tab change handlers, all bound via @change /
+// @blur on the markup. They write straight to the server and surface a
+// toast on completion — reading the new values back into state on the
+// next populateIdentityTab() pass is what keeps form state in sync.
+async function onChangeAnnounceInterval() {
+  const ms = Number(state.forms.identity.announceInterval);
   try {
     await state.transport.setIdentitySettings(state.identityId, { announce_interval_ms: ms });
     if (state.self) state.self.announce_interval_ms = ms;
@@ -5966,172 +6140,153 @@ $('id-announce-interval').addEventListener('change', async (e) => {
   } catch (err) {
     toast('Could not update setting: ' + (err.message || err), 'error');
   }
-});
+}
 
 // Save the display name on blur (or Enter). No save on every keystroke
 // — peers don't see the new label until the next announce anyway, so
-// per-keystroke API calls would just churn the meta.json write.
-(() => {
-  const inp = $('id-display-name');
-  const commit = async () => {
-    const desired = inp.value.trim();
-    const last    = inp.dataset.lastSaved || '';
-    if (desired === last) return;
-    if (!desired) {
-      inp.value = last;  // refuse empty; restore prior
-      toast('Display name cannot be empty', 'error');
-      return;
-    }
-    try {
-      const resp = await state.transport.setIdentitySettings(
-        state.identityId, { display_name: desired });
-      inp.dataset.lastSaved = resp.display_name || desired;
-      inp.value             = resp.display_name || desired;
-      if (state.self) state.self.display_name = resp.display_name || desired;
-      $('self-name').textContent = inp.value;
-      toast('Display name updated', 'success');
-    } catch (err) {
-      inp.value = last;
-      toast('Could not update display name: ' + (err.message || err), 'error');
-    }
-  };
-  inp.addEventListener('blur', commit);
-  inp.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
-    else if (e.key === 'Escape') { inp.value = inp.dataset.lastSaved || ''; inp.blur(); }
-  });
-})();
+// per-keystroke API calls would just churn the meta.json write. The
+// input's @keydown.enter blurs the field, which triggers this.
+async function onBlurIdName() {
+  const desired = (state.forms.identity.displayName || '').trim();
+  const last    = state.forms.identity._lastSavedDisplayName || '';
+  if (desired === last) return;
+  if (!desired) {
+    state.forms.identity.displayName = last;  // refuse empty; restore prior
+    toast('Display name cannot be empty', 'error');
+    return;
+  }
+  try {
+    const resp = await state.transport.setIdentitySettings(
+      state.identityId, { display_name: desired });
+    const saved = resp.display_name || desired;
+    state.forms.identity._lastSavedDisplayName = saved;
+    state.forms.identity.displayName           = saved;
+    if (state.self) state.self.display_name = saved;
+    toast('Display name updated', 'success');
+  } catch (err) {
+    state.forms.identity.displayName = last;
+    toast('Could not update display name: ' + (err.message || err), 'error');
+  }
+}
 
-$('id-persist-outbound').addEventListener('change', async (e) => {
-  const on = !!e.target.checked;
+async function onChangePersistOutbound() {
+  const on = !!state.forms.identity.persistOutbound;
   try {
     await state.transport.setIdentitySettings(state.identityId, { persist_outbound_attachments: on });
     if (state.self) state.self.persist_outbound_attachments = on;
   } catch (err) {
     toast('Could not update setting: ' + (err.message || err), 'error');
   }
-});
-$('btn-settings').addEventListener('click', () => openSettingsModal('identity', false));
-$('pref-enter-sends').addEventListener('change', (e) => {
-  savePrefs({ enterSends: !!e.target.checked });
-});
-$('pref-auto-download-attachments').addEventListener('change', (e) => {
-  savePrefs({ autoDownloadAttachments: !!e.target.checked });
-  // Re-render the open thread so existing inline previews collapse
-  // back to chips (or vice versa) without waiting for an SSE event.
+}
+
+// App-tab preference checkboxes — both bound @change="savePrefs()" in
+// markup. This wrapper merges the live form values into the persisted
+// prefs and triggers a thread re-render for the auto-download flip.
+function savePrefs() {
+  state.prefs = {
+    ...state.prefs,
+    enterSends:               !!state.forms.prefs.enterSends,
+    autoDownloadAttachments:  !!state.forms.prefs.autoDownloadAttachments,
+  };
+  localStorage.setItem(LS.PREFS, JSON.stringify(state.prefs));
   if (state.openPeer) renderThread();
-});
+}
 
 // Inbox capacity + TTL — populated lazily when the UI tab opens and
 // saved on each change. Server applies + persists in one round-trip.
 async function populateInboxConfig() {
-  const status = $('inbox-config-status');
-  status.textContent = '';
+  state.ui.inboxConfigStatus = '';
   try {
     const cfg = await state.transport._req('/api/inbox_config');
     const r = cfg.default_retention || { kind: 'none', value: 0 };
     const key = r.kind + ':' + (r.value || 0);
-    const sel = $('inbox-default-retention');
-    sel.value = key;
-    if (sel.selectedIndex === -1) sel.value = 'none:0';
+    // Default to 'none:0' if the value isn't one of the offered options.
+    const known = new Set([
+      'none:0','time:604800','time:2592000','time:7776000','time:31536000',
+      'count:50','count:200',
+    ]);
+    state.forms.prefs.inboxDefaultRetention = known.has(key) ? key : 'none:0';
   } catch (e) {
-    status.textContent = 'Could not load: ' + (e.message || e);
+    state.ui.inboxConfigStatus = 'Could not load: ' + (e.message || e);
   }
 }
-async function saveInboxConfig() {
-  const status = $('inbox-config-status');
-  const raw = $('inbox-default-retention').value || 'none:0';
+// Bound via @change on #inbox-default-retention.
+async function onChangeInboxDefaultRetention() {
+  const raw = state.forms.prefs.inboxDefaultRetention || 'none:0';
   const [kind, vStr] = raw.split(':');
   const body = { default_retention: { kind, value: parseInt(vStr, 10) || 0 } };
   try {
     await state.transport._req('/api/inbox_config', { method: 'POST', body });
-    status.textContent = 'Saved.';
-    setTimeout(() => { status.textContent = ''; }, 2000);
+    state.ui.inboxConfigStatus = 'Saved.';
+    setTimeout(() => { state.ui.inboxConfigStatus = ''; }, 2000);
   } catch (e) {
-    status.textContent = 'Save failed: ' + (e.message || e);
+    state.ui.inboxConfigStatus = 'Save failed: ' + (e.message || e);
   }
 }
-$('inbox-default-retention').addEventListener('change', saveInboxConfig);
 
 // Storage transfer caps — two sliders bound to the device's current
 // effective_max_* (clamped to backing-store free space + protocol
 // ceiling). The slider's max is the largest cap the device can
-// currently accept; the value is the user's saved preference.
+// currently accept; the value is the user's saved preference. Both
+// sliders are x-model'd to state.forms.storage.{maxSend,maxRecv} and
+// their :max binds to state.ui.storageMax*Max; labels are x-text
+// against state.ui.storageMax*Label.
+function _fmtBytes(n) {
+  const mb = (n || 0) / (1024 * 1024);
+  return mb >= 100 ? `${Math.round(mb)} MiB`
+       : mb >= 1   ? `${mb.toFixed(1)} MiB`
+                   : `${Math.round((n || 0) / 1024)} KiB`;
+}
+function _renderStorageLabels() {
+  const cfg = state._storageConfig || {};
+  state.ui.storageMaxSendLabel = `${_fmtBytes(state.forms.storage.maxSend)} (device caps at ${_fmtBytes(cfg.effective_max_send_bytes)})`;
+  state.ui.storageMaxRecvLabel = `${_fmtBytes(state.forms.storage.maxRecv)} (device caps at ${_fmtBytes(cfg.effective_max_recv_bytes)})`;
+}
 async function populateStorageConfig() {
-  const status = $('storage-config-status');
-  if (status) status.textContent = '';
+  state.ui.storageStatus = '';
   try {
     const cfg = await state.transport._req('/api/storage/config');
-    const sendInp  = $('storage-max-send');
-    const recvInp  = $('storage-max-recv');
-    const sendLbl  = $('storage-max-send-label');
-    const recvLbl  = $('storage-max-recv-label');
-    const fmt = (n) => {
-      const mb = (n || 0) / (1024 * 1024);
-      return mb >= 100 ? `${Math.round(mb)} MiB`
-           : mb >= 1   ? `${mb.toFixed(1)} MiB`
-                       : `${Math.round((n || 0) / 1024)} KiB`;
-    };
-    sendInp.max   = Math.max(cfg.effective_max_send_bytes || 0, 65536);
-    sendInp.value = Math.min(cfg.user_max_send_bytes || 0, sendInp.max);
-    sendLbl.textContent = `${fmt(sendInp.value)} (device caps at ${fmt(cfg.effective_max_send_bytes)})`;
-    recvInp.max   = Math.max(cfg.effective_max_recv_bytes || 0, 65536);
-    recvInp.value = Math.min(cfg.user_max_receive_bytes || 0, recvInp.max);
-    recvLbl.textContent = `${fmt(recvInp.value)} (device caps at ${fmt(cfg.effective_max_recv_bytes)})`;
     state._storageConfig = cfg;
+    state.ui.storageMaxSendMax = Math.max(cfg.effective_max_send_bytes || 0, 65536);
+    state.ui.storageMaxRecvMax = Math.max(cfg.effective_max_recv_bytes || 0, 65536);
+    state.forms.storage.maxSend = Math.min(cfg.user_max_send_bytes    || 0, state.ui.storageMaxSendMax);
+    state.forms.storage.maxRecv = Math.min(cfg.user_max_receive_bytes || 0, state.ui.storageMaxRecvMax);
+    _renderStorageLabels();
   } catch (e) {
-    if (status) status.textContent = 'Could not load: ' + (e.message || e);
+    state.ui.storageStatus = 'Could not load: ' + (e.message || e);
   }
 }
-async function saveStorageConfig() {
-  const status = $('storage-config-status');
+async function onChangeStorageSlider() {
+  // Re-render the live "N KiB / cap M KiB" labels immediately, then
+  // POST the new values. Server response refreshes the sliders' caps.
+  _renderStorageLabels();
   const body = {
-    user_max_send_bytes:    parseInt($('storage-max-send').value, 10) || 0,
-    user_max_receive_bytes: parseInt($('storage-max-recv').value, 10) || 0,
+    user_max_send_bytes:    Number(state.forms.storage.maxSend) || 0,
+    user_max_receive_bytes: Number(state.forms.storage.maxRecv) || 0,
   };
   try {
     const cfg = await state.transport._req('/api/storage/config', { method: 'POST', body });
     state._storageConfig = cfg;
-    if (status) {
-      status.textContent = 'Saved.';
-      setTimeout(() => { status.textContent = ''; }, 2000);
-    }
-    refreshStorageSliders();
+    state.ui.storageMaxSendMax = Math.max(cfg.effective_max_send_bytes || 0, 65536);
+    state.ui.storageMaxRecvMax = Math.max(cfg.effective_max_recv_bytes || 0, 65536);
+    _renderStorageLabels();
+    state.ui.storageStatus = 'Saved.';
+    setTimeout(() => { state.ui.storageStatus = ''; }, 2000);
   } catch (e) {
-    if (status) status.textContent = 'Save failed: ' + (e.message || e);
+    state.ui.storageStatus = 'Save failed: ' + (e.message || e);
   }
 }
+// Public name kept so external callers (e.g. system_update WS frame
+// when the SD card flips state) still re-fit the slider bounds.
 function refreshStorageSliders() {
   const cfg = state._storageConfig;
   if (!cfg) return;
-  const fmt = (n) => {
-    const mb = (n || 0) / (1024 * 1024);
-    return mb >= 100 ? `${Math.round(mb)} MiB`
-         : mb >= 1   ? `${mb.toFixed(1)} MiB`
-                     : `${Math.round((n || 0) / 1024)} KiB`;
-  };
-  const sendInp = $('storage-max-send');
-  const recvInp = $('storage-max-recv');
-  if (!sendInp || !recvInp) return;
-  sendInp.max   = Math.max(cfg.effective_max_send_bytes || 0, 65536);
-  if (Number(sendInp.value) > Number(sendInp.max)) sendInp.value = sendInp.max;
-  $('storage-max-send-label').textContent = `${fmt(sendInp.value)} (device caps at ${fmt(cfg.effective_max_send_bytes)})`;
-  recvInp.max   = Math.max(cfg.effective_max_recv_bytes || 0, 65536);
-  if (Number(recvInp.value) > Number(recvInp.max)) recvInp.value = recvInp.max;
-  $('storage-max-recv-label').textContent = `${fmt(recvInp.value)} (device caps at ${fmt(cfg.effective_max_recv_bytes)})`;
+  state.ui.storageMaxSendMax = Math.max(cfg.effective_max_send_bytes || 0, 65536);
+  state.ui.storageMaxRecvMax = Math.max(cfg.effective_max_recv_bytes || 0, 65536);
+  if (state.forms.storage.maxSend > state.ui.storageMaxSendMax) state.forms.storage.maxSend = state.ui.storageMaxSendMax;
+  if (state.forms.storage.maxRecv > state.ui.storageMaxRecvMax) state.forms.storage.maxRecv = state.ui.storageMaxRecvMax;
+  _renderStorageLabels();
 }
-$('storage-max-send').addEventListener('input', () => {
-  const cfg = state._storageConfig || {};
-  const fmt = (n) => (n || 0) >= 1024 * 1024 ? `${((n||0)/(1024*1024)).toFixed(1)} MiB` : `${Math.round((n||0)/1024)} KiB`;
-  $('storage-max-send-label').textContent = `${fmt($('storage-max-send').value)} (device caps at ${fmt(cfg.effective_max_send_bytes)})`;
-});
-$('storage-max-send').addEventListener('change', saveStorageConfig);
-$('storage-max-recv').addEventListener('input', () => {
-  const cfg = state._storageConfig || {};
-  const fmt = (n) => (n || 0) >= 1024 * 1024 ? `${((n||0)/(1024*1024)).toFixed(1)} MiB` : `${Math.round((n||0)/1024)} KiB`;
-  $('storage-max-recv-label').textContent = `${fmt($('storage-max-recv').value)} (device caps at ${fmt(cfg.effective_max_recv_bytes)})`;
-});
-$('storage-max-recv').addEventListener('change', saveStorageConfig);
 
 // Escape dismisses whichever overlay is open. Order matters when more
 // than one is somehow open — close the topmost / most-recently-opened
@@ -6148,26 +6303,27 @@ document.addEventListener('keydown', (e) => {
     if (state.modals[key]) { state.modals[key] = false; e.preventDefault(); return; }
   }
   if (state.modals.settings) {
-    const settings = $('modal-settings');
-    if (settings && settings.dataset.firstRun === '1') return;  // locked
+    if (state.settingsFirstRun) return;  // locked
     state.modals.settings = false;
     e.preventDefault();
     return;
   }
 });
 
-$('btn-ct-save').addEventListener('click', () => {
-  const addr = $('ct-addr').value.trim().toLowerCase();
-  const name = $('ct-name').value.trim();
+// Bound via @click on #btn-ct-save in the App tab's contacts card.
+function onClickContactSave() {
+  const addr = (state.forms.contactRename.addr || '').trim().toLowerCase();
+  const name = (state.forms.contactRename.name || '').trim();
   if (!/^[0-9a-f]{32}$/.test(addr) || !name) { toast('Invalid address or empty name', 'warn'); return; }
   state.contacts[addr] = name;
   persistContacts();
   renderContacts();
   renderConversations();
-  $('ct-addr').value = ''; $('ct-name').value = '';
-});
+  Object.assign(state.forms.contactRename, { addr: '', name: '' });
+}
 
-$('btn-delete-self').addEventListener('click', async () => {
+// Bound via @click on #btn-delete-self in the Reset tab.
+async function onClickDeleteSelf(btn) {
   const ok = await showConfirm({
     title: 'Delete this identity?',
     body: 'Inbox, outbox, identity material — all gone for ' +
@@ -6176,7 +6332,7 @@ $('btn-delete-self').addEventListener('click', async () => {
     destructive: true,
   });
   if (!ok) return;
-  await withBusy($('btn-delete-self'), async () => {
+  await withBusy(btn, async () => {
     try {
       await state.transport.deleteIdentity(state.identityId);
       state.token = null; state.identityId = null;
@@ -6184,9 +6340,10 @@ $('btn-delete-self').addEventListener('click', async () => {
       location.reload();
     } catch (e) { toast('Delete failed: ' + (e.message || e), 'error'); }
   }, { label: 'Deleting…' });
-});
+}
 
-$('btn-fr2').addEventListener('click', async () => {
+// Bound via @click on #btn-fr2 in the Reset tab.
+async function onClickFr2() {
   const ok = await showConfirm({
     title: 'Factory reset?',
     body: 'Every identity, inbox, outbox, and saved token on this device will be wiped.',
@@ -6196,13 +6353,13 @@ $('btn-fr2').addEventListener('click', async () => {
   if (!ok) return;
   await withBusy($('btn-fr2'), async () => {
     try {
-      await state.transport.factoryReset($('fr2-code').value);
+      await state.transport.factoryReset(state.forms.factoryReset2.code);
       waitForDeviceAndReload('Factory-resetting & rebooting…');
     } catch (e) {
       toast('Reset failed: ' + (e.message || e), 'error');
     }
   }, { label: 'Resetting…', alsoDisable: ['#fr2-code'] });
-});
+}
 
 function doLogout(btn) {
   return withBusy(btn, async () => {
@@ -6221,87 +6378,76 @@ function doLogout(btn) {
 // check. The dropdowns auto-save on change; the master toggle saves
 // after collecting the identity code (and reverts on cancel).
 async function populateDiscoveryTab() {
-  const status = $('disc-status');
-  if (status) status.textContent = '';
+  state.ui.discStatus = '';
   try {
     const [s, id] = await Promise.all([
       state.transport._req('/api/discovery/state'),
       state.transport._req('/api/discovery/identity'),
     ]);
-    $('disc-enabled').checked = !!s.enabled;
-    const ivSel = $('disc-interval');
-    ivSel.value = String(s.default_interval_min ?? 360);
-    if (ivSel.selectedIndex === -1) ivSel.value = '360';
-    const scSel = $('disc-stamp-cost');
-    scSel.value = String(s.default_stamp_cost ?? 0);
-    if (scSel.selectedIndex === -1) scSel.value = '0';
-    const nameInp = $('disc-advertised-name');
-    nameInp.value = s.advertised_name || '';
-    if (s.max_advertised_name_bytes) nameInp.maxLength = s.max_advertised_name_bytes;
-    $('disc-identity-hash').textContent = id.ready ? id.hash : 'not generated yet';
+    Object.assign(state.forms.discovery, {
+      enabled:        !!s.enabled,
+      interval:       String(s.default_interval_min ?? 360),
+      stampCost:      String(s.default_stamp_cost ?? 0),
+      advertisedName: s.advertised_name || '',
+    });
+    state.forms.discovery._lastSavedAdvertisedName = s.advertised_name || '';
+    state.ui.discIdentityHash = id.ready ? id.hash : 'not generated yet';
   } catch (e) {
-    if (status) status.textContent = 'Could not load: ' + (e.message || e);
+    state.ui.discStatus = 'Could not load: ' + (e.message || e);
   }
 }
 async function saveDiscoveryField(body) {
-  const status = $('disc-status');
   try {
     const updated = await state.transport._req('/api/discovery/state', { method: 'POST', body });
-    if (status) {
-      status.textContent = 'Saved.';
-      setTimeout(() => { status.textContent = ''; }, 2000);
-    }
+    state.ui.discStatus = 'Saved.';
+    setTimeout(() => { state.ui.discStatus = ''; }, 2000);
     return updated;
   } catch (e) {
-    if (status) status.textContent = 'Save failed: ' + (e.message || e);
+    state.ui.discStatus = 'Save failed: ' + (e.message || e);
     throw e;
   }
 }
-$('disc-enabled').addEventListener('change', async (ev) => {
-  const cb = ev.target;
-  const wantOn = cb.checked;
+// Master toggle (#disc-enabled) — bound @change in markup.
+async function onChangeDiscEnabled() {
+  const wantOn = state.forms.discovery.enabled;
   if (!wantOn) {
-    // Disable path: bearer-only, no prompt.
+    // Disable path: bearer-only, no prompt. Revert if the save fails.
     try { await saveDiscoveryField({ enabled: false }); }
-    catch { cb.checked = true; }
+    catch { state.forms.discovery.enabled = true; }
     return;
   }
   // Enable path: collect identity code, then save. Revert the checkbox
   // if the user cancels or the save fails.
   state.pendingIdCodeAction = async (code) => {
-    if (!code) { cb.checked = false; return; }
+    if (!code) { state.forms.discovery.enabled = false; return; }
     try { await saveDiscoveryField({ enabled: true, identity_code: code }); }
-    catch { cb.checked = false; }
+    catch { state.forms.discovery.enabled = false; }
   };
   openIdCodeModal();
-});
-$('disc-interval').addEventListener('change', async (ev) => {
-  await saveDiscoveryField({ default_interval_min: parseInt(ev.target.value, 10) || 360 });
-});
-$('disc-stamp-cost').addEventListener('change', async (ev) => {
-  await saveDiscoveryField({ default_stamp_cost: parseInt(ev.target.value, 10) || 0 });
-});
-// Advertised name: persist on blur or Enter so we don't write on
-// every keystroke. Trim whitespace; empty value = "fall back to the
-// interface name" on the firmware side.
-async function saveAdvertisedName() {
-  const v = ($('disc-advertised-name').value || '').trim();
-  const status = $('disc-name-status');
+}
+async function onChangeDiscInterval() {
+  await saveDiscoveryField({ default_interval_min: parseInt(state.forms.discovery.interval, 10) || 360 });
+}
+async function onChangeDiscStampCost() {
+  await saveDiscoveryField({ default_stamp_cost: parseInt(state.forms.discovery.stampCost, 10) || 0 });
+}
+// Advertised name: persist on blur (markup @keydown.enter blurs first).
+// Trim whitespace; empty value = "fall back to the interface name" on
+// the firmware side. No-op when the value hasn't actually changed.
+async function onBlurDiscName() {
+  const v    = (state.forms.discovery.advertisedName || '').trim();
+  const last = state.forms.discovery._lastSavedAdvertisedName || '';
+  if (v === last) return;
   try {
     await state.transport._req('/api/discovery/state',
       { method: 'POST', body: { advertised_name: v } });
-    if (status) {
-      status.textContent = v ? 'Saved.' : 'Cleared — falls back to interface name.';
-      setTimeout(() => { status.textContent = ''; }, 2000);
-    }
+    state.forms.discovery._lastSavedAdvertisedName = v;
+    state.ui.discNameStatus = v ? 'Saved.' : 'Cleared — falls back to interface name.';
+    setTimeout(() => { state.ui.discNameStatus = ''; }, 2000);
   } catch (e) {
-    if (status) status.textContent = 'Save failed: ' + (e.message || e);
+    state.ui.discNameStatus = 'Save failed: ' + (e.message || e);
   }
 }
-$('disc-advertised-name').addEventListener('blur',   saveAdvertisedName);
-$('disc-advertised-name').addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter') { ev.preventDefault(); ev.target.blur(); }
-});
 
 // ============================== IDENTITY CODE MODAL ==============================
 // opts.codePresent: true if a code is already on the OLED (we got
@@ -6311,26 +6457,24 @@ $('disc-advertised-name').addEventListener('keydown', (ev) => {
 // matches reality.
 function openIdCodeModal(opts) {
   const codePresent = !!(opts && opts.codePresent);
-  $('idc-input').value = '';
-  $('id-code-modal-title').textContent = codePresent
+  state.forms.idCode.input  = '';
+  state.ui.idCodeModalTitle = codePresent
     ? 'Identity code available'
     : 'Identity code required';
-  const hint = document.getElementById('id-code-modal-hint');
-  if (hint) {
-    hint.textContent = codePresent
-      ? 'A code is on the device OLED for ~' + idCodeTtlText() + '. Read the 6 hex chars and type them below.'
-      : 'A 6-character code is needed to authorise this action. If one is not already on the device OLED, press the device button (see below) to generate one, then type it below.';
-  }
+  state.ui.idCodeModalHint  = codePresent
+    ? 'A code is on the device OLED for ~' + idCodeTtlText() + '. Read the 6 hex chars and type them below.'
+    : 'A 6-character code is needed to authorise this action. If one is not already on the device OLED, press the device button (see below) to generate one, then type it below.';
   state.modals.idCode = true;
   // Focus the input next tick so the box doesn't fight the modal's
   // own paint for first-frame attention.
   setTimeout(() => $('idc-input').focus(), 0);
 }
-$('btn-idc-ok').addEventListener('click', () => {
-  const code = $('idc-input').value;
+// Bound @click on #btn-idc-ok and @keydown.enter on #idc-input.
+function onClickIdcOk() {
+  const code = state.forms.idCode.input;
   state.modals.idCode = false;
   if (state.pendingIdCodeAction) { state.pendingIdCodeAction(code); state.pendingIdCodeAction = null; }
-});
+}
 
 // ============================== REBOOT WAITER ==============================
 function waitForDeviceAndReload(message) {
@@ -6349,6 +6493,10 @@ function waitForDeviceAndReload(message) {
   document.body.innerHTML =
     '<div class="page"><div class="card"><h2>Rebooting</h2>' +
     '<p class="muted" id="rb-status"></p></div></div>';
+  // The replacement body has its own #rb-status element which is no
+  // longer Alpine-bound (the SPA's root x-data is gone). Keep the
+  // imperative textContent here because the rendering tree just
+  // changed under us.
   $('rb-status').textContent = message;
   // Captured before the device reboots. Falsey when not yet known
   // (first /api/info hasn't returned by the time we navigate here);

@@ -1548,61 +1548,54 @@ summary:hover { color: var(--text); }
 <!-- ===================== STATUS POPOVER ===================== -->
 <!-- Anchored below #btn-status. Not a modal; clicking elsewhere closes
      it. Contents refresh on each open from /api/info. -->
-<div id="popover-status" class="popover" x-data
+<div id="popover-status" class="popover" x-data="statusPopoverData()"
      x-show="$store.s.popovers.status"
-     x-effect="$store.s.popovers.status && $store.s.system && renderStatusPopover()"
+     x-effect="$store.s.popovers.status && refreshRadioTelemetry()"
      x-cloak>
   <div class="popover-section">
     <div class="popover-row">
-      <div class="popover-label" id="status-radio-label">RADIO</div>
-      <div id="status-radio-line"></div>
+      <div class="popover-label" id="status-radio-label" x-text="radioLabel">RADIO</div>
+      <div id="status-radio-line">
+        <span :class="radioPillClass" x-text="radioPillLabel"></span>
+      </div>
     </div>
-    <!-- Radio config = primary fact for the section, split across two
-         lines so each one stays readable on narrow phones:
-           cfg-1 = frequency + bandwidth
-           cfg-2 = SF + CR + TX power
-         Packet counters / rate / airtime are secondary sublines. -->
-    <div class="popover-value" id="status-radio-cfg-1"></div>
-    <div class="popover-value" id="status-radio-cfg-2"></div>
-    <div class="popover-subline" id="status-radio-stats"></div>
-    <div class="popover-subline" id="status-radio-rate"></div>
-    <div class="popover-subline" id="status-radio-airtime"></div>
-    <!-- Live CSMA state — band the contention-window loop is parked in
-         plus DCD / LOCK flags. Pulled from the latest radio_telemetry
-         sample, so it refreshes at 1 Hz while the popover is open. -->
-    <div class="popover-subline" id="status-radio-csma"></div>
-    <!-- Live 1Hz telemetry chart. Seeded on popover-open via
-         GET /api/radio/telemetry, then patched in place from the WS
-         `radio_telemetry` frame so it scrolls smoothly while open. -->
-    <div class="radio-chart-wrap" id="status-radio-chart"></div>
+    <div class="popover-value" id="status-radio-cfg-1" x-html="radioCfg1"></div>
+    <div class="popover-value" id="status-radio-cfg-2" x-html="radioCfg2"></div>
+    <div class="popover-subline" id="status-radio-stats" x-text="radioStatsLine"></div>
+    <div class="popover-subline" id="status-radio-rate" x-text="radioRateLine"></div>
+    <div class="popover-subline" id="status-radio-airtime" x-text="radioAirtimeLine"></div>
+    <div class="popover-subline" id="status-radio-csma" x-html="radioCsmaLine"></div>
+    <div class="radio-chart-wrap" id="status-radio-chart" x-html="radioChartHTML"></div>
   </div>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label">WiFi</div>
-      <div id="status-wifi-line"></div>
+      <div id="status-wifi-line">
+        <span :class="wifiPillClass" x-text="wifiPillLabel"></span>
+      </div>
     </div>
-    <div class="popover-value" id="status-wifi-ssid"></div>
-    <div class="popover-subline" id="status-wifi-ip"></div>
-    <div class="popover-subline" id="status-wifi-auth"></div>
-    <button class="secondary" id="btn-force-softap" hidden style="width:100%;margin-top:8px"
+    <div class="popover-value" id="status-wifi-ssid" x-text="wifiSsid"></div>
+    <div class="popover-subline" id="status-wifi-ip" x-text="wifiIpLine"></div>
+    <div class="popover-subline" id="status-wifi-auth" x-html="wifiAuthLine"></div>
+    <button class="secondary" id="btn-force-softap" style="width:100%;margin-top:8px"
+            x-show="wifiMode === 'sta'"
             title="Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again."
             @click="onClickForceSoftap($event.currentTarget)">Switch to softAP</button>
-    <!-- The button itself carries a `title=` for desktop hover; this
-         subline duplicates the text inline because mobile browsers
-         can't reliably show tooltips (long-press is reserved for the
-         browser context menu, hover doesn't exist). Popover scrolls
-         internally so the extra line doesn't push other content
-         offscreen. -->
-    <div class="popover-subline" id="status-wifi-hint" hidden>Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again.</div>
+    <div class="popover-subline" id="status-wifi-hint"
+         x-show="wifiMode === 'sta'">Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again.</div>
   </div>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label">Transport</div>
-      <div id="status-transport-line"></div>
+      <div id="status-transport-line">
+        <span :class="'pill ' + (transportEnabled ? 'ok' : '')"
+              x-text="transportEnabled ? 'On — relaying packets' : 'Off — endpoint only'"></span>
+      </div>
     </div>
     <button class="secondary" id="btn-toggle-transport" style="width:100%;margin-top:8px"
             title="Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots."
-            @click="onClickToggleTransport($event.currentTarget)">…</button>
+            x-text="transportEnabled ? 'Turn transport off' : 'Turn transport on'"
+            @click="onClickToggleTransport($event.currentTarget)"></button>
     <div class="popover-subline">Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots.</div>
   </div>
 </div>
@@ -1610,17 +1603,18 @@ summary:hover { color: var(--text); }
 <!-- Anchored below #btn-power. Hosts the detailed battery telemetry
      plus future per-knob power-management toggles. The topbar battery
      icon shows just percent + state; full detail lives here. -->
-<div id="popover-power" class="popover" x-data
+<div id="popover-power" class="popover" x-data="powerPopoverData()"
      x-show="$store.s.popovers.power"
-     x-effect="$store.s.popovers.power && $store.s.system && renderPowerPopover($store.s.system)"
      x-cloak>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label">Battery</div>
-      <div id="pw-battery-line"></div>
+      <div id="pw-battery-line">
+        <span :class="stateClass" x-text="stateLabel"></span>
+      </div>
     </div>
-    <div class="popover-value" id="pw-battery-values"></div>
-    <div class="popover-subline" id="pw-battery-slope"></div>
+    <div class="popover-value" id="pw-battery-values" x-html="valuesHTML"></div>
+    <div class="popover-subline" id="pw-battery-slope" x-html="slopeHTML"></div>
   </div>
   <div class="popover-section" id="pw-tuning-section" hidden>
     <div class="popover-row">
@@ -4495,6 +4489,18 @@ function applyServerLimits(limits) {
 // background tick so the indicator isn't perpetually stale.
 async function refreshStatus() {
   try {
+    // Snapshot the prior info BEFORE we overwrite it so the Alpine
+    // "Δ since last poll" getter has stable prev values to compare
+    // against the freshly-fetched current values.
+    if (state.lastInfo && state.lastInfo.radio && state.lastInfo.radio.stats) {
+      const ps = state.lastInfo.radio.stats;
+      state.lastInfoStats = {
+        ts:        Date.now(),
+        uptime_ms: state.lastInfo.uptime_ms || 0,
+        rx:        ps.rx_packets || 0,
+        tx:        ps.tx_packets || 0,
+      };
+    }
     const info = await state.transport.getInfo();
     state.lastInfo = info;
     state.info = info;
@@ -4515,7 +4521,8 @@ async function refreshStatus() {
     }
     applyStatusToButton(info);
     applyBatteryToButton(info);
-    if (!$('popover-status').hidden) renderStatusPopover();
+    // Popover content is fully reactive against $store.s.lastInfo —
+    // no imperative render call.
   } catch (e) {
     $('btn-status').setAttribute('data-state', 'unknown');
     $('btn-status').title = 'Status unknown: ' + (e.message || e);
@@ -4584,135 +4591,115 @@ function renderTopbarBattery() {
   const infoB = (state.lastInfo && state.lastInfo.battery) || null;
   applyBatteryToButton({ battery: sysB || infoB });
 }
-function renderStatusPopover() {
-  const info = state.lastInfo || {};
-  const r = info.radio  || {};
-  const t = info.transport || {};
-  const radioLine = $('status-radio-line');
-  radioLine.innerHTML = '';
-  // The chip model alone is the section label — no "RADIO" suffix
-  // needed; the pill next to it carries the state.
-  $('status-radio-label').textContent = r.model || 'Radio';
-  if (!r.have_conf) {
-    radioLine.appendChild(el('span', { class: 'pill warn' }, 'Not configured'));
-  } else if (r.online) {
-    radioLine.appendChild(el('span', { class: 'pill ok' }, 'Online'));
-  } else {
-    radioLine.appendChild(el('span', { class: 'pill bad' }, 'Offline'));
-  }
-  if (r.have_conf) {
-    $('status-radio-cfg-1').innerHTML =
-      vu((r.frequency/1e6).toFixed(3), 'MHz') + ' · BW ' + vu((r.bandwidth/1000), 'kHz');
-    $('status-radio-cfg-2').innerHTML =
-      'SF' + r.spreading_factor + ' · CR4/' + r.coding_rate + ' · ' + vu(r.tx_power, 'dBm');
-  } else {
-    $('status-radio-cfg-1').textContent = 'No radio config saved yet.';
-    $('status-radio-cfg-2').textContent = '';
-  }
-  const s = r.stats || {};
-  // Airtime: current usage / regulatory cap, short-term and
-  // long-term. Shown as "now/cap" so it's obvious which number is
-  // the live channel-utilisation reading vs the configured ceiling.
-  if (s.airtime_pct !== undefined || s.longterm_airtime_pct !== undefined) {
-    const st_now = s.airtime_pct || 0;
-    const lt_now = s.longterm_airtime_pct || 0;
-    const st_cap = s.airtime_limit_pct;
-    const lt_cap = s.longterm_airtime_limit_pct;
-    const stStr = st_cap !== undefined ? st_now + '%/' + st_cap + '% s'
-                                       : st_now + '% s';
-    const ltStr = lt_cap !== undefined ? lt_now + '%/' + lt_cap + '% l'
-                                       : lt_now + '% l';
-    $('status-radio-airtime').textContent = 'Airtime: ' + stStr + ' · ' + ltStr;
-  } else {
-    $('status-radio-airtime').textContent = '';
-  }
-  if (s.rx_packets !== undefined || s.tx_packets !== undefined) {
-    $('status-radio-stats').textContent =
-      'RX ' + (s.rx_packets || 0) + ' pkt · TX ' + (s.tx_packets || 0) + ' pkt';
-  } else {
-    $('status-radio-stats').textContent = '';
-  }
-  // Rate-since-last-poll. lastInfoStats caches the previous snapshot so
-  // we can show "+3 RX / +1 TX in the last 60 s" delta on each popover
-  // open. refreshStatus runs every 60 s on the topbar timer.
-  const prev = state.lastInfoStats;
-  if (prev && info.uptime_ms && prev.ts) {
-    const dt_s = (info.uptime_ms - prev.uptime_ms) / 1000;
-    if (dt_s > 0.5 && dt_s < 600) {
+// Reactive data backing the radio/wifi/transport popover. Every field
+// is computed from $store.s.lastInfo / $store.s.radioTlm.
+function statusPopoverData() {
+  return {
+    // -------- radio --------
+    get _r() { return (this.$store.s.lastInfo && this.$store.s.lastInfo.radio) || {}; },
+    get _t() { return (this.$store.s.lastInfo && this.$store.s.lastInfo.transport) || {}; },
+    get _s() { return this._r.stats || {}; },
+    get _w() { return (this.$store.s.lastInfo && this.$store.s.lastInfo.wifi) || {}; },
+    get radioLabel() { return this._r.model || 'Radio'; },
+    get radioPillClass() {
+      const r = this._r;
+      if (!r.have_conf) return 'pill warn';
+      return r.online ? 'pill ok' : 'pill bad';
+    },
+    get radioPillLabel() {
+      const r = this._r;
+      if (!r.have_conf) return 'Not configured';
+      return r.online ? 'Online' : 'Offline';
+    },
+    get radioCfg1() {
+      const r = this._r;
+      return r.have_conf
+        ? (vu((r.frequency/1e6).toFixed(3), 'MHz') + ' · BW ' + vu((r.bandwidth/1000), 'kHz'))
+        : 'No radio config saved yet.';
+    },
+    get radioCfg2() {
+      const r = this._r;
+      return r.have_conf
+        ? ('SF' + r.spreading_factor + ' · CR4/' + r.coding_rate + ' · ' + vu(r.tx_power, 'dBm'))
+        : '';
+    },
+    get radioStatsLine() {
+      const s = this._s;
+      if (s.rx_packets === undefined && s.tx_packets === undefined) return '';
+      return 'RX ' + (s.rx_packets || 0) + ' pkt · TX ' + (s.tx_packets || 0) + ' pkt';
+    },
+    get radioAirtimeLine() {
+      const s = this._s;
+      if (s.airtime_pct === undefined && s.longterm_airtime_pct === undefined) return '';
+      const st_now = s.airtime_pct || 0;
+      const lt_now = s.longterm_airtime_pct || 0;
+      const stStr = s.airtime_limit_pct !== undefined ? (st_now + '%/' + s.airtime_limit_pct + '% s') : (st_now + '% s');
+      const ltStr = s.longterm_airtime_limit_pct !== undefined ? (lt_now + '%/' + s.longterm_airtime_limit_pct + '% l') : (lt_now + '% l');
+      return 'Airtime: ' + stStr + ' · ' + ltStr;
+    },
+    get radioRateLine() {
+      const prev = this.$store.s.lastInfoStats;
+      const info = this.$store.s.lastInfo || {};
+      const s = this._s;
+      if (!prev || !info.uptime_ms || !prev.ts) return '';
+      const dt_s = (info.uptime_ms - prev.uptime_ms) / 1000;
+      if (!(dt_s > 0.5 && dt_s < 600)) return '';
       const drx = (s.rx_packets || 0) - (prev.rx || 0);
       const dtx = (s.tx_packets || 0) - (prev.tx || 0);
-      $('status-radio-rate').textContent =
-        'Δ ' + dt_s.toFixed(0) + 's: +' + drx + ' RX · +' + dtx + ' TX';
-    } else {
-      $('status-radio-rate').textContent = '';
-    }
-  } else {
-    $('status-radio-rate').textContent = '';
-  }
-  state.lastInfoStats = {
-    ts:        Date.now(),
-    uptime_ms: info.uptime_ms || 0,
-    rx:        s.rx_packets || 0,
-    tx:        s.tx_packets || 0,
+      return 'Δ ' + dt_s.toFixed(0) + 's: +' + drx + ' RX · +' + dtx + ' TX';
+    },
+    get radioCsmaLine() {
+      // Touch radioTlm.samples.length so changes trigger re-eval.
+      void this.$store.s.radioTlm.samples.length;
+      return radioCsmaLineText();
+    },
+    get radioChartHTML() {
+      void this.$store.s.radioTlm.samples.length;
+      return radioChartHTMLBuild();
+    },
+    // -------- wifi --------
+    get wifiMode() { return this._w.mode; },
+    get wifiPillClass() {
+      const w = this._w;
+      if (w.mode === 'ap') return 'pill warn';
+      if (w.mode === 'sta' && w.connected) return 'pill ok';
+      if (w.mode === 'sta') return 'pill bad';
+      return 'pill';
+    },
+    get wifiPillLabel() {
+      const w = this._w;
+      if (w.mode === 'ap') return 'softAP';
+      if (w.mode === 'sta' && w.connected) return 'Connected';
+      if (w.mode === 'sta') return 'Disconnected';
+      return w.mode || 'off';
+    },
+    get wifiSsid() { return this._w.ssid || ''; },
+    get wifiIpLine() {
+      const w = this._w;
+      if (w.mode === 'ap' && w.ap_ip) return 'http://' + w.ap_ip + '/';
+      if (w.ip && w.ip !== '0.0.0.0') return w.ip;
+      return '';
+    },
+    get wifiAuthLine() {
+      const w = this._w;
+      if (!w.auth) return '';
+      let s = w.auth;
+      if (typeof w.rssi_dbm === 'number') s += ' · ' + vu(w.rssi_dbm, 'dBm');
+      return s;
+    },
+    // -------- transport --------
+    get transportEnabled() { return !!this._t.enabled; },
   };
-  // WiFi mode + SSID + IP + auth, each on its own line so longer
-  // SSIDs / IPv6-ish strings don't wrap the popover awkwardly.
-  const w = info.wifi || {};
-  const wLine = $('status-wifi-line');
-  wLine.innerHTML = '';
-  if (w.mode === 'ap') {
-    wLine.appendChild(el('span', { class: 'pill warn' }, 'softAP'));
-  } else if (w.mode === 'sta' && w.connected) {
-    wLine.appendChild(el('span', { class: 'pill ok' }, 'Connected'));
-  } else if (w.mode === 'sta') {
-    wLine.appendChild(el('span', { class: 'pill bad' }, 'Disconnected'));
-  } else {
-    wLine.appendChild(el('span', { class: 'pill' }, w.mode || 'off'));
-  }
-  // SSID is the primary fact; IP and security/RSSI are sublines.
-  $('status-wifi-ssid').textContent = w.ssid || '';
-  let ipText = '';
-  if (w.mode === 'ap' && w.ap_ip) ipText = 'http://' + w.ap_ip + '/';
-  else if (w.ip && w.ip !== '0.0.0.0') ipText = w.ip;
-  $('status-wifi-ip').textContent = ipText;
-  if (w.auth) {
-    let html = w.auth;
-    if (typeof w.rssi_dbm === 'number') html += ' · ' + vu(w.rssi_dbm, 'dBm');
-    $('status-wifi-auth').innerHTML = html;
-  } else {
-    $('status-wifi-auth').textContent = '';
-  }
-  // Only show the softAP-toggle button when we're actually in STA
-  // mode — there's nothing to switch to from AP. The same gate
-  // applies to its accompanying explanatory subline.
-  const showSoftapBtn = w.mode === 'sta';
-  $('btn-force-softap').hidden  = !showSoftapBtn;
-  $('status-wifi-hint').hidden  = !showSoftapBtn;
-
-  // Storage now lives in the System-status popover (#120); /api/info
-  // still surfaces the same data for any other consumer.
-
-  const tLine = $('status-transport-line');
-  tLine.innerHTML = '';
-  tLine.appendChild(el('span', { class: 'pill ' + (t.enabled ? 'ok' : '') },
-                       t.enabled ? 'On — relaying packets' : 'Off — endpoint only'));
-  $('btn-toggle-transport').textContent = t.enabled ? 'Turn transport off' : 'Turn transport on';
 }
 function openStatusPopover() {
-  renderStatusPopover();
   // Backfill the radio-telemetry ring once per session so the chart
   // shows ~2 min of history right away. Subsequent updates arrive via
   // the WS `radio_telemetry` push and are appended in dispatchEvent.
   // Re-seed each open is wasteful — the local ring is already correct
   // once seeded — so the guard prevents that.
-  refreshRadioTelemetry().finally(() => {
-    renderRadioChart();
-    renderRadioCsmaLine();
-  });
-  // Repaint the CSMA subline from the currently-cached last sample so
-  // the popover doesn't show a blank line for the second it takes the
-  // first WS frame to arrive.
-  renderRadioCsmaLine();
+  refreshRadioTelemetry();
+  // Chart + CSMA line are reactive — Alpine bindings repaint them
+  // automatically as $store.s.radioTlm.samples grows from WS pushes.
   state.popovers.status = true;
   // Close on outside click; defer one tick so this click doesn't fire it.
   // Announce button is excluded — it's a momentary action button users
@@ -4768,16 +4755,14 @@ async function refreshRadioTelemetry() {
 // refreshes at 1 Hz while the popover is open. Empty when the
 // telemetry ring is still warming up so the row doesn't leave a stale
 // figure on screen.
-function renderRadioCsmaLine() {
-  const el = $('status-radio-csma');
-  if (!el) return;
+function radioCsmaLineText() {
   const rt = state.radioTlm;
   const last = rt.samples.length ? rt.samples[rt.samples.length - 1] : null;
-  if (!last) { el.textContent = ''; return; }
+  if (!last) return '';
   const parts = ['CW band ' + (last.cw ?? '?') + '/' + rt.cwMax];
   if (last.dcd)  parts.push('DCD');
   if (last.lock) parts.push('TX locked');
-  el.textContent = parts.join(' · ');
+  return parts.join(' · ');
 }
 
 // Render the inline chart into #status-radio-chart. Two y-axes:
@@ -4785,18 +4770,17 @@ function renderRadioCsmaLine() {
 //   right = -120..-40 dBm for RSSI
 // Time axis is sample-index — 1 px-per-sample at the popover's width.
 // Re-renders in place; safe to call on every WS push while open.
-function renderRadioChart() {
-  const host = $('status-radio-chart');
-  if (!host) return;
+// Build the inline radio-telemetry SVG chart as an HTML string. Called
+// from the popover's x-html binding so Alpine reactivity drives the
+// update without an imperative innerHTML write.
+function radioChartHTMLBuild() {
   const rt = state.radioTlm;
   const n = rt.samples.length;
-  if (n < 2) {
-    host.innerHTML = '<div class="radio-chart-empty">Awaiting telemetry…</div>';
-    return;
-  }
-  // Width: use the host's clientWidth so SVG matches the popover width.
+  if (n < 2) return '<div class="radio-chart-empty">Awaiting telemetry…</div>';
+  // Width: use the popover host's clientWidth so the SVG matches.
   // Fall back to 240 if the host hasn't laid out yet (display:none parent).
-  const W = Math.max(120, host.clientWidth || 240);
+  const host = document.getElementById('status-radio-chart');
+  const W = Math.max(120, (host && host.clientWidth) || 240);
   const H = 56;
   const padL = 22, padR = 22, padT = 4, padB = 4;
   const plotW = W - padL - padR;
@@ -4892,7 +4876,7 @@ function renderRadioChart() {
     <text x="${W - 20}"   y="${padT + 6}"        font-size="8" fill="#888">${RSSI_HI}</text>
     <text x="${W - 20}"   y="${padT + plotH}"    font-size="8" fill="#888">${RSSI_LO}</text>
   `;
-  host.innerHTML = `
+  return `
     <svg class="radio-chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
       ${utilGrid}
       <path class="radio-chart-line noise"  d="${path(yRssi, 'noise')}"/>
@@ -5247,38 +5231,50 @@ function onClickSystemBtn() {
   openSystemPopover();
 }
 
-// Power popover — anchored to #btn-power. Pulls fresh battery detail
-// from /api/system_status on open and on a slow ticker while it's
-// visible. The lightweight summary (percent / state) lives on info.
-function renderPowerPopover(sys) {
-  const b = (sys && sys.battery) || {};
-  const sum = (state.lastInfo && state.lastInfo.battery) || {};
-  const line = $('pw-battery-line'); line.innerHTML = '';
-  const sclass =
-    sum.state === 'charging'    ? 'pill ok'   :
-    sum.state === 'charged'     ? 'pill ok'   :
-    sum.state === 'discharging' && typeof sum.percent === 'number' && sum.percent < 15 ? 'pill bad' :
-    sum.state === 'discharging' && typeof sum.percent === 'number' && sum.percent < 30 ? 'pill warn' :
-    'pill';
-  const label = sum.state === 'charging' ? 'Charging'
-              : sum.state === 'charged'  ? 'Full'
-              : sum.state === 'discharging' ? 'Discharging'
-              : 'Unknown';
-  line.appendChild(el('span', { class: sclass }, label));
-  const parts = [];
-  if (typeof b.voltage_v === 'number') parts.push(vu(b.voltage_v.toFixed(2), 'V'));
-  if (typeof sum.percent === 'number' && sum.percent >= 0) parts.push(vu(sum.percent, '%'));
-  if (b.vbus_present) parts.push('USB ' + vu((b.vbus_voltage_v || 0).toFixed(2), 'V'));
-  $('pw-battery-values').innerHTML = parts.join(' · ');
-  const slope = [];
-  if (typeof b.slope_mv_per_min === 'number') {
-    const sign = b.slope_mv_per_min < 0 ? '' : '+';
-    const win  = Math.round((b.slope_window_ms || 0) / 60000);
-    slope.push('Slope ' + sign + vu(b.slope_mv_per_min.toFixed(1), 'mV/min') + ' (' + win + ' min)');
-  }
-  if (typeof b.discharge_ma === 'number') slope.push('Draw ' + vu(b.discharge_ma.toFixed(0), 'mA'));
-  if (typeof b.pmu_temp_c   === 'number') slope.push('PMU ' + vu(b.pmu_temp_c.toFixed(1), '°C'));
-  $('pw-battery-slope').innerHTML = slope.join(' · ');
+// Power popover — anchored to #btn-power. Battery detail data flows
+// through reactive getters; the template in #popover-power binds to
+// stateClass / stateLabel / valuesHTML / slopeHTML.
+function powerPopoverData() {
+  return {
+    get _b() { return (this.$store.s.system && this.$store.s.system.battery) || {}; },
+    get _sum() { return (this.$store.s.lastInfo && this.$store.s.lastInfo.battery) || {}; },
+    get stateClass() {
+      const s = this._sum;
+      if (s.state === 'charging' || s.state === 'charged') return 'pill ok';
+      if (s.state === 'discharging' && typeof s.percent === 'number') {
+        if (s.percent < 15) return 'pill bad';
+        if (s.percent < 30) return 'pill warn';
+      }
+      return 'pill';
+    },
+    get stateLabel() {
+      const st = this._sum.state;
+      return st === 'charging' ? 'Charging'
+           : st === 'charged'  ? 'Full'
+           : st === 'discharging' ? 'Discharging'
+           : 'Unknown';
+    },
+    get valuesHTML() {
+      const b = this._b, s = this._sum;
+      const parts = [];
+      if (typeof b.voltage_v === 'number') parts.push(vu(b.voltage_v.toFixed(2), 'V'));
+      if (typeof s.percent === 'number' && s.percent >= 0) parts.push(vu(s.percent, '%'));
+      if (b.vbus_present) parts.push('USB ' + vu((b.vbus_voltage_v || 0).toFixed(2), 'V'));
+      return parts.join(' · ');
+    },
+    get slopeHTML() {
+      const b = this._b;
+      const parts = [];
+      if (typeof b.slope_mv_per_min === 'number') {
+        const sign = b.slope_mv_per_min < 0 ? '' : '+';
+        const win  = Math.round((b.slope_window_ms || 0) / 60000);
+        parts.push('Slope ' + sign + vu(b.slope_mv_per_min.toFixed(1), 'mV/min') + ' (' + win + ' min)');
+      }
+      if (typeof b.discharge_ma === 'number') parts.push('Draw ' + vu(b.discharge_ma.toFixed(0), 'mA'));
+      if (typeof b.pmu_temp_c   === 'number') parts.push('PMU ' + vu(b.pmu_temp_c.toFixed(1), '°C'));
+      return parts.join(' · ');
+    },
+  };
 }
 let _pwTicker = null;
 async function openPowerPopover() {
@@ -5286,18 +5282,17 @@ async function openPowerPopover() {
     toast('System snapshot still loading…', 'info');
     return;
   }
-  renderPowerPopover(state.system);
+  // Template re-renders automatically from $store.s.system; no explicit
+  // call needed.
   state.popovers.status = false;
   state.popovers.system = false;
   state.popovers.power = true;
   if (!_pwTicker) {
-    // Repaint from the cached snapshot on a short ticker. The WS
-    // `system_update` keeps the cache fresh every 30 s; this just
-    // re-renders so any in-place transitions feel smooth.
-    _pwTicker = setInterval(() => {
-      if ($('popover-power').hidden) return;
-      if (state.system) renderPowerPopover(state.system);
-    }, 5000);
+    // The WS `system_update` keeps state.system fresh every 30 s; this
+    // ticker is a noop now that the template is reactive. Kept for
+    // future force-refresh hooks.
+    // No-op tick — template binds reactively to state.system.
+    _pwTicker = setInterval(() => {}, 5000);
   }
   setTimeout(() => {
     const dismiss = (ev) => {
@@ -5637,13 +5632,8 @@ function dispatchEvent(ev) {
         if (typeof rx_packets === 'number') state.lastInfo.radio.stats.rx_packets = rx_packets;
         if (typeof tx_packets === 'number') state.lastInfo.radio.stats.tx_packets = tx_packets;
       }
-      if (!$('popover-status').hidden) {
-        renderRadioChart();
-        renderRadioCsmaLine();
-        // Repaint the RX/TX text line. Cheap — renderStatusPopover
-        // is just textContent updates, no /api/info round-trip.
-        renderStatusPopover();
-      }
+      // Chart / CSMA / status text now reactive — the radioTlm push
+      // mutation above is observed by the Alpine bindings.
     }
     return;
   }

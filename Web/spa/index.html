@@ -1935,18 +1935,18 @@ summary:hover { color: var(--text); }
       </button>
     </header>
     <div class="tab-bar" id="settings-tabs">
-      <button class="tab" data-tab="identity">Identity</button>
-      <button class="tab" data-tab="connectivity">Connectivity</button>
-      <button class="tab" data-tab="discovery">Discovery</button>
-      <button class="tab" data-tab="time">Time</button>
-      <button class="tab" data-tab="ui">App</button>
-      <button class="tab" data-tab="network">Activity</button>
-      <button class="tab" data-tab="danger">Reset</button>
+      <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['time','Time'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
+        <button class="tab" :data-tab="t[0]"
+                :class="{ active: $store.s.settingsTab === t[0] }"
+                :hidden="$store.s.settingsFirstRun && t[0] !== 'connectivity'"
+                x-text="t[1]"
+                @click="selectSettingsTab(t[0])"></button>
+      </template>
     </div>
     <div class="modal-body">
 
       <!-- ============== Identity tab ============== -->
-      <div class="tab-panel" data-panel="identity">
+      <div class="tab-panel" data-panel="identity" :class="{ active: $store.s.settingsTab === 'identity' }">
         <div class="card">
           <div class="list-row" style="display:flex;align-items:center;gap:10px">
             <span class="idc" id="id-modal-idc"></span>
@@ -1970,7 +1970,7 @@ summary:hover { color: var(--text); }
       </div>
 
       <!-- ============== Connectivity tab (accordion: Radio / WiFi / Bluetooth) ============== -->
-      <div class="tab-panel" data-panel="connectivity">
+      <div class="tab-panel" data-panel="connectivity" :class="{ active: $store.s.settingsTab === 'connectivity' }">
         <div class="warn" style="margin:0 0 12px">⚠ Connectivity settings are <strong>device-wide</strong> — they apply to every identity stored on this device. Changing radio params reboots the device and may interrupt active conversations.</div>
 
         <details class="cn-section" data-cn="radio" open>
@@ -2075,7 +2075,7 @@ summary:hover { color: var(--text); }
       </div>
 
       <!-- ============== Discovery tab ============== -->
-      <div class="tab-panel" data-panel="discovery">
+      <div class="tab-panel" data-panel="discovery" :class="{ active: $store.s.settingsTab === 'discovery' }">
         <div class="warn" style="margin:0 0 12px">⚠ Discovery announces this device's interfaces to other nodes that can hear it. Off by default for privacy — only turn it on if you want to be findable.</div>
         <div class="card">
           <strong>Network identity</strong>
@@ -2134,7 +2134,7 @@ summary:hover { color: var(--text); }
       </div>
 
       <!-- ============== Time tab ============== -->
-      <div class="tab-panel" data-panel="time">
+      <div class="tab-panel" data-panel="time" :class="{ active: $store.s.settingsTab === 'time' }">
         <div class="card">
           <p class="muted" style="margin-top:0">The highest-priority enabled source that's reported a value wins.</p>
           <div class="row" style="margin-bottom:14px;align-items:center;gap:12px">
@@ -2154,7 +2154,7 @@ summary:hover { color: var(--text); }
       </div>
 
       <!-- ============== App / UI tab ============== -->
-      <div class="tab-panel" data-panel="ui">
+      <div class="tab-panel" data-panel="ui" :class="{ active: $store.s.settingsTab === 'ui' }">
         <div class="card">
           <strong>UI preferences</strong>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:10px 0 0">
@@ -2237,7 +2237,7 @@ summary:hover { color: var(--text); }
       </div>
 
       <!-- ============== Network tab ============== -->
-      <div class="tab-panel" data-panel="network">
+      <div class="tab-panel" data-panel="network" :class="{ active: $store.s.settingsTab === 'network' }">
         <div class="card">
           <strong>Recent announces</strong>
           <div class="muted" style="margin-top:4px">LXMF endpoints heard on the network. Click an entry to start a chat.</div>
@@ -2279,7 +2279,7 @@ summary:hover { color: var(--text); }
       </div>
 
       <!-- ============== Danger tab ============== -->
-      <div class="tab-panel" data-panel="danger">
+      <div class="tab-panel" data-panel="danger" :class="{ active: $store.s.settingsTab === 'danger' }">
         <div class="card">
           <strong>Delete this identity</strong>
           <p class="muted">Permanently delete this identity from the device. Inbox, outbox, and identity material are removed. Only affects the currently logged-in identity.</p>
@@ -2421,6 +2421,9 @@ let state = {
     power:   false,
     emoji:   false,
   },
+  // Active tab in the Settings modal. Drives :class="{ active: ... }"
+  // on every #settings-tabs > .tab and #modal-settings .tab-panel.
+  settingsTab: 'identity',
   info: null,
   transport: null,
   token: localStorage.getItem(LS.TOKEN) || null,
@@ -6788,10 +6791,11 @@ async function populateIdentityTab() {
 }
 
 function selectSettingsTab(tabId) {
-  const tabs = document.querySelectorAll('#settings-tabs .tab');
-  const panels = document.querySelectorAll('#modal-settings .tab-panel');
-  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabId));
-  panels.forEach(p => p.classList.toggle('active', p.dataset.panel === tabId));
+  // Visual state is reactive via $store.s.settingsTab + the :class
+  // bindings on each #settings-tabs > .tab and #modal-settings
+  // .tab-panel. This function still handles the per-tab data load
+  // (populateXxxTab) which the legacy code coupled to the tab click.
+  state.settingsTab = tabId;
   // Stop the time-tab ticker if we're leaving it; populateTimeTab
   // restarts it when we re-enter.
   if (tabId !== 'time') stopTimeTicker();
@@ -7298,9 +7302,10 @@ async function openSettingsModal(initialTab, firstRun) {
   // Treat the legacy 'radio' tab name as a synonym for 'connectivity'
   // — callers that open the radio gate still work.
   if (initialTab === 'radio') initialTab = 'connectivity';
-  for (const t of document.querySelectorAll('#settings-tabs .tab')) {
-    t.hidden = firstRun && t.dataset.tab !== 'connectivity';
-  }
+  // First-run lock: while the device is in its initial radio-setup
+  // gate, only the Connectivity tab is reachable. Stored on state so
+  // the x-for'd tab markup can bind :hidden.
+  state.settingsFirstRun = firstRun;
   // First-run radio intro is more urgent.
   $('rd-intro').innerHTML = firstRun
     ? 'Before this device can talk to other LoRa nodes, it needs to know which region to operate in. Pick the preset for your local mesh — both ends of a conversation must use the <em>same</em> region settings, or they won\'t hear each other.'
@@ -7314,10 +7319,8 @@ function closeSettingsModal() {
   stopTimeTicker();
 }
 
-// Tab-bar click → switch panel.
-for (const tab of document.querySelectorAll('#settings-tabs .tab')) {
-  tab.addEventListener('click', () => selectSettingsTab(tab.dataset.tab));
-}
+// Tab-bar click → switch panel. Wiring lives on the Alpine
+// <template x-for> @click in markup.
 // Close button + backdrop click both dismiss (when not first-run).
 $('btn-close-settings').addEventListener('click', closeSettingsModal);
 $('modal-settings').addEventListener('click', (e) => {

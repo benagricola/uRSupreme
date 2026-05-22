@@ -3054,19 +3054,14 @@ class UReticulumHTTPTransport extends Transport {
 }
 
 // ============================== RENDER ==============================
-const _convRowEls = new Map();  // peer_hex → row element
+// Legacy DOM-cache + state-preservation helpers. Both are obsolete now
+// that conv-list / thread / settings lists are rendered by Alpine —
+// Alpine's template diffing preserves scroll / focus / details
+// open-state natively. Kept and exported because a few legacy
+// render-via-rebuild paths (settings tabs, popovers) still call them
+// until the Wave 5 / 6 migrations land.
+const _convRowEls = new Map();  // unused; kept to satisfy any stale ref
 
-// State-preservation wrapper for render functions that wipe-and-rebuild
-// a container. Captures scroll position, focus, selection range and the
-// open/closed state of any <details> elements before fn runs; restores
-// after. This is what stops the UI "jumping back to the bottom" / losing
-// form focus / collapsing the Discovered list every time an SSE event
-// triggers a rerender.
-//
-// `detailsKey(detEl)` returns a stable string identifying each <details>
-// across rerenders (e.g. its first <summary> textContent). Defaults to
-// "details index in container" if not provided — fine for containers
-// with a fixed set of details elements.
 function withPreservedState(container, fn, opts = {}) {
   const detailsKey = opts.detailsKey || ((d, i) => 'idx:' + i);
   const scrollTop  = container.scrollTop;
@@ -3801,12 +3796,9 @@ async function selectConversation(peer) {
     renderAttachTray();
   }
   state.openPeer = peer;
-  // Update conv row "active" state.
-  for (const [p, row] of _convRowEls) {
-    row.classList.toggle('active', p === peer);
-  }
-  renderThread();
-  // Make sure a record exists even if empty.
+  // Make sure a record exists even if empty. The conv-row "active"
+  // highlight is now driven by Alpine's :class binding against
+  // $store.s.openPeer; no manual DOM toggling needed.
   if (!state.conversations[peer]) {
     state.conversations[peer] = { peer, msgs: [], last_ts: 0 };
   }

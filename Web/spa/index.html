@@ -99,6 +99,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .hide, [hidden] { display: none !important; }
 .muted { color: var(--text-mute); font-size: 12px; }
 .mono  { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+
 .warn {
   background: var(--warn-bg); border: 1px solid var(--warn-bd); color: var(--warn);
   padding: 8px 12px; border-radius: 6px; font-size: 13px; margin: 12px;
@@ -1165,6 +1166,84 @@ summary:hover { color: var(--text); }
    of the wrong state on first paint. The defer'd <script> at the
    end of <head> guarantees Alpine starts after DOMContentLoaded. */
 [x-cloak] { display: none !important; }
+
+/* ============== utility classes ==============
+   Replace the most common inline styles. Stick to spacing / sizing /
+   flex / monospace — anything with bespoke colours or borders keeps
+   its own component class. The naming follows a small fragment of
+   the Tailwind convention (mt-N / mb-N where N is a 4px step) so a
+   reader who knows Tailwind has a head start. Declared LAST so they
+   reliably win over component rules when both apply. */
+.mt-mini { margin-top: 2px; } .mb-mini { margin-bottom: 2px; }
+.mt-1 { margin-top: 4px; }   .mb-1 { margin-bottom: 4px; }
+.mt-2 { margin-top: 8px; }   .mb-2 { margin-bottom: 8px; }
+.mt-3 { margin-top: 12px; }  .mb-3 { margin-bottom: 12px; }
+.mt-4 { margin-top: 16px; }  .mb-4 { margin-bottom: 16px; }
+.mt-6 { margin-top: 6px; }   .mb-6 { margin-bottom: 6px; }   /* odd offsets that recur */
+.mt-10 { margin-top: 10px; } .mb-10 { margin-bottom: 10px; }
+.mt-14 { margin-top: 14px; } .mb-14 { margin-bottom: 14px; }
+.w-full { width: 100%; }
+.flex-1 { flex: 1; }
+.min-w-0 { min-width: 0; }
+.flex-1-min0 { flex: 1; min-width: 0; }
+.clickable { cursor: pointer; }
+/* Override the global `input { width: 100%; min-height: 36px }` for
+   checkboxes / radios that sit inline next to a label. */
+.input-inline { width: auto; min-height: auto; }
+.font-mono-inline { font-family: ui-monospace, monospace; }
+.font-bold { font-weight: 600; }
+.text-tiny { font-size: 10px; }
+.text-xs { font-size: 11px; }
+.text-sm { font-size: 12px; }
+/* Modal z-indices: layered above each other and the base modal stack
+   (.modal-bg = 200) so identity-code / image / confirm can sit on top
+   of a Settings modal that's already open. */
+.z-260 { z-index: 260; }
+.z-270 { z-index: 270; }
+.z-280 { z-index: 280; }
+/* Reusable card width inside a modal-bg. The base .modal max-width is
+   380px; .modal-wide expands to 460px for forms that need to fit two
+   columns of inputs. */
+.modal-wide { max-width: 460px; }
+/* Small attachment-style chip used inside message bubbles. */
+.chip {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 11px;
+}
+.chip-btn {
+  margin-top: 6px;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+  display: block;
+}
+.chip-error {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 90, 90, 0.18);
+  font-size: 11px;
+  color: inherit;
+}
+/* Inline progress bar used in conv rows + synthetic incoming rows. */
+.progress-track {
+  height: 3px;
+  margin-top: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 200ms ease-out;
+}
+/* Inline-toggle label: settings rows with a checkbox / radio sitting
+   next to readable text. Differs from the global `label` rule (which
+   is block, 12px, muted). */
+.toggle-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin: 0; }
 </style>
 <script src="/alpine.min.js" defer></script>
 </head>
@@ -1212,7 +1291,7 @@ summary:hover { color: var(--text); }
   <div class="card">
     <h2>First-time setup</h2>
     <p class="muted">This device hasn't been configured for a WiFi network yet. Configure home WiFi so you can reach it from any device on your network — or skip and use it directly from this softAP for standalone / off-grid operation.</p>
-    <div class="row" style="margin-bottom:8px">
+    <div class="row mb-2" >
       <select id="bs-ssid">
         <option value=""
                 x-text="$store.s.wifiScanState === 'scanning' ? '— scanning… —'
@@ -1225,15 +1304,15 @@ summary:hover { color: var(--text); }
       <button class="secondary" id="bs-rescan">Rescan</button>
     </div>
     <label>Password</label>
-    <input id="bs-psk" type="password" placeholder="WiFi password" style="margin-bottom:10px">
-    <p class="muted id-code-hint" style="margin-top:14px"></p>
+    <input class="mb-10" id="bs-psk" type="password" placeholder="WiFi password">
+    <p class="muted id-code-hint mt-14" ></p>
     <label>Identity code</label>
-    <input id="bs-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:10px">
-    <button id="bs-save" style="width:100%">Save WiFi & reboot</button>
-    <p class="muted" style="margin-top:10px">Tip: leave the password empty for an open network.</p>
+    <input class="font-mono-inline mb-10" id="bs-code" maxlength="6" placeholder="abc123">
+    <button class="w-full" id="bs-save">Save WiFi & reboot</button>
+    <p class="muted mt-10" >Tip: leave the password empty for an open network.</p>
     <hr style="border-color:var(--border);margin:14px 0">
-    <button class="secondary" id="bs-skip" style="width:100%">Skip — use chat from this softAP</button>
-    <p class="muted" style="margin-top:8px">Standalone mode: don't join a WiFi network at all; stay on this device's softAP. You can join a network later from the settings menu.</p>
+    <button class="secondary w-full" id="bs-skip" >Skip — use chat from this softAP</button>
+    <p class="muted mt-2" >Standalone mode: don't join a WiFi network at all; stay on this device's softAP. You can join a network later from the settings menu.</p>
   </div>
 </div>
 
@@ -1248,7 +1327,7 @@ summary:hover { color: var(--text); }
       <template x-for="id in $store.s.identities" :key="id.id">
         <div class="iden-card" @click="enterLogin(id)">
           <span class="idc" x-html="identicon(id.address, 44)"></span>
-          <div style="min-width:0">
+          <div class="min-w-0">
             <div class="name" x-text="id.display_name || '(no name)'"></div>
             <div class="addr" x-text="id.address"></div>
           </div>
@@ -1256,16 +1335,16 @@ summary:hover { color: var(--text); }
         </div>
       </template>
     </div>
-    <div class="row" style="margin-top:14px">
-      <button id="btn-show-create" style="flex:1" @click="enterCreate()">Create new identity</button>
+    <div class="row mt-14" >
+      <button class="flex-1" id="btn-show-create" @click="enterCreate()">Create new identity</button>
     </div>
-    <details style="margin-top:14px">
+    <details class="mt-14">
       <summary class="muted">Lost a password?</summary>
       <p class="muted">Factory reset wipes <em>every</em> identity on this device — inboxes, sent messages, auth tokens, the lot. Required if every password is forgotten.</p>
       <p class="muted id-code-hint"></p>
       <label>Identity code</label>
       <input id="fr-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:8px">
-      <button class="danger" id="btn-factory-reset" style="width:100%" @click="onClickFactoryReset()">Factory reset</button>
+      <button class="danger w-full" id="btn-factory-reset"  @click="onClickFactoryReset()">Factory reset</button>
     </details>
   </div>
 </div>
@@ -1275,14 +1354,14 @@ summary:hover { color: var(--text); }
   <div class="card">
     <h2>Create identity</h2>
     <label>Display name</label>
-    <input id="cr-name" placeholder="Your name" style="margin-bottom:10px">
+    <input class="mb-10" id="cr-name" placeholder="Your name">
     <label>Password (≥8 chars)</label>
-    <input id="cr-pw1" type="password" style="margin-bottom:8px">
+    <input class="mb-2" id="cr-pw1" type="password">
     <label>Confirm password</label>
-    <input id="cr-pw2" type="password" style="margin-bottom:10px">
+    <input class="mb-10" id="cr-pw2" type="password">
     <p class="muted id-code-hint"></p>
     <label>Identity code</label>
-    <input id="cr-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:10px">
+    <input class="font-mono-inline mb-10" id="cr-code" maxlength="6" placeholder="abc123">
     <div class="row">
       <button class="secondary" id="btn-create-cancel" @click="enterIdentityPicker()">Back</button>
       <button id="btn-create-go" @click="onClickCreateGo()">Create</button>
@@ -1296,7 +1375,7 @@ summary:hover { color: var(--text); }
     <h2 id="login-title">Login</h2>
     <p class="muted">Enter the password you set when this identity was created. No physical-presence proof is needed for login — the password is the only key.</p>
     <label>Password</label>
-    <input id="login-pw" type="password" style="margin-bottom:12px">
+    <input class="mb-3" id="login-pw" type="password">
     <div class="row">
       <button class="secondary" id="btn-login-back" @click="enterIdentityPicker()">Back</button>
       <button id="btn-login-go" @click="onClickLoginGo($event.currentTarget)">Login</button>
@@ -1371,7 +1450,7 @@ summary:hover { color: var(--text); }
   </header>
   <aside id="pane-list">
     <header id="list-header">
-      <input id="search" placeholder="Search chats and contacts" style="flex:1">
+      <input class="flex-1" id="search" placeholder="Search chats and contacts">
       <button class="icon" id="btn-new-conv" title="New conversation" @click="openNewConvModal()">
         <!-- new chat: pencil-square -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h7"/><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L13 14l-4 1 1-4 8.5-8.5z"/></svg>
@@ -1400,7 +1479,7 @@ summary:hover { color: var(--text); }
           <div class="middle">
             <div class="name">Incoming attachment</div>
             <div class="last" x-text="incomingSubText(t)"></div>
-            <div style="height:3px;margin-top:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden">
+            <div class="progress-track">
               <div :style="'height:100%;width:' + transferPct(t) + '%;background:var(--accent);transition:width 200ms ease-out'"></div>
             </div>
           </div>
@@ -1428,7 +1507,7 @@ summary:hover { color: var(--text); }
                    x-text="announceSeenString($store.s.announces[c.peer])"></div>
             </template>
             <template x-if="activeTransferFor(c.peer)">
-              <div style="height:3px;margin-top:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden">
+              <div class="progress-track">
                 <div :style="'height:100%;width:' + transferPct(activeTransferFor(c.peer)) + '%;background:var(--accent);transition:width 200ms ease-out'"></div>
               </div>
             </template>
@@ -1481,7 +1560,7 @@ summary:hover { color: var(--text); }
       <span class="idc" id="thread-idc"
             x-html="$store.s.openPeer ? identicon($store.s.openPeer, 36) : ''"></span>
       <div class="peer-info">
-        <div class="name" id="thread-name" title="Click to rename" style="cursor:pointer"
+        <div class="name clickable" id="thread-name" title="Click to rename" 
              x-text="$store.s.openPeer ? nameFor($store.s.openPeer) : ''"
              @click="renamePeerFlow($store.s.openPeer)"></div>
         <div class="addr" id="thread-addr"
@@ -1539,14 +1618,14 @@ summary:hover { color: var(--text); }
                        x-text="attachmentLabel(a) + ' — SD card unavailable'"></div>
                 </template>
                 <template x-if="attachmentMode(a) === 'click-to-load'">
-                  <button class="attachment-chip"
-                          style="margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block"
+                  <button class="attachment-chip chip chip-btn"
+                          
                           @click="downloadAttachment(state.identityId, a, $event.currentTarget, $event.currentTarget.parentElement)"
                           x-text="attachmentLabel(a) + ' — click to load'"></button>
                 </template>
                 <template x-if="attachmentMode(a) === 'click-to-download'">
-                  <button class="attachment-chip"
-                          style="margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block"
+                  <button class="attachment-chip chip chip-btn"
+                          
                           @click="downloadAttachment(state.identityId, a, $event.currentTarget, $event.currentTarget.parentElement)"
                           x-text="attachmentLabel(a) + ' — click to download'"></button>
                 </template>
@@ -1555,17 +1634,17 @@ summary:hover { color: var(--text); }
                        x-text="attachmentLabel(a)"></div>
                 </template>
                 <template x-if="attachmentMode(a) === 'inline-image'">
-                  <div style="margin-top:6px" x-init="loadAttachmentBlob(a)">
+                  <div class="mt-6" x-init="loadAttachmentBlob(a)">
                     <template x-if="$store.s.attachmentBlobs[a.filename] === 'loading'">
-                      <div class="muted" style="padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);font-size:11px"
+                      <div class="muted chip" 
                            x-text="attachmentLabel(a) + ' — loading…'"></div>
                     </template>
                     <template x-if="isBlobFailed($store.s.attachmentBlobs[a.filename])">
-                      <div style="padding:4px 8px;border-radius:6px;background:rgba(255,90,90,0.18);font-size:11px;color:inherit">
+                      <div class="chip-error">
                         <div x-text="attachmentLabel(a) + ' — load failed'"></div>
-                        <div class="muted" style="font-size:10px;margin-top:2px"
+                        <div class="muted text-tiny mt-mini" 
                              x-text="$store.s.attachmentBlobs[a.filename] && $store.s.attachmentBlobs[a.filename].error"></div>
-                        <button class="ghost" style="margin-top:6px;font-size:11px"
+                        <button class="ghost mt-6 text-xs" 
                                 @click="retryAttachment(a, $event.currentTarget.closest('.bubble'))">Retry</button>
                       </div>
                     </template>
@@ -1577,17 +1656,17 @@ summary:hover { color: var(--text); }
                   </div>
                 </template>
                 <template x-if="attachmentMode(a) === 'inline-audio'">
-                  <div style="margin-top:6px" x-init="loadAttachmentBlob(a)">
+                  <div class="mt-6" x-init="loadAttachmentBlob(a)">
                     <template x-if="$store.s.attachmentBlobs[a.filename] === 'loading'">
-                      <div class="muted" style="padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);font-size:11px"
+                      <div class="muted chip" 
                            x-text="attachmentLabel(a) + ' — loading…'"></div>
                     </template>
                     <template x-if="isBlobFailed($store.s.attachmentBlobs[a.filename])">
-                      <div style="padding:4px 8px;border-radius:6px;background:rgba(255,90,90,0.18);font-size:11px;color:inherit">
+                      <div class="chip-error">
                         <div x-text="attachmentLabel(a) + ' — load failed'"></div>
-                        <div class="muted" style="font-size:10px;margin-top:2px"
+                        <div class="muted text-tiny mt-mini" 
                              x-text="$store.s.attachmentBlobs[a.filename] && $store.s.attachmentBlobs[a.filename].error"></div>
-                        <button class="ghost" style="margin-top:6px;font-size:11px"
+                        <button class="ghost mt-6 text-xs" 
                                 @click="retryAttachment(a, $event.currentTarget.closest('.bubble'))">Retry</button>
                       </div>
                     </template>
@@ -1703,7 +1782,7 @@ summary:hover { color: var(--text); }
     <div class="popover-value" id="status-wifi-ssid" x-text="wifiSsid"></div>
     <div class="popover-subline" id="status-wifi-ip" x-text="wifiIpLine"></div>
     <div class="popover-subline" id="status-wifi-auth" x-html="wifiAuthLine"></div>
-    <button class="secondary" id="btn-force-softap" style="width:100%;margin-top:8px"
+    <button class="secondary w-full mt-2" id="btn-force-softap" 
             x-show="wifiMode === 'sta'"
             title="Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again."
             @click="onClickForceSoftap($event.currentTarget)">Switch to softAP</button>
@@ -1718,7 +1797,7 @@ summary:hover { color: var(--text); }
               x-text="transportEnabled ? 'On — relaying packets' : 'Off — endpoint only'"></span>
       </div>
     </div>
-    <button class="secondary" id="btn-toggle-transport" style="width:100%;margin-top:8px"
+    <button class="secondary w-full mt-2" id="btn-toggle-transport" 
             title="Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots."
             x-text="transportEnabled ? 'Turn transport off' : 'Turn transport on'"
             @click="onClickToggleTransport($event.currentTarget)"></button>
@@ -1765,7 +1844,7 @@ summary:hover { color: var(--text); }
     </div>
     <div class="popover-value" id="sys-storage-flash" x-html="storageFlashHTML"></div>
     <div class="popover-subline" id="sys-storage-sd" x-html="storageSdHTML"></div>
-    <button id="sys-storage-migrate" class="secondary" style="width:100%;margin-top:8px"
+    <button id="sys-storage-migrate" class="secondary w-full mt-2" 
             x-show="storageShowMigrate" x-cloak @click="onClickStorageMigrate($event.currentTarget)">
       Move flash attachments to SD card
     </button>
@@ -1782,7 +1861,7 @@ summary:hover { color: var(--text); }
   </div>
   <div class="popover-section" id="sys-section-gps" data-sensor="gps"
        x-show="gpsAvailable" x-cloak>
-    <div class="popover-row" style="cursor:pointer" data-role="header">
+    <div class="popover-row clickable"  data-role="header">
       <div class="popover-label">Position</div>
       <div id="sys-gps-line">
         <span :class="gpsPillClass" x-text="gpsPillLabel"></span>
@@ -1796,7 +1875,7 @@ summary:hover { color: var(--text); }
   </div>
   <div class="popover-section" id="sys-section-env" data-sensor="environment"
        x-show="envAvailable" x-cloak>
-    <div class="popover-row" style="cursor:pointer" data-role="header">
+    <div class="popover-row clickable"  data-role="header">
       <div class="popover-label">Environment</div>
       <div id="sys-env-line">
         <span :class="envState.cls" x-text="envState.label"></span>
@@ -1821,7 +1900,7 @@ summary:hover { color: var(--text); }
   </div>
   <div class="popover-section" id="sys-section-mag" data-sensor="magnetometer"
        x-show="magAvailable" x-cloak>
-    <div class="popover-row" style="cursor:pointer" data-role="header">
+    <div class="popover-row clickable"  data-role="header">
       <div class="popover-label">Compass</div>
       <div id="sys-mag-line">
         <span :class="magState.cls" x-text="magState.label"></span>
@@ -1846,7 +1925,7 @@ summary:hover { color: var(--text); }
   </div>
   <div class="popover-section" id="sys-section-imu" data-sensor="imu"
        x-show="imuAvailable" x-cloak>
-    <div class="popover-row" style="cursor:pointer" data-role="header">
+    <div class="popover-row clickable"  data-role="header">
       <div class="popover-label">Motion</div>
       <div id="sys-imu-line">
         <span :class="imuState.cls" x-text="imuState.label"></span>
@@ -1894,7 +1973,7 @@ summary:hover { color: var(--text); }
 
 <!-- ===================== NEW CONVERSATION MODAL ===================== -->
 <div id="modal-new-conv" class="modal-bg" x-data x-show="$store.s.modals.newConv" x-cloak>
-  <div class="modal" style="max-width:460px">
+  <div class="modal modal-wide">
     <h3>New conversation</h3>
     <div id="nc-pick" style="max-height:260px;overflow-y:auto;margin-bottom:12px"
          x-data="newConvPickerData()">
@@ -1905,10 +1984,10 @@ summary:hover { color: var(--text); }
         <div class="list-section" style="padding:4px 0">Saved contacts</div>
       </template>
       <template x-for="c in contacts" :key="'c:' + c.addr">
-        <div class="iden-card" style="margin-bottom:6px"
+        <div class="iden-card mb-6" 
              @click="$('nc-addr').value = c.addr; if (c.name) $('nc-name').value = c.name;">
           <span x-html="identicon(c.addr, 36)"></span>
-          <div style="min-width:0">
+          <div class="min-w-0">
             <div class="name" x-text="c.name || shortHex(c.addr)"></div>
             <div class="addr" x-text="c.addr"></div>
           </div>
@@ -1919,13 +1998,13 @@ summary:hover { color: var(--text); }
         <div class="list-section" style="padding:4px 0;margin-top:6px">Discovered nearby</div>
       </template>
       <template x-for="a in discovered" :key="'d:' + a.dest">
-        <div class="iden-card" style="margin-bottom:6px"
+        <div class="iden-card mb-6" 
              @click="$('nc-addr').value = a.dest; if (a.display_name) $('nc-name').value = a.display_name;">
           <span x-html="identicon(a.dest, 36)"></span>
-          <div style="min-width:0">
+          <div class="min-w-0">
             <div class="name" x-text="a.display_name || shortHex(a.dest)"></div>
             <div class="addr" x-text="a.dest"></div>
-            <div class="muted" style="font-size:11px"
+            <div class="muted text-xs" 
                  x-text="'heard ' + heardLabel(a) + ' ago'"></div>
           </div>
           <div>→</div>
@@ -1935,7 +2014,7 @@ summary:hover { color: var(--text); }
     <label>Or enter address manually (32 hex)</label>
     <input id="nc-addr" maxlength="32" placeholder="a5104e44225af3db4430f8e749509946" style="margin-bottom:10px;font-family:ui-monospace,monospace">
     <label>Contact name (optional, saved locally)</label>
-    <input id="nc-name" placeholder="Their name" style="margin-bottom:14px">
+    <input class="mb-14" id="nc-name" placeholder="Their name">
     <div class="row">
       <button class="secondary" id="btn-nc-cancel" @click="state.modals.newConv = false">Cancel</button>
       <button id="btn-nc-go" @click="onClickNewConvGo()">Open</button>
@@ -1947,11 +2026,11 @@ summary:hover { color: var(--text); }
 <!-- Opened after the user picks an image. Lets them pick small /
      medium / original; each option shows its file size + ETA against
      the current destination so the cost is visible before send. -->
-<div id="modal-image-resize" class="modal-bg" x-data x-show="$store.s.modals.imageResize"
-     @click.self="imageResizeCancel()" x-cloak style="z-index:260">
-  <div class="modal" style="max-width:480px">
+<div id="modal-image-resize" class="modal-bg z-260" x-data x-show="$store.s.modals.imageResize"
+     @click.self="imageResizeCancel()" x-cloak>
+  <div class="modal modal-wide">
     <h3>Attach image</h3>
-    <p class="muted" id="ir-source" style="margin-bottom:10px"
+    <p class="muted mb-10" id="ir-source" 
        x-text="$store.s.imageResize.sourceLine"></p>
     <div id="ir-options" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
       <template x-for="p in $store.s.imageResize.prepared" :key="p.key">
@@ -1959,9 +2038,9 @@ summary:hover { color: var(--text); }
              @click="imageResizePick(p)">
           <img :src="p.objectUrl"
                :style="'width:' + $store.s.imageResize.thumbBox + 'px;height:' + $store.s.imageResize.thumbBox + 'px;object-fit:contain;background:var(--bg);border-radius:4px;flex-shrink:0'">
-          <div style="flex:1;min-width:0">
-            <div style="font-weight:600"
-                 x-text="p.label + (p.maxDim ? '  (≤ ' + p.maxDim + ' px)' : '  (as-is)')"></div>
+          <div class="flex-1-min0">
+            <div class="font-bold" 
+         x-text="p.label + (p.maxDim ? ' (≤ ' + p.maxDim + ' px)' : ' (as-is)')"></div>
             <div class="muted mono" style="font-size:11px;margin-top:2px"
                  x-text="p.dims.w + '×' + p.dims.h + ' · ' + formatBytes(p.size)"></div>
             <template x-if="p.size > $store.s.imageResize.cap">
@@ -1986,21 +2065,21 @@ summary:hover { color: var(--text); }
      showConfirm(opts) so call sites don't have to declare their own
      modal HTML for every action. Optional identity-code input for
      physical-presence-gated calls. -->
-<div id="modal-confirm" class="modal-bg" x-data x-show="$store.s.modals.confirm"
-     @click.self="confirmCancel()" x-cloak style="z-index:270">
+<div id="modal-confirm" class="modal-bg z-270" x-data x-show="$store.s.modals.confirm"
+     @click.self="confirmCancel()" x-cloak>
   <div class="modal">
     <h3 id="mc-title" x-text="$store.s.confirm.title">Confirm</h3>
     <p class="muted" id="mc-body" style="white-space:pre-wrap"
        x-text="$store.s.confirm.body"></p>
-    <div id="mc-code-wrap" style="margin-bottom:12px" x-show="$store.s.confirm.needsCode" x-cloak>
+    <div class="mb-3" id="mc-code-wrap" x-show="$store.s.confirm.needsCode" x-cloak>
       <label>Identity code</label>
-      <p class="muted id-code-hint" style="margin-bottom:6px"></p>
-      <input id="mc-code" maxlength="6" placeholder="abc123"
-             style="font-family:ui-monospace,monospace"
-             x-model="$store.s.confirm.codeValue"
-             @keydown.enter.prevent="confirmOk()">
+      <p class="muted id-code-hint mb-6" ></p>
+      <input class="font-mono-inline" id="mc-code" maxlength="6" placeholder="abc123"
+       
+       x-model="$store.s.confirm.codeValue"
+       @keydown.enter.prevent="confirmOk()">
     </div>
-    <div id="mc-input-wrap" style="margin-bottom:12px" x-show="$store.s.confirm.needsInput" x-cloak>
+    <div class="mb-3" id="mc-input-wrap" x-show="$store.s.confirm.needsInput" x-cloak>
       <label id="mc-input-label" x-text="$store.s.confirm.inputLabel"></label>
       <input id="mc-input" type="text"
              x-model="$store.s.confirm.inputValue"
@@ -2020,12 +2099,12 @@ summary:hover { color: var(--text); }
 <!-- Opened from the Connectivity tab's "Add a network" button. Same
      scan + pick + PSK + identity-code flow that the bootstrap softAP
      uses, just framed as a modal so it doesn't bloat the settings tab. -->
-<div id="modal-wifi-add" class="modal-bg" x-data x-show="$store.s.modals.wifiAdd" x-cloak style="z-index:260">
-  <div class="modal" style="max-width:460px">
+<div id="modal-wifi-add" class="modal-bg z-260" x-data x-show="$store.s.modals.wifiAdd" x-cloak>
+  <div class="modal modal-wide">
     <h3>Add a WiFi network</h3>
-    <p class="muted" style="margin-bottom:10px">Pick a network for this device to join. Saving reboots the device. The softAP fallback engages automatically if the saved network isn't reachable on next boot.</p>
+    <p class="muted mb-10" >Pick a network for this device to join. Saving reboots the device. The softAP fallback engages automatically if the saved network isn't reachable on next boot.</p>
     <label>Network</label>
-    <select id="cn-wifi-ssid" style="margin-bottom:8px">
+    <select class="mb-2" id="cn-wifi-ssid">
       <option value=""
               x-text="$store.s.wifiScanState === 'scanning' ? '— scanning… —'
                      : $store.s.wifiScanState === 'error' ? '(scan failed)'
@@ -2034,10 +2113,10 @@ summary:hover { color: var(--text); }
         <option :value="n.ssid" x-text="n.ssid + (n.secure ? ' 🔒' : '')"></option>
       </template>
     </select>
-    <button class="secondary" id="cn-wifi-scan" style="margin-bottom:12px" @click="scanIntoWifiModal()">Rescan networks</button>
+    <button class="secondary mb-3" id="cn-wifi-scan"  @click="scanIntoWifiModal()">Rescan networks</button>
     <label>Password</label>
-    <input id="cn-wifi-psk" type="password" placeholder="(leave blank for open networks)" style="margin-bottom:8px">
-    <p class="muted id-code-hint" style="margin-bottom:8px"></p>
+    <input class="mb-2" id="cn-wifi-psk" type="password" placeholder="(leave blank for open networks)">
+    <p class="muted id-code-hint mb-2" ></p>
     <label>Identity code</label>
     <input id="cn-wifi-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:12px">
     <div class="row">
@@ -2048,16 +2127,16 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== ADD TCP CLIENT MODAL ===================== -->
-<div id="modal-tcp-add" class="modal-bg" x-data x-show="$store.s.modals.tcpAdd" x-cloak style="z-index:260">
-  <div class="modal" style="max-width:460px">
+<div id="modal-tcp-add" class="modal-bg z-260" x-data x-show="$store.s.modals.tcpAdd" x-cloak>
+  <div class="modal modal-wide">
     <h3>Add a TCP client</h3>
-    <p class="muted" style="margin-bottom:10px">Connect outbound to another Reticulum node by hostname or IP. The link comes up immediately and persists across reboots.</p>
+    <p class="muted mb-10" >Connect outbound to another Reticulum node by hostname or IP. The link comes up immediately and persists across reboots.</p>
     <label>Name</label>
-    <input id="cn-tcp-name" placeholder="e.g. amsterdam-hub" maxlength="32" style="margin-bottom:8px">
-    <div class="row" style="margin-bottom:8px">
+    <input class="mb-2" id="cn-tcp-name" placeholder="e.g. amsterdam-hub" maxlength="32">
+    <div class="row mb-2" >
       <div>
         <label>Host</label>
-        <input id="cn-tcp-host" placeholder="hub.example.org" style="font-family:ui-monospace,monospace">
+        <input class="font-mono-inline" id="cn-tcp-host" placeholder="hub.example.org">
       </div>
       <div>
         <label>Port</label>
@@ -2069,11 +2148,11 @@ summary:hover { color: var(--text); }
       connection. Peers can't reach back through it, so it can't be
       publicly advertised the way a LoRa or UDP interface can.
     </p>
-    <div class="row" style="margin-top:12px">
+    <div class="row mt-3" >
       <button class="secondary" id="cn-tcp-cancel" @click="state.modals.tcpAdd = false">Cancel</button>
       <button id="cn-tcp-save" @click="onClickTcpSave($event.currentTarget)">Add</button>
     </div>
-    <div class="muted" id="cn-tcp-status" style="margin-top:8px;font-size:11px"></div>
+    <div class="muted mt-2 text-xs" id="cn-tcp-status" ></div>
   </div>
 </div>
 
@@ -2082,7 +2161,7 @@ summary:hover { color: var(--text); }
      image attachment in a chat bubble. Tap the image to toggle between
      fit-to-viewport and natural size (pan via scroll when zoomed).
      Tap the backdrop or hit Escape to close. -->
-<div id="modal-image" class="modal-bg" x-data x-show="$store.s.modals.image" x-cloak style="z-index:280;background:rgba(0,0,0,0.92)">
+<div id="modal-image" class="modal-bg z-280" x-data x-show="$store.s.modals.image" x-cloak style="background:rgba(0,0,0,0.92)">
   <!-- 100dvh, not 100vh — Firefox Android's bottom address bar
        otherwise hides the bottom of the image (and the close/save
        buttons by reducing the usable area). Same fix as the modals. -->
@@ -2117,11 +2196,11 @@ summary:hover { color: var(--text); }
        - forever: keep all messages from this peer forever
        - time:    expire records older than N units of time
        - count:   keep only the newest N messages from this peer -->
-<div id="modal-conv-retention" class="modal-bg" x-data x-show="$store.s.modals.convRetention"
-     @click.self="retentionCancel()" x-cloak style="z-index:260">
-  <div class="modal" style="max-width:460px">
+<div id="modal-conv-retention" class="modal-bg z-260" x-data x-show="$store.s.modals.convRetention"
+     @click.self="retentionCancel()" x-cloak>
+  <div class="modal modal-wide">
     <h3>Retention for this chat</h3>
-    <p class="muted" style="margin-bottom:14px">
+    <p class="muted mb-14" >
       Older messages are pruned according to the chosen retention.
       <span id="cr-default-line" x-text="'Identity default: ' + $store.s.retention.defaultLabel + '.'"></span>
     </p>
@@ -2157,7 +2236,7 @@ summary:hover { color: var(--text); }
              x-model.number="$store.s.retention.countN">
       <span class="cr-unit">messages</span>
     </label>
-    <div class="row" style="margin-top:14px">
+    <div class="row mt-14" >
       <button class="secondary" id="cr-cancel" @click="retentionCancel()">Cancel</button>
       <button id="cr-save" @click="retentionSave($event.currentTarget)">Save</button>
     </div>
@@ -2165,7 +2244,7 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== IDENTITY CODE MODAL ===================== -->
-<div id="modal-id-code" class="modal-bg" x-data x-show="$store.s.modals.idCode" x-cloak style="z-index:280">
+<div id="modal-id-code" class="modal-bg z-280" x-data x-show="$store.s.modals.idCode" x-cloak>
   <div class="modal">
     <h3 id="id-code-modal-title">Identity code required</h3>
     <!-- Two opening paths: (1) the device button was pressed and the
@@ -2215,26 +2294,26 @@ summary:hover { color: var(--text); }
         <div class="card">
           <div class="list-row" style="display:flex;align-items:center;gap:10px">
             <span class="idc" id="id-modal-idc"></span>
-            <div style="min-width:0;flex:1">
+            <div class="flex-1-min0">
               <input type="text" id="id-display-name" maxlength="96"
                      style="font-weight:600;width:100%;min-height:auto;padding:4px 6px"
                      autocomplete="off" spellcheck="false">
-              <div class="muted mono" id="id-address" style="margin-top:4px"></div>
+              <div class="muted mono mt-1" id="id-address" ></div>
             </div>
           </div>
-          <div class="muted" style="margin-top:4px">The label peers see in your identity announce. Changes take effect on the next announce — press the megaphone after editing to re-broadcast immediately.</div>
-          <label style="margin-top:12px">Auto-announce</label>
+          <div class="muted mt-1" >The label peers see in your identity announce. Changes take effect on the next announce — press the megaphone after editing to re-broadcast immediately.</div>
+          <label class="mt-3">Auto-announce</label>
           <select id="id-announce-interval">
             <template x-for="i in ANNOUNCE_INTERVALS" :key="i.ms">
               <option :value="String(i.ms)" x-text="i.label"></option>
             </template>
           </select>
-          <div class="muted" style="margin-top:4px">How often this identity automatically broadcasts an announce so peers can find and route to it. Manual announces via the megaphone icon work regardless of this setting.</div>
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:16px 0 0">
-            <input type="checkbox" id="id-persist-outbound" style="width:auto;min-height:auto">
+          <div class="muted mt-1" >How often this identity automatically broadcasts an announce so peers can find and route to it. Manual announces via the megaphone icon work regardless of this setting.</div>
+          <label class="toggle-row mt-4">
+            <input class="input-inline" type="checkbox" id="id-persist-outbound">
             <span>Keep a copy of attachments I send</span>
           </label>
-          <div class="muted" style="margin-top:4px">Lets the chat history show an inline preview of images and audio you've sent. Off saves storage at the cost of preview.</div>
+          <div class="muted mt-1" >Lets the chat history show an inline preview of images and audio you've sent. Off saves storage at the cost of preview.</div>
         </div>
       </div>
 
@@ -2258,7 +2337,7 @@ summary:hover { color: var(--text); }
           <div class="cn-section-body">
             <label>Region preset</label>
             <p class="muted" id="rd-intro" style="margin:4px 0 6px">Pick the region preset that matches your local LoRa community. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.</p>
-            <select id="rd-preset" style="margin-bottom:6px">
+            <select class="mb-6" id="rd-preset">
               <option value="__empty">— Pick a region —</option>
               <template x-for="p in RADIO_PRESETS" :key="p.id">
                 <option :value="p.id" x-text="p.label"></option>
@@ -2267,7 +2346,7 @@ summary:hover { color: var(--text); }
             </select>
             <div class="muted" id="rd-preset-note" style="margin-bottom:14px;min-height:14px"></div>
             <div id="rd-raw">
-              <div class="row" style="margin-bottom:8px">
+              <div class="row mb-2" >
                 <div>
                   <label>Frequency (Hz)</label>
                   <input id="rd-freq" type="number">
@@ -2277,7 +2356,7 @@ summary:hover { color: var(--text); }
                   <input id="rd-bw" type="number">
                 </div>
               </div>
-              <div class="row" style="margin-bottom:8px">
+              <div class="row mb-2" >
                 <div>
                   <label>Spreading factor</label>
                   <input id="rd-sf" type="number" min="6" max="12">
@@ -2291,7 +2370,7 @@ summary:hover { color: var(--text); }
                   <input id="rd-tx" type="number" min="0" max="22">
                 </div>
               </div>
-              <div class="row" style="margin-bottom:8px">
+              <div class="row mb-2" >
                 <div>
                   <label title="Instantaneous duty-cycle ceiling; 0 = no limit">Airtime cap (% short-term)</label>
                   <input id="rd-airtime" type="number" min="0" max="99">
@@ -2301,17 +2380,17 @@ summary:hover { color: var(--text); }
                   <input id="rd-airtime-lt" type="number" min="0" max="99">
                 </div>
               </div>
-              <p class="muted" style="margin-bottom:14px">SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom — useful for long links.<br><strong>Airtime caps are regulatory limits</strong> — picking a region preset sets a sane default; 0 disables (only use where allowed).</p>
+              <p class="muted mb-14" >SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom — useful for long links.<br><strong>Airtime caps are regulatory limits</strong> — picking a region preset sets a sane default; 0 disables (only use where allowed).</p>
             </div>
-            <button id="btn-radio-save" style="width:100%" @click="onClickRadioSave($event.currentTarget)">Save &amp; reboot</button>
+            <button class="w-full" id="btn-radio-save" @click="onClickRadioSave($event.currentTarget)">Save &amp; reboot</button>
           </div>
         </details>
 
         <details class="cn-section" data-cn="wifi">
           <summary>WiFi <span class="cn-dot" id="cn-dot-wifi" hidden></span></summary>
           <div class="cn-section-body">
-            <p class="muted" style="margin-bottom:10px">Networks this device has credentials for. Forgetting one wipes the SSID + password from the device and reboots into softAP for reconfiguration.</p>
-            <div id="cn-wifi-saved-list" style="margin-bottom:10px" x-data>
+            <p class="muted mb-10" >Networks this device has credentials for. Forgetting one wipes the SSID + password from the device and reboots into softAP for reconfiguration.</p>
+            <div class="mb-10" id="cn-wifi-saved-list" x-data>
               <template x-if="$store.s.wifiSaved === null">
                 <p class="muted">Loading…</p>
               </template>
@@ -2320,9 +2399,9 @@ summary:hover { color: var(--text); }
               </template>
               <template x-for="n in ($store.s.wifiSaved || [])" :key="n.ssid">
                 <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--bg-elev-2);border-radius:6px;margin-bottom:6px">
-                  <div style="flex:1">
-                    <div style="font-weight:600" x-text="n.ssid"></div>
-                    <div class="muted" style="font-size:11px"
+                  <div class="flex-1">
+                    <div class="font-bold" x-text="n.ssid"></div>
+                    <div class="muted text-xs" 
                          x-text="n.has_psk ? 'Saved with password' : 'Saved (open network)'"></div>
                   </div>
                   <button class="secondary" @click="forgetSavedNetwork(n.ssid)">Forget</button>
@@ -2331,15 +2410,15 @@ summary:hover { color: var(--text); }
             </div>
               <p class="muted">Loading…</p>
             </div>
-            <button class="secondary" id="btn-wifi-add" style="width:100%" @click="openAddWifiModal()">Add a network…</button>
+            <button class="secondary w-full" id="btn-wifi-add"  @click="openAddWifiModal()">Add a network…</button>
           </div>
         </details>
 
         <details class="cn-section" data-cn="tcp" hidden>
           <summary>TCP clients <span class="cn-dot" id="cn-dot-tcp" hidden></span></summary>
           <div class="cn-section-body">
-            <p class="muted" style="margin-bottom:10px">Outbound TCP links to other Reticulum nodes. Useful for joining a remote network over the internet, or for a wired LAN bridge. Each entry connects on boot and reconnects automatically if dropped.</p>
-            <div id="cn-tcp-list" style="margin-bottom:10px" x-data>
+            <p class="muted mb-10" >Outbound TCP links to other Reticulum nodes. Useful for joining a remote network over the internet, or for a wired LAN bridge. Each entry connects on boot and reconnects automatically if dropped.</p>
+            <div class="mb-10" id="cn-tcp-list" x-data>
               <template x-if="$store.s.tcpClients === null">
                 <p class="muted">Loading…</p>
               </template>
@@ -2365,7 +2444,7 @@ summary:hover { color: var(--text); }
                 <p class="muted" x-text="'All ' + $store.s.tcpClientsCap + ' TCP client slots in use — remove one before adding another.'"></p>
               </template>
             </div>
-            <button class="secondary" id="btn-tcp-add" style="width:100%" @click="openAddTcpModal()">Add a TCP client…</button>
+            <button class="secondary w-full" id="btn-tcp-add"  @click="openAddTcpModal()">Add a TCP client…</button>
           </div>
         </details>
 
@@ -2379,8 +2458,8 @@ summary:hover { color: var(--text); }
         <details class="cn-section" data-cn="diag">
           <summary>Serial / diagnostics</summary>
           <div class="cn-section-body">
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:0">
-              <input type="checkbox" id="cn-kiss-out" style="width:auto;min-height:auto">
+            <label class="toggle-row">
+              <input class="input-inline" type="checkbox" id="cn-kiss-out">
               <span>KISS-frame radio traffic on USB serial</span>
             </label>
             <div class="muted" style="font-size:11px;margin-top:6px">Turn OFF if you're reading the USB serial with <code>pio device monitor</code> or similar — KISS-framed binary bytes are otherwise interleaved with the diagnostic text log. Leave ON if you're using the device as a KISS host for tools like rnsd or MeshChat. Persists across reboots.</div>
@@ -2400,24 +2479,24 @@ summary:hover { color: var(--text); }
             <div id="disc-identity-hash" class="muted" style="font-family:ui-monospace,monospace;font-size:11px">—</div>
           </div>
         </div>
-        <div class="card" style="margin-top:12px">
+        <div class="card mt-3" >
           <strong>Master toggle</strong>
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:10px 0 0">
-            <input type="checkbox" id="disc-enabled" style="width:auto;min-height:auto">
+          <label class="toggle-row mt-10">
+            <input class="input-inline" type="checkbox" id="disc-enabled">
             <span>Announce discoverable interfaces</span>
           </label>
-          <div class="muted" style="margin-top:4px">When on, each interface marked as discoverable on the Connectivity tab will emit a periodic announce. Enabling requires the identity code on the device's display.</div>
+          <div class="muted mt-1" >When on, each interface marked as discoverable on the Connectivity tab will emit a periodic announce. Enabling requires the identity code on the device's display.</div>
         </div>
-        <div class="card" style="margin-top:12px">
+        <div class="card mt-3" >
           <strong>Advertised name</strong>
-          <label style="margin-top:8px">Public label shown to other Reticulum nodes</label>
+          <label class="mt-2">Public label shown to other Reticulum nodes</label>
           <input id="disc-advertised-name" type="text" placeholder="(uses interface name if empty)">
-          <div class="muted" style="margin-top:4px">Carried inside every discovery announce. Defaults to the interface name (e.g. <code>LoRaInterface</code>); set a friendlier label here if you want this device to show up as something specific on rmap.world / similar listeners.</div>
+          <div class="muted mt-1" >Carried inside every discovery announce. Defaults to the interface name (e.g. <code>LoRaInterface</code>); set a friendlier label here if you want this device to show up as something specific on rmap.world / similar listeners.</div>
           <div class="muted" id="disc-name-status" style="margin-top:4px;font-size:11px"></div>
         </div>
-        <div class="card" style="margin-top:12px">
+        <div class="card mt-3" >
           <strong>Cadence</strong>
-          <label style="margin-top:8px">Default interval</label>
+          <label class="mt-2">Default interval</label>
           <select id="disc-interval">
             <option value="5">5 minutes (debug)</option>
             <option value="15">15 minutes</option>
@@ -2426,11 +2505,11 @@ summary:hover { color: var(--text); }
             <option value="720">12 hours</option>
             <option value="1440">24 hours</option>
           </select>
-          <div class="muted" style="margin-top:4px">How often each discoverable interface re-announces. Lower values mean other nodes find this device sooner but use more airtime.</div>
+          <div class="muted mt-1" >How often each discoverable interface re-announces. Lower values mean other nodes find this device sooner but use more airtime.</div>
         </div>
-        <div class="card" style="margin-top:12px">
+        <div class="card mt-3" >
           <strong>Stamp cost</strong>
-          <label style="margin-top:8px">PoW difficulty (leading zero bits)</label>
+          <label class="mt-2">PoW difficulty (leading zero bits)</label>
           <select id="disc-stamp-cost">
             <option value="0">0 — no proof-of-work</option>
             <option value="8">8 bits</option>
@@ -2438,14 +2517,14 @@ summary:hover { color: var(--text); }
             <option value="14">14 bits (upstream default)</option>
             <option value="16">16 bits</option>
           </select>
-          <div class="warn" style="margin-top:6px">
+          <div class="warn mt-6" >
             <strong>Currently not enforced.</strong> The firmware emits a 32-zero-byte
             stamp regardless of this setting. Strict listeners (rmap.world
             uses required_value=14 by default) will drop announces until
             PoW is implemented.
           </div>
         </div>
-        <div class="muted" id="disc-status" style="margin-top:8px;font-size:11px"></div>
+        <div class="muted mt-2 text-xs" id="disc-status" ></div>
       </div>
 
       <!-- ============== Time tab ============== -->
@@ -2453,14 +2532,14 @@ summary:hover { color: var(--text); }
         <div class="card">
           <p class="muted" style="margin-top:0">The highest-priority enabled source that's reported a value wins.</p>
           <div class="row" style="margin-bottom:14px;align-items:center;gap:12px">
-            <div style="min-width:0;flex:1">
+            <div class="flex-1-min0">
               <div><strong id="tm-current">—</strong></div>
-              <div class="muted" id="tm-source" style="font-size:11px">no source has reported yet</div>
+              <div class="muted text-xs" id="tm-source" >no source has reported yet</div>
             </div>
             <button id="btn-tm-browser-sync" style="margin:0">Sync to browser time</button>
           </div>
         </div>
-        <div class="card" style="margin-top:12px">
+        <div class="card mt-3" >
           <strong>Time sources (drag to reorder)</strong>
           <div class="muted" style="font-size:11px;margin:4px 0 8px">Top of the list = highest priority. Disable a source to skip it entirely. Some sources expose an interval — how often their driver polls.</div>
           <div id="tm-sources" x-data>
@@ -2483,7 +2562,7 @@ summary:hover { color: var(--text); }
                         :style="row.expanded ? 'transform:rotate(180deg)' : ''">▾</span>
                 </div>
                 <div :style="(row.expanded ? 'display:block' : 'display:none') + ';padding:0 10px 10px 38px;font-size:12px'">
-                  <div class="muted" style="margin-bottom:6px" x-text="row.desc"></div>
+                  <div class="muted mb-6"  x-text="row.desc"></div>
                   <template x-if="row.hasInterval">
                     <div style="display:flex;align-items:center;gap:8px">
                       <label style="font-size:12px;color:var(--text);flex:0 0 auto">Refresh:</label>
@@ -2501,7 +2580,7 @@ summary:hover { color: var(--text); }
               </div>
             </template>
           </div>
-          <button id="btn-tm-save" style="width:100%;margin-top:10px">Save time-source config</button>
+          <button class="w-full mt-10" id="btn-tm-save">Save time-source config</button>
         </div>
       </div>
 
@@ -2509,28 +2588,28 @@ summary:hover { color: var(--text); }
       <div class="tab-panel" data-panel="ui" :class="{ active: $store.s.settingsTab === 'ui' }">
         <div class="card">
           <strong>UI preferences</strong>
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:10px 0 0">
-            <input type="checkbox" id="pref-enter-sends" style="width:auto;min-height:auto">
+          <label class="toggle-row mt-10">
+            <input class="input-inline" type="checkbox" id="pref-enter-sends">
             <span>Press <kbd>Enter</kbd> to send (Shift+Enter for newline)</span>
           </label>
-          <div class="muted" style="margin-top:4px">When off: Enter inserts a newline, Shift+Enter sends.</div>
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:14px 0 0">
-            <input type="checkbox" id="pref-auto-download-attachments" style="width:auto;min-height:auto">
+          <div class="muted mt-1" >When off: Enter inserts a newline, Shift+Enter sends.</div>
+          <label class="toggle-row mt-14">
+            <input class="input-inline" type="checkbox" id="pref-auto-download-attachments">
             <span>Automatically download attachments</span>
           </label>
-          <div class="muted" style="margin-top:4px">When off: inbound images and audio show as click-to-load chips.</div>
+          <div class="muted mt-1" >When off: inbound images and audio show as click-to-load chips.</div>
         </div>
-        <div class="card" style="margin-top:14px">
+        <div class="card mt-14" >
           <strong>Transport</strong>
           <div class="list-row">
             <div id="tp-name">uR device (HTTP)</div>
-            <div class="muted" id="tp-endpoint" style="font-family:ui-monospace,monospace"></div>
+            <div class="muted font-mono-inline" id="tp-endpoint" ></div>
           </div>
           <button class="secondary" disabled title="Only one transport is wired up so far">Switch transport…</button>
         </div>
-        <div class="card" style="margin-top:14px">
+        <div class="card mt-14" >
           <strong>Default retention</strong>
-          <div class="muted" style="margin-top:4px;margin-bottom:10px">
+          <div class="muted mt-1 mb-10" >
             Applied to every chat that's set to "Use identity default"
             (the inherit mode). Changing this here cascades to all
             inheriting chats at the next prune. Chats with an explicit
@@ -2548,30 +2627,30 @@ summary:hover { color: var(--text); }
             <option value="count:50">Last 50 messages</option>
             <option value="count:200">Last 200 messages</option>
           </select>
-          <div class="muted" id="inbox-config-status" style="margin-top:6px;font-size:11px"></div>
+          <div class="muted mt-6 text-xs" id="inbox-config-status" ></div>
         </div>
-        <div class="card" style="margin-top:14px">
+        <div class="card mt-14" >
           <strong>Transfer limits</strong>
-          <div class="muted" style="margin-top:4px;margin-bottom:10px">Maximum outbound message size you can send, and maximum inbound size accepted from peers. The slider's upper bound tracks your device's available storage live — values above your current free space are disabled. Pull / re-insert the SD card to see the range change.</div>
+          <div class="muted mt-1 mb-10" >Maximum outbound message size you can send, and maximum inbound size accepted from peers. The slider's upper bound tracks your device's available storage live — values above your current free space are disabled. Pull / re-insert the SD card to see the range change.</div>
           <label>Max send</label>
-          <input type="range" id="storage-max-send" min="65536" step="65536" style="margin-bottom:4px">
+          <input class="mb-1" type="range" id="storage-max-send" min="65536" step="65536">
           <div class="muted" id="storage-max-send-label" style="margin-bottom:10px;font-size:11px"></div>
           <label>Max receive</label>
-          <input type="range" id="storage-max-recv" min="65536" step="65536" style="margin-bottom:4px">
+          <input class="mb-1" type="range" id="storage-max-recv" min="65536" step="65536">
           <div class="muted" id="storage-max-recv-label" style="margin-bottom:6px;font-size:11px"></div>
-          <div class="muted" id="storage-config-status" style="margin-top:6px;font-size:11px"></div>
+          <div class="muted mt-6 text-xs" id="storage-config-status" ></div>
         </div>
-        <div class="card" style="margin-top:14px">
+        <div class="card mt-14" >
           <strong>Contacts</strong>
-          <div class="muted" style="margin-top:4px">Stored in this browser only — they don't leave the device or sync between browsers.</div>
-          <div id="contacts-list" style="margin-top:8px" x-data x-cloak>
+          <div class="muted mt-1" >Stored in this browser only — they don't leave the device or sync between browsers.</div>
+          <div class="mt-2" id="contacts-list" x-data x-cloak>
             <template x-if="Object.keys($store.s.contacts).length === 0">
               <div class="muted">No contacts saved.</div>
             </template>
             <template x-for="addr in Object.keys($store.s.contacts)" :key="addr">
               <div class="list-row" style="display:flex;gap:8px;align-items:center">
                 <span x-html="identicon(addr, 28)"></span>
-                <div style="flex:1;min-width:0">
+                <div class="flex-1-min0">
                   <div x-text="$store.s.contacts[addr]"></div>
                   <div class="muted mono" x-text="addr"></div>
                 </div>
@@ -2580,10 +2659,10 @@ summary:hover { color: var(--text); }
               </div>
             </template>
           </div>
-          <label style="margin-top:8px">Address</label>
-          <input id="ct-addr" maxlength="32" style="font-family:ui-monospace,monospace;margin-bottom:6px">
+          <label class="mt-2">Address</label>
+          <input class="font-mono-inline mb-6" id="ct-addr" maxlength="32">
           <label>Name</label>
-          <input id="ct-name" style="margin-bottom:8px">
+          <input class="mb-2" id="ct-name">
           <button class="secondary" id="btn-ct-save">Save contact</button>
         </div>
       </div>
@@ -2592,8 +2671,8 @@ summary:hover { color: var(--text); }
       <div class="tab-panel" data-panel="network" :class="{ active: $store.s.settingsTab === 'network' }">
         <div class="card">
           <strong>Recent announces</strong>
-          <div class="muted" style="margin-top:4px">LXMF endpoints heard on the network. Click an entry to start a chat.</div>
-          <div id="announces-card" style="margin-top:8px" x-data x-cloak>
+          <div class="muted mt-1" >LXMF endpoints heard on the network. Click an entry to start a chat.</div>
+          <div class="mt-2" id="announces-card" x-data x-cloak>
             <template x-if="Object.keys($store.s.announces).length === 0">
               <div class="muted">No announces seen yet.</div>
             </template>
@@ -2609,10 +2688,10 @@ summary:hover { color: var(--text); }
             </template>
           </div>
         </div>
-        <div class="card" style="margin-top:14px">
+        <div class="card mt-14" >
           <strong>Known paths</strong>
-          <div class="muted" style="margin-top:4px">Every announce we've seen, not just LXMF endpoints — Reticulum transport relays, propagation nodes, etc.</div>
-          <div id="paths-card" style="margin-top:8px" x-data x-cloak>
+          <div class="muted mt-1" >Every announce we've seen, not just LXMF endpoints — Reticulum transport relays, propagation nodes, etc.</div>
+          <div class="mt-2" id="paths-card" x-data x-cloak>
             <template x-if="Object.keys($store.s.paths).length === 0">
               <div class="muted">No paths known yet.</div>
             </template>
@@ -2637,12 +2716,12 @@ summary:hover { color: var(--text); }
           <p class="muted">Permanently delete this identity from the device. Inbox, outbox, and identity material are removed. Only affects the currently logged-in identity.</p>
           <button class="danger" id="btn-delete-self">Delete this identity</button>
         </div>
-        <div class="card" style="margin-top:14px">
+        <div class="card mt-14" >
           <strong>Factory reset device</strong>
           <p class="muted">Wipes <em>every</em> identity on this device. Only escape if all passwords are lost.</p>
           <p class="muted id-code-hint"></p>
           <label>Identity code</label>
-          <input id="fr2-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:6px">
+          <input class="font-mono-inline mb-6" id="fr2-code" maxlength="6" placeholder="abc123">
           <button class="danger" id="btn-fr2">Factory reset device</button>
         </div>
       </div>

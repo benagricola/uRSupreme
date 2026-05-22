@@ -1487,20 +1487,82 @@ summary:hover { color: var(--text); }
           <template x-if="m.body">
             <div x-text="m.body" style="white-space:pre-wrap;word-wrap:break-word"></div>
           </template>
-          <!-- Attachments: each chip is built imperatively so the
-               existing renderInboundImage / renderInboundAudio paths
-               (which manage blob URLs + audio element lifecycle) stay
-               unchanged. We use a stable wrapper <div> as the
-               Alpine-tracked element and appendChild the attachment
-               node into it via x-init — replacing $el outright breaks
-               x-for's element tracking, leading to duplicate nodes
-               accumulating on every reactive re-render. `display:
-               contents` keeps the wrapper layout-invisible so the
-               attachment sits directly inline like the legacy code. -->
+          <!-- Attachments: declarative chip / inline-image / inline-
+               audio / error / SD-unreachable variants. attachmentMode(a)
+               picks one; the appropriate <template x-if> renders it.
+               Blob URLs flow via $store.s.attachmentBlobs which the
+               loader (loadAttachmentBlob) mutates so x-bind picks up
+               the cached URL on completion. -->
           <template x-for="a in (m.attachments || [])"
                     :key="(a.filename || a.display_name || '') + ':' + a.tag">
-            <div style="display:contents"
-                 x-init="const n = attachmentNode(m, a); if (n) $el.appendChild(n)"></div>
+            <template x-if="attachmentVisible(a)">
+              <span style="display:contents" x-data="{ a: a }">
+                <template x-if="attachmentMode(a) === 'sd_unreachable'">
+                  <div style="margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,180,90,0.15);font-size:11px;color:inherit"
+                       :title="'This attachment was saved on the SD card. Re-insert the card and reboot the device to recover it.'"
+                       x-text="attachmentLabel(a) + ' — SD card unavailable'"></div>
+                </template>
+                <template x-if="attachmentMode(a) === 'click-to-load'">
+                  <button class="attachment-chip"
+                          style="margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block"
+                          @click="downloadAttachment(state.identityId, a, $event.currentTarget, $event.currentTarget.parentElement)"
+                          x-text="attachmentLabel(a) + ' — click to load'"></button>
+                </template>
+                <template x-if="attachmentMode(a) === 'click-to-download'">
+                  <button class="attachment-chip"
+                          style="margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block"
+                          @click="downloadAttachment(state.identityId, a, $event.currentTarget, $event.currentTarget.parentElement)"
+                          x-text="attachmentLabel(a) + ' — click to download'"></button>
+                </template>
+                <template x-if="attachmentMode(a) === 'static'">
+                  <div style="margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);font-size:11px"
+                       x-text="attachmentLabel(a)"></div>
+                </template>
+                <template x-if="attachmentMode(a) === 'inline-image'">
+                  <div style="margin-top:6px" x-init="loadAttachmentBlob(a)">
+                    <template x-if="$store.s.attachmentBlobs[a.filename] === 'loading'">
+                      <div class="muted" style="padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);font-size:11px"
+                           x-text="attachmentLabel(a) + ' — loading…'"></div>
+                    </template>
+                    <template x-if="isBlobFailed($store.s.attachmentBlobs[a.filename])">
+                      <div style="padding:4px 8px;border-radius:6px;background:rgba(255,90,90,0.18);font-size:11px;color:inherit">
+                        <div x-text="attachmentLabel(a) + ' — load failed'"></div>
+                        <div class="muted" style="font-size:10px;margin-top:2px"
+                             x-text="$store.s.attachmentBlobs[a.filename] && $store.s.attachmentBlobs[a.filename].error"></div>
+                        <button class="ghost" style="margin-top:6px;font-size:11px"
+                                @click="retryAttachment(a, $event.currentTarget.closest('.bubble'))">Retry</button>
+                      </div>
+                    </template>
+                    <template x-if="typeof $store.s.attachmentBlobs[a.filename] === 'string' && $store.s.attachmentBlobs[a.filename] !== 'loading'">
+                      <img :src="$store.s.attachmentBlobs[a.filename]"
+                           style="margin-top:6px;max-width:240px;max-height:240px;border-radius:6px;display:block;cursor:zoom-in"
+                           @click="openImageModal($store.s.attachmentBlobs[a.filename], a)">
+                    </template>
+                  </div>
+                </template>
+                <template x-if="attachmentMode(a) === 'inline-audio'">
+                  <div style="margin-top:6px" x-init="loadAttachmentBlob(a)">
+                    <template x-if="$store.s.attachmentBlobs[a.filename] === 'loading'">
+                      <div class="muted" style="padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);font-size:11px"
+                           x-text="attachmentLabel(a) + ' — loading…'"></div>
+                    </template>
+                    <template x-if="isBlobFailed($store.s.attachmentBlobs[a.filename])">
+                      <div style="padding:4px 8px;border-radius:6px;background:rgba(255,90,90,0.18);font-size:11px;color:inherit">
+                        <div x-text="attachmentLabel(a) + ' — load failed'"></div>
+                        <div class="muted" style="font-size:10px;margin-top:2px"
+                             x-text="$store.s.attachmentBlobs[a.filename] && $store.s.attachmentBlobs[a.filename].error"></div>
+                        <button class="ghost" style="margin-top:6px;font-size:11px"
+                                @click="retryAttachment(a, $event.currentTarget.closest('.bubble'))">Retry</button>
+                      </div>
+                    </template>
+                    <template x-if="typeof $store.s.attachmentBlobs[a.filename] === 'string' && $store.s.attachmentBlobs[a.filename] !== 'loading'">
+                      <audio :src="$store.s.attachmentBlobs[a.filename]" controls preload="metadata"
+                             style="max-width:240px;display:block"></audio>
+                    </template>
+                  </div>
+                </template>
+              </span>
+            </template>
           </template>
           <template x-if="msgMeta(m)">
             <div class="bmeta" x-text="msgMeta(m)"></div>
@@ -2613,7 +2675,7 @@ let state = {
                                     // at least one manual announce since SPA load
   pendingAttachments: [],           // [{ tag, bytes:Uint8Array, filename, mime, eta_ms }]
                                     // staged before send; cleared after send.
-  attachmentBlobs: new Map(),       // filename → object URL. Inbound image
+  attachmentBlobs: {},              // filename → object URL. Inbound image
                                     // chips auto-fetch on first render and
                                     // cache the result here so SSE-driven
                                     // rerenders don't refetch.
@@ -3475,56 +3537,86 @@ function msgMeta(m) {
   return parts.join(' · ');
 }
 
-// Build a single attachment chip / inline preview as a DOM Node so
-// the existing renderInboundImage / renderInboundAudio functions can
-// stay imperative (they manage blob URLs + audio element lifecycle
-// themselves). The template uses x-init to inject the node.
-function attachmentNode(m, a) {
-  // Outbound attachments with no on-disk filename can still be shown
-  // via display_name + size; ignore truly empty ones.
-  if (!a.filename && !a.display_name && !(a.size > 0)) return null;
+// ============== ATTACHMENT-CHIP HELPERS (Alpine bindings) ==============
+// The bubble template's <template x-for="a in m.attachments"> calls
+// these to decide which chip variant to render and (for inline-media
+// modes) to source the blob URL from the cache. Loader entry point:
+// loadAttachmentBlob(a) below, which sets state.attachmentBlobs[a.filename]
+// = 'loading' / blobUrl / { failed: true, error }.
+
+// Is this attachment renderable at all? Outbound attachments with no
+// on-disk filename AND no display_name AND no size are skipped — they
+// carried no actionable content. Mirrors attachmentNode's old check.
+function attachmentVisible(a) {
+  return !!a && (!!a.filename || !!a.display_name || (a.size > 0));
+}
+
+// Compose icon + name + size label. Display name comes from the
+// sender (Sideband convention); blank → fallback to type word.
+function attachmentLabel(a) {
   const icon = a.tag === 5 ? '📎' : a.tag === 6 ? '🖼' : a.tag === 7 ? '🎙' : '📎';
   const typeWord = a.tag === 5 ? 'file' : a.tag === 6 ? 'image' : a.tag === 7 ? 'audio' : 'attachment';
   const name = (a.display_name || '').trim();
-  const label = icon + ' ' + (name || typeWord) + ' (' + formatBytes(a.size || 0) + ')';
-
-  const hasBlob = /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename || '');
-  const sdUnreachable = hasBlob && a.backend === 'sd' && state.sdPresent === false;
-
-  if (sdUnreachable) {
-    return el('div', {
-      style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,180,90,0.15);font-size:11px;color:inherit',
-      text: label + ' — SD card unavailable',
-      title: 'This attachment was saved on the SD card. Re-insert the card and reboot the device to recover it.',
-    });
-  }
-  if (hasBlob && (a.tag === 6 || a.tag === 7)) {
-    const alreadyCached = state.attachmentBlobs.has(a.filename);
-    if (state.prefs.autoDownloadAttachments || alreadyCached) {
-      return a.tag === 6 ? renderInboundImage(a, label) : renderInboundAudio(a, label);
-    }
-    const chip = el('button', {
-      class: 'attachment-chip',
-      style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block',
-      text: label + ' — click to load',
-    });
-    chip.addEventListener('click', () => downloadAttachment(state.identityId, a, chip, chip.parentElement));
-    return chip;
-  }
-  if (hasBlob) {
-    const chip = el('button', {
-      class: 'attachment-chip',
-      style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block',
-      text: label + ' — click to download',
-    });
-    chip.addEventListener('click', () => downloadAttachment(state.identityId, a, chip, chip.parentElement));
-    return chip;
-  }
-  return el('div', {
-    style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);font-size:11px',
-    text: label,
-  });
+  return icon + ' ' + (name || typeWord) + ' (' + formatBytes(a.size || 0) + ')';
 }
+
+// Picks the variant template (the <template x-if> in the bubble
+// markup) that should render for this attachment. Variants:
+//   'sd_unreachable'      — blob lives on SD that's been ejected
+//   'inline-image'        — auto-rendered image (auto-download pref or cached)
+//   'inline-audio'        — auto-rendered audio player
+//   'click-to-load'       — image/audio chip awaiting a click to fetch
+//   'click-to-download'   — generic-file chip (no inline preview)
+//   'static'              — info-only chip (no on-disk blob exists)
+function attachmentMode(a) {
+  const hasBlob = /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename || '');
+  if (hasBlob && a.backend === 'sd' && state.sdPresent === false) return 'sd_unreachable';
+  if (hasBlob && (a.tag === 6 || a.tag === 7)) {
+    const cached = a.filename in state.attachmentBlobs;
+    if (state.prefs.autoDownloadAttachments || cached) {
+      return a.tag === 6 ? 'inline-image' : 'inline-audio';
+    }
+    return 'click-to-load';
+  }
+  if (hasBlob) return 'click-to-download';
+  return 'static';
+}
+
+// Auto-loader: kicks off a blob fetch when the inline template
+// mounts and there's no cache entry yet. Called from x-init on each
+// inline-image / inline-audio variant.
+async function loadAttachmentBlob(a) {
+  if (!a || !a.filename) return;
+  if (a.filename in state.attachmentBlobs) return;  // already loading / done / failed
+  state.attachmentBlobs[a.filename] = 'loading';
+  try {
+    const { blob } = await state.transport.fetchAttachment(state.identityId, a.filename);
+    let typed = blob;
+    // Audio in particular needs the right MIME so Chrome/Safari pick
+    // a decoder. Re-wrap with the sniffed type.
+    if (a.tag === 7 && typeof blob.arrayBuffer === 'function') {
+      const head = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+      typed = new Blob([blob], { type: sniffAudioMime(head) });
+    }
+    state.attachmentBlobs[a.filename] = URL.createObjectURL(typed);
+  } catch (e) {
+    state.attachmentBlobs[a.filename] = { failed: true, error: e.message || String(e) };
+  }
+}
+
+// User clicked Retry on a failed inline preview. Clear the cache
+// entry and let the bubble re-mount kick off a fresh fetch.
+function retryAttachment(a) {
+  if (a && a.filename) delete state.attachmentBlobs[a.filename];
+  // The inline-* template's x-init fires again on next reactive eval
+  // (Alpine remounts the x-if branch); calling loadAttachmentBlob
+  // here too guarantees it kicks off even if the template branch
+  // hasn't been re-evaluated yet.
+  loadAttachmentBlob(a);
+}
+
+// Is the cache entry a {failed: true, error} record?
+function isBlobFailed(v) { return v != null && typeof v === 'object' && v.failed === true; }
 
 // "Stickiness" auto-scroll: if the user was at/near the bottom of the
 // thread before a new message arrived, snap to the new bottom. If they
@@ -3589,350 +3681,45 @@ function sniffAudioMime(bytes) {
   return 'audio/ogg';
 }
 
-// Inbound audio attachment: auto-load and render an inline player.
-// Same caching pattern as renderInboundImage so SSE rerenders reuse
-// the blob URL.
-function renderInboundAudio(meta, fallbackLabel) {
-  const wrap = el('div', { style: 'margin-top:6px' });
-  const cached = state.attachmentBlobs.get(meta.filename);
-  const makePlayer = (url) => el('audio', {
-    src: url, controls: 'controls', preload: 'metadata',
-    style: 'max-width:240px;display:block',
-  });
-  if (cached && cached !== 'loading' && typeof cached !== 'object') {
-    wrap.appendChild(makePlayer(cached));
-    return wrap;
-  }
-  // Failed state: render once with a retry button (don't auto-refire).
-  if (cached && typeof cached === 'object' && cached.failed) {
-    const errBox = el('div', {
-      style: 'padding:8px 10px;border-radius:6px;background:rgba(248,81,73,0.12);'
-           + 'border:1px solid var(--danger);font-size:11px;color:var(--text)',
-    });
-    errBox.appendChild(el('div', { text: fallbackLabel + ' — load failed' }));
-    errBox.appendChild(el('div', { class: 'muted', style: 'font-size:10px;margin-top:2px',
-                                    text: cached.error || 'unknown' }));
-    const retry = el('button', { class: 'ghost', style: 'margin-top:6px;font-size:11px',
-                                  text: 'Retry' });
-    retry.addEventListener('click', () => {
-      state.attachmentBlobs.delete(meta.filename);
-      const replacement = renderInboundAudio(meta, fallbackLabel);
-      wrap.parentNode.replaceChild(replacement, wrap);
-    });
-    errBox.appendChild(retry);
-    wrap.appendChild(errBox);
-    return wrap;
-  }
-  const placeholder = el('div', {
-    style: 'padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.08);font-size:11px;color:var(--text-dim)',
-    text: fallbackLabel + ' — loading…',
-  });
-  wrap.appendChild(placeholder);
-  if (cached === 'loading') return wrap;
-  state.attachmentBlobs.set(meta.filename, 'loading');
-  state.transport.fetchAttachment(state.identityId, meta.filename).then(async ({ blob }) => {
-    const buf = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
-    const mime = sniffAudioMime(buf);
-    const typed = new Blob([await blob.arrayBuffer()], { type: mime });
-    const url = URL.createObjectURL(typed);
-    state.attachmentBlobs.set(meta.filename, url);
-    if (wrap.contains(placeholder)) {
-      wrap.replaceChild(makePlayer(url), placeholder);
-    }
-  }).catch((e) => {
-    state.attachmentBlobs.set(meta.filename, { failed: true, error: e.message || String(e) });
-    if (wrap.parentNode) {
-      const replacement = renderInboundAudio(meta, fallbackLabel);
-      wrap.parentNode.replaceChild(replacement, wrap);
-    }
-  });
-  return wrap;
-}
 
-// Inbound image attachment: auto-load and render inline. Returns a
-// wrapper element that's appended to the bubble immediately; the
-// actual <img> is swapped in once the fetch resolves. Subsequent
-// renderThread passes reuse the cached object URL so SSE rerenders
-// don't refetch.
-// Full-screen image viewer.
-//
-// Three interaction zones with distinct behaviours:
-//   - Image, when fit-to-viewport AND natural size > viewport:
-//       cursor zoom-in, click → switches to 1:1, recentred.
-//   - Image, when zoomed 1:1: cursor zoom-out, click → back to fit.
-//     While zoomed: mouse-drag pans the overflowing image (touch
-//     scroll already pans natively via overflow:auto).
-//   - Image, when natural already fits: cursor default, click is
-//     a no-op (the user can't zoom into something already at 1:1).
-//   - Backdrop (anywhere inside the modal that ISN'T the image
-//     itself, the close button, or the save button): click closes.
-//   - Close X (top right, always above the image) + Escape: close.
-//
-// Earlier revisions cycled "click anywhere closes" — fine for mobile
-// where pinch-zoom is the native zoom gesture, but it confused
-// desktop users who wanted detail inspection without leaving the
-// modal. This version restores conditional zoom: only when there's
-// actually more detail to see than the fit-to-viewport pass shows.
-function openImageModal(url, meta) {
-  const modal = $('modal-image');
-  const img   = $('mi-img');
-  const wrap  = $('mi-wrap');
-  const save  = $('mi-save');
-  const close = $('mi-close');
-  // Reset to fit-mode on each open.
-  img.src = url;
-  img.style.maxWidth  = '100vw';
-  img.style.maxHeight = '100dvh';
-  img.style.width  = '';
-  img.style.height = '';
-  img.style.cursor = 'default';      // overridden on load if zoom is available
-  // Save-as filename: prefer sender display_name, fall back to hash.
-  const dl = (meta && meta.display_name) || (meta && meta.filename) || 'image';
-  save.setAttribute('download', dl);
-  save.href = url;
-  state.modals.image = true;
-
-  let zoomed = false;          // true: image rendered at natural 1:1
-  let zoomAvailable = false;   // set on load; image natural > viewport
-  let drag = null;             // {startX, startY, startSL, startST} while pan-dragging
-
-  const computeZoomAvailable = () => {
-    // Compare the image's natural pixels to the wrap's viewport.
-    // wrap is overflow:auto so its clientWidth/Height is the
-    // visible area after any scrollbar reservation.
-    return img.naturalWidth  > wrap.clientWidth
-        || img.naturalHeight > wrap.clientHeight;
-  };
-  const applyFit = () => {
-    zoomed = false;
-    img.style.maxWidth  = '100vw';
-    img.style.maxHeight = '100dvh';
-    img.style.width  = '';
-    img.style.height = '';
-    img.style.cursor = zoomAvailable ? 'zoom-in' : 'default';
-  };
-  const applyZoom = () => {
-    zoomed = true;
-    img.style.maxWidth  = 'none';
-    img.style.maxHeight = 'none';
-    img.style.width  = img.naturalWidth + 'px';
-    img.style.height = img.naturalHeight + 'px';
-    img.style.cursor = 'zoom-out';
-    // Recentre the scroll viewport on the image's geometric centre.
-    // After style change the browser lays out synchronously; scrollTo
-    // operates on the new bounds.
-    requestAnimationFrame(() => {
-      wrap.scrollLeft = (img.naturalWidth  - wrap.clientWidth)  / 2;
-      wrap.scrollTop  = (img.naturalHeight - wrap.clientHeight) / 2;
-    });
-  };
-  const onImgLoad = () => {
-    zoomAvailable = computeZoomAvailable();
-    img.style.cursor = zoomAvailable ? 'zoom-in' : 'default';
-  };
-  if (img.complete && img.naturalWidth > 0) {
-    onImgLoad();
-  } else {
-    img.addEventListener('load', onImgLoad, { once: true });
-  }
-
-  const onImgClick = (e) => {
-    e.stopPropagation();         // don't bubble to onBackdrop and close
-    if (drag) return;            // a drag just completed — ignore click
-    if (!zoomAvailable) return;  // image already fits naturally, no zoom
-    if (zoomed) applyFit(); else applyZoom();
-  };
-
-  // Mouse drag-to-pan while zoomed. Cursor flips to grabbing for
-  // visual feedback. Touch pan is already free via overflow:auto.
-  const onMouseDown = (e) => {
-    if (!zoomed) return;
-    if (e.button !== 0) return;  // only primary button
-    drag = {
-      startX: e.clientX, startY: e.clientY,
-      startSL: wrap.scrollLeft, startST: wrap.scrollTop,
-      moved: false,
-    };
-    img.style.cursor = 'grabbing';
-    e.preventDefault();
-  };
-  const onMouseMove = (e) => {
-    if (!drag) return;
-    const dx = e.clientX - drag.startX;
-    const dy = e.clientY - drag.startY;
-    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
-    wrap.scrollLeft = drag.startSL - dx;
-    wrap.scrollTop  = drag.startST - dy;
-  };
-  const onMouseUp = () => {
-    if (!drag) return;
-    const wasMoved = drag.moved;
-    drag = null;
-    img.style.cursor = zoomed ? 'zoom-out' : 'zoom-in';
-    // If the user actually dragged (vs a click that registered tiny
-    // movement), suppress the immediate click handler.
-    if (wasMoved) {
-      img.addEventListener('click', swallowOnce, { once: true, capture: true });
-    }
-  };
-  const swallowOnce = (e) => { e.stopPropagation(); e.preventDefault(); };
-
-  const onBackdrop = (e) => {
-    // Backdrop = anywhere inside the modal that isn't the image, the
-    // close button, or the save button.
-    if (e.target === img) return;
-    if (close.contains(e.target)) return;
-    if (save.contains(e.target))  return;
-    cleanup();
-  };
-  const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
-  const cleanup = () => {
-    state.modals.image = false;
-    img.removeEventListener('click', onImgClick);
-    img.removeEventListener('mousedown', onMouseDown);
-    window.removeEventListener('mousemove', onMouseMove);
-    window.removeEventListener('mouseup',   onMouseUp);
-    modal.removeEventListener('click', onBackdrop);
-    close.removeEventListener('click', cleanup);
-    document.removeEventListener('keydown', onKey);
-    img.src = '';   // release reference; cached blob URL stays in state.attachmentBlobs
-  };
-  img.addEventListener('click', onImgClick);
-  img.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('mouseup',   onMouseUp);
-  modal.addEventListener('click', onBackdrop);
-  close.addEventListener('click', cleanup);
-  document.addEventListener('keydown', onKey);
-}
-
-function renderInboundImage(meta, fallbackLabel) {
-  const wrap = el('div', { style: 'margin-top:6px' });
-  const cached = state.attachmentBlobs.get(meta.filename);
-  const makeImg = (url) => {
-    const img = el('img', {
-      src: url,
-      style: 'max-width:240px;max-height:240px;border-radius:6px;display:block;cursor:zoom-in',
-    });
-    img.addEventListener('click', () => openImageModal(url, meta));
-    return img;
-  };
-  // Already-loaded image: reuse cached object URL.
-  if (cached && cached !== 'loading' && typeof cached !== 'object') {
-    wrap.appendChild(makeImg(cached));
-    return wrap;
-  }
-  // Previously-failed load: render a non-retrying error with a manual
-  // retry button. Without this gate, every SSE-driven rerender would
-  // refire the failed fetch — turning one broken attachment into a
-  // perpetual load-fail loop (the user saw this firsthand).
-  if (cached && typeof cached === 'object' && cached.failed) {
-    const errBox = el('div', {
-      style: 'padding:8px 10px;border-radius:6px;background:rgba(248,81,73,0.12);'
-           + 'border:1px solid var(--danger);font-size:11px;color:var(--text)',
-    });
-    errBox.appendChild(el('div', { text: fallbackLabel + ' — load failed' }));
-    errBox.appendChild(el('div', { class: 'muted', style: 'font-size:10px;margin-top:2px',
-                                    text: cached.error || 'unknown' }));
-    const retry = el('button', { class: 'ghost', style: 'margin-top:6px;font-size:11px',
-                                  text: 'Retry' });
-    retry.addEventListener('click', () => {
-      state.attachmentBlobs.delete(meta.filename);
-      const replacement = renderInboundImage(meta, fallbackLabel);
-      wrap.parentNode.replaceChild(replacement, wrap);
-    });
-    errBox.appendChild(retry);
-    wrap.appendChild(errBox);
-    return wrap;
-  }
-  // Placeholder while fetching — small, low-key so it doesn't jump.
-  const placeholder = el('div', {
-    style: 'padding:8px 10px;border-radius:6px;background:rgba(255,255,255,0.08);font-size:11px;color:var(--text-dim)',
-    text: fallbackLabel + ' — loading…',
-  });
-  wrap.appendChild(placeholder);
-  // Don't double-kick a fetch for the same filename across rerenders.
-  if (cached === 'loading') return wrap;
-  state.attachmentBlobs.set(meta.filename, 'loading');
-  state.transport.fetchAttachment(state.identityId, meta.filename).then(({ blob }) => {
-    const url = URL.createObjectURL(blob);
-    state.attachmentBlobs.set(meta.filename, url);
-    if (wrap.contains(placeholder)) {
-      wrap.replaceChild(makeImg(url), placeholder);
-    }
-  }).catch((e) => {
-    // Mark failed with the error message so the retry-button render
-    // can show what went wrong. Object form distinguishes 'failed'
-    // from the URL-string success case.
-    state.attachmentBlobs.set(meta.filename, { failed: true, error: e.message || String(e) });
-    if (wrap.contains(placeholder)) {
-      // Re-render to switch placeholder → error-with-retry. Just
-      // swap the inner wrap on the parent so the existing layout
-      // stays put.
-      const replacement = renderInboundImage(meta, fallbackLabel);
-      if (wrap.parentNode) wrap.parentNode.replaceChild(replacement, wrap);
-    }
-  });
-  return wrap;
-}
-
-// Fetch the attachment blob from the device. Images (tag 6) and audio
-// (tag 7) get inline previews + cached so subsequent rerenders reuse
-// the blob URL; everything else triggers a browser Save-As.
-async function downloadAttachment(identityId, meta, chipEl, bubbleEl) {
-  if (chipEl.dataset.busy) return;
-  chipEl.dataset.busy = '1';
-  const originalText = chipEl.textContent;
-  chipEl.textContent = originalText.replace(/ —.*$/, '') + ' — fetching…';
+// Fetch the attachment blob from the device. Image (tag 6) / audio
+// (tag 7): cache the blob URL in state.attachmentBlobs — the bubble
+// template observes that and re-evaluates attachmentMode() to swap
+// from chip → inline preview automatically.
+// Everything else (tag 5 / unknown): trigger a browser Save-As.
+async function downloadAttachment(identityId, meta, chipEl /*unused — kept for backward compat*/ ) {
+  if (!meta || !meta.filename) return;
+  if (state.attachmentBlobs[meta.filename] === 'loading') return;
+  state.attachmentBlobs[meta.filename] = 'loading';
   try {
     const { blob } = await state.transport.fetchAttachment(identityId, meta.filename);
     if (meta.tag === 6) {
-      const url = URL.createObjectURL(blob);
-      state.attachmentBlobs.set(meta.filename, url);
-      const img = el('img', {
-        src: url,
-        style: 'margin-top:6px;max-width:240px;max-height:240px;border-radius:6px;display:block;cursor:zoom-in',
-      });
-      // Open the in-app modal viewer (with tap-to-zoom + save) rather
-      // than spawning a new browser tab — matches the renderInboundImage
-      // code path. The old window.open behaviour was a leftover from
-      // before the modal viewer existed and broke the UX for any
-      // image first fetched via the click-to-load chip (sent images
-      // after a page reload, or received images with auto-download off).
-      img.addEventListener('click', () => openImageModal(url, meta));
-      bubbleEl.replaceChild(img, chipEl);
+      state.attachmentBlobs[meta.filename] = URL.createObjectURL(blob);
     } else if (meta.tag === 7) {
-      // Audio: sniff the codec so the browser <audio> element accepts
-      // it (some don't fall back on Content-Type alone), then cache.
       const head = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
       const mime = sniffAudioMime(head);
       const typed = new Blob([await blob.arrayBuffer()], { type: mime });
-      const url = URL.createObjectURL(typed);
-      state.attachmentBlobs.set(meta.filename, url);
-      const player = el('audio', {
-        src: url, controls: 'controls', preload: 'metadata',
-        style: 'max-width:240px;display:block;margin-top:6px',
-      });
-      bubbleEl.replaceChild(player, chipEl);
+      state.attachmentBlobs[meta.filename] = URL.createObjectURL(typed);
     } else {
-      // File / unknown: trigger Save-As. Use the sender-supplied
-      // display_name (Sideband convention) as the suggested filename so
-      // the user gets "report.pdf" rather than "<hash>_05_0.bin". Fall
-      // back to the on-disk stem if no display_name (legacy peer).
+      // File / unknown: trigger Save-As via an offscreen <a download>.
+      // No el() — set href / download / click() directly on a fresh
+      // anchor and revoke after.
       const url = URL.createObjectURL(blob);
-      const a = el('a', { href: url, download: meta.display_name || meta.filename });
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = meta.display_name || meta.filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      // Revoke after a tick so the browser has time to start the download.
       setTimeout(() => URL.revokeObjectURL(url), 30000);
-      chipEl.textContent = originalText.replace(/ —.*$/, '') + ' — saved';
-      chipEl.dataset.busy = '';
+      // Don't cache non-media in attachmentBlobs — there's no inline
+      // preview, so caching just wastes memory. Clear the placeholder.
+      delete state.attachmentBlobs[meta.filename];
+      toast('Saved ' + (meta.display_name || meta.filename), 'success');
     }
   } catch (e) {
+    state.attachmentBlobs[meta.filename] = { failed: true, error: e.message || String(e) };
     toast('Attachment fetch failed: ' + (e.message || e), 'error');
-    chipEl.textContent = originalText;
-    chipEl.dataset.busy = '';
   }
 }
 

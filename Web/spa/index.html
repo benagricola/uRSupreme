@@ -1538,7 +1538,27 @@ summary:hover { color: var(--text); }
       </button>
       <input id="attach-file" type="file" hidden>
       <div id="compose-mid">
-        <div id="attach-tray" hidden></div>
+        <div id="attach-tray" x-data="attachTrayData()" x-show="visible" x-cloak>
+          <template x-if="recording">
+            <div class="record-chip">
+              <span>🔴</span>
+              <span class="elapsed" x-text="recordElapsedText"></span>
+              <button class="secondary" @click="stopRecording(true)">Stop</button>
+              <button class="ghost" @click="stopRecording(false)">Cancel</button>
+            </div>
+          </template>
+          <template x-for="(a, idx) in $store.s.pendingAttachments" :key="idx + ':' + a.filename">
+            <div class="attach-chip">
+              <span x-text="a.tag === FIELD_IMAGE ? '🖼' : a.tag === FIELD_AUDIO ? '🎙' : '📎'"></span>
+              <span class="label" x-text="a.filename + ' · ' + formatBytes(a.bytes.length)"></span>
+              <template x-if="attachEtaText(a)">
+                <span class="eta" x-text="attachEtaText(a)"></span>
+              </template>
+              <span class="drop" title="Drop attachment"
+                    @click="$store.s.pendingAttachments.splice(idx, 1)">×</span>
+            </div>
+          </template>
+        </div>
         <textarea id="compose-text" placeholder="Message…" rows="1" maxlength="4096"></textarea>
         <!-- Live character counter — appears only when the user is
              approaching the cap. The firmware rejects >4096 with 413,
@@ -4362,84 +4382,56 @@ async function stagePendingAttachment(att) {
   renderAttachTray();
 }
 
-function renderAttachTray() {
-  const tray = $('attach-tray');
-  tray.innerHTML = '';
-  const isRecording = !!state.recorder;
-  if (state.pendingAttachments.length === 0 && !isRecording) {
-    tray.hidden = true;
-    if (state._recTimer) { clearInterval(state._recTimer); state._recTimer = null; }
-    return;
+// Composed ETA / upload-progress / "no route" string for an attachment
+// chip. Called from the x-text on each chip's .eta span.
+function attachEtaText(a) {
+  if (a.uploading) {
+    const denom = a.uploaded_total || a.bytes.length;
+    const pct = denom > 0
+      ? Math.max(0, Math.min(100, Math.round(100 * (a.uploaded_bytes || 0) / denom)))
+      : 0;
+    return 'uploading ' + pct + '%';
   }
-  tray.hidden = false;
-  if (isRecording) {
-    const chip = el('div', { class: 'record-chip' });
-    chip.appendChild(el('span', { text: '🔴' }));
-    const elapsed = el('span', { class: 'elapsed', text: '0:00 — recording' });
-    chip.appendChild(elapsed);
-    const stop = el('button', { class: 'secondary', text: 'Stop' });
-    stop.addEventListener('click', () => stopRecording(true));
-    chip.appendChild(stop);
-    const cancel = el('button', { class: 'ghost', text: 'Cancel' });
-    cancel.addEventListener('click', () => stopRecording(false));
-    chip.appendChild(cancel);
-    tray.appendChild(chip);
-    // Live elapsed-time tick. Stops itself when state.recorder clears.
-    if (!state._recTimer) {
-      state._recTimer = setInterval(() => {
-        if (!state.recorder) {
-          clearInterval(state._recTimer);
-          state._recTimer = null;
-          return;
-        }
-        const ms = Date.now() - state.recorderStartMs;
-        const s  = Math.floor(ms / 1000);
-        const mm = Math.floor(s / 60);
-        const ss = (s % 60).toString().padStart(2, '0');
-        elapsed.textContent = mm + ':' + ss + ' — recording';
-      }, 250);
-    }
-  }
-  state.pendingAttachments.forEach((a, idx) => {
-    const icon = a.tag === FIELD_IMAGE ? '🖼' : a.tag === FIELD_AUDIO ? '🎙' : '📎';
-    const chip = el('div', { class: 'attach-chip' });
-    chip.appendChild(el('span', { text: icon }));
-    chip.appendChild(el('span', { class: 'label',
-                                  text: a.filename + ' · ' + formatBytes(a.bytes.length) }));
-    // Upload-progress trumps the ETA pill while bytes are being shipped
-    // to the device's staging buffer (#130). After upload finishes (or
-    // before it starts), we fall back to the ETA estimate.
-    let etaText = '';
-    if (a.uploading) {
-      // Use the multipart-encoded total (a.uploaded_total) for the
-      // denominator — dividing by a.bytes.length would over-count to
-      // 101-102 % because the multipart form-data wrapper adds bytes.
-      // Clamp to [0, 100] as a defence against any edge cases.
-      const denom = a.uploaded_total || a.bytes.length;
-      const pct = denom > 0
-        ? Math.max(0, Math.min(100, Math.round(100 * (a.uploaded_bytes || 0) / denom)))
-        : 0;
-      etaText = 'uploading ' + pct + '%';
-    } else if (a.staging_id) {
-      etaText = 'uploaded';
-    } else {
-      // a.kind comes from /api/paths/estimate at stage-time; fall back
-      // to a.eta_ms if present. "?" / blank states are deliberate —
-      // signal "device couldn't size this route", not a missing UI.
-      if      (a.kind === 'local')   etaText = 'instant';
-      else if (a.kind === 'unknown') etaText = 'no route';
-      else {
-        const e = formatEta(a.eta_ms);
-        etaText = e || 'sizing…';
-      }
-    }
-    if (etaText) chip.appendChild(el('span', { class: 'eta', text: etaText }));
-    const x = el('span', { class: 'drop', text: '×', title: 'Drop attachment' });
-    x.addEventListener('click', () => { state.pendingAttachments.splice(idx, 1); renderAttachTray(); });
-    chip.appendChild(x);
-    tray.appendChild(chip);
-  });
+  if (a.staging_id) return 'uploaded';
+  if (a.kind === 'local')   return 'instant';
+  if (a.kind === 'unknown') return 'no route';
+  return formatEta(a.eta_ms) || 'sizing…';
 }
+
+// Reactive data for the #attach-tray below the compose textarea.
+// Visibility tracks pending attachments OR active recording. While
+// recording, a 250ms ticker updates recordElapsedText.
+function attachTrayData() {
+  return {
+    nowMs: Date.now(),
+    _tick: null,
+    init() {
+      // Lazy elapsed-time tick — runs only while recording. Watching
+      // $store.s.recorder lets us start/stop the interval reactively.
+      this.$watch(() => !!this.$store.s.recorder, (rec) => {
+        if (rec) {
+          if (!this._tick) this._tick = setInterval(() => { this.nowMs = Date.now(); }, 250);
+        } else if (this._tick) {
+          clearInterval(this._tick); this._tick = null;
+        }
+      });
+    },
+    get visible()   { return this.recording || (this.$store.s.pendingAttachments && this.$store.s.pendingAttachments.length > 0); },
+    get recording() { return !!this.$store.s.recorder; },
+    get recordElapsedText() {
+      const ms = this.nowMs - (this.$store.s.recorderStartMs || this.nowMs);
+      const s  = Math.floor(ms / 1000);
+      const mm = Math.floor(s / 60);
+      const ss = (s % 60).toString().padStart(2, '0');
+      return mm + ':' + ss + ' — recording';
+    },
+  };
+}
+
+// Backwards-compat shim — pendingAttachments / recorder are reactive
+// now, so callers no longer need to re-render. Stub so existing call
+// sites don't trip.
+function renderAttachTray() { /* no-op */ }
 
 // Shared dismiss predicate for topbar popovers. Returns true when the
 // click should close the popover — i.e. it landed outside both the

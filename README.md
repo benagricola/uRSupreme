@@ -21,7 +21,7 @@ BME280 for environmental telemetry, and an AXP2101 with charge control
 and battery telemetry. Upstream RNode firmware treats devices as KISS
 radios for an attached host. Upstream microReticulum_Firmware adds the
 RNS stack and transport routing on-device, but stops short of a user
-interface. **uRSupreme adds the user.**
+interface. **uRSupreme adds the user interface.**
 
 That means an LXMF inbox / outbox running on the device, a web UI for
 sending messages and attachments, multi-identity support, sensor /

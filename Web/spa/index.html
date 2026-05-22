@@ -1221,7 +1221,7 @@ summary:hover { color: var(--text); }
     <h2>Identities</h2>
     <div id="identity-list"></div>
     <div class="row" style="margin-top:14px">
-      <button id="btn-show-create" style="flex:1">Create new identity</button>
+      <button id="btn-show-create" style="flex:1" @click="enterCreate()">Create new identity</button>
     </div>
     <details style="margin-top:14px">
       <summary class="muted">Lost a password?</summary>
@@ -1229,7 +1229,7 @@ summary:hover { color: var(--text); }
       <p class="muted id-code-hint"></p>
       <label>Identity code</label>
       <input id="fr-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:8px">
-      <button class="danger" id="btn-factory-reset" style="width:100%">Factory reset</button>
+      <button class="danger" id="btn-factory-reset" style="width:100%" @click="onClickFactoryReset()">Factory reset</button>
     </details>
   </div>
 </div>
@@ -1248,8 +1248,8 @@ summary:hover { color: var(--text); }
     <label>Identity code</label>
     <input id="cr-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:10px">
     <div class="row">
-      <button class="secondary" id="btn-create-cancel">Back</button>
-      <button id="btn-create-go">Create</button>
+      <button class="secondary" id="btn-create-cancel" @click="enterIdentityPicker()">Back</button>
+      <button id="btn-create-go" @click="onClickCreateGo()">Create</button>
     </div>
   </div>
 </div>
@@ -1262,8 +1262,8 @@ summary:hover { color: var(--text); }
     <label>Password</label>
     <input id="login-pw" type="password" style="margin-bottom:12px">
     <div class="row">
-      <button class="secondary" id="btn-login-back">Back</button>
-      <button id="btn-login-go">Login</button>
+      <button class="secondary" id="btn-login-back" @click="enterIdentityPicker()">Back</button>
+      <button id="btn-login-go" @click="onClickLoginGo($event.currentTarget)">Login</button>
     </div>
   </div>
 </div>
@@ -1581,7 +1581,8 @@ summary:hover { color: var(--text); }
     <div class="popover-subline" id="status-wifi-ip"></div>
     <div class="popover-subline" id="status-wifi-auth"></div>
     <button class="secondary" id="btn-force-softap" hidden style="width:100%;margin-top:8px"
-            title="Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again.">Switch to softAP</button>
+            title="Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again."
+            @click="onClickForceSoftap($event.currentTarget)">Switch to softAP</button>
     <!-- The button itself carries a `title=` for desktop hover; this
          subline duplicates the text inline because mobile browsers
          can't reliably show tooltips (long-press is reserved for the
@@ -1596,7 +1597,8 @@ summary:hover { color: var(--text); }
       <div id="status-transport-line"></div>
     </div>
     <button class="secondary" id="btn-toggle-transport" style="width:100%;margin-top:8px"
-            title="Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots.">…</button>
+            title="Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots."
+            @click="onClickToggleTransport($event.currentTarget)">…</button>
     <div class="popover-subline">Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots.</div>
   </div>
 </div>
@@ -1707,8 +1709,8 @@ summary:hover { color: var(--text); }
     <label>Contact name (optional, saved locally)</label>
     <input id="nc-name" placeholder="Their name" style="margin-bottom:14px">
     <div class="row">
-      <button class="secondary" id="btn-nc-cancel">Cancel</button>
-      <button id="btn-nc-go">Open</button>
+      <button class="secondary" id="btn-nc-cancel" @click="state.modals.newConv = false">Cancel</button>
+      <button id="btn-nc-go" @click="onClickNewConvGo()">Open</button>
     </div>
   </div>
 </div>
@@ -1766,15 +1768,15 @@ summary:hover { color: var(--text); }
     <select id="cn-wifi-ssid" style="margin-bottom:8px">
       <option value="">— scanning… —</option>
     </select>
-    <button class="secondary" id="cn-wifi-scan" style="margin-bottom:12px">Rescan networks</button>
+    <button class="secondary" id="cn-wifi-scan" style="margin-bottom:12px" @click="scanIntoWifiModal()">Rescan networks</button>
     <label>Password</label>
     <input id="cn-wifi-psk" type="password" placeholder="(leave blank for open networks)" style="margin-bottom:8px">
     <p class="muted id-code-hint" style="margin-bottom:8px"></p>
     <label>Identity code</label>
     <input id="cn-wifi-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace;margin-bottom:12px">
     <div class="row">
-      <button class="secondary" id="cn-wifi-cancel">Cancel</button>
-      <button id="cn-wifi-save">Save &amp; reboot</button>
+      <button class="secondary" id="cn-wifi-cancel" @click="state.modals.wifiAdd = false">Cancel</button>
+      <button id="cn-wifi-save" @click="onClickWifiSave($event.currentTarget)">Save &amp; reboot</button>
     </div>
   </div>
 </div>
@@ -1802,8 +1804,8 @@ summary:hover { color: var(--text); }
       publicly advertised the way a LoRa or UDP interface can.
     </p>
     <div class="row" style="margin-top:12px">
-      <button class="secondary" id="cn-tcp-cancel">Cancel</button>
-      <button id="cn-tcp-save">Add</button>
+      <button class="secondary" id="cn-tcp-cancel" @click="state.modals.tcpAdd = false">Cancel</button>
+      <button id="cn-tcp-save" @click="onClickTcpSave($event.currentTarget)">Add</button>
     </div>
     <div class="muted" id="cn-tcp-status" style="margin-top:8px;font-size:11px"></div>
   </div>
@@ -1903,7 +1905,7 @@ summary:hover { color: var(--text); }
     <p class="muted id-code-hint"></p>
     <input id="idc-input" maxlength="6" placeholder="abc123" style="margin-bottom:12px;font-family:ui-monospace,monospace">
     <div class="row">
-      <button class="secondary" id="btn-idc-cancel">Dismiss</button>
+      <button class="secondary" id="btn-idc-cancel" @click="state.modals.idCode = false">Dismiss</button>
       <button id="btn-idc-ok">OK</button>
     </div>
   </div>
@@ -1918,7 +1920,7 @@ summary:hover { color: var(--text); }
   <div class="modal modal-tall">
     <header class="modal-header">
       <h3 id="settings-title">Settings</h3>
-      <button class="icon" id="btn-close-settings" title="Close">
+      <button class="icon" id="btn-close-settings" title="Close" @click="state.modals.settings = false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
       </button>
     </header>
@@ -2016,7 +2018,7 @@ summary:hover { color: var(--text); }
               </div>
               <p class="muted" style="margin-bottom:14px">SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom — useful for long links.<br><strong>Airtime caps are regulatory limits</strong> — picking a region preset sets a sane default; 0 disables (only use where allowed).</p>
             </div>
-            <button id="btn-radio-save" style="width:100%">Save &amp; reboot</button>
+            <button id="btn-radio-save" style="width:100%" @click="onClickRadioSave($event.currentTarget)">Save &amp; reboot</button>
           </div>
         </details>
 
@@ -2027,7 +2029,7 @@ summary:hover { color: var(--text); }
             <div id="cn-wifi-saved-list" style="margin-bottom:10px">
               <p class="muted">Loading…</p>
             </div>
-            <button class="secondary" id="btn-wifi-add" style="width:100%">Add a network…</button>
+            <button class="secondary" id="btn-wifi-add" style="width:100%" @click="openAddWifiModal()">Add a network…</button>
           </div>
         </details>
 
@@ -2038,7 +2040,7 @@ summary:hover { color: var(--text); }
             <div id="cn-tcp-list" style="margin-bottom:10px">
               <p class="muted">Loading…</p>
             </div>
-            <button class="secondary" id="btn-tcp-add" style="width:100%">Add a TCP client…</button>
+            <button class="secondary" id="btn-tcp-add" style="width:100%" @click="openAddTcpModal()">Add a TCP client…</button>
           </div>
         </details>
 
@@ -5436,17 +5438,19 @@ function updateSensorConfigUI(s) {
     attachSensorConfigToggle(section);
   }
 }
-$('btn-toggle-transport').addEventListener('click', () => withBusy($('btn-toggle-transport'), async () => {
-  const cur = !!(state.lastInfo && state.lastInfo.transport && state.lastInfo.transport.enabled);
-  try {
-    await state.transport.setTransportEnabled(!cur);
-    toast(cur ? 'Transport disabled' : 'Transport enabled', 'success');
-    await refreshStatus();
-  } catch (e) {
-    toast('Toggle failed: ' + (e.message || e), 'error');
-  }
-}));
-$('btn-force-softap').addEventListener('click', async () => {
+function onClickToggleTransport(btn) {
+  return withBusy(btn, async () => {
+    const cur = !!(state.lastInfo && state.lastInfo.transport && state.lastInfo.transport.enabled);
+    try {
+      await state.transport.setTransportEnabled(!cur);
+      toast(cur ? 'Transport disabled' : 'Transport enabled', 'success');
+      await refreshStatus();
+    } catch (e) {
+      toast('Toggle failed: ' + (e.message || e), 'error');
+    }
+  });
+}
+async function onClickForceSoftap(btn) {
   const r = await showConfirm({
     title: 'Switch to softAP?',
     body: 'You will be disconnected; reconnect to the device\'s bootstrap WiFi to continue. The saved network is kept — a reboot will try it again.',
@@ -5455,7 +5459,7 @@ $('btn-force-softap').addEventListener('click', async () => {
     needsCode: true,
   });
   if (!r) return;
-  await withBusy($('btn-force-softap'), async () => {
+  await withBusy(btn, async () => {
     try {
       await state.transport._req('/api/wifi/softap', { method: 'POST', body: { identity_code: r.code } });
       toast('Device switching to softAP — reconnect to the bootstrap network.', 'info');
@@ -5464,7 +5468,7 @@ $('btn-force-softap').addEventListener('click', async () => {
       toast('softAP switch failed: ' + (e.message || e), 'error');
     }
   }, { label: 'Switching…' });
-});
+}
 // Slow background refresh — once a minute is enough for an indicator
 // that mainly changes after a reboot or a deliberate toggle.
 setInterval(refreshStatus, 60000);
@@ -5976,9 +5980,8 @@ $('bs-skip').addEventListener('click', async () => {
   }
 });
 
-// ============================== IDENTITY PICKER WIRING ==============================
-$('btn-show-create').addEventListener('click', enterCreate);
-$('btn-factory-reset').addEventListener('click', async () => {
+// ============================== IDENTITY PICKER / CREATE / LOGIN ==============================
+async function onClickFactoryReset() {
   const ok = await showConfirm({
     title: 'Factory reset?',
     body: 'This permanently erases every identity, message, and saved token on this device.',
@@ -5994,11 +5997,9 @@ $('btn-factory-reset').addEventListener('click', async () => {
       toast('Reset failed: ' + (e.message || e), 'error');
     }
   }, { label: 'Resetting…', alsoDisable: ['#fr-code', '#btn-show-create'] });
-});
+}
 
-// ============================== CREATE WIRING ==============================
-$('btn-create-cancel').addEventListener('click', enterIdentityPicker);
-$('btn-create-go').addEventListener('click', () => {
+function onClickCreateGo() {
   if ($('cr-pw1').value !== $('cr-pw2').value) { toast('Passwords do not match', 'warn'); return; }
   if ($('cr-pw1').value.length < 8) { toast('Password must be at least 8 chars', 'warn'); return; }
   return withBusy($('btn-create-go'), async () => {
@@ -6014,29 +6015,30 @@ $('btn-create-go').addEventListener('click', () => {
       enterApp();
     } catch (e) { toast('Create failed: ' + (e.message || e), 'error'); }
   }, { label: 'Creating…', alsoDisable: ['#btn-create-cancel', '#cr-name', '#cr-pw1', '#cr-pw2', '#cr-code'] });
-});
+}
 
-// ============================== LOGIN WIRING ==============================
-$('btn-login-back').addEventListener('click', enterIdentityPicker);
+function onClickLoginGo(btn) {
+  return withBusy(btn, async () => {
+    try {
+      const r = await state.transport.login(state.identityId, $('login-pw').value);
+      state.token = r.token;
+      state.identityId = r.identityId;
+      localStorage.setItem(LS.TOKEN, r.token);
+      localStorage.setItem(LS.IDENTITY, r.identityId);
+      state.self = state.identities.find(x => x.id === r.identityId) || null;
+      await refreshState();
+      enterApp();
+    } catch (e) {
+      if (e.status === 401) toast('Wrong password', 'error');
+      else toast('Login failed: ' + (e.message || e), 'error');
+    }
+  }, { label: 'Logging in…', alsoDisable: ['#login-pw', '#btn-login-back'] });
+}
+
 // Enter in the password field should submit, just like a real form.
 $('login-pw').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); $('btn-login-go').click(); }
 });
-$('btn-login-go').addEventListener('click', () => withBusy($('btn-login-go'), async () => {
-  try {
-    const r = await state.transport.login(state.identityId, $('login-pw').value);
-    state.token = r.token;
-    state.identityId = r.identityId;
-    localStorage.setItem(LS.TOKEN, r.token);
-    localStorage.setItem(LS.IDENTITY, r.identityId);
-    state.self = state.identities.find(x => x.id === r.identityId) || null;
-    await refreshState();
-    enterApp();
-  } catch (e) {
-    if (e.status === 401) toast('Wrong password', 'error');
-    else toast('Login failed: ' + (e.message || e), 'error');
-  }
-}, { label: 'Logging in…', alsoDisable: ['#login-pw', '#btn-login-back'] }));
 
 // ============================== APP WIRING ==============================
 function openNewConvModal() {
@@ -6094,17 +6096,15 @@ function renderNewConvPicker() {
     wrap.appendChild(el('div', { class: 'muted', text: 'No saved contacts or discovered peers yet. Enter an address below.' }));
   }
 }
-$('btn-nc-cancel').addEventListener('click', () => { state.modals.newConv = false; });
-$('btn-nc-go').addEventListener('click', () => {
+function onClickNewConvGo() {
   const addr = $('nc-addr').value.trim().toLowerCase();
   if (!/^[0-9a-f]{32}$/.test(addr)) { toast('Address must be 32 hex characters', 'warn'); return; }
   const name = $('nc-name').value.trim();
-  if (name) { state.contacts[addr] = name; persistContacts(); renderContacts(); }
+  if (name) { state.contacts[addr] = name; persistContacts(); }
   if (!state.conversations[addr]) state.conversations[addr] = { peer: addr, msgs: [], last_ts: 0 };
-  renderConversations();
   selectConversation(addr);
   state.modals.newConv = false;
-});
+}
 
 // Delegated conv-row click handler. Bound once to the container so an
 // SSE rerender mid-click can't strip the listener off the row that was
@@ -6387,32 +6387,30 @@ async function openRetentionModal(identityId, peerHex) {
   });
 }
 
-$('btn-conv-retention').addEventListener('click', () => {
-  if (state.openPeer) openRetentionModal(state.identityId, state.openPeer);
-});
-$('btn-clear-conv').addEventListener('click', () => withBusy($('btn-clear-conv'),
-  () => clearConversationFlow(state.openPeer),
-  { label: 'Clearing…' }));
-$('btn-radio-save').addEventListener('click', () => withBusy($('btn-radio-save'), async () => {
-  try {
-    // Single save path — /api/radio now persists airtime caps alongside
-    // the band params so a region preset's regulatory limits survive a
-    // reboot. Old separate /api/radio/airtime endpoint remains for live
-    // tweaks without a reboot but isn't part of the user-driven save.
-    await state.transport.setRadio({
-      frequency: Number($('rd-freq').value),
-      bandwidth: Number($('rd-bw').value),
-      spreading_factor: Number($('rd-sf').value),
-      coding_rate: Number($('rd-cr').value),
-      tx_power: Number($('rd-tx').value),
-      airtime_limit_pct:          Number($('rd-airtime').value),
-      longterm_airtime_limit_pct: Number($('rd-airtime-lt').value),
-    });
-    waitForDeviceAndReload('Saving radio config & rebooting…');
-  } catch (e) {
-    toast('Save failed: ' + (e.message || e), 'error');
-  }
-}, { label: 'Saving radio…' }));
+// btn-conv-retention / btn-clear-conv are now @click-bound in the
+// thread-header template (Wave 4).
+function onClickRadioSave(btn) {
+  return withBusy(btn, async () => {
+    try {
+      // Single save path — /api/radio now persists airtime caps alongside
+      // the band params so a region preset's regulatory limits survive a
+      // reboot. Old separate /api/radio/airtime endpoint remains for live
+      // tweaks without a reboot but isn't part of the user-driven save.
+      await state.transport.setRadio({
+        frequency: Number($('rd-freq').value),
+        bandwidth: Number($('rd-bw').value),
+        spreading_factor: Number($('rd-sf').value),
+        coding_rate: Number($('rd-cr').value),
+        tx_power: Number($('rd-tx').value),
+        airtime_limit_pct:          Number($('rd-airtime').value),
+        longterm_airtime_limit_pct: Number($('rd-airtime-lt').value),
+      });
+      waitForDeviceAndReload('Saving radio config & rebooting…');
+    } catch (e) {
+      toast('Save failed: ' + (e.message || e), 'error');
+    }
+  }, { label: 'Saving radio…' });
+}
 // Connectivity tab: accordion exclusivity — close every other section
 // when one opens, so the tab never grows taller than the modal.
 for (const det of document.querySelectorAll('#modal-settings .cn-section')) {
@@ -6427,23 +6425,22 @@ for (const det of document.querySelectorAll('#modal-settings .cn-section')) {
 // WiFi: list defaults to saved networks + an "Add a network" button.
 // Add opens a modal that runs the scan and the same wifiConfigure
 // call the bootstrap softAP flow uses.
-$('btn-wifi-add').addEventListener('click', openAddWifiModal);
-$('cn-wifi-cancel').addEventListener('click', () => { state.modals.wifiAdd = false; });
-$('cn-wifi-scan').addEventListener('click', scanIntoWifiModal);
-$('cn-wifi-save').addEventListener('click', () => withBusy($('cn-wifi-save'), async () => {
-  const ssid = $('cn-wifi-ssid').value;
-  if (!ssid) { toast('Pick a network first.', 'error'); return; }
-  const psk  = $('cn-wifi-psk').value;
-  const code = $('cn-wifi-code').value.trim();
-  if (!code) { toast('Identity code required to change WiFi.', 'error'); return; }
-  try {
-    await state.transport.wifiConfigure(ssid, psk, code);
-    state.modals.wifiAdd = false;
-    waitForDeviceAndReload('Saving WiFi & rebooting…');
-  } catch (e) {
-    toast('WiFi save failed: ' + (e.message || e), 'error');
-  }
-}, { label: 'Saving WiFi…', alsoDisable: ['#cn-wifi-ssid', '#cn-wifi-psk', '#cn-wifi-code', '#cn-wifi-scan', '#cn-wifi-cancel'] }));
+function onClickWifiSave(btn) {
+  return withBusy(btn, async () => {
+    const ssid = $('cn-wifi-ssid').value;
+    if (!ssid) { toast('Pick a network first.', 'error'); return; }
+    const psk  = $('cn-wifi-psk').value;
+    const code = $('cn-wifi-code').value.trim();
+    if (!code) { toast('Identity code required to change WiFi.', 'error'); return; }
+    try {
+      await state.transport.wifiConfigure(ssid, psk, code);
+      state.modals.wifiAdd = false;
+      waitForDeviceAndReload('Saving WiFi & rebooting…');
+    } catch (e) {
+      toast('WiFi save failed: ' + (e.message || e), 'error');
+    }
+  }, { label: 'Saving WiFi…', alsoDisable: ['#cn-wifi-ssid', '#cn-wifi-psk', '#cn-wifi-code', '#cn-wifi-scan', '#cn-wifi-cancel'] });
+}
 
 async function openAddWifiModal() {
   fillIdCodeHints();
@@ -6913,9 +6910,7 @@ function openAddTcpModal() {
   $('cn-tcp-status').textContent = '';
   state.modals.tcpAdd = true;
 }
-$('btn-tcp-add').addEventListener('click', openAddTcpModal);
-$('cn-tcp-cancel').addEventListener('click', () => { state.modals.tcpAdd = false; });
-$('cn-tcp-save').addEventListener('click', async () => {
+async function onClickTcpSave(_btn) {
   const name = $('cn-tcp-name').value.trim();
   const host = $('cn-tcp-host').value.trim();
   const port = parseInt($('cn-tcp-port').value, 10);
@@ -6935,7 +6930,7 @@ $('cn-tcp-save').addEventListener('click', async () => {
   } catch (e) {
     status.textContent = 'Failed: ' + (e.message || e);
   }
-});
+}
 
 // ============================== TIME SETTINGS ==============================
 // LXMF needs a real wall clock for the message-timestamp field. The
@@ -7710,7 +7705,6 @@ function openIdCodeModal(opts) {
   // own paint for first-frame attention.
   setTimeout(() => $('idc-input').focus(), 0);
 }
-$('btn-idc-cancel').addEventListener('click', () => { state.modals.idCode = false; });
 $('btn-idc-ok').addEventListener('click', () => {
   const code = $('idc-input').value;
   state.modals.idCode = false;

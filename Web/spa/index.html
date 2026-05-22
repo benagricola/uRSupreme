@@ -1739,7 +1739,11 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== EMOJI PICKER ===================== -->
-<div id="popup-emoji" x-data x-show="$store.s.popovers.emoji" x-cloak></div>
+<div id="popup-emoji" x-data x-show="$store.s.popovers.emoji" x-cloak>
+  <template x-for="e in EMOJI" :key="e">
+    <div class="emoji-cell" x-text="e" @click="onEmojiPick(e)"></div>
+  </template>
+</div>
 
 <!-- ===================== NEW CONVERSATION MODAL ===================== -->
 <div id="modal-new-conv" class="modal-bg" x-data x-show="$store.s.modals.newConv" x-cloak>
@@ -2898,12 +2902,13 @@ const EMOJI = [
   '👍','👎','👏','🙏','❤️','🔥','✅','❌',
   '📍','🎉','🤝','💬','📞','📷','💡','⚡',
 ];
+// Picker open path. The grid itself is rendered declaratively in the
+// markup via x-for over EMOJI; this function just stashes the
+// per-open callback + anchors the popover at the click site.
+let _emojiPickCallback = null;
 function openEmojiPicker(anchorEl, onPick) {
   const pop = $('popup-emoji');
-  pop.innerHTML = '';
-  for (const e of EMOJI) {
-    pop.appendChild(el('div', { class: 'emoji-cell', text: e, onclick: () => { onPick(e); state.popovers.emoji = false; } }));
-  }
+  _emojiPickCallback = onPick;
   const rect = anchorEl.getBoundingClientRect();
   pop.style.left = Math.max(8, rect.left) + 'px';
   pop.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
@@ -2917,6 +2922,11 @@ function openEmojiPicker(anchorEl, onPick) {
     };
     document.addEventListener('click', dismiss);
   }, 0);
+}
+// @click handler for each emoji cell in the picker template.
+function onEmojiPick(e) {
+  if (_emojiPickCallback) _emojiPickCallback(e);
+  state.popovers.emoji = false;
 }
 
 // ============================== TRANSPORT ABSTRACTION ==============================

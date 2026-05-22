@@ -1626,76 +1626,86 @@ summary:hover { color: var(--text); }
 
 <!-- Anchored below #btn-system. Mirrors #popover-status' style but
      hosts device-side state: storage, clock + RTC, on-board sensors. -->
-<div id="popover-system" class="popover" x-data
+<div id="popover-system" class="popover" x-data="systemPopoverData()"
      x-show="$store.s.popovers.system"
-     x-effect="$store.s.popovers.system && $store.s.system && renderSystemPopover($store.s.system)"
+     x-effect="$store.s.popovers.system && refreshSensorConfigUI()"
      x-cloak>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label">Storage</div>
-      <div id="sys-storage-line"></div>
+      <div id="sys-storage-line">
+        <span :class="storagePillClass" x-text="storagePillLabel"></span>
+      </div>
     </div>
-    <div class="popover-value" id="sys-storage-flash"></div>
-    <div class="popover-subline" id="sys-storage-sd"></div>
-    <button id="sys-storage-migrate" class="secondary" hidden style="width:100%;margin-top:8px">
+    <div class="popover-value" id="sys-storage-flash" x-html="storageFlashHTML"></div>
+    <div class="popover-subline" id="sys-storage-sd" x-html="storageSdHTML"></div>
+    <button id="sys-storage-migrate" class="secondary" style="width:100%;margin-top:8px"
+            x-show="storageShowMigrate" x-cloak @click="onClickStorageMigrate($event.currentTarget)">
       Move flash attachments to SD card
     </button>
   </div>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label">Clock</div>
-      <div id="sys-clock-line"></div>
+      <div id="sys-clock-line">
+        <span :class="clockPillClass" x-text="clockPillLabel"></span>
+      </div>
     </div>
-    <!-- Wall-clock time = primary fact; calibration age + source =
-         the only subline. RTC chip presence is implied by "Last
-         calibrated … (RTC)" appearing on cold boot — no point taking
-         a whole line to state the obvious. -->
-    <div class="popover-value" id="sys-clock-now"></div>
-    <div class="popover-subline" id="sys-clock-source"></div>
+    <div class="popover-value" id="sys-clock-now" x-text="clockNowText"></div>
+    <div class="popover-subline" id="sys-clock-source" x-text="clockSourceText"></div>
   </div>
-  <div class="popover-section" id="sys-section-gps" data-sensor="gps" hidden>
+  <div class="popover-section" id="sys-section-gps" data-sensor="gps"
+       x-show="gpsAvailable" x-cloak>
     <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Position</div>
-      <div id="sys-gps-line"></div>
+      <div id="sys-gps-line">
+        <span :class="gpsPillClass" x-text="gpsPillLabel"></span>
+      </div>
       <span class="popover-chev" data-role="chev">▾</span>
     </div>
-    <!-- "No fix" / "lat, lon" goes in the primary line; "Last read
-         Xs ago (GPS)" is the subline. Speed is a second subline when
-         we have a fix. -->
-    <div class="popover-value" id="sys-gps-pos"></div>
-    <div class="popover-subline" id="sys-gps-speed"></div>
-    <div class="popover-subline" id="sys-gps-age"></div>
+    <div class="popover-value" id="sys-gps-pos" x-text="gpsPosText"></div>
+    <div class="popover-subline" id="sys-gps-speed" x-show="gpsHaveFix" x-text="gpsFixTimeText"></div>
+    <div class="popover-subline" id="sys-gps-age" x-text="gpsAgeText"></div>
     <div class="popover-config" data-role="config" hidden></div>
   </div>
-  <div class="popover-section" id="sys-section-env" data-sensor="environment" hidden>
+  <div class="popover-section" id="sys-section-env" data-sensor="environment"
+       x-show="envAvailable" x-cloak>
     <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Environment</div>
-      <div id="sys-env-line"></div>
+      <div id="sys-env-line">
+        <span :class="envState.cls" x-text="envState.label"></span>
+      </div>
       <span class="popover-chev" data-role="chev">▾</span>
     </div>
-    <div class="popover-value" id="sys-env-values"></div>
-    <div class="popover-subline" id="sys-env-age"></div>
+    <div class="popover-value" id="sys-env-values" x-html="envValuesHTML"></div>
+    <div class="popover-subline" id="sys-env-age" x-text="envAgeText"></div>
     <div class="popover-config" data-role="config" hidden></div>
   </div>
-  <div class="popover-section" id="sys-section-mag" data-sensor="magnetometer" hidden>
+  <div class="popover-section" id="sys-section-mag" data-sensor="magnetometer"
+       x-show="magAvailable" x-cloak>
     <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Compass</div>
-      <div id="sys-mag-line"></div>
+      <div id="sys-mag-line">
+        <span :class="magState.cls" x-text="magState.label"></span>
+      </div>
       <span class="popover-chev" data-role="chev">▾</span>
     </div>
-    <div class="popover-value" id="sys-mag-values"></div>
-    <div class="popover-subline" id="sys-mag-age"></div>
+    <div class="popover-value" id="sys-mag-values" x-html="magValuesHTML"></div>
+    <div class="popover-subline" id="sys-mag-age" x-text="magAgeText"></div>
     <div class="popover-config" data-role="config" hidden></div>
   </div>
-  <div class="popover-section" id="sys-section-imu" data-sensor="imu" hidden>
+  <div class="popover-section" id="sys-section-imu" data-sensor="imu"
+       x-show="imuAvailable" x-cloak>
     <div class="popover-row" style="cursor:pointer" data-role="header">
       <div class="popover-label">Motion</div>
-      <div id="sys-imu-line"></div>
+      <div id="sys-imu-line">
+        <span :class="imuState.cls" x-text="imuState.label"></span>
+      </div>
       <span class="popover-chev" data-role="chev">▾</span>
     </div>
-    <div class="popover-value" id="sys-imu-accel"></div>
-    <div class="popover-subline" id="sys-imu-gyro"></div>
-    <div class="popover-subline" id="sys-imu-age"></div>
+    <div class="popover-value" id="sys-imu-accel" x-html="imuAccelHTML"></div>
+    <div class="popover-subline" id="sys-imu-gyro" x-html="imuGyroHTML"></div>
+    <div class="popover-subline" id="sys-imu-age" x-text="imuAgeText"></div>
     <div class="popover-config" data-role="config" hidden></div>
   </div>
 </div>
@@ -4952,185 +4962,179 @@ function compactAgo(seconds) {
   return Math.round(s / 86400) + 'd ago';
 }
 
-function renderSystemPopover(s) {
-  // Storage.
-  const fl = (s.storage && s.storage.flash) || {};
-  const sd = (s.storage && s.storage.sd)    || {};
-  const sLine = $('sys-storage-line'); sLine.innerHTML = '';
-  const pct = (fl.total_bytes > 0)
-    ? Math.round(100 * (fl.free_bytes || 0) / fl.total_bytes) : 0;
-  const cls = pct < 10 ? 'pill bad' : pct < 25 ? 'pill warn' : 'pill ok';
-  sLine.appendChild(el('span', { class: fl.total_bytes ? cls : 'pill' },
-    fl.total_bytes ? (pct + '% free') : '—'));
-  // Flash usage is the primary fact for the storage section. SD line
-  // is the subline since SD is optional. Drop the "Flash:" / "SD:"
-  // prefixes — the popover label already says "Storage" and the
-  // section's two-tier layout signals the hierarchy.
-  $('sys-storage-flash').innerHTML = fl.total_bytes
-    ? formatBytesVU(fl.used_bytes || 0) + ' / ' + formatBytesVU(fl.total_bytes) + ' flash'
-    : '';
-  if (sd.present && sd.total_bytes) {
-    $('sys-storage-sd').innerHTML =
-      formatBytesVU(sd.used_bytes || 0) + ' / ' + formatBytesVU(sd.total_bytes) + ' SD';
-  } else {
-    $('sys-storage-sd').textContent = 'SD card not present';
-  }
-  // Migration button visible only when SD is present + flash isn't
-  // mostly empty (no point offering it when there's nothing to free).
-  const flashUsed = fl.used_bytes || 0;
-  $('sys-storage-migrate').hidden = !(sd.present && flashUsed > 0);
+// Shared three-state sensor pill (Live / Disabled / Warming up).
+function sensorStateForPill(enabled, valid) {
+  if (!enabled) return { cls: 'pill warn', label: 'Disabled', state: 'disabled' };
+  if (!valid)   return { cls: 'pill warn', label: 'Warming up', state: 'warming' };
+  return { cls: 'pill ok', label: 'Live', state: 'live' };
+}
 
-  // Clock. Read from the WS-pinned anchor (set in dispatchEvent on
-  // hello) — /api/system_status no longer carries it. The anchor is
-  // stable for the WS session; the ticker below advances the
-  // displayed time without re-fetching.
-  const a = state.clockAnchor || {};
-  const cLine = $('sys-clock-line'); cLine.innerHTML = '';
-  cLine.appendChild(el('span', { class: a.calibrated ? 'pill ok' : 'pill warn' },
-    a.calibrated ? 'Calibrated' : 'Uncalibrated'));
-  if (a.deviceUnixMs) {
-    sysPopover.clockAnchor = {
-      deviceUnixMs: a.deviceUnixMs,
-      localNowMs:   a.localPerfMs || performance.now(),
-    };
-    $('sys-clock-now').textContent = new Date(a.deviceUnixMs).toLocaleString();
-  } else {
-    sysPopover.clockAnchor = null;
-    $('sys-clock-now').textContent = '—';
-  }
-  // "Last calibrated 50m ago (NTP)" — matches the "Last read Xs ago
-  // (MODEL)" subline pattern used by every other sensor section. When
-  // no calibration has happened yet, fall back to just the source.
-  {
-    const src    = (a.source || 'unknown').toUpperCase();
-    const lastMs = Number(a.lastCalibratedMs || 0);
-    const now    = deviceMillisNow();
-    if (lastMs > 0 && now !== null) {
-      const age_s = Math.max(0, Math.round((now - lastMs) / 1000));
-      $('sys-clock-source').textContent = 'Last calibrated ' + compactAgo(age_s) + ' (' + src + ')';
-    } else {
-      $('sys-clock-source').textContent = 'Source: ' + src;
-    }
-  }
-  // Position — GPS. Hide the whole section when no module is wired
-  // (e.g. non-Supreme boards). Sections with available=false stay
-  // out of the popover entirely rather than showing an "Absent" pill.
-  const g = (s.sensors && s.sensors.gps) || {};
-  $('sys-section-gps').hidden = !g.available;
-  if (g.available) {
-    const gLine = $('sys-gps-line'); gLine.innerHTML = '';
-    // Pill describes the *current querying state*, not the fix
-    // state of the displayed primary line:
-    //   Live      = the most recent attempt got a valid fix
-    //   Sleeping  = chip is off between pulsed polls
-    //   Acquiring = chip is on and hunting (no current valid fix)
-    let pillClass, pillText;
-    if (g.valid)                  { pillClass = 'pill ok';   pillText = 'Live'; }
-    else if (g.powered === false) { pillClass = 'pill';      pillText = 'Sleeping'; }
-    else                          { pillClass = 'pill warn'; pillText = 'Acquiring'; }
-    gLine.appendChild(el('span', { class: pillClass }, pillText));
-    // Primary line: cached lat/lon as soon as we've *ever* had a
-    // valid fix. The RMC parser only updates unix_epoch on valid='A'
-    // sentences, so a non-zero unix_ms means "at least one good fix
-    // has landed in this boot's history" — useful as the proxy here
-    // since cached lat/lon stays put across subsequent V sentences.
-    // When we've never had a fix, the primary reads "No fix" so the
-    // section never goes blank.
-    const haveEverFix = (typeof g.unix_ms === 'number' && g.unix_ms > 0);
-    if (haveEverFix) {
-      $('sys-gps-pos').textContent =
-        g.latitude.toFixed(5) + ', ' + g.longitude.toFixed(5);
-      // Subline 1: when that fix happened (GPS-emitted UTC, formatted
-      // to the user's locale). Distinct from the wall-clock "Last
-      // read" subline below — this is the timestamp the satellites
-      // signed off on, the other is when our UART last saw bytes.
-      $('sys-gps-speed').hidden = false;
-      $('sys-gps-speed').textContent =
-        'GPS fix ' + new Date(g.unix_ms).toLocaleString();
-    } else {
-      $('sys-gps-pos').textContent = 'No fix';
-      $('sys-gps-speed').hidden = true;
-    }
-    // Subline 2: "Last read Xs ago (MODEL)" — independent of fix
-    // state. Reads the last
-    // NMEA byte (raw device millis). When the chip has never spoken
-    // yet (cold boot, before first power-on) ageLine returns
-    // empty, so the section just shows the primary line.
-    const gWarming = typeof g.last_byte_ms !== 'number' || g.last_byte_ms < 0;
-    $('sys-gps-age').textContent = ageLine(g.last_byte_ms, g.model || 'GPS', gWarming);
-  }
+// Reactive data backing the system popover. Each getter reads from
+// $store.s.system (the WS-pushed system snapshot) plus state.clockAnchor.
+function systemPopoverData() {
+  return {
+    get _sys()  { return this.$store.s.system || {}; },
+    get _fl()   { return (this._sys.storage && this._sys.storage.flash) || {}; },
+    get _sd()   { return (this._sys.storage && this._sys.storage.sd)    || {}; },
+    get _g()    { return (this._sys.sensors && this._sys.sensors.gps)          || {}; },
+    get _env()  { return (this._sys.sensors && this._sys.sensors.environment)  || {}; },
+    get _mg()   { return (this._sys.sensors && this._sys.sensors.magnetometer) || {}; },
+    get _im()   { return (this._sys.sensors && this._sys.sensors.imu)          || {}; },
+    get _a()    { return this.$store.s.clockAnchor || {}; },
 
-  // Generic three-state pill renderer for simple sensor sections.
-  // Caller has already confirmed available=true and unhidden the
-  // section. Returns 'disabled' / 'warming' / 'live'.
-  function renderSensorState(line, enabled, valid) {
-    line.innerHTML = '';
-    if (!enabled) {
-      line.appendChild(el('span', { class: 'pill warn' }, 'Disabled'));
-      return 'disabled';
-    }
-    if (!valid) {
-      line.appendChild(el('span', { class: 'pill warn' }, 'Warming up'));
-      return 'warming';
-    }
-    line.appendChild(el('span', { class: 'pill ok' }, 'Live'));
-    return 'live';
-  }
+    // -------- storage --------
+    get storagePillClass() {
+      const fl = this._fl;
+      if (!fl.total_bytes) return 'pill';
+      const pct = Math.round(100 * (fl.free_bytes || 0) / fl.total_bytes);
+      if (pct < 10) return 'pill bad';
+      if (pct < 25) return 'pill warn';
+      return 'pill ok';
+    },
+    get storagePillLabel() {
+      const fl = this._fl;
+      if (!fl.total_bytes) return '—';
+      const pct = Math.round(100 * (fl.free_bytes || 0) / fl.total_bytes);
+      return pct + '% free';
+    },
+    get storageFlashHTML() {
+      const fl = this._fl;
+      return fl.total_bytes
+        ? formatBytesVU(fl.used_bytes || 0) + ' / ' + formatBytesVU(fl.total_bytes) + ' flash'
+        : '';
+    },
+    get storageSdHTML() {
+      const sd = this._sd;
+      return (sd.present && sd.total_bytes)
+        ? formatBytesVU(sd.used_bytes || 0) + ' / ' + formatBytesVU(sd.total_bytes) + ' SD'
+        : 'SD card not present';
+    },
+    get storageShowMigrate() {
+      return !!(this._sd.present && (this._fl.used_bytes || 0) > 0);
+    },
 
-  // Atmospheric — generic key (driver-independent). Bench device has
-  // a BME280 wired; the SPA doesn't care which chip is installed.
-  const env = (s.sensors && s.sensors.environment) || {};
-  $('sys-section-env').hidden = !env.available;
-  if (env.available) {
-    const envState = renderSensorState($('sys-env-line'), env.enabled, env.valid);
-    if (envState === 'live') {
-      $('sys-env-values').innerHTML =
-        vu(env.temp_c.toFixed(1), '°C') + ' · ' +
-        vu(env.humidity_pct.toFixed(0), '%RH') + ' · ' +
-        vu((env.pressure_pa / 100).toFixed(1), 'hPa');
-    } else {
-      $('sys-env-values').textContent = '';
-    }
-    $('sys-env-age').textContent = ageLine(env.taken_ms, env.model || 'environment', envState === 'warming');
-  }
+    // -------- clock --------
+    get clockPillClass() { return this._a.calibrated ? 'pill ok' : 'pill warn'; },
+    get clockPillLabel() { return this._a.calibrated ? 'Calibrated' : 'Uncalibrated'; },
+    get clockNowText() {
+      return this._a.deviceUnixMs ? new Date(this._a.deviceUnixMs).toLocaleString() : '—';
+    },
+    get clockSourceText() {
+      const a = this._a;
+      const src    = (a.source || 'unknown').toUpperCase();
+      const lastMs = Number(a.lastCalibratedMs || 0);
+      const now    = deviceMillisNow();
+      if (lastMs > 0 && now !== null) {
+        const age_s = Math.max(0, Math.round((now - lastMs) / 1000));
+        return 'Last calibrated ' + compactAgo(age_s) + ' (' + src + ')';
+      }
+      return 'Source: ' + src;
+    },
 
-  // Compass — QMC6310 magnetometer.
-  const mg = (s.sensors && s.sensors.magnetometer) || {};
-  $('sys-section-mag').hidden = !mg.available;
-  if (mg.available) {
-    const mState = renderSensorState($('sys-mag-line'), mg.enabled, mg.valid);
-    if (mState === 'live') {
-      $('sys-mag-values').innerHTML =
-        'Heading ' + vu(mg.heading_deg.toFixed(0), '°') + ' · ' +
-        vu(mg.x_uT.toFixed(1) + ' / ' + mg.y_uT.toFixed(1) + ' / ' + mg.z_uT.toFixed(1), 'µT');
-    } else {
-      $('sys-mag-values').textContent = '';
-    }
-    $('sys-mag-age').textContent = ageLine(mg.taken_ms, mg.model || 'magnetometer', mState === 'warming');
-  }
+    // -------- GPS --------
+    get gpsAvailable() { return !!this._g.available; },
+    get gpsPillClass() {
+      const g = this._g;
+      if (g.valid)                  return 'pill ok';
+      if (g.powered === false)      return 'pill';
+      return 'pill warn';
+    },
+    get gpsPillLabel() {
+      const g = this._g;
+      if (g.valid)                  return 'Live';
+      if (g.powered === false)      return 'Sleeping';
+      return 'Acquiring';
+    },
+    get gpsHaveFix() {
+      const g = this._g;
+      return typeof g.unix_ms === 'number' && g.unix_ms > 0;
+    },
+    get gpsPosText() {
+      const g = this._g;
+      return this.gpsHaveFix
+        ? g.latitude.toFixed(5) + ', ' + g.longitude.toFixed(5)
+        : 'No fix';
+    },
+    get gpsFixTimeText() {
+      return this.gpsHaveFix ? ('GPS fix ' + new Date(this._g.unix_ms).toLocaleString()) : '';
+    },
+    get gpsAgeText() {
+      const g = this._g;
+      return ageLine(g.last_byte_ms, g.model || 'GPS');
+    },
 
-  // Motion — QMI8658 IMU.
-  const im = (s.sensors && s.sensors.imu) || {};
-  $('sys-section-imu').hidden = !im.available;
-  if (im.available) {
-    const iState = renderSensorState($('sys-imu-line'), im.enabled, im.valid);
-    if (iState === 'live') {
-      $('sys-imu-accel').innerHTML = 'Accel ' +
-        vu(im.accel_x_g.toFixed(2) + ' / ' + im.accel_y_g.toFixed(2) + ' / ' + im.accel_z_g.toFixed(2), 'g');
-      $('sys-imu-gyro').innerHTML = 'Gyro  ' +
-        vu(im.gyro_x_dps.toFixed(1) + ' / ' + im.gyro_y_dps.toFixed(1) + ' / ' + im.gyro_z_dps.toFixed(1), '°/s') + ' · ' +
-        vu(im.temp_c.toFixed(1), '°C');
-    } else {
-      $('sys-imu-accel').textContent = '';
-      $('sys-imu-gyro').textContent = '';
-    }
-    $('sys-imu-age').textContent = ageLine(im.taken_ms, im.model || 'imu', iState === 'warming');
-  }
+    // -------- environment / mag / imu --------
+    get envAvailable() { return !!this._env.available; },
+    get envState() { return sensorStateForPill(this._env.enabled, this._env.valid); },
+    get envValuesHTML() {
+      if (this.envState.state !== 'live') return '';
+      const env = this._env;
+      return vu(env.temp_c.toFixed(1), '°C') + ' · ' +
+             vu(env.humidity_pct.toFixed(0), '%RH') + ' · ' +
+             vu((env.pressure_pa / 100).toFixed(1), 'hPa');
+    },
+    get envAgeText() {
+      const env = this._env;
+      return ageLine(env.taken_ms, env.model || 'environment');
+    },
 
-  // Build / refresh the per-sensor enable+interval config rows
-  // beneath each section header (#131). Sections that are hidden
-  // (sensor not present) are skipped.
-  updateSensorConfigUI(s);
+    get magAvailable() { return !!this._mg.available; },
+    get magState() { return sensorStateForPill(this._mg.enabled, this._mg.valid); },
+    get magValuesHTML() {
+      if (this.magState.state !== 'live') return '';
+      const mg = this._mg;
+      return 'Heading ' + vu(mg.heading_deg.toFixed(0), '°') + ' · ' +
+             vu(mg.x_uT.toFixed(1) + ' / ' + mg.y_uT.toFixed(1) + ' / ' + mg.z_uT.toFixed(1), 'µT');
+    },
+    get magAgeText() {
+      const mg = this._mg;
+      return ageLine(mg.taken_ms, mg.model || 'magnetometer');
+    },
+
+    get imuAvailable() { return !!this._im.available; },
+    get imuState() { return sensorStateForPill(this._im.enabled, this._im.valid); },
+    get imuAccelHTML() {
+      if (this.imuState.state !== 'live') return '';
+      const im = this._im;
+      return 'Accel ' + vu(im.accel_x_g.toFixed(2) + ' / ' + im.accel_y_g.toFixed(2) + ' / ' + im.accel_z_g.toFixed(2), 'g');
+    },
+    get imuGyroHTML() {
+      if (this.imuState.state !== 'live') return '';
+      const im = this._im;
+      return 'Gyro  ' + vu(im.gyro_x_dps.toFixed(1) + ' / ' + im.gyro_y_dps.toFixed(1) + ' / ' + im.gyro_z_dps.toFixed(1), '°/s') + ' · ' +
+             vu(im.temp_c.toFixed(1), '°C');
+    },
+    get imuAgeText() {
+      const im = this._im;
+      return ageLine(im.taken_ms, im.model || 'imu');
+    },
+  };
+}
+
+// The legacy storage-migrate click handler had no name; expose one so
+// the new @click in markup can reach it.
+function onClickStorageMigrate(btn) {
+  return withBusy(btn, async () => {
+    const ok = await showConfirm({
+      title: 'Move attachments to SD card?',
+      body: 'Frees device flash storage. The files become unreachable if the SD card is later removed.',
+      okLabel: 'Move',
+    });
+    if (!ok) return;
+    try {
+      const r = await state.transport._req('/api/system/migrate_flash_to_sd', { method: 'POST', body: {} });
+      toast('Moved ' + r.moved + ' / ' + (r.moved + r.skipped + r.failed) + ' attachments to SD', 'ok', 6000);
+    } catch (e) { toast('Migration failed: ' + (e.message || e), 'error'); }
+  }, { label: 'Moving…' });
+}
+
+// Build / refresh the per-sensor enable+interval config rows whenever
+// the system snapshot changes — declarative bindings handle the sensor
+// values but the config inputs are still imperatively constructed
+// inside updateSensorConfigUI. The Alpine x-effect wiring on the
+// system popover dispatches this for us.
+function refreshSensorConfigUI() {
+  if (state.system) updateSensorConfigUI(state.system);
 }
 
 function tickSystemClock() {
@@ -5205,8 +5209,7 @@ async function openSystemPopover() {
     toast('System snapshot still loading…', 'info');
     return;
   }
-  renderSystemPopover(state.system);
-  // Close the other popover (same anchor position).
+  // Popover content is reactive — no imperative render call.
   state.popovers.status = false;
   state.popovers.system = true;
   startSystemTicker();
@@ -5313,29 +5316,9 @@ function onClickPowerBtn() {
   }
   openPowerPopover();
 }
-$('sys-storage-migrate').addEventListener('click', async () => {
-  const ok = await showConfirm({
-    title: 'Move attachments to SD card?',
-    body: 'Frees device flash storage. The files become unreachable if the SD card is later removed.',
-    okLabel: 'Move',
-  });
-  if (!ok) return;
-  $('sys-storage-migrate-result').textContent = '';
-  await withBusy($('sys-storage-migrate'), async () => {
-    try {
-      const r = await state.transport._req('/api/storage/migrate_flash_to_sd', { method: 'POST' });
-      const parts = [];
-      if (r.moved)   parts.push(r.moved + ' moved (' + formatBytes(r.bytes || 0) + ')');
-      if (r.skipped) parts.push(r.skipped + ' already on SD');
-      if (r.failed)  parts.push(r.failed + ' failed');
-      const summary = parts.length ? parts.join(' · ') : 'No flash attachments to migrate';
-      toast(summary, r.failed ? 'warn' : 'info');
-      if (state.system) renderSystemPopover(state.system);
-    } catch (e) {
-      toast('Migration failed: ' + (e.message || e), 'warn');
-    }
-  }, { label: 'Moving…' });
-});
+// onClickStorageMigrate handler is declared above; @click in markup
+// points at it. Popover content auto-rerenders from the reactive
+// $store.s.system snapshot.
 
 // ============================== SYSTEM POPOVER — sensor config ==============================
 // Each sensor section (Environment / Compass / Motion) has a click-
@@ -5400,7 +5383,7 @@ function buildSensorConfigRow(section, key, sensor) {
       if (state.system && state.system.sensors && state.system.sensors[key]) {
         state.system.sensors[key].enabled     = cb.checked;
         state.system.sensors[key].interval_ms = parseInt(sel.value, 10) * 1000;
-        renderSystemPopover(state.system);
+        // Alpine binding observes the mutation; no explicit re-render.
       }
     } catch (e) {
       toast('Sensor config save failed: ' + (e.message || e), 'error');
@@ -5606,12 +5589,8 @@ function dispatchEvent(ev) {
     // interval just changed by the user) appeared correct, and a
     // later snapshot couldn't correct it because the render path
     // was unreachable.
-    if (typeof renderSystemPopover === 'function'
-        && document.getElementById('popover-system')
-        && !document.getElementById('popover-system').hidden) {
-      renderSystemPopover(state.system);
-    }
-    if (typeof renderTopbarBattery === 'function') renderTopbarBattery();
+    // System popover + topbar battery are reactive on state.system —
+    // no explicit re-render needed.
     return;
   }
   if (ev.type === 'radio_telemetry') {

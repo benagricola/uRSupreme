@@ -2066,12 +2066,26 @@ summary:hover { color: var(--text); }
 'use strict';
 
 // ============================== ALPINE STORES ==============================
-// Stand up Alpine reactive stores before Alpine boots. The defer'd
-// /alpine.min.js script will pick these up via the alpine:init event.
-// Tiny PoC: just network status, behind $store.net. The legacy code
-// keeps setting state.connected (already its own boolean); the store
-// mirrors it via a setter shim below.
+// Bridge the legacy `state` object to Alpine.
+//
+// alpine:init fires once, before any x-data block evaluates. We:
+//   1. Replace `state` with an Alpine.reactive() proxy over the same
+//      initial values. Because `state` is declared with `let`, every
+//      closure that reads `state.foo` automatically sees the new
+//      reactive binding (let captures the binding, not the value).
+//   2. Register the same reactive object under Alpine.store('s') so
+//      templates can use `$store.s.foo` directly. The store and
+//      `state` are the same proxy; mutating either path triggers
+//      reactivity.
+//   3. Register a separate `net` store for connection state — kept
+//      out of the main state object because the WS code mutates it
+//      from below the Alpine boundary (timer callbacks etc.) and
+//      having it isolated makes the network-down condition trivial
+//      to test in templates.
 document.addEventListener('alpine:init', () => {
+  state = Alpine.reactive(state);
+  window.state = state;            // expose for console debugging
+  Alpine.store('s',   state);
   Alpine.store('net', { connected: true });
 });
 
@@ -2097,18 +2111,24 @@ function savePrefs(p) {
   state.prefs = Object.assign({}, state.prefs, p);
   localStorage.setItem(LS.PREFS, JSON.stringify(state.prefs));
 }
-const state = {
+// `let`, not `const`, so the alpine:init bridge below can promote it
+// to an Alpine.reactive() wrapper. Closures see the latest binding
+// (let semantics), so all existing `state.foo` reads / writes start
+// flowing through the reactive proxy automatically once Alpine boots.
+let state = {
   info: null,
   transport: null,
   token: localStorage.getItem(LS.TOKEN) || null,
   identityId: localStorage.getItem(LS.IDENTITY) || null,
   identities: [],
   self: null,                       // current identity object {id, display_name, address, ...}
-  conversations: new Map(),         // peer_hex → {peer, display_name, last_ts, last_body, last_in, msgs:[]}
+  // Plain objects (not Maps) so Alpine 3's reactive proxy can observe
+  // mutations — Alpine doesn't track Map/Set internals.
+  conversations: {},                // peer_hex → {peer, display_name, last_ts, last_body, last_in, msgs:[]}
   openPeer: null,
-  announces: new Map(),             // dest_hex → record
-  paths: new Map(),
-  transfers: new Map(),   // link_hash → { peer, incoming, bytes_done, bytes_total }
+  announces: {},                    // dest_hex → record
+  paths: {},                        // dest_hex → record
+  transfers: {},                    // link_hash → { peer, incoming, bytes_done, bytes_total }
   // System snapshot (storage / sensors / battery / outbound_caps / rtc).
   // Populated from the WS `hello` frame and refreshed by `system_update`
   // events every ~30s. Read-only state for popovers + the topbar icons.
@@ -2322,8 +2342,8 @@ function renderTopbarProgress() {
   if (!strip) return;
   const bar = strip.querySelector('.bar');
   let total = 0, done = 0, any = false, anyUnknown = false;
-  if (state.transfers && state.transfers.size > 0) {
-    for (const t of state.transfers.values()) {
+  if (state.transfers && Object.keys(state.transfers).length > 0) {
+    for (const t of Object.values(state.transfers)) {
       // Inbound transfers already surface as a synthetic "Incoming
       // attachment" row in the conversation list with its own inline
       // progress bar — double-billing them on the topbar strip is
@@ -2900,7 +2920,7 @@ function _renderConversationsBody(wrap) {
   // Order conversations by (boot_epoch, received_ms) — see msgCmp.
   // Newest activity first; peer-clock ts is purely a fallback for
   // legacy records that pre-date the schema change.
-  const convs = [...state.conversations.values()]
+  const convs = Object.values(state.conversations)
     .sort((a, b) => {
       const ba = a.last_boot_epoch || 0, bb = b.last_boot_epoch || 0;
       if (ba !== bb) return bb - ba;
@@ -2909,7 +2929,7 @@ function _renderConversationsBody(wrap) {
       return (b.last_ts || 0) - (a.last_ts || 0);
     });
   const chattedSet = new Set(convs.map(c => c.peer));
-  const discovered = [...state.announces.values()]
+  const discovered = Object.values(state.announces)
     .filter(a => !chattedSet.has(a.dest))
     .sort((a, b) => (b.received_ms || 0) - (a.received_ms || 0));
 
@@ -2926,7 +2946,7 @@ function _renderConversationsBody(wrap) {
     // Online (green dot + bold "now") if heard within the last 60s,
     // otherwise the age string. Peers we've never heard a real
     // (lxmf.delivery) announce for show no indicator at all.
-    const announce = state.announces.get(peer);
+    const announce = state.announces[peer];
     const seenStr = announceSeenString(announce);
     const isOnline = announce && (Date.now() - announce.seenAt) < 60_000;
     const idc = identiconEl(peer, 44);
@@ -2996,9 +3016,9 @@ function _renderConversationsBody(wrap) {
   // Pick the active (non-finished) transfer involving this peer, if any.
   // Outgoing transfers take priority — they're the visible-action ones.
   function activeTransferFor(peer) {
-    if (!state.transfers || state.transfers.size === 0) return null;
+    if (!state.transfers || Object.keys(state.transfers).length === 0) return null;
     let outgoing = null, incoming = null;
-    for (const t of state.transfers.values()) {
+    for (const t of Object.values(state.transfers)) {
       if (t.peer !== peer) continue;
       if (t.incoming) incoming = t; else outgoing = t;
     }
@@ -3019,8 +3039,8 @@ function _renderConversationsBody(wrap) {
   // Once message_complete clears the entry and the LXMF `incoming`
   // event lands the new message under the right conversation, the
   // synthetic row disappears.
-  const pendingInbound = (state.transfers && state.transfers.size > 0)
-    ? [...state.transfers.values()].filter(t => t.incoming && !t.peer)
+  const pendingInbound = (state.transfers && Object.keys(state.transfers).length > 0)
+    ? Object.values(state.transfers).filter(t => t.incoming && !t.peer)
     : [];
   if (pendingInbound.length > 0) {
     wrap.appendChild(el('div', { class: 'list-section' }, 'Incoming'));
@@ -3143,7 +3163,7 @@ function renderThread() {
   // *outside* msgsEl so it's not affected, but defence in depth).
   withPreservedState(msgsEl, () => {
     msgsEl.innerHTML = '';
-    const c = state.conversations.get(peer);
+    const c = state.conversations[peer];
     if (!c || c.msgs.length === 0) {
       msgsEl.appendChild(el('div', { class: 'empty-state' }, 'No messages yet. Say hi.'));
       return;
@@ -3257,8 +3277,8 @@ function renderThread() {
     // at SF7/BW250k; without this, the UI sits silent and the user has
     // no idea anything is happening.
     let activeXfer = null;
-    if (state.transfers && state.transfers.size > 0) {
-      for (const t of state.transfers.values()) {
+    if (state.transfers && Object.keys(state.transfers).length > 0) {
+      for (const t of Object.values(state.transfers)) {
         if (t.peer === peer) { activeXfer = t; break; }
       }
     }
@@ -3693,10 +3713,10 @@ function msgCmp(a, b) {
 function upsertMessage(m) {
   const peer = m.peer || m.peer_hex;
   if (!peer) return;
-  let c = state.conversations.get(peer);
+  let c = state.conversations[peer];
   if (!c) {
     c = { peer, msgs: [], last_ts: 0, last_boot_epoch: 0, last_received_ms: 0, last_body: '', last_in: false };
-    state.conversations.set(peer, c);
+    state.conversations[peer] = c;
   }
   // Dedup by seq + direction (inbox and outbox have independent seq
   // counters). When we already have this message — e.g. an optimistic
@@ -3740,7 +3760,7 @@ function renderAnnounces() {
   const wrap = $('announces-card');
   withPreservedState(wrap, () => {
     wrap.innerHTML = '';
-    const arr = [...state.announces.values()].sort((a,b) => b.received_ms - a.received_ms);
+    const arr = Object.values(state.announces).sort((a,b) => b.received_ms - a.received_ms);
     if (arr.length === 0) { wrap.appendChild(el('div', { class: 'muted', text: 'No announces seen yet.' })); return; }
     for (const a of arr) {
       wrap.appendChild(el('div', { class: 'list-row' },
@@ -3759,7 +3779,7 @@ function renderPaths() {
   const wrap = $('paths-card');
   withPreservedState(wrap, () => {
     wrap.innerHTML = '';
-    const arr = [...state.paths.values()].sort((a,b) => b.received_ms - a.received_ms);
+    const arr = Object.values(state.paths).sort((a,b) => b.received_ms - a.received_ms);
     if (arr.length === 0) { wrap.appendChild(el('div', { class: 'muted', text: 'No paths known yet.' })); return; }
     for (const a of arr) {
       wrap.appendChild(el('div', { class: 'list-row' },
@@ -3808,8 +3828,8 @@ async function selectConversation(peer) {
   }
   renderThread();
   // Make sure a record exists even if empty.
-  if (!state.conversations.has(peer)) {
-    state.conversations.set(peer, { peer, msgs: [], last_ts: 0 });
+  if (!state.conversations[peer]) {
+    state.conversations[peer] = { peer, msgs: [], last_ts: 0 };
   }
 }
 
@@ -5637,12 +5657,12 @@ function dispatchEvent(ev) {
     // Convert the device's monotonic age_ms to a wall-clock anchor so
     // we can refresh "X ago" labels purely client-side.
     ev.seenAt = Date.now() - (ev.age_ms || 0);
-    state.announces.set(ev.dest, ev);
+    state.announces[ev.dest] = ev;
     renderAnnounces();
     renderConversations();  // also surfaces in the Discovered group
   } else if (ev.type === 'path_seen') {
     ev.seenAt = Date.now() - (ev.age_ms || 0);
-    state.paths.set(ev.dest, ev);
+    state.paths[ev.dest] = ev;
     renderPaths();
   } else if (ev.type === 'identity_code_available') {
     state.pendingIdCode = true;
@@ -5658,7 +5678,7 @@ function dispatchEvent(ev) {
     // Find any cached outbound message whose link_hash matches and
     // flip its status field, then re-render the open thread.
     let touched = false;
-    for (const conv of state.conversations.values()) {
+    for (const conv of Object.values(state.conversations)) {
       for (const m of conv.msgs) {
         if (!m.in && m.packet_hash === link) {
           m.status = ev.status;
@@ -5691,10 +5711,10 @@ function dispatchEvent(ev) {
     // doesn't have the peer hash at outbox-status callback time, only the
     // link hash. So look up the peer we already cached from the earlier
     // progress events keyed by link_hash, BEFORE deleting the entry.
-    const existing = state.transfers.get(key);
+    const existing = state.transfers[key];
     const peer = ev.peer || (existing && existing.peer) || null;
     if (ev.finished) {
-      state.transfers.delete(key);
+      delete state.transfers[key];
     } else {
       // Inbound Resource progress arrives with peer="" — the Reticulum
       // responder side doesn't know who initiated the link until the
@@ -5705,12 +5725,12 @@ function dispatchEvent(ev) {
       // happening; the real conversation row picks it up once the
       // `incoming` event arrives with the source_hash and this entry
       // is cleared by message_complete.
-      state.transfers.set(key, {
+      state.transfers[key] = {
         peer,                       // may be null for inbound pre-decrypt
         incoming: !!ev.incoming,
         bytes_done: ev.bytes_done || 0,
         bytes_total: ev.bytes_total || 0,
-      });
+      };
     }
     renderConversations();
     if (peer && state.openPeer === peer) renderThread();
@@ -5722,22 +5742,25 @@ async function refreshState() {
   try {
     const r = await state.transport.getState(state.identityId);
     state.self = r.identity;
-    state.announces.clear();
+    // Clear by deleting own keys (NOT reassigning to {}) so Alpine's
+    // reactive proxy on `state` keeps observing the same object — a
+    // reassignment would orphan the proxy and silently break templates.
+    for (const k of Object.keys(state.announces)) delete state.announces[k];
     for (const a of (r.announces || [])) {
       a.seenAt = Date.now() - (a.age_ms || 0);
-      state.announces.set(a.dest, a);
+      state.announces[a.dest] = a;
     }
-    state.paths.clear();
+    for (const k of Object.keys(state.paths)) delete state.paths[k];
     for (const p of (r.paths || [])) {
       p.seenAt = Date.now() - (p.age_ms || 0);
-      state.paths.set(p.dest, p);
+      state.paths[p.dest] = p;
     }
     // The clock anchor is set from the WS `hello` frame (see
     // dispatchEvent). /state no longer carries `clock` — the WS path
     // is canonical now. If a refresh fires before the WS opens, the
     // anchor stays null and relative-time labels fall back to
     // "earlier" until the first hello arrives.
-    state.conversations.clear();
+    for (const k of Object.keys(state.conversations)) delete state.conversations[k];
     for (const c of (r.conversations || [])) {
       const conv = {
         peer: c.peer,
@@ -5749,7 +5772,7 @@ async function refreshState() {
         last_in:           c.last_in,
       };
       for (const m of (c.messages || [])) conv.msgs.push(m);
-      state.conversations.set(c.peer, conv);
+      state.conversations[c.peer] = conv;
     }
     renderSelf();
     renderConversations();
@@ -6005,8 +6028,8 @@ function renderNewConvPicker() {
   // "new" one with someone we have chat history with — they're already
   // in the main left pane).
   const knownSet = new Set(contacts.map(([addr]) => addr));
-  for (const peer of state.conversations.keys()) knownSet.add(peer);
-  const discovered = [...state.announces.values()]
+  for (const peer of Object.keys(state.conversations)) knownSet.add(peer);
+  const discovered = Object.values(state.announces)
     .filter(a => !knownSet.has(a.dest))
     .sort((a, b) => (b.received_ms || 0) - (a.received_ms || 0));
 
@@ -6048,7 +6071,7 @@ $('btn-nc-go').addEventListener('click', () => {
   if (!/^[0-9a-f]{32}$/.test(addr)) { toast('Address must be 32 hex characters', 'warn'); return; }
   const name = $('nc-name').value.trim();
   if (name) { state.contacts[addr] = name; persistContacts(); renderContacts(); }
-  if (!state.conversations.has(addr)) state.conversations.set(addr, { peer: addr, msgs: [], last_ts: 0 });
+  if (!state.conversations[addr]) state.conversations[addr] = { peer: addr, msgs: [], last_ts: 0 };
   renderConversations();
   selectConversation(addr);
   $('modal-new-conv').hidden = true;
@@ -6216,7 +6239,7 @@ async function clearConversationFlow(peer) {
   if (!ok) return;
   try {
     await state.transport.clearConversation(state.identityId, peer);
-    state.conversations.delete(peer);
+    delete state.conversations[peer];
     if (state.openPeer === peer) state.openPeer = null;
     renderConversations();
     renderThread();

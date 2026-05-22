@@ -1942,40 +1942,49 @@ summary:hover { color: var(--text); }
        - forever: keep all messages from this peer forever
        - time:    expire records older than N units of time
        - count:   keep only the newest N messages from this peer -->
-<div id="modal-conv-retention" class="modal-bg" x-data x-show="$store.s.modals.convRetention" x-cloak style="z-index:260">
+<div id="modal-conv-retention" class="modal-bg" x-data x-show="$store.s.modals.convRetention"
+     @click.self="retentionCancel()" x-cloak style="z-index:260">
   <div class="modal" style="max-width:460px">
     <h3>Retention for this chat</h3>
     <p class="muted" style="margin-bottom:14px">
       Older messages are pruned according to the chosen retention.
-      <span id="cr-default-line"></span>
+      <span id="cr-default-line" x-text="'Identity default: ' + $store.s.retention.defaultLabel + '.'"></span>
     </p>
     <label class="cr-option">
-      <input type="radio" name="cr-mode" value="default" id="cr-mode-default">
-      <span id="cr-mode-default-label">Use identity default</span>
+      <input type="radio" name="cr-mode" value="default" id="cr-mode-default"
+             x-model="$store.s.retention.mode" value="default">
+      <span id="cr-mode-default-label"
+            x-text="'Use identity default (' + $store.s.retention.defaultLabel + ')'"></span>
     </label>
     <label class="cr-option">
-      <input type="radio" name="cr-mode" value="forever" id="cr-mode-forever">
+      <input type="radio" name="cr-mode" value="forever" id="cr-mode-forever"
+             x-model="$store.s.retention.mode" value="forever">
       <span>Keep forever</span>
     </label>
     <label class="cr-option cr-option-custom">
-      <input type="radio" name="cr-mode" value="time" id="cr-mode-time">
+      <input type="radio" name="cr-mode" value="time" id="cr-mode-time"
+             x-model="$store.s.retention.mode" value="time">
       <span>Expire after</span>
-      <input type="number" id="cr-time-n" min="1" step="1" value="7" class="cr-num">
-      <select id="cr-time-unit" class="cr-unit">
+      <input type="number" id="cr-time-n" min="1" step="1" class="cr-num"
+             x-model.number="$store.s.retention.timeN">
+      <select id="cr-time-unit" class="cr-unit"
+              x-model="$store.s.retention.timeUnit">
         <option value="60">minutes</option>
         <option value="3600">hours</option>
-        <option value="86400" selected>days</option>
+        <option value="86400">days</option>
       </select>
     </label>
     <label class="cr-option cr-option-custom">
-      <input type="radio" name="cr-mode" value="count" id="cr-mode-count">
+      <input type="radio" name="cr-mode" value="count" id="cr-mode-count"
+             x-model="$store.s.retention.mode" value="count">
       <span>Keep last</span>
-      <input type="number" id="cr-count-n" min="1" max="200" step="1" value="200" class="cr-num">
+      <input type="number" id="cr-count-n" min="1" max="200" step="1" class="cr-num"
+             x-model.number="$store.s.retention.countN">
       <span class="cr-unit">messages</span>
     </label>
     <div class="row" style="margin-top:14px">
-      <button class="secondary" id="cr-cancel">Cancel</button>
-      <button id="cr-save">Save</button>
+      <button class="secondary" id="cr-cancel" @click="retentionCancel()">Cancel</button>
+      <button id="cr-save" @click="retentionSave($event.currentTarget)">Save</button>
     </div>
   </div>
 </div>
@@ -2537,6 +2546,17 @@ let state = {
   // the legacy bgTasks Map but as a plain object so Alpine reactivity
   // tracks add / remove / update on the topbar progress strip.
   bgTasks: {},
+  // Live retention-modal config. Populated by openRetentionModal().
+  // Inputs x-model into this; retentionSave() reads it.
+  retention: {
+    defaultLabel: 'no expiry',
+    mode: 'default',
+    timeN: 7, timeUnit: '86400',
+    countN: 200,
+    identityId: '',
+    peerHex: '',
+    _resolve: null,
+  },
   // Live confirm-modal config. Populated by showConfirm(opts) and
   // mutated by confirmOk / confirmCancel. Null when no confirm modal
   // is open. The _resolve fn isn't enumerated reactively but Alpine
@@ -6342,81 +6362,75 @@ async function openRetentionModal(identityId, peerHex) {
     toast('Could not load retention: ' + (e.message || e), 'error');
     return;
   }
-  const modal = $('modal-conv-retention');
   const defaultR = cfg.default_retention || { kind: 'none', value: 0 };
-  $('cr-default-line').textContent =
-      'Identity default: ' + retentionLabel(defaultR) + '.';
-  $('cr-mode-default-label').textContent =
-      'Use identity default (' + retentionLabel(defaultR) + ')';
-  // Populate the form from the current per-peer override (null when
-  // none is set — the SPA shows "Use identity default" in that case).
   const r = cfg.retention;
+  // Seed the store from the saved per-peer override (null = default).
+  const ret = state.retention;
+  ret.defaultLabel = retentionLabel(defaultR);
+  ret.identityId   = identityId;
+  ret.peerHex      = peerHex;
+  ret.timeN        = 7;
+  ret.timeUnit     = '86400';
+  ret.countN       = 200;
   if (!r) {
-    $('cr-mode-default').checked = true;
+    ret.mode = 'default';
   } else if (r.kind === 'none' || !r.value) {
-    $('cr-mode-forever').checked = true;
+    ret.mode = 'forever';
   } else if (r.kind === 'time') {
-    $('cr-mode-time').checked = true;
+    ret.mode = 'time';
     const s = Number(r.value);
-    if (s % 86400 === 0)     { $('cr-time-n').value = s / 86400; $('cr-time-unit').value = '86400'; }
-    else if (s % 3600 === 0) { $('cr-time-n').value = s / 3600;  $('cr-time-unit').value = '3600';  }
-    else if (s % 60 === 0)   { $('cr-time-n').value = s / 60;    $('cr-time-unit').value = '60';    }
-    else                      { $('cr-time-n').value = s;         $('cr-time-unit').value = '60';    }
+    if      (s % 86400 === 0) { ret.timeN = s / 86400; ret.timeUnit = '86400'; }
+    else if (s % 3600  === 0) { ret.timeN = s / 3600;  ret.timeUnit = '3600';  }
+    else if (s % 60    === 0) { ret.timeN = s / 60;    ret.timeUnit = '60';    }
+    else                      { ret.timeN = s;          ret.timeUnit = '60';    }
   } else if (r.kind === 'count') {
-    $('cr-mode-count').checked = true;
-    $('cr-count-n').value = String(r.value);
+    ret.mode   = 'count';
+    ret.countN = Number(r.value);
   } else {
-    $('cr-mode-default').checked = true;
+    ret.mode = 'default';
   }
   state.modals.convRetention = true;
+  return new Promise((resolve) => { ret._resolve = resolve; });
+}
 
-  return new Promise((resolve) => {
-    const cleanup = () => {
-      state.modals.convRetention = false;
-      $('cr-save').removeEventListener('click', onSave);
-      $('cr-cancel').removeEventListener('click', onCancel);
-      modal.removeEventListener('click', onBackdrop);
-    };
-    const onCancel = () => { cleanup(); resolve(false); };
-    const onBackdrop = (e) => { if (e.target === modal) onCancel(); };
-    const onSave = async () => {
-      const mode = (document.querySelector('input[name="cr-mode"]:checked') || {}).value;
-      let body;
-      if (mode === 'default')       body = { retention: null };
-      else if (mode === 'forever')  body = { retention: { kind: 'none',  value: 0 } };
-      else if (mode === 'time') {
-        const n = parseInt($('cr-time-n').value, 10);
-        const unit = parseInt($('cr-time-unit').value, 10);
-        if (!Number.isFinite(n) || n <= 0) {
-          toast('Enter a positive number.', 'error');
-          return;
-        }
-        body = { retention: { kind: 'time', value: n * unit } };
-      } else if (mode === 'count') {
-        const n = parseInt($('cr-count-n').value, 10);
-        if (!Number.isFinite(n) || n <= 0) {
-          toast('Enter a positive number.', 'error');
-          return;
-        }
-        body = { retention: { kind: 'count', value: n } };
-      } else {
-        body = { retention: null };
-      }
-      try {
-        await withBusy($('cr-save'), async () => {
-          await state.transport.setConversationConfig(identityId, peerHex, body);
-        }, { label: 'Saving…' });
-        toast('Retention saved.', 'ok');
-        cleanup();
-        resolve(true);
-      } catch (e) {
-        toast('Save failed: ' + (e.message || e), 'error');
-      }
-    };
-    $('cr-save').addEventListener('click', onSave);
-    $('cr-cancel').addEventListener('click', onCancel);
-    modal.addEventListener('click', onBackdrop);
-  });
+function retentionCancel() {
+  const r = state.retention;
+  if (!r._resolve) return;
+  const resolve = r._resolve;
+  r._resolve = null;
+  state.modals.convRetention = false;
+  resolve(false);
+}
+
+async function retentionSave(btn) {
+  const r = state.retention;
+  let body;
+  if (r.mode === 'default') body = { retention: null };
+  else if (r.mode === 'forever') body = { retention: { kind: 'none', value: 0 } };
+  else if (r.mode === 'time') {
+    const n = parseInt(r.timeN, 10);
+    const unit = parseInt(r.timeUnit, 10);
+    if (!Number.isFinite(n) || n <= 0) { toast('Enter a positive number.', 'error'); return; }
+    body = { retention: { kind: 'time', value: n * unit } };
+  } else if (r.mode === 'count') {
+    const n = parseInt(r.countN, 10);
+    if (!Number.isFinite(n) || n <= 0) { toast('Enter a positive number.', 'error'); return; }
+    body = { retention: { kind: 'count', value: n } };
+  } else {
+    body = { retention: null };
+  }
+  try {
+    await withBusy(btn, async () => {
+      await state.transport.setConversationConfig(r.identityId, r.peerHex, body);
+    }, { label: 'Saving…' });
+    toast('Retention saved.', 'ok');
+    const resolve = r._resolve;
+    r._resolve = null;
+    state.modals.convRetention = false;
+    if (resolve) resolve(true);
+  } catch (e) {
+    toast('Save failed: ' + (e.message || e), 'error');
+  }
 }
 
 // btn-conv-retention / btn-clear-conv are now @click-bound in the

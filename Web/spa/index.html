@@ -1745,7 +1745,42 @@ summary:hover { color: var(--text); }
 <div id="modal-new-conv" class="modal-bg" x-data x-show="$store.s.modals.newConv" x-cloak>
   <div class="modal" style="max-width:460px">
     <h3>New conversation</h3>
-    <div id="nc-pick" style="max-height:260px;overflow-y:auto;margin-bottom:12px"></div>
+    <div id="nc-pick" style="max-height:260px;overflow-y:auto;margin-bottom:12px"
+         x-data="newConvPickerData()">
+      <template x-if="contacts.length === 0 && discovered.length === 0">
+        <div class="muted">No saved contacts or discovered peers yet. Enter an address below.</div>
+      </template>
+      <template x-if="contacts.length > 0">
+        <div class="list-section" style="padding:4px 0">Saved contacts</div>
+      </template>
+      <template x-for="c in contacts" :key="'c:' + c.addr">
+        <div class="iden-card" style="margin-bottom:6px"
+             @click="$('nc-addr').value = c.addr; if (c.name) $('nc-name').value = c.name;">
+          <span x-html="identicon(c.addr, 36)"></span>
+          <div style="min-width:0">
+            <div class="name" x-text="c.name || shortHex(c.addr)"></div>
+            <div class="addr" x-text="c.addr"></div>
+          </div>
+          <div>→</div>
+        </div>
+      </template>
+      <template x-if="discovered.length > 0">
+        <div class="list-section" style="padding:4px 0;margin-top:6px">Discovered nearby</div>
+      </template>
+      <template x-for="a in discovered" :key="'d:' + a.dest">
+        <div class="iden-card" style="margin-bottom:6px"
+             @click="$('nc-addr').value = a.dest; if (a.display_name) $('nc-name').value = a.display_name;">
+          <span x-html="identicon(a.dest, 36)"></span>
+          <div style="min-width:0">
+            <div class="name" x-text="a.display_name || shortHex(a.dest)"></div>
+            <div class="addr" x-text="a.dest"></div>
+            <div class="muted" style="font-size:11px"
+                 x-text="'heard ' + heardLabel(a) + ' ago'"></div>
+          </div>
+          <div>→</div>
+        </div>
+      </template>
+    </div>
     <label>Or enter address manually (32 hex)</label>
     <input id="nc-addr" maxlength="32" placeholder="a5104e44225af3db4430f8e749509946" style="margin-bottom:10px;font-family:ui-monospace,monospace">
     <label>Contact name (optional, saved locally)</label>
@@ -6018,52 +6053,32 @@ function openNewConvModal() {
 // Build the contact / discovered-peer picker for the new-conversation
 // modal. Saved contacts come first, discovered peers (lxmf.delivery
 // announces we've heard but haven't chatted to or saved) come second.
-function renderNewConvPicker() {
-  const wrap = $('nc-pick');
-  wrap.innerHTML = '';
-  const contacts = Object.entries(state.contacts || {});
-  // Discovered = peers announced as lxmf.delivery, not already saved as
-  // a contact and not already in a conversation (no point starting a
-  // "new" one with someone we have chat history with — they're already
-  // in the main left pane).
-  const knownSet = new Set(contacts.map(([addr]) => addr));
-  for (const peer of Object.keys(state.conversations)) knownSet.add(peer);
-  const discovered = Object.values(state.announces)
-    .filter(a => !knownSet.has(a.dest))
-    .sort((a, b) => (b.received_ms || 0) - (a.received_ms || 0));
-
-  const pickRow = (addr, name, sub) => el('div', {
-    class: 'iden-card',
-    style: 'margin-bottom:6px',
-    onclick: () => {
-      $('nc-addr').value = addr;
-      if (name) $('nc-name').value = name;
+// Reactive data for #nc-pick (the New Conversation modal's peer picker).
+// Contacts come first; "Discovered" = announces from peers we've not
+// chatted with or saved.
+function newConvPickerData() {
+  return {
+    get contacts() {
+      return Object.entries(this.$store.s.contacts || {})
+        .map(([addr, name]) => ({ addr, name }));
     },
-  },
-    identiconEl(addr, 36),
-    el('div', { style: 'min-width:0' },
-      el('div', { class: 'name', text: name || shortHex(addr) }),
-      el('div', { class: 'addr', text: addr }),
-      sub ? el('div', { class: 'muted', style: 'font-size:11px', text: sub }) : null,
-    ),
-    el('div', null, '→'),
-  );
-
-  if (contacts.length > 0) {
-    wrap.appendChild(el('div', { class: 'list-section', style: 'padding:4px 0' }, 'Saved contacts'));
-    for (const [addr, name] of contacts) wrap.appendChild(pickRow(addr, name, null));
-  }
-  if (discovered.length > 0) {
-    wrap.appendChild(el('div', { class: 'list-section', style: 'padding:4px 0;margin-top:6px' }, 'Discovered nearby'));
-    for (const a of discovered) {
-      const ageS = Math.floor((Date.now() - a.received_ms) / 1000);
-      wrap.appendChild(pickRow(a.dest, a.display_name, 'heard ' + (ageS < 60 ? ageS + 's' : Math.floor(ageS/60) + 'm') + ' ago'));
-    }
-  }
-  if (contacts.length === 0 && discovered.length === 0) {
-    wrap.appendChild(el('div', { class: 'muted', text: 'No saved contacts or discovered peers yet. Enter an address below.' }));
-  }
+    get discovered() {
+      const known = new Set(Object.keys(this.$store.s.contacts || {}));
+      for (const p of Object.keys(this.$store.s.conversations || {})) known.add(p);
+      return Object.values(this.$store.s.announces || {})
+        .filter(a => !known.has(a.dest))
+        .sort((a, b) => (b.received_ms || 0) - (a.received_ms || 0));
+    },
+    heardLabel(a) {
+      const s = Math.floor((Date.now() - (a.received_ms || 0)) / 1000);
+      return s < 60 ? s + 's' : Math.floor(s/60) + 'm';
+    },
+  };
 }
+
+// Backwards-compat stub for callers that called renderNewConvPicker()
+// explicitly. The Alpine template now repaints itself reactively.
+function renderNewConvPicker() { /* no-op */ }
 function onClickNewConvGo() {
   const addr = $('nc-addr').value.trim().toLowerCase();
   if (!/^[0-9a-f]{32}$/.test(addr)) { toast('Address must be 32 hex characters', 'warn'); return; }

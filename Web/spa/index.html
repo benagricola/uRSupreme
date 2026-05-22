@@ -1180,6 +1180,20 @@ summary:hover { color: var(--text); }
      x-data
      x-show="$store.net && !$store.net.connected"
      x-cloak>Reconnecting…</div>
+<!-- Offscreen utility nodes — never user-visible. Created in markup
+     once instead of via document.createElement on every Save-As /
+     image-resize call. -->
+<a id="dl-link" hidden></a>
+<canvas id="resize-canvas" hidden></canvas>
+
+<!-- Singleton info-tooltip popover. Positioned at runtime via
+     $store.s.infoTip.{x,y} and its body comes from .data-info on the
+     icon that triggered it. -->
+<div class="info-tooltip" x-data x-show="$store.s.infoTip"
+     :style="$store.s.infoTip ? ('left:' + $store.s.infoTip.x + 'px;top:' + $store.s.infoTip.y + 'px') : ''"
+     x-html="$store.s.infoTip ? $store.s.infoTip.html : ''"
+     x-cloak></div>
+
 <div id="toast-stack" x-data x-cloak>
   <template x-for="t in $store.toasts.items" :key="t.id">
     <div :class="'toast ' + t.kind + (t.dismissing ? ' dismissing' : '')"
@@ -1199,7 +1213,15 @@ summary:hover { color: var(--text); }
     <h2>First-time setup</h2>
     <p class="muted">This device hasn't been configured for a WiFi network yet. Configure home WiFi so you can reach it from any device on your network — or skip and use it directly from this softAP for standalone / off-grid operation.</p>
     <div class="row" style="margin-bottom:8px">
-      <select id="bs-ssid"><option value="">— pick a network —</option></select>
+      <select id="bs-ssid">
+        <option value=""
+                x-text="$store.s.wifiScanState === 'scanning' ? '— scanning… —'
+                       : $store.s.wifiScanState === 'error' ? '(scan failed)'
+                       : '— pick a network —'"></option>
+        <template x-for="n in $store.s.wifiScanList" :key="n.ssid">
+          <option :value="n.ssid" x-text="n.ssid + (n.secure ? ' 🔒' : '')"></option>
+        </template>
+      </select>
       <button class="secondary" id="bs-rescan">Rescan</button>
     </div>
     <label>Password</label>
@@ -1783,7 +1805,19 @@ summary:hover { color: var(--text); }
     </div>
     <div class="popover-value" id="sys-env-values" x-html="envValuesHTML"></div>
     <div class="popover-subline" id="sys-env-age" x-text="envAgeText"></div>
-    <div class="popover-config" data-role="config" hidden></div>
+    <div class="popover-config" data-role="config" hidden>
+      <label>
+        <input type="checkbox" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.environment ? $store.s.system.sensors.environment.enabled : false"
+               @change="onSensorConfigChange('environment', $event.target)">
+        <span>Enabled</span>
+      </label>
+      <select :value="sensorIntervalCurrent('environment')"
+              @change="onSensorConfigChange('environment', $event.target)">
+        <template x-for="p in SENSOR_INTERVALS" :key="p.value">
+          <option :value="String(p.value)" x-text="p.label"></option>
+        </template>
+      </select>
+    </div>
   </div>
   <div class="popover-section" id="sys-section-mag" data-sensor="magnetometer"
        x-show="magAvailable" x-cloak>
@@ -1796,7 +1830,19 @@ summary:hover { color: var(--text); }
     </div>
     <div class="popover-value" id="sys-mag-values" x-html="magValuesHTML"></div>
     <div class="popover-subline" id="sys-mag-age" x-text="magAgeText"></div>
-    <div class="popover-config" data-role="config" hidden></div>
+    <div class="popover-config" data-role="config" hidden>
+      <label>
+        <input type="checkbox" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.magnetometer ? $store.s.system.sensors.magnetometer.enabled : false"
+               @change="onSensorConfigChange('magnetometer', $event.target)">
+        <span>Enabled</span>
+      </label>
+      <select :value="sensorIntervalCurrent('magnetometer')"
+              @change="onSensorConfigChange('magnetometer', $event.target)">
+        <template x-for="p in SENSOR_INTERVALS" :key="p.value">
+          <option :value="String(p.value)" x-text="p.label"></option>
+        </template>
+      </select>
+    </div>
   </div>
   <div class="popover-section" id="sys-section-imu" data-sensor="imu"
        x-show="imuAvailable" x-cloak>
@@ -1810,7 +1856,19 @@ summary:hover { color: var(--text); }
     <div class="popover-value" id="sys-imu-accel" x-html="imuAccelHTML"></div>
     <div class="popover-subline" id="sys-imu-gyro" x-html="imuGyroHTML"></div>
     <div class="popover-subline" id="sys-imu-age" x-text="imuAgeText"></div>
-    <div class="popover-config" data-role="config" hidden></div>
+    <div class="popover-config" data-role="config" hidden>
+      <label>
+        <input type="checkbox" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.imu ? $store.s.system.sensors.imu.enabled : false"
+               @change="onSensorConfigChange('imu', $event.target)">
+        <span>Enabled</span>
+      </label>
+      <select :value="sensorIntervalCurrent('imu')"
+              @change="onSensorConfigChange('imu', $event.target)">
+        <template x-for="p in SENSOR_INTERVALS" :key="p.value">
+          <option :value="String(p.value)" x-text="p.label"></option>
+        </template>
+      </select>
+    </div>
   </div>
 </div>
 
@@ -1968,7 +2026,13 @@ summary:hover { color: var(--text); }
     <p class="muted" style="margin-bottom:10px">Pick a network for this device to join. Saving reboots the device. The softAP fallback engages automatically if the saved network isn't reachable on next boot.</p>
     <label>Network</label>
     <select id="cn-wifi-ssid" style="margin-bottom:8px">
-      <option value="">— scanning… —</option>
+      <option value=""
+              x-text="$store.s.wifiScanState === 'scanning' ? '— scanning… —'
+                     : $store.s.wifiScanState === 'error' ? '(scan failed)'
+                     : '— pick a network —'"></option>
+      <template x-for="n in $store.s.wifiScanList" :key="n.ssid">
+        <option :value="n.ssid" x-text="n.ssid + (n.secure ? ' 🔒' : '')"></option>
+      </template>
     </select>
     <button class="secondary" id="cn-wifi-scan" style="margin-bottom:12px" @click="scanIntoWifiModal()">Rescan networks</button>
     <label>Password</label>
@@ -2160,7 +2224,11 @@ summary:hover { color: var(--text); }
           </div>
           <div class="muted" style="margin-top:4px">The label peers see in your identity announce. Changes take effect on the next announce — press the megaphone after editing to re-broadcast immediately.</div>
           <label style="margin-top:12px">Auto-announce</label>
-          <select id="id-announce-interval"></select>
+          <select id="id-announce-interval">
+            <template x-for="i in ANNOUNCE_INTERVALS" :key="i.ms">
+              <option :value="String(i.ms)" x-text="i.label"></option>
+            </template>
+          </select>
           <div class="muted" style="margin-top:4px">How often this identity automatically broadcasts an announce so peers can find and route to it. Manual announces via the megaphone icon work regardless of this setting.</div>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);margin:16px 0 0">
             <input type="checkbox" id="id-persist-outbound" style="width:auto;min-height:auto">
@@ -2190,7 +2258,13 @@ summary:hover { color: var(--text); }
           <div class="cn-section-body">
             <label>Region preset</label>
             <p class="muted" id="rd-intro" style="margin:4px 0 6px">Pick the region preset that matches your local LoRa community. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.</p>
-            <select id="rd-preset" style="margin-bottom:6px"></select>
+            <select id="rd-preset" style="margin-bottom:6px">
+              <option value="__empty">— Pick a region —</option>
+              <template x-for="p in RADIO_PRESETS" :key="p.id">
+                <option :value="p.id" x-text="p.label"></option>
+              </template>
+              <option value="__custom">Custom (manual)</option>
+            </select>
             <div class="muted" id="rd-preset-note" style="margin-bottom:14px;min-height:14px"></div>
             <div id="rd-raw">
               <div class="row" style="margin-bottom:8px">
@@ -2389,7 +2463,44 @@ summary:hover { color: var(--text); }
         <div class="card" style="margin-top:12px">
           <strong>Time sources (drag to reorder)</strong>
           <div class="muted" style="font-size:11px;margin:4px 0 8px">Top of the list = highest priority. Disable a source to skip it entirely. Some sources expose an interval — how often their driver polls.</div>
-          <div id="tm-sources"></div>
+          <div id="tm-sources" x-data>
+            <template x-for="row in $store.s.timeSources" :key="row.key">
+              <div class="tm-source-row" :data-source="row.key" draggable="true"
+                   x-init="attachTimeSourceDnD($el)"
+                   style="margin-bottom:6px;border:1px solid var(--bg-elev-2);border-radius:6px;background:var(--bg-elev);user-select:none;overflow:hidden">
+                <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:grab"
+                     @click="row.expanded = !row.expanded">
+                  <div style="opacity:0.5;font-size:14px;line-height:1;width:14px;text-align:center;flex:0 0 auto">⋮⋮</div>
+                  <input type="checkbox" data-role="enable"
+                         style="width:auto;min-height:auto;flex:0 0 auto;margin:0 6px 0 0"
+                         :checked="row.enabled"
+                         @change.stop="row.enabled = $event.target.checked"
+                         @click.stop>
+                  <div style="flex:1;min-width:0;font-size:13px">
+                    <strong x-text="row.label"></strong>
+                  </div>
+                  <span style="opacity:0.55;font-size:11px;flex:0 0 auto;transition:transform .12s"
+                        :style="row.expanded ? 'transform:rotate(180deg)' : ''">▾</span>
+                </div>
+                <div :style="(row.expanded ? 'display:block' : 'display:none') + ';padding:0 10px 10px 38px;font-size:12px'">
+                  <div class="muted" style="margin-bottom:6px" x-text="row.desc"></div>
+                  <template x-if="row.hasInterval">
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <label style="font-size:12px;color:var(--text);flex:0 0 auto">Refresh:</label>
+                      <select data-role="interval" style="flex:1;max-width:160px"
+                              title="How often this source should report a new time."
+                              :value="String(row.interval_s)"
+                              @change="row.interval_s = parseInt($event.target.value, 10)">
+                        <template x-for="p in INTERVAL_PRESETS" :key="p.value">
+                          <option :value="String(p.value)" x-text="p.label"></option>
+                        </template>
+                      </select>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
           <button id="btn-tm-save" style="width:100%;margin-top:10px">Save time-source config</button>
         </div>
       </div>
@@ -2675,6 +2786,11 @@ let state = {
   // Row-menu popover state. null = closed; { items, x, y } when open.
   // items: [{ label, fn, destructive? }, ...]
   rowMenu: null,
+  // Time-source rows in priority order. Each: { key, label, desc,
+  // enabled, interval_s, hasInterval, expanded }.
+  timeSources: [],
+  // Singleton info-tooltip state. null = closed. { html, x, y } open.
+  infoTip: null,
   // Image-resize picker state. Populated by openImageResizePicker; the
   // modal's <template x-for> renders prepared variants and chosen
   // tracks the active selection.
@@ -2682,6 +2798,11 @@ let state = {
     sourceLine: '', cap: 0, thumbBox: 200, prepared: [],
     chosen: null, etaByKey: {}, _resolve: null, _file: null,
   },
+  // Scanned WiFi networks for the bootstrap + add-wifi-modal dropdowns.
+  // null while a scan is in flight; an array (possibly empty) once done.
+  // 'error' if the last scan failed. Both view templates bind to this.
+  wifiScanList: [],
+  wifiScanState: 'idle',   // 'idle' | 'scanning' | 'error'
   // Background-task registry. Keyed by an arbitrary string id. Mirrors
   // the legacy bgTasks Map but as a plain object so Alpine reactivity
   // tracks add / remove / update on the topbar progress strip.
@@ -3075,16 +3196,6 @@ function identicon(addrHex, size = 40) {
   _idcCache.set(key, svg);
   return svg;
 }
-// Only callsite still using a function-built identicon node is the
-// identity-picker (enterIdentityPicker). Build the span directly —
-// no el() helper needed since the only attr is class + innerHTML.
-function identiconEl(addrHex, size = 40) {
-  const span = document.createElement('span');
-  span.className = 'idc';
-  span.innerHTML = identicon(addrHex, size);
-  return span;
-}
-
 // ============================== EMOJI ==============================
 const EMOJI = [
   '😀','😂','😍','🙂','😎','🤔','😢','😡',
@@ -3750,16 +3861,13 @@ async function downloadAttachment(identityId, meta, chipEl /*unused — kept for
       const typed = new Blob([await blob.arrayBuffer()], { type: mime });
       state.attachmentBlobs[meta.filename] = URL.createObjectURL(typed);
     } else {
-      // File / unknown: trigger Save-As via an offscreen <a download>.
-      // No el() — set href / download / click() directly on a fresh
-      // anchor and revoke after.
+      // File / unknown: trigger Save-As via the static offscreen
+      // #dl-link anchor in markup. Set href + download, click, revoke.
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = $('dl-link');
       a.href = url;
       a.download = meta.display_name || meta.filename;
-      document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 30000);
       // Don't cache non-media in attachmentBlobs — there's no inline
       // preview, so caching just wastes memory. Clear the placeholder.
@@ -4012,7 +4120,10 @@ async function resizeImage(file, maxDim) {
     const k = maxDim / Math.max(w, h);
     w = Math.round(w * k); h = Math.round(h * k);
   }
-  const canvas = document.createElement('canvas');
+  // Reuse the static offscreen #resize-canvas. Resetting width/height
+  // also clears the bitmap data so the previous resize doesn't bleed
+  // into this one.
+  const canvas = $('resize-canvas');
   canvas.width = w; canvas.height = h;
   canvas.getContext('2d').drawImage(bmp, 0, 0, w, h);
   bmp.close();
@@ -5267,58 +5378,33 @@ function sensorIntervalSnap(secs) {
   return best;
 }
 
-function buildSensorConfigRow(section, key, sensor) {
-  const wrap = section.querySelector('[data-role="config"]');
-  if (!wrap) return;
-  wrap.innerHTML = '';
-  // Inline styling lives on .popover-config in the CSS — caller's
-  // markup just needs the class. Same for the checkbox + select
-  // size resets.
-  const enable = document.createElement('label');
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.checked = !!sensor.enabled;
-  enable.appendChild(cb);
-  const lbl = document.createElement('span');
-  lbl.textContent = 'Enabled';
-  enable.appendChild(lbl);
-  const sel = document.createElement('select');
-  const snapped = sensorIntervalSnap(Math.round((sensor.interval_ms || 60000) / 1000));
-  for (const p of SENSOR_INTERVALS) {
-    const opt = document.createElement('option');
-    opt.value = String(p.value);
-    opt.textContent = p.label;
-    if (p.value === snapped) opt.selected = true;
-    sel.appendChild(opt);
-  }
-  // Defensive: setting the `selected` property on individual <option>s
-  // pre-DOM-insertion is supposed to be honored, but some browsers
-  // (notably Firefox Android during a re-render burst) ignore it and
-  // fall back to index-0 — which would make the dropdown appear to
-  // "revert" to the first option on every save. Canonicalising via
-  // sel.value after build forces the correct display.
-  sel.value = String(snapped);
-  const save = async () => {
-    const body = { sensor: key, enabled: cb.checked, interval_s: parseInt(sel.value, 10) };
-    try {
-      await state.transport._req('/api/sensors/config', { method: 'POST', body });
-      // The next periodic system_update (≤30 s) will refresh the
-      // sensor block in state.system. Patch the cached snapshot
-      // optimistically now so the popover reflects the toggle
-      // immediately without waiting.
-      if (state.system && state.system.sensors && state.system.sensors[key]) {
-        state.system.sensors[key].enabled     = cb.checked;
-        state.system.sensors[key].interval_ms = parseInt(sel.value, 10) * 1000;
-        // Alpine binding observes the mutation; no explicit re-render.
-      }
-    } catch (e) {
-      toast('Sensor config save failed: ' + (e.message || e), 'error');
+// Current interval value (snapped to one of the presets) for a sensor
+// key. Used by the declarative <select :value> binding inside each
+// .popover-config block.
+function sensorIntervalCurrent(key) {
+  const s = state.system && state.system.sensors && state.system.sensors[key];
+  return String(sensorIntervalSnap(Math.round(((s && s.interval_ms) || 60000) / 1000)));
+}
+
+// @change handler shared by the checkbox + select inputs in each
+// sensor-config row. Reads BOTH from the section so a single change
+// fires a single POST with both fields.
+async function onSensorConfigChange(key, sourceEl) {
+  const section = sourceEl.closest('[data-sensor]');
+  if (!section) return;
+  const cb  = section.querySelector('.popover-config input[type=checkbox]');
+  const sel = section.querySelector('.popover-config select');
+  if (!cb || !sel) return;
+  const body = { sensor: key, enabled: cb.checked, interval_s: parseInt(sel.value, 10) };
+  try {
+    await state.transport._req('/api/sensors/config', { method: 'POST', body });
+    if (state.system && state.system.sensors && state.system.sensors[key]) {
+      state.system.sensors[key].enabled     = cb.checked;
+      state.system.sensors[key].interval_ms = parseInt(sel.value, 10) * 1000;
     }
-  };
-  cb.addEventListener('change', save);
-  sel.addEventListener('change', save);
-  wrap.appendChild(enable);
-  wrap.appendChild(sel);
+  } catch (e) {
+    toast('Sensor config save failed: ' + (e.message || e), 'error');
+  }
 }
 
 function attachSensorConfigToggle(section) {
@@ -5336,23 +5422,21 @@ function attachSensorConfigToggle(section) {
   });
 }
 
-// Hook into renderSystemPopover by patching the existing data flow.
-// Each sensor's section gets its config row (re)built whenever the
-// popover renders, so a fresh /api/system_status fetch refreshes the
-// dropdown selection if the device-side value changed.
-function updateSensorConfigUI(s) {
+// Each sensor section's .popover-config block now renders its
+// checkbox + interval select declaratively against state.system.
+// updateSensorConfigUI just wires the expander toggle on each
+// section header — that's a one-shot setup that survives reactive
+// rerenders.
+function updateSensorConfigUI(_s) {
   const map = {
     environment:  'sys-section-env',
     magnetometer: 'sys-section-mag',
     imu:          'sys-section-imu',
     gps:          'sys-section-gps',
   };
-  for (const [key, secId] of Object.entries(map)) {
+  for (const secId of Object.values(map)) {
     const section = $(secId);
-    if (!section || section.hidden) continue;
-    const sensor = (s.sensors && s.sensors[key]) || {};
-    buildSensorConfigRow(section, key, sensor);
-    attachSensorConfigToggle(section);
+    if (section) attachSensorConfigToggle(section);
   }
 }
 function onClickToggleTransport(btn) {
@@ -5832,15 +5916,15 @@ async function enterApp() {
 
 // ============================== BOOTSTRAP VIEW WIRING ==============================
 async function bsRescan() {
-  const sel = $('bs-ssid');
-  sel.innerHTML = '<option value="">— scanning… —</option>';
+  state.wifiScanState = 'scanning';
+  state.wifiScanList  = [];
   try {
     const r = await state.transport.wifiScan();
-    sel.innerHTML = '<option value="">— pick a network —</option>';
-    for (const n of (r.networks || [])) {
-      { const o = document.createElement('option'); o.value = n.ssid; o.textContent = n.ssid + (n.secure ? ' 🔒' : ''); sel.appendChild(o); }
-    }
-  } catch (e) { sel.innerHTML = '<option value="">(scan failed)</option>'; }
+    state.wifiScanList  = r.networks || [];
+    state.wifiScanState = 'idle';
+  } catch (_) {
+    state.wifiScanState = 'error';
+  }
 }
 $('bs-rescan').addEventListener('click', bsRescan);
 $('bs-save').addEventListener('click', () => withBusy($('bs-save'), async () => {
@@ -6312,16 +6396,15 @@ async function openAddWifiModal() {
 }
 
 async function scanIntoWifiModal() {
-  const sel = $('cn-wifi-ssid');
-  sel.innerHTML = '<option value="">— scanning… —</option>';
+  // Same scan store as the bootstrap view — both <select>s bind to it.
+  state.wifiScanState = 'scanning';
+  state.wifiScanList  = [];
   try {
     const r = await state.transport.wifiScan();
-    sel.innerHTML = '<option value="">— pick a network —</option>';
-    for (const n of (r.networks || [])) {
-      { const o = document.createElement('option'); o.value = n.ssid; o.textContent = n.ssid + (n.secure ? ' 🔒' : ''); sel.appendChild(o); }
-    }
-  } catch (e) {
-    sel.innerHTML = '<option value="">(scan failed)</option>';
+    state.wifiScanList  = r.networks || [];
+    state.wifiScanState = 'idle';
+  } catch (_) {
+    state.wifiScanState = 'error';
   }
 }
 
@@ -6430,21 +6513,10 @@ const RADIO_PRESETS = [
     airtime: 1, lt_airtime: 1,
     note: 'CN 470-510 MHz. 1 % duty cycle. Hardware must support 470 band.' },
 ];
-function populateRadioPresets() {
-  const sel = $('rd-preset');
-  sel.innerHTML = '';
-  const mk = (value, text) => {
-    const o = document.createElement('option');
-    o.value = value; o.textContent = text;
-    sel.appendChild(o);
-  };
-  mk('__empty', '— Pick a region —');
-  for (const p of RADIO_PRESETS) mk(p.id, p.label);
-  // "Custom" lives at the bottom — it's the fallback after the named
-  // regions, and ordering it last keeps the common-case picks adjacent
-  // to the placeholder at top.
-  mk('__custom', 'Custom (manual)');
-}
+// Options are now rendered declaratively via <template x-for> over
+// RADIO_PRESETS inside the #rd-preset markup. No imperative builder
+// needed; kept as a no-op so legacy callers don't NPE.
+function populateRadioPresets() { /* declarative */ }
 function findMatchingPreset() {
   const freq = Number($('rd-freq').value);
   const bw   = Number($('rd-bw').value);
@@ -6546,49 +6618,47 @@ async function populateRadioTab() {
 })();
 
 // ============== INFO ICON / CLICK TOOLTIP ==============
-// Generic explainer popover. Click an `.info-icon` button to show a
-// tooltip containing its `data-info` text. Outside-click / Esc / scroll
-// closes. Used where an inline paragraph would crowd the UI but the
-// user still needs an explanation on demand.
-let _infoTooltipEl = null;
-function _closeInfoTooltip() {
-  if (_infoTooltipEl) { _infoTooltipEl.remove(); _infoTooltipEl = null; }
-}
+// Generic explainer popover. Click an `.info-icon` button to set
+// state.infoTip = { html, x, y } — the declarative .info-tooltip
+// element in body markup picks up the position + content.
+function _closeInfoTooltip() { state.infoTip = null; }
 document.addEventListener('click', (ev) => {
   const btn = ev.target.closest('.info-icon');
   if (btn) {
-    // Stop the click from toggling whatever container the icon lives in
-    // (e.g. the accordion summary or the .cn-row-toggle label).
     ev.preventDefault();
     ev.stopPropagation();
-    // Re-clicking the same icon closes the open tooltip — feels right
-    // for an "info" affordance that doubles as a dismiss button.
-    const info = btn.dataset.info || '';
-    if (_infoTooltipEl && _infoTooltipEl.dataset.from === info) {
+    const html = btn.dataset.info || '';
+    // Toggle: re-click closes.
+    if (state.infoTip && state.infoTip.html === html) {
       _closeInfoTooltip();
       return;
     }
-    _closeInfoTooltip();
-    const tip = document.createElement('div');
-    tip.className = 'info-tooltip';
-    tip.innerHTML = info;
-    tip.dataset.from = info;
-    document.body.appendChild(tip);
-    _infoTooltipEl = tip;
     const r = btn.getBoundingClientRect();
-    const w = tip.offsetWidth || 280;
-    const h = tip.offsetHeight || 60;
+    // Tooltip width/height are unknown until rendered — guess 280×60
+    // (matches CSS max-width); the position adjusts on next frame
+    // when the actual rect is known via x-effect inside the tooltip
+    // ... we skip that and just clamp generously. Browsers honor the
+    // first paint position; the user can tolerate a few px drift if
+    // the body is unusually long.
+    const w = 280, h = 60;
     let left = r.left + r.width / 2 - w / 2;
     let top  = r.bottom + 6;
     if (left + w > window.innerWidth  - 8) left = window.innerWidth  - w - 8;
     if (left < 8) left = 8;
     if (top  + h > window.innerHeight - 8) top  = r.top - h - 6;
     if (top  < 8) top  = 8;
-    tip.style.left = left + 'px';
-    tip.style.top  = top  + 'px';
+    state.infoTip = { html, x: left, y: top };
     return;
   }
-  if (_infoTooltipEl && !_infoTooltipEl.contains(ev.target)) _closeInfoTooltip();
+  if (state.infoTip) {
+    // Click outside the .info-tooltip closes.
+    let n = ev.target;
+    while (n && n !== document.body) {
+      if (n.classList && n.classList.contains('info-tooltip')) return;
+      n = n.parentNode;
+    }
+    _closeInfoTooltip();
+  }
 }, true);
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') _closeInfoTooltip(); });
 window.addEventListener('scroll', _closeInfoTooltip, true);
@@ -6840,28 +6910,27 @@ function renderTimeStatus(t) {
 }
 
 function renderTimeSources(sources) {
-  const wrap = $('tm-sources');
-  wrap.innerHTML = '';
-  // Sort sources by current priority for the initial render. Equal
-  // priority falls back to the canonical order.
   // Canonical fallback order when priorities tie. NTP comes first
   // because it's the cheapest, most-reliable source when WiFi has an
   // internet route — see TimeManager::default_config. GPS sits a step
   // behind for offline-only deployments.
   const order = ['ntp', 'gps', 'browser', 'rns'];
-  const rows = order.map(key => {
-    const cfg = sources[key] || { enabled: true, priority: 99, interval_s: 0 };
-    return { key, cfg };
-  });
+  const rows = order.map(key => ({ key, cfg: sources[key] || { enabled: true, priority: 99, interval_s: 0 } }));
   rows.sort((a, b) => {
     const pa = (a.cfg.priority != null) ? a.cfg.priority : 99;
     const pb = (b.cfg.priority != null) ? b.cfg.priority : 99;
     if (pa !== pb) return pa - pb;
     return order.indexOf(a.key) - order.indexOf(b.key);
   });
-  for (const { key, cfg } of rows) {
-    wrap.appendChild(buildTimeSourceRow(key, cfg));
-  }
+  // Replace the reactive list in one swap so Alpine repaints the
+  // <template x-for> in #tm-sources.
+  state.timeSources = rows.map(({ key, cfg }) => {
+    const [label, desc] = TIME_SOURCE_LABELS[key];
+    const hasInterval   = !!TIME_SOURCE_HAS_INTERVAL[key];
+    const interval_s    = hasInterval ? snapToPreset(cfg.interval_s) : 0;
+    return { key, label, desc, hasInterval,
+             enabled: !!cfg.enabled, interval_s, expanded: false };
+  });
 }
 
 // Interval-dropdown presets. 0 = "at boot": driver reports once and
@@ -6886,92 +6955,6 @@ function snapToPreset(secs) {
   return best.value;
 }
 
-function buildTimeSourceRow(key, cfg) {
-  const [label, desc] = TIME_SOURCE_LABELS[key];
-  const hasInterval = !!TIME_SOURCE_HAS_INTERVAL[key];
-  // Helper to keep the long createElement chain readable.
-  const mk = (tag, attrs, content) => {
-    const n = document.createElement(tag);
-    if (attrs) for (const k in attrs) {
-      if (k === 'style') n.setAttribute('style', attrs[k]);
-      else if (k.startsWith('data-')) n.setAttribute(k, attrs[k]);
-      else if (k === 'class') n.className = attrs[k];
-      else n.setAttribute(k, attrs[k]);
-    }
-    if (content != null) n.textContent = content;
-    return n;
-  };
-  const row = mk('div', {
-    class: 'tm-source-row',
-    'data-source': key,
-    draggable: 'true',
-    style: 'margin-bottom:6px;border:1px solid var(--bg-elev-2);border-radius:6px;background:var(--bg-elev);user-select:none;overflow:hidden',
-  });
-  // -------- collapsed header (always visible) --------
-  const header = mk('div', { style: 'display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:grab' });
-  const handle = mk('div', { style: 'opacity:0.5;font-size:14px;line-height:1;width:14px;text-align:center;flex:0 0 auto' }, '⋮⋮');
-  const enable = mk('input', { type: 'checkbox', style: 'width:auto;min-height:auto;flex:0 0 auto;margin:0 6px 0 0' });
-  enable.checked = !!cfg.enabled;
-  enable.dataset.role = 'enable';
-  // Clicking the checkbox shouldn't also toggle the expander.
-  enable.addEventListener('click', (ev) => ev.stopPropagation());
-  const labelEl = mk('div', { style: 'flex:1;min-width:0;font-size:13px' });
-  const strong = document.createElement('strong');
-  strong.textContent = label;
-  labelEl.appendChild(strong);
-  const chev = mk('span', { style: 'opacity:0.55;font-size:11px;flex:0 0 auto;transition:transform .12s' }, '▾');
-  header.appendChild(handle);
-  header.appendChild(enable);
-  header.appendChild(labelEl);
-  header.appendChild(chev);
-
-  // -------- expanded body (description + interval) --------
-  const body = mk('div', { style: 'display:none;padding:0 10px 10px 38px;font-size:12px' });
-  body.appendChild(mk('div', { class: 'muted', style: 'margin-bottom:6px' }, desc));
-  let interval = null;
-  if (hasInterval) {
-    const wrap = mk('div', { style: 'display:flex;align-items:center;gap:8px' });
-    wrap.appendChild(mk('label', { style: 'font-size:12px;color:var(--text);flex:0 0 auto' }, 'Refresh:'));
-    interval = mk('select', { style: 'flex:1;max-width:160px',
-                              title: 'How often this source should report a new time.' });
-    interval.dataset.role = 'interval';
-    const snapped = snapToPreset(cfg.interval_s);
-    for (const p of INTERVAL_PRESETS) {
-      const opt = mk('option', { value: String(p.value) }, p.label);
-      if (p.value === snapped) opt.selected = true;
-      interval.appendChild(opt);
-    }
-    wrap.appendChild(interval);
-    body.appendChild(wrap);
-  }
-
-  // Toggle expansion. Click on header (except checkbox) toggles. We
-  // also need to NOT trigger expansion when the user is starting a
-  // drag — track mousedown→mousemove to distinguish drag from click.
-  let mouseDownX = 0, mouseDownY = 0, draggedDuringPress = false;
-  header.addEventListener('mousedown', (ev) => {
-    if (ev.target === enable) return;
-    mouseDownX = ev.clientX; mouseDownY = ev.clientY;
-    draggedDuringPress = false;
-  });
-  header.addEventListener('mousemove', (ev) => {
-    if (Math.hypot(ev.clientX - mouseDownX, ev.clientY - mouseDownY) > 6) {
-      draggedDuringPress = true;
-    }
-  });
-  header.addEventListener('click', (ev) => {
-    if (ev.target === enable) return;
-    if (draggedDuringPress) return;
-    const open = body.style.display !== 'none';
-    body.style.display = open ? 'none' : 'block';
-    chev.style.transform = open ? '' : 'rotate(180deg)';
-  });
-
-  row.appendChild(header);
-  row.appendChild(body);
-  attachTimeSourceDnD(row);
-  return row;
-}
 
 // Drag-and-drop: minimal HTML5-DnD reorder. Drop above/below the
 // hovered row based on midpoint. Save button picks up the resulting
@@ -6990,12 +6973,21 @@ function attachTimeSourceDnD(row) {
   row.addEventListener('drop', (ev) => {
     ev.preventDefault();
     const src = ev.dataTransfer.getData('text/source');
-    if (!src || src === row.dataset.source) return;
-    const dragged = document.querySelector('.tm-source-row[data-source="' + src + '"]');
-    if (!dragged) return;
+    const dst = row.dataset.source;
+    if (!src || src === dst) return;
     const rect = row.getBoundingClientRect();
     const above = (ev.clientY - rect.top) < (rect.height / 2);
-    row.parentNode.insertBefore(dragged, above ? row : row.nextSibling);
+    // Reorder state.timeSources — Alpine x-for repaints from the new
+    // array order, so the visual move matches without a manual DOM
+    // insertBefore (which Alpine could undo on its next render pass).
+    const list = state.timeSources;
+    const srcIdx = list.findIndex(r => r.key === src);
+    const dstIdx = list.findIndex(r => r.key === dst);
+    if (srcIdx < 0 || dstIdx < 0) return;
+    const [moved] = list.splice(srcIdx, 1);
+    const insertAt = above ? (srcIdx < dstIdx ? dstIdx - 1 : dstIdx)
+                           : (srcIdx < dstIdx ? dstIdx     : dstIdx + 1);
+    list.splice(insertAt, 0, moved);
   });
 }
 
@@ -7017,20 +7009,14 @@ $('btn-tm-browser-sync').addEventListener('click', () => withBusy($('btn-tm-brow
 }, { label: 'Syncing…' }));
 
 $('btn-tm-save').addEventListener('click', () => withBusy($('btn-tm-save'), async () => {
-  // Walk the rows in their current DOM order — that's the user's
-  // preferred priority sequence. Index = priority (0 = highest).
+  // Walk state.timeSources in its current order — that's the user's
+  // preferred priority sequence (drag-and-drop mutates the array).
+  // Index = priority (0 = highest).
   const body = { sources: {} };
-  const rows = document.querySelectorAll('#tm-sources .tm-source-row');
-  rows.forEach((row, idx) => {
-    const key  = row.dataset.source;
-    const en   = row.querySelector('input[data-role="enable"]');
-    const iv   = row.querySelector('[data-role="interval"]');
-    const cfg = {
-      enabled:  !!(en && en.checked),
-      priority: idx,
-    };
-    if (iv) cfg.interval_s = Math.max(0, parseInt(iv.value, 10) || 0);
-    body.sources[key] = cfg;
+  state.timeSources.forEach((r, idx) => {
+    const cfg = { enabled: !!r.enabled, priority: idx };
+    if (r.hasInterval) cfg.interval_s = Math.max(0, parseInt(r.interval_s, 10) || 0);
+    body.sources[r.key] = cfg;
   });
   try {
     const r = await state.transport._req('/api/time/sources',
@@ -7135,16 +7121,10 @@ const ANNOUNCE_INTERVALS = [
   { ms: 21600000, label: 'Every 6 hours' },
   { ms: 86400000, label: 'Every 24 hours' },
 ];
-function populateIntervalSelect() {
-  const sel = $('id-announce-interval');
-  sel.innerHTML = '';
-  for (const i of ANNOUNCE_INTERVALS) {
-    const o = document.createElement('option');
-    o.value = String(i.ms); o.textContent = i.label;
-    sel.appendChild(o);
-  }
-}
-populateIntervalSelect();
+// Options rendered declaratively via <template x-for> over
+// ANNOUNCE_INTERVALS inside #id-announce-interval. Kept as a no-op
+// for any external callers.
+function populateIntervalSelect() { /* declarative */ }
 $('id-announce-interval').addEventListener('change', async (e) => {
   const ms = Number(e.target.value);
   try {

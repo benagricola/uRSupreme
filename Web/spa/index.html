@@ -1194,7 +1194,7 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== BOOTSTRAP WIFI SETUP ===================== -->
-<div id="view-bootstrap" class="page" hidden>
+<div id="view-bootstrap" class="page" x-data x-show="$store.s.view === 'view-bootstrap'" x-cloak>
   <div class="card">
     <h2>First-time setup</h2>
     <p class="muted">This device hasn't been configured for a WiFi network yet. Configure home WiFi so you can reach it from any device on your network — or skip and use it directly from this softAP for standalone / off-grid operation.</p>
@@ -1216,7 +1216,7 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== IDENTITY PICKER ===================== -->
-<div id="view-identities" class="page" hidden>
+<div id="view-identities" class="page" x-data x-show="$store.s.view === 'view-identities'" x-cloak>
   <div class="card">
     <h2>Identities</h2>
     <div id="identity-list"></div>
@@ -1235,7 +1235,7 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== CREATE IDENTITY ===================== -->
-<div id="view-create" class="page" hidden>
+<div id="view-create" class="page" x-data x-show="$store.s.view === 'view-create'" x-cloak>
   <div class="card">
     <h2>Create identity</h2>
     <label>Display name</label>
@@ -1255,7 +1255,7 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== LOGIN ===================== -->
-<div id="view-login" class="page" hidden>
+<div id="view-login" class="page" x-data x-show="$store.s.view === 'view-login'" x-cloak>
   <div class="card">
     <h2 id="login-title">Login</h2>
     <p class="muted">Enter the password you set when this identity was created. No physical-presence proof is needed for login — the password is the only key.</p>
@@ -1273,7 +1273,7 @@ summary:hover { color: var(--text); }
      tab pre-selected and "locked" so other tabs are hidden.) -->
 
 <!-- ===================== APP (split-pane chat) ===================== -->
-<div id="view-app" hidden x-data :class="{ 'thread-open': $store.s.openPeer }">
+<div id="view-app" x-data x-show="$store.s.view === 'view-app'" :class="{ 'thread-open': $store.s.openPeer }" x-cloak>
   <header id="topbar">
     <span class="idc" id="self-idc"
           x-data
@@ -1544,7 +1544,7 @@ summary:hover { color: var(--text); }
 <!-- ===================== STATUS POPOVER ===================== -->
 <!-- Anchored below #btn-status. Not a modal; clicking elsewhere closes
      it. Contents refresh on each open from /api/info. -->
-<div id="popover-status" class="popover" hidden>
+<div id="popover-status" class="popover" x-data x-show="$store.s.popovers.status" x-cloak>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label" id="status-radio-label">RADIO</div>
@@ -1601,7 +1601,7 @@ summary:hover { color: var(--text); }
 <!-- Anchored below #btn-power. Hosts the detailed battery telemetry
      plus future per-knob power-management toggles. The topbar battery
      icon shows just percent + state; full detail lives here. -->
-<div id="popover-power" class="popover" hidden>
+<div id="popover-power" class="popover" x-data x-show="$store.s.popovers.power" x-cloak>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label">Battery</div>
@@ -1620,7 +1620,7 @@ summary:hover { color: var(--text); }
 
 <!-- Anchored below #btn-system. Mirrors #popover-status' style but
      hosts device-side state: storage, clock + RTC, on-board sensors. -->
-<div id="popover-system" class="popover" hidden>
+<div id="popover-system" class="popover" x-data x-show="$store.s.popovers.system" x-cloak>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label">Storage</div>
@@ -1692,10 +1692,10 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== EMOJI PICKER ===================== -->
-<div id="popup-emoji" hidden></div>
+<div id="popup-emoji" x-data x-show="$store.s.popovers.emoji" x-cloak></div>
 
 <!-- ===================== NEW CONVERSATION MODAL ===================== -->
-<div id="modal-new-conv" class="modal-bg" hidden>
+<div id="modal-new-conv" class="modal-bg" x-data x-show="$store.s.modals.newConv" x-cloak>
   <div class="modal" style="max-width:460px">
     <h3>New conversation</h3>
     <div id="nc-pick" style="max-height:260px;overflow-y:auto;margin-bottom:12px"></div>
@@ -1714,7 +1714,7 @@ summary:hover { color: var(--text); }
 <!-- Opened after the user picks an image. Lets them pick small /
      medium / original; each option shows its file size + ETA against
      the current destination so the cost is visible before send. -->
-<div id="modal-image-resize" class="modal-bg" hidden style="z-index:260">
+<div id="modal-image-resize" class="modal-bg" x-data x-show="$store.s.modals.imageResize" x-cloak style="z-index:260">
   <div class="modal" style="max-width:480px">
     <h3>Attach image</h3>
     <p class="muted" id="ir-source" style="margin-bottom:10px"></p>
@@ -1731,7 +1731,7 @@ summary:hover { color: var(--text); }
      showConfirm(opts) so call sites don't have to declare their own
      modal HTML for every action. Optional identity-code input for
      physical-presence-gated calls. -->
-<div id="modal-confirm" class="modal-bg" hidden style="z-index:270">
+<div id="modal-confirm" class="modal-bg" x-data x-show="$store.s.modals.confirm" x-cloak style="z-index:270">
   <div class="modal">
     <h3 id="mc-title">Confirm</h3>
     <p class="muted" id="mc-body" style="white-space:pre-wrap"></p>
@@ -1755,7 +1755,7 @@ summary:hover { color: var(--text); }
 <!-- Opened from the Connectivity tab's "Add a network" button. Same
      scan + pick + PSK + identity-code flow that the bootstrap softAP
      uses, just framed as a modal so it doesn't bloat the settings tab. -->
-<div id="modal-wifi-add" class="modal-bg" hidden style="z-index:260">
+<div id="modal-wifi-add" class="modal-bg" x-data x-show="$store.s.modals.wifiAdd" x-cloak style="z-index:260">
   <div class="modal" style="max-width:460px">
     <h3>Add a WiFi network</h3>
     <p class="muted" style="margin-bottom:10px">Pick a network for this device to join. Saving reboots the device. The softAP fallback engages automatically if the saved network isn't reachable on next boot.</p>
@@ -1777,7 +1777,7 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== ADD TCP CLIENT MODAL ===================== -->
-<div id="modal-tcp-add" class="modal-bg" hidden style="z-index:260">
+<div id="modal-tcp-add" class="modal-bg" x-data x-show="$store.s.modals.tcpAdd" x-cloak style="z-index:260">
   <div class="modal" style="max-width:460px">
     <h3>Add a TCP client</h3>
     <p class="muted" style="margin-bottom:10px">Connect outbound to another Reticulum node by hostname or IP. The link comes up immediately and persists across reboots.</p>
@@ -1811,7 +1811,7 @@ summary:hover { color: var(--text); }
      image attachment in a chat bubble. Tap the image to toggle between
      fit-to-viewport and natural size (pan via scroll when zoomed).
      Tap the backdrop or hit Escape to close. -->
-<div id="modal-image" class="modal-bg" hidden style="z-index:280;background:rgba(0,0,0,0.92)">
+<div id="modal-image" class="modal-bg" x-data x-show="$store.s.modals.image" x-cloak style="z-index:280;background:rgba(0,0,0,0.92)">
   <!-- 100dvh, not 100vh — Firefox Android's bottom address bar
        otherwise hides the bottom of the image (and the close/save
        buttons by reducing the usable area). Same fix as the modals. -->
@@ -1846,7 +1846,7 @@ summary:hover { color: var(--text); }
        - forever: keep all messages from this peer forever
        - time:    expire records older than N units of time
        - count:   keep only the newest N messages from this peer -->
-<div id="modal-conv-retention" class="modal-bg" hidden style="z-index:260">
+<div id="modal-conv-retention" class="modal-bg" x-data x-show="$store.s.modals.convRetention" x-cloak style="z-index:260">
   <div class="modal" style="max-width:460px">
     <h3>Retention for this chat</h3>
     <p class="muted" style="margin-bottom:14px">
@@ -1885,7 +1885,7 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== IDENTITY CODE MODAL ===================== -->
-<div id="modal-id-code" class="modal-bg" hidden style="z-index:280">
+<div id="modal-id-code" class="modal-bg" x-data x-show="$store.s.modals.idCode" x-cloak style="z-index:280">
   <div class="modal">
     <h3 id="id-code-modal-title">Identity code required</h3>
     <!-- Two opening paths: (1) the device button was pressed and the
@@ -1911,7 +1911,7 @@ summary:hover { color: var(--text); }
      below. Opens via the gear icon (default tab: Identity) or the
      radio icon (Radio tab). Boot-time first-run forces the Radio tab
      and hides the others until a config is saved. -->
-<div id="modal-settings" class="modal-bg" hidden>
+<div id="modal-settings" class="modal-bg" x-data x-show="$store.s.modals.settings" x-cloak>
   <div class="modal modal-tall">
     <header class="modal-header">
       <h3 id="settings-title">Settings</h3>
@@ -2305,6 +2305,16 @@ summary:hover { color: var(--text); }
 //      having it isolated makes the network-down condition trivial
 //      to test in templates.
 document.addEventListener('alpine:init', () => {
+  // Seed view to whatever was already shown at boot (the imperative
+  // bootstrap path may have flipped one before Alpine init runs).
+  // Re-evaluated as state.view changes drive all top-level x-show.
+  state.view = state.view || (() => {
+    for (const v of ['view-bootstrap', 'view-identities', 'view-create', 'view-login', 'view-app']) {
+      const el = document.getElementById(v);
+      if (el && !el.hidden) return v;
+    }
+    return 'view-bootstrap';
+  })();
   state = Alpine.reactive(state);
   window.state = state;            // expose for console debugging
   Alpine.store('s',   state);
@@ -2370,6 +2380,32 @@ function savePrefs(p) {
 // (let semantics), so all existing `state.foo` reads / writes start
 // flowing through the reactive proxy automatically once Alpine boots.
 let state = {
+  // Top-level view shown to the user. One of view-bootstrap /
+  // view-identities / view-create / view-login / view-app. Drives
+  // x-show on each top-level page div. Mutated by show(viewId).
+  view: 'view-bootstrap',
+  // Per-modal visibility flags. Each maps 1:1 to a `<div
+  // class="modal-bg">` and is wired via x-show in markup.
+  // Stacked modals (image / id-code / confirm on top of settings)
+  // each have their own flag so multiple can be open at once.
+  modals: {
+    newConv:        false,
+    imageResize:    false,
+    confirm:        false,
+    wifiAdd:        false,
+    tcpAdd:         false,
+    image:          false,
+    convRetention:  false,
+    idCode:         false,
+    settings:       false,
+  },
+  // Per-popover visibility flags. Same pattern as modals.
+  popovers: {
+    status:  false,
+    system:  false,
+    power:   false,
+    emoji:   false,
+  },
   info: null,
   transport: null,
   token: localStorage.getItem(LS.TOKEN) || null,
@@ -2479,9 +2515,10 @@ function el(tag, props, ...children) {
   return e;
 }
 function show(viewId) {
-  for (const v of ['view-bootstrap', 'view-identities', 'view-create', 'view-login', 'view-app']) {
-    $(v).hidden = (v !== viewId);
-  }
+  // Alpine drives the view switching via x-show against $store.s.view;
+  // legacy callers still call show('view-foo') and it works because
+  // state.view is reactive.
+  state.view = viewId;
 }
 function relTime(tsSec) {
   if (!tsSec) return '';
@@ -2688,7 +2725,7 @@ function showConfirm(opts) {
       $('mc-input').value             = ic.value || '';
       $('mc-input').placeholder       = ic.placeholder || '';
     }
-    modal.hidden = false;
+    state.modals.confirm = true;
     setTimeout(() => {
       if (wantInput)            $('mc-input').focus();
       else if (opts.needsCode)  $('mc-code').focus();
@@ -2697,7 +2734,7 @@ function showConfirm(opts) {
     }, 0);
 
     const cleanup = () => {
-      modal.hidden = true;
+      state.modals.confirm = false;
       $('mc-ok').removeEventListener('click', onOk);
       $('mc-cancel').removeEventListener('click', onCancel);
       $('mc-code').removeEventListener('keydown', onKey);
@@ -2782,16 +2819,16 @@ function openEmojiPicker(anchorEl, onPick) {
   const pop = $('popup-emoji');
   pop.innerHTML = '';
   for (const e of EMOJI) {
-    pop.appendChild(el('div', { class: 'emoji-cell', text: e, onclick: () => { onPick(e); pop.hidden = true; } }));
+    pop.appendChild(el('div', { class: 'emoji-cell', text: e, onclick: () => { onPick(e); state.popovers.emoji = false; } }));
   }
   const rect = anchorEl.getBoundingClientRect();
   pop.style.left = Math.max(8, rect.left) + 'px';
   pop.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
-  pop.hidden = false;
+  state.popovers.emoji = true;
   setTimeout(() => {
     const dismiss = (ev) => {
       if (!pop.contains(ev.target) && ev.target !== anchorEl) {
-        pop.hidden = true;
+        state.popovers.emoji = false;
         document.removeEventListener('click', dismiss);
       }
     };
@@ -3482,7 +3519,7 @@ function openImageModal(url, meta) {
   const dl = (meta && meta.display_name) || (meta && meta.filename) || 'image';
   save.setAttribute('download', dl);
   save.href = url;
-  modal.hidden = false;
+  state.modals.image = true;
 
   let zoomed = false;          // true: image rendered at natural 1:1
   let zoomAvailable = false;   // set on load; image natural > viewport
@@ -3579,7 +3616,7 @@ function openImageModal(url, meta) {
   };
   const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
   const cleanup = () => {
-    modal.hidden = true;
+    state.modals.image = false;
     img.removeEventListener('click', onImgClick);
     img.removeEventListener('mousedown', onMouseDown);
     window.removeEventListener('mousemove', onMouseMove);
@@ -4242,9 +4279,9 @@ async function openImageResizePicker(file) {
   };
   renderOptions();
   await refreshEtas();
-  modal.hidden = false;
+  state.modals.imageResize = true;
   const cleanup = () => {
-    modal.hidden = true;
+    state.modals.imageResize = false;
     for (const p of prepared) URL.revokeObjectURL(p.objectUrl);
     $('ir-cancel').removeEventListener('click', onCancel);
     $('ir-attach').removeEventListener('click', onAttach);
@@ -4659,7 +4696,7 @@ function openStatusPopover() {
   // the popover doesn't show a blank line for the second it takes the
   // first WS frame to arrive.
   renderRadioCsmaLine();
-  $('popover-status').hidden = false;
+  state.popovers.status = true;
   // Close on outside click; defer one tick so this click doesn't fire it.
   // Announce button is excluded — it's a momentary action button users
   // may legitimately want to hit while reading the popover (e.g. open
@@ -4671,7 +4708,7 @@ function openStatusPopover() {
   setTimeout(() => {
     const dismiss = (ev) => {
       if (popoverDismissibleClick(ev, 'popover-status', 'btn-status')) {
-        $('popover-status').hidden = true;
+        state.popovers.status = false;
         document.removeEventListener('click', dismiss);
       }
     };
@@ -4679,9 +4716,9 @@ function openStatusPopover() {
   }, 0);
 }
 $('btn-status').addEventListener('click', async () => {
-  if (!$('popover-status').hidden) { $('popover-status').hidden = true; return; }
+  if (state.popovers.status) { state.popovers.status = false; return; }
   // Both popovers share the top-right position — close the other.
-  $('popover-system').hidden = true; stopSystemTicker();
+  state.popovers.system = false; stopSystemTicker();
   await refreshStatus();
   openStatusPopover();
 });
@@ -5168,13 +5205,13 @@ async function openSystemPopover() {
   }
   renderSystemPopover(state.system);
   // Close the other popover (same anchor position).
-  $('popover-status').hidden = true;
-  $('popover-system').hidden = false;
+  state.popovers.status = false;
+  state.popovers.system = true;
   startSystemTicker();
   setTimeout(() => {
     const dismiss = (ev) => {
       if (popoverDismissibleClick(ev, 'popover-system', 'btn-system')) {
-        $('popover-system').hidden = true;
+        state.popovers.system = false;
         stopSystemTicker();
         document.removeEventListener('click', dismiss);
       }
@@ -5185,7 +5222,7 @@ async function openSystemPopover() {
 
 $('btn-system').addEventListener('click', () => {
   if (!$('popover-system').hidden) {
-    $('popover-system').hidden = true;
+    state.popovers.system = false;
     stopSystemTicker();
     return;
   }
@@ -5232,9 +5269,9 @@ async function openPowerPopover() {
     return;
   }
   renderPowerPopover(state.system);
-  $('popover-status').hidden = true;
-  $('popover-system').hidden = true;
-  $('popover-power').hidden  = false;
+  state.popovers.status = false;
+  state.popovers.system = false;
+  state.popovers.power = true;
   if (!_pwTicker) {
     // Repaint from the cached snapshot on a short ticker. The WS
     // `system_update` keeps the cache fresh every 30 s; this just
@@ -5247,7 +5284,7 @@ async function openPowerPopover() {
   setTimeout(() => {
     const dismiss = (ev) => {
       if (popoverDismissibleClick(ev, 'popover-power', 'btn-power')) {
-        $('popover-power').hidden = true;
+        state.popovers.power = false;
         if (_pwTicker) { clearInterval(_pwTicker); _pwTicker = null; }
         document.removeEventListener('click', dismiss);
       }
@@ -5257,7 +5294,7 @@ async function openPowerPopover() {
 }
 $('btn-power').addEventListener('click', () => {
   if (!$('popover-power').hidden) {
-    $('popover-power').hidden = true;
+    state.popovers.power = false;
     if (_pwTicker) { clearInterval(_pwTicker); _pwTicker = null; }
     return;
   }
@@ -5419,7 +5456,7 @@ $('btn-force-softap').addEventListener('click', async () => {
     try {
       await state.transport._req('/api/wifi/softap', { method: 'POST', body: { identity_code: r.code } });
       toast('Device switching to softAP — reconnect to the bootstrap network.', 'info');
-      $('popover-status').hidden = true;
+      state.popovers.status = false;
     } catch (e) {
       toast('softAP switch failed: ' + (e.message || e), 'error');
     }
@@ -6002,7 +6039,7 @@ $('btn-login-go').addEventListener('click', () => withBusy($('btn-login-go'), as
 $('btn-new-conv').addEventListener('click', () => {
   $('nc-addr').value = ''; $('nc-name').value = '';
   renderNewConvPicker();
-  $('modal-new-conv').hidden = false;
+  state.modals.newConv = true;
 });
 
 // Build the contact / discovered-peer picker for the new-conversation
@@ -6054,7 +6091,7 @@ function renderNewConvPicker() {
     wrap.appendChild(el('div', { class: 'muted', text: 'No saved contacts or discovered peers yet. Enter an address below.' }));
   }
 }
-$('btn-nc-cancel').addEventListener('click', () => { $('modal-new-conv').hidden = true; });
+$('btn-nc-cancel').addEventListener('click', () => { state.modals.newConv = false; });
 $('btn-nc-go').addEventListener('click', () => {
   const addr = $('nc-addr').value.trim().toLowerCase();
   if (!/^[0-9a-f]{32}$/.test(addr)) { toast('Address must be 32 hex characters', 'warn'); return; }
@@ -6063,7 +6100,7 @@ $('btn-nc-go').addEventListener('click', () => {
   if (!state.conversations[addr]) state.conversations[addr] = { peer: addr, msgs: [], last_ts: 0 };
   renderConversations();
   selectConversation(addr);
-  $('modal-new-conv').hidden = true;
+  state.modals.newConv = false;
 });
 
 // Delegated conv-row click handler. Bound once to the container so an
@@ -6297,11 +6334,11 @@ async function openRetentionModal(identityId, peerHex) {
   } else {
     $('cr-mode-default').checked = true;
   }
-  modal.hidden = false;
+  state.modals.convRetention = true;
 
   return new Promise((resolve) => {
     const cleanup = () => {
-      modal.hidden = true;
+      state.modals.convRetention = false;
       $('cr-save').removeEventListener('click', onSave);
       $('cr-cancel').removeEventListener('click', onCancel);
       modal.removeEventListener('click', onBackdrop);
@@ -6390,7 +6427,7 @@ for (const det of document.querySelectorAll('#modal-settings .cn-section')) {
 // Add opens a modal that runs the scan and the same wifiConfigure
 // call the bootstrap softAP flow uses.
 $('btn-wifi-add').addEventListener('click', openAddWifiModal);
-$('cn-wifi-cancel').addEventListener('click', () => { $('modal-wifi-add').hidden = true; });
+$('cn-wifi-cancel').addEventListener('click', () => { state.modals.wifiAdd = false; });
 $('cn-wifi-scan').addEventListener('click', scanIntoWifiModal);
 $('cn-wifi-save').addEventListener('click', () => withBusy($('cn-wifi-save'), async () => {
   const ssid = $('cn-wifi-ssid').value;
@@ -6400,7 +6437,7 @@ $('cn-wifi-save').addEventListener('click', () => withBusy($('cn-wifi-save'), as
   if (!code) { toast('Identity code required to change WiFi.', 'error'); return; }
   try {
     await state.transport.wifiConfigure(ssid, psk, code);
-    $('modal-wifi-add').hidden = true;
+    state.modals.wifiAdd = false;
     waitForDeviceAndReload('Saving WiFi & rebooting…');
   } catch (e) {
     toast('WiFi save failed: ' + (e.message || e), 'error');
@@ -6411,7 +6448,7 @@ async function openAddWifiModal() {
   fillIdCodeHints();
   $('cn-wifi-psk').value = '';
   $('cn-wifi-code').value = '';
-  $('modal-wifi-add').hidden = false;
+  state.modals.wifiAdd = true;
   await scanIntoWifiModal();
 }
 
@@ -6874,10 +6911,10 @@ function openAddTcpModal() {
   $('cn-tcp-host').value = '';
   $('cn-tcp-port').value = '4242';
   $('cn-tcp-status').textContent = '';
-  $('modal-tcp-add').hidden = false;
+  state.modals.tcpAdd = true;
 }
 $('btn-tcp-add').addEventListener('click', openAddTcpModal);
-$('cn-tcp-cancel').addEventListener('click', () => { $('modal-tcp-add').hidden = true; });
+$('cn-tcp-cancel').addEventListener('click', () => { state.modals.tcpAdd = false; });
 $('cn-tcp-save').addEventListener('click', async () => {
   const name = $('cn-tcp-name').value.trim();
   const host = $('cn-tcp-host').value.trim();
@@ -6892,7 +6929,7 @@ $('cn-tcp-save').addEventListener('click', async () => {
   // wrong (peers can't connect that way).
   try {
     await state.transport._req('/api/transport/tcp_clients', { method: 'POST', body: { name, host, port } });
-    $('modal-tcp-add').hidden = true;
+    state.modals.tcpAdd = false;
     populateTcpClientsList();
     toast('TCP client added');
   } catch (e) {
@@ -7248,7 +7285,7 @@ async function forgetSavedNetwork(ssid) {
 // firstRun=true: must-configure-radio gate. Hide every non-connectivity
 // tab, hide the close button, suppress dismissal handlers.
 async function openSettingsModal(initialTab, firstRun) {
-  $('modal-settings').hidden = false;
+  state.modals.settings = true;
   $('modal-settings').dataset.firstRun = firstRun ? '1' : '';
   // Title + tab visibility
   $('settings-title').textContent = firstRun ? 'Set up your radio' : 'Settings';
@@ -7268,7 +7305,7 @@ async function openSettingsModal(initialTab, firstRun) {
 
 function closeSettingsModal() {
   if ($('modal-settings').dataset.firstRun === '1') return;  // locked
-  $('modal-settings').hidden = true;
+  state.modals.settings = false;
   stopTimeTicker();
 }
 
@@ -7485,17 +7522,19 @@ $('storage-max-recv').addEventListener('change', saveStorageConfig);
 // first. Popups before transient modals before the big settings modal.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  const popup = $('popup-emoji');
-  if (popup && !popup.hidden) { popup.hidden = true; e.preventDefault(); return; }
-  const modals = ['modal-id-code', 'modal-new-conv'];
-  for (const m of modals) {
-    const node = $(m);
-    if (node && !node.hidden) { node.hidden = true; e.preventDefault(); return; }
+  if (state.popovers.emoji) { state.popovers.emoji = false; e.preventDefault(); return; }
+  // Map old element-ID list to store keys.
+  const escModals = [
+    ['idCode',          'modal-id-code'],
+    ['newConv',         'modal-new-conv'],
+  ];
+  for (const [key, _m] of escModals) {
+    if (state.modals[key]) { state.modals[key] = false; e.preventDefault(); return; }
   }
-  const settings = $('modal-settings');
-  if (settings && !settings.hidden) {
-    if (settings.dataset.firstRun === '1') return;  // locked
-    settings.hidden = true;
+  if (state.modals.settings) {
+    const settings = $('modal-settings');
+    if (settings && settings.dataset.firstRun === '1') return;  // locked
+    state.modals.settings = false;
     e.preventDefault();
     return;
   }
@@ -7664,15 +7703,15 @@ function openIdCodeModal(opts) {
       ? 'A code is on the device OLED for ~' + idCodeTtlText() + '. Read the 6 hex chars and type them below.'
       : 'A 6-character code is needed to authorise this action. If one is not already on the device OLED, press the device button (see below) to generate one, then type it below.';
   }
-  $('modal-id-code').hidden = false;
+  state.modals.idCode = true;
   // Focus the input next tick so the box doesn't fight the modal's
   // own paint for first-frame attention.
   setTimeout(() => $('idc-input').focus(), 0);
 }
-$('btn-idc-cancel').addEventListener('click', () => { $('modal-id-code').hidden = true; });
+$('btn-idc-cancel').addEventListener('click', () => { state.modals.idCode = false; });
 $('btn-idc-ok').addEventListener('click', () => {
   const code = $('idc-input').value;
-  $('modal-id-code').hidden = true;
+  state.modals.idCode = false;
   if (state.pendingIdCodeAction) { state.pendingIdCodeAction(code); state.pendingIdCodeAction = null; }
 });
 

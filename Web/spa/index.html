@@ -1175,7 +1175,18 @@ summary:hover { color: var(--text); }
      x-data
      x-show="$store.net && !$store.net.connected"
      x-cloak>Reconnecting…</div>
-<div id="toast-stack"></div>
+<div id="toast-stack" x-data x-cloak>
+  <template x-for="t in $store.toasts.items" :key="t.id">
+    <div :class="'toast ' + t.kind + (t.dismissing ? ' dismissing' : '')"
+         role="status"
+         @click="$store.toasts.dismiss(t.id)">
+      <div class="title" x-text="t.title"></div>
+      <template x-if="t.body">
+        <div class="body" x-text="t.body"></div>
+      </template>
+    </div>
+  </template>
+</div>
 
 <!-- ===================== BOOTSTRAP WIFI SETUP ===================== -->
 <div id="view-bootstrap" class="page" hidden>
@@ -2091,6 +2102,38 @@ document.addEventListener('alpine:init', () => {
   window.state = state;            // expose for console debugging
   Alpine.store('s',   state);
   Alpine.store('net', { connected: true });
+  Alpine.store('toasts', {
+    items: [],
+    _seq: 1,
+    push(message, kind = 'info', durationMs) {
+      if (!message) return;
+      if (durationMs == null) {
+        durationMs = (kind === 'error') ? 7000 : (kind === 'success') ? 3000 : 4000;
+      }
+      // Split "Title: body" into separate lines — same heuristic as
+      // the old imperative path.
+      let title = message, body = '';
+      const idx = message.indexOf(':');
+      if (idx > 0 && idx < 32 && message.length > idx + 2) {
+        title = message.slice(0, idx);
+        body  = message.slice(idx + 1).trim();
+      }
+      const id = this._seq++;
+      this.items.push({ id, kind, title, body, dismissing: false });
+      setTimeout(() => this.dismiss(id), durationMs);
+    },
+    dismiss(id) {
+      const t = this.items.find(x => x.id === id);
+      if (!t || t.dismissing) return;
+      // Set the flag → CSS .dismissing animates out → remove after
+      // the 200 ms transition. Matches the legacy timing.
+      t.dismissing = true;
+      setTimeout(() => {
+        const i = this.items.findIndex(x => x.id === id);
+        if (i >= 0) this.items.splice(i, 1);
+      }, 200);
+    },
+  });
 });
 
 // ============================== STATE ==============================
@@ -2387,28 +2430,15 @@ function renderTopbarProgress() {
 // Non-blocking notification. Replaces alert() throughout. Kinds:
 //   'info' (default), 'success', 'warn', 'error'.
 // Defaults: errors live ~7s (long enough to read), success ~3s, info ~4s.
+// Legacy global `toast()` — kept as a thin shim that delegates to the
+// Alpine store. ~50+ callsites across the SPA still call toast(msg, …);
+// rewriting them in this commit would balloon the diff. Cleanup wave
+// can rename them to $store.toasts.push directly.
 function toast(message, kind = 'info', durationMs) {
-  if (!message) return;
-  if (durationMs == null) durationMs = (kind === 'error' ? 7000 : kind === 'success' ? 3000 : 4000);
-  const stack = $('toast-stack');
-  const node = el('div', { class: 'toast ' + kind, role: 'status' });
-  // If the message has a colon, split into title + body for emphasis.
-  const idx = message.indexOf(':');
-  if (idx > 0 && idx < 32 && message.length > idx + 2) {
-    node.appendChild(el('div', { class: 'title', text: message.slice(0, idx) }));
-    node.appendChild(el('div', { class: 'body',  text: message.slice(idx + 1).trim() }));
-  } else {
-    node.appendChild(el('div', { class: 'title', text: message }));
-  }
-  const dismiss = () => {
-    if (node.dataset.dismissing) return;
-    node.dataset.dismissing = '1';
-    node.classList.add('dismissing');
-    setTimeout(() => node.remove(), 200);
-  };
-  node.addEventListener('click', dismiss);
-  stack.appendChild(node);
-  setTimeout(dismiss, durationMs);
+  if (!window.Alpine) return;       // pre-init: silently drop. Toasts
+                                    // matter for user feedback after
+                                    // boot, not before.
+  Alpine.store('toasts').push(message, kind, durationMs);
 }
 
 // ============================== CONFIRM MODAL ==============================

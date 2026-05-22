@@ -1219,7 +1219,21 @@ summary:hover { color: var(--text); }
 <div id="view-identities" class="page" x-data x-show="$store.s.view === 'view-identities'" x-cloak>
   <div class="card">
     <h2>Identities</h2>
-    <div id="identity-list"></div>
+    <div id="identity-list" x-data>
+      <template x-if="$store.s.identities.length === 0">
+        <div class="muted">No identities yet — create one below.</div>
+      </template>
+      <template x-for="id in $store.s.identities" :key="id.id">
+        <div class="iden-card" @click="enterLogin(id)">
+          <span class="idc" x-html="identicon(id.address, 44)"></span>
+          <div style="min-width:0">
+            <div class="name" x-text="id.display_name || '(no name)'"></div>
+            <div class="addr" x-text="id.address"></div>
+          </div>
+          <div>→</div>
+        </div>
+      </template>
+    </div>
     <div class="row" style="margin-top:14px">
       <button id="btn-show-create" style="flex:1" @click="enterCreate()">Create new identity</button>
     </div>
@@ -1801,6 +1815,19 @@ summary:hover { color: var(--text); }
 </div>
 
 <!-- ===================== EMOJI PICKER ===================== -->
+<!-- Floating per-row context menu. Rendered once, positioned via the
+     x/y from $store.s.rowMenu. openRowMenu(peer, anchor) seeds the
+     items + coords; closeRowMenu sets rowMenu to null. -->
+<div x-data x-show="$store.s.rowMenu" x-cloak
+     class="row-menu"
+     :style="$store.s.rowMenu ? ('left:' + $store.s.rowMenu.x + 'px;top:' + $store.s.rowMenu.y + 'px') : ''">
+  <template x-for="it in ($store.s.rowMenu ? $store.s.rowMenu.items : [])" :key="it.label">
+    <button :class="'row-menu-item' + (it.destructive ? ' destructive' : '')"
+            @click.stop="closeRowMenu(); it.fn()"
+            x-text="it.label"></button>
+  </template>
+</div>
+
 <div id="popup-emoji" x-data x-show="$store.s.popovers.emoji" x-cloak>
   <template x-for="e in EMOJI" :key="e">
     <div class="emoji-cell" x-text="e" @click="onEmojiPick(e)"></div>
@@ -1862,14 +1889,36 @@ summary:hover { color: var(--text); }
 <!-- Opened after the user picks an image. Lets them pick small /
      medium / original; each option shows its file size + ETA against
      the current destination so the cost is visible before send. -->
-<div id="modal-image-resize" class="modal-bg" x-data x-show="$store.s.modals.imageResize" x-cloak style="z-index:260">
+<div id="modal-image-resize" class="modal-bg" x-data x-show="$store.s.modals.imageResize"
+     @click.self="imageResizeCancel()" x-cloak style="z-index:260">
   <div class="modal" style="max-width:480px">
     <h3>Attach image</h3>
-    <p class="muted" id="ir-source" style="margin-bottom:10px"></p>
-    <div id="ir-options" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px"></div>
+    <p class="muted" id="ir-source" style="margin-bottom:10px"
+       x-text="$store.s.imageResize.sourceLine"></p>
+    <div id="ir-options" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
+      <template x-for="p in $store.s.imageResize.prepared" :key="p.key">
+        <div :style="imageResizeCardStyle(p)"
+             @click="imageResizePick(p)">
+          <img :src="p.objectUrl"
+               :style="'width:' + $store.s.imageResize.thumbBox + 'px;height:' + $store.s.imageResize.thumbBox + 'px;object-fit:contain;background:var(--bg);border-radius:4px;flex-shrink:0'">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600"
+                 x-text="p.label + (p.maxDim ? '  (≤ ' + p.maxDim + ' px)' : '  (as-is)')"></div>
+            <div class="muted mono" style="font-size:11px;margin-top:2px"
+                 x-text="p.dims.w + '×' + p.dims.h + ' · ' + formatBytes(p.size)"></div>
+            <template x-if="p.size > $store.s.imageResize.cap">
+              <div style="color:var(--danger-2);font-size:11px;margin-top:4px"
+                   x-text="'Too large — cap is ' + formatBytes($store.s.imageResize.cap)"></div>
+            </template>
+            <div class="muted mono" style="font-size:11px;color:var(--text-dim);margin-top:4px"
+                 x-text="$store.s.imageResize.etaByKey[p.key] || ''"></div>
+          </div>
+        </div>
+      </template>
+    </div>
     <div class="row">
-      <button class="secondary" id="ir-cancel">Cancel</button>
-      <button id="ir-attach">Attach</button>
+      <button class="secondary" id="ir-cancel" @click="imageResizeCancel()">Cancel</button>
+      <button id="ir-attach" @click="imageResizeAttach($event.currentTarget)">Attach</button>
     </div>
   </div>
 </div>
@@ -2623,6 +2672,16 @@ let state = {
   tcpClientsLive: 0,
   // Saved WiFi networks. null = loading.
   wifiSaved: null,
+  // Row-menu popover state. null = closed; { items, x, y } when open.
+  // items: [{ label, fn, destructive? }, ...]
+  rowMenu: null,
+  // Image-resize picker state. Populated by openImageResizePicker; the
+  // modal's <template x-for> renders prepared variants and chosen
+  // tracks the active selection.
+  imageResize: {
+    sourceLine: '', cap: 0, thumbBox: 200, prepared: [],
+    chosen: null, etaByKey: {}, _resolve: null, _file: null,
+  },
   // Background-task registry. Keyed by an arbitrary string id. Mirrors
   // the legacy bgTasks Map but as a plain object so Alpine reactivity
   // tracks add / remove / update on the topbar progress strip.
@@ -2743,20 +2802,6 @@ function fillIdCodeHints() {
 
 // ============================== UTIL ==============================
 function $(id) { return document.getElementById(id); }
-function el(tag, props, ...children) {
-  const e = document.createElement(tag);
-  if (props) for (const k in props) {
-    if (k === 'class')      e.className = props[k];
-    else if (k === 'text')  e.textContent = props[k];
-    else if (k.startsWith('on')) e.addEventListener(k.slice(2), props[k]);
-    else e.setAttribute(k, props[k]);
-  }
-  for (const c of children) {
-    if (c == null) continue;
-    e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
-  }
-  return e;
-}
 function show(viewId) {
   // Alpine drives the view switching via x-show against $store.s.view;
   // legacy callers still call show('view-foo') and it works because
@@ -3030,8 +3075,12 @@ function identicon(addrHex, size = 40) {
   _idcCache.set(key, svg);
   return svg;
 }
+// Only callsite still using a function-built identicon node is the
+// identity-picker (enterIdentityPicker). Build the span directly —
+// no el() helper needed since the only attr is class + innerHTML.
 function identiconEl(addrHex, size = 40) {
-  const span = el('span', { class: 'idc' });
+  const span = document.createElement('span');
+  span.className = 'idc';
   span.innerHTML = identicon(addrHex, size);
   return span;
 }
@@ -4132,13 +4181,11 @@ async function stageNonImageAttachment(file) {
 }
 
 async function openImageResizePicker(file) {
-  const modal = $('modal-image-resize');
-  const cap   = attachMaxBytes();
+  const cap = attachMaxBytes();
   const backendLabel = attachBackendLabel();
-  $('ir-source').textContent = file.name + ' · ' + formatBytes(file.size)
+  const sourceLine = file.name + ' · ' + formatBytes(file.size)
         + (backendLabel ? ('  ·  staging: ' + backendLabel + ' (' + formatBytes(cap) + ')') : '');
-  const wrap = $('ir-options');
-  wrap.innerHTML = '';
+
   // Compute candidate sizes up-front. "Resize" here means downscaling
   // the image's pixel dimensions (which proportionally shrinks the
   // encoded JPEG); "original" sends the user's file bytes as-is.
@@ -4149,12 +4196,7 @@ async function openImageResizePicker(file) {
   ];
   const prepared = [];
   for (const c of candidates) {
-    let blob;
-    if (c.key === 'original') {
-      blob = file;
-    } else {
-      blob = await resizeImage(file, c.maxDim);
-    }
+    const blob = c.key === 'original' ? file : await resizeImage(file, c.maxDim);
     const dims = await blobImageDimensions(blob);
     prepared.push({ ...c, blob, size: blob.size, dims,
                     objectUrl: URL.createObjectURL(blob) });
@@ -4166,99 +4208,82 @@ async function openImageResizePicker(file) {
   const thumbBox = Math.min(200, Math.max(smallVariant.dims.w, smallVariant.dims.h));
 
   // Default selection: largest candidate that still fits the cap.
-  let chosen = [...prepared].reverse().find(p => p.size <= cap) || prepared[0];
+  const chosen = [...prepared].reverse().find(p => p.size <= cap) || prepared[0];
 
-  const renderOptions = () => {
-    wrap.innerHTML = '';
-    for (const p of prepared) {
-      const tooBig = p.size > cap;
-      const isChosen = p.key === chosen.key && !tooBig;
-      const card = el('div', {
-        style: 'display:flex;gap:12px;padding:8px;border-radius:6px;'
-             + 'border:2px solid ' + (isChosen ? 'var(--accent)' : 'var(--bg-elev-2)') + ';'
-             + 'background:' + (isChosen ? 'rgba(255,255,255,0.04)' : 'transparent') + ';'
-             + 'cursor:' + (tooBig ? 'not-allowed' : 'pointer') + ';'
-             + 'opacity:' + (tooBig ? 0.5 : 1) + ';'
-             + 'align-items:flex-start',
-      });
-      // Thumbnail: actual resized JPEG, displayed at a fixed box size
-      // with object-fit:contain so aspect ratio is preserved and
-      // medium/original visually shrink to the same on-screen footprint
-      // as small. This lets the user compare quality at equal scale.
-      const img = el('img', {
-        src: p.objectUrl,
-        style: 'width:' + thumbBox + 'px;height:' + thumbBox + 'px;'
-             + 'object-fit:contain;background:var(--bg);border-radius:4px;flex-shrink:0',
-      });
-      card.appendChild(img);
+  Object.assign(state.imageResize, {
+    sourceLine, cap, thumbBox, prepared, chosen,
+    etaByKey: {}, _file: file,
+  });
+  state.modals.imageResize = true;
 
-      const info = el('div', { style: 'flex:1;min-width:0' });
-      info.appendChild(el('div', { style: 'font-weight:600',
-        text: p.label + (p.maxDim ? '  (≤ ' + p.maxDim + ' px)' : '  (as-is)') }));
-      info.appendChild(el('div', { class: 'muted mono', style: 'font-size:11px;margin-top:2px',
-        text: p.dims.w + '×' + p.dims.h + ' · ' + formatBytes(p.size) }));
-      if (tooBig) {
-        info.appendChild(el('div', { style: 'color:var(--danger-2);font-size:11px;margin-top:4px',
-          text: 'Too large — cap is ' + formatBytes(cap) }));
-      }
-      info.appendChild(el('div', { class: 'muted mono',
-        'data-eta-for': p.key,
-        style: 'font-size:11px;color:var(--text-dim);margin-top:4px',
-        text: '' }));
-      card.appendChild(info);
-
-      if (!tooBig) {
-        card.addEventListener('click', () => {
-          chosen = p;
-          renderOptions();
-        });
-      }
-      wrap.appendChild(card);
-    }
-  };
-  const refreshEtas = async () => {
+  // Fetch per-variant ETAs in the background; the template observes
+  // etaByKey via x-text and shows them as they arrive.
+  (async () => {
     const peer = state.openPeer;
     if (!peer) return;
     for (const p of prepared) {
       if (p.size > cap) continue;
       try {
         const r = await state.transport.pathEstimate(peer, p.size + 120);
-        const node = wrap.querySelector('[data-eta-for="' + p.key + '"]');
-        if (!node) continue;
-        if (r.kind === 'local')      node.textContent = 'ETA: instant (same device)';
-        else if (r.kind === 'unknown') node.textContent = 'ETA: unknown route';
+        let line = '';
+        if (r.kind === 'local')        line = 'ETA: instant (same device)';
+        else if (r.kind === 'unknown') line = 'ETA: unknown route';
         else {
           const e = formatEta(r.eta_ms);
-          node.textContent = e ? ('ETA: ' + e) : 'ETA: pending path estimate';
+          line = e ? ('ETA: ' + e) : 'ETA: pending path estimate';
         }
+        state.imageResize.etaByKey[p.key] = line;
       } catch (_) { /* leave blank */ }
     }
-  };
-  renderOptions();
-  await refreshEtas();
-  state.modals.imageResize = true;
-  const cleanup = () => {
-    state.modals.imageResize = false;
-    for (const p of prepared) URL.revokeObjectURL(p.objectUrl);
-    $('ir-cancel').removeEventListener('click', onCancel);
-    $('ir-attach').removeEventListener('click', onAttach);
-  };
-  const onCancel = () => cleanup();
-  const onAttach = async () => {
-    if (!chosen) return;
-    const c = chosen;  // capture before cleanup revokes URLs
-    cleanup();
-    const bytes = await blobToBytes(c.blob);
-    const filename = (file.name || 'image').replace(/\.[^.]+$/, '')
-                    + (c.key === 'original' ? '' : '_' + c.key)
-                    + '.jpg';
-    await stagePendingAttachment({
-      tag: FIELD_IMAGE, bytes, filename,
-      mime: c.key === 'original' ? (file.type || 'image/jpeg') : 'image/jpeg',
-    });
-  };
-  $('ir-cancel').addEventListener('click', onCancel);
-  $('ir-attach').addEventListener('click', onAttach);
+  })();
+}
+
+// Card style binding — outlines + background match selection state,
+// dim + not-allowed for over-cap options.
+function imageResizeCardStyle(p) {
+  const ir = state.imageResize;
+  const tooBig   = p.size > ir.cap;
+  const isChosen = ir.chosen && p.key === ir.chosen.key && !tooBig;
+  return 'display:flex;gap:12px;padding:8px;border-radius:6px;'
+       + 'border:2px solid ' + (isChosen ? 'var(--accent)' : 'var(--bg-elev-2)') + ';'
+       + 'background:' + (isChosen ? 'rgba(255,255,255,0.04)' : 'transparent') + ';'
+       + 'cursor:' + (tooBig ? 'not-allowed' : 'pointer') + ';'
+       + 'opacity:' + (tooBig ? 0.5 : 1) + ';'
+       + 'align-items:flex-start';
+}
+
+// Selection click — accept only when the variant fits the cap.
+function imageResizePick(p) {
+  if (p.size > state.imageResize.cap) return;
+  state.imageResize.chosen = p;
+}
+
+// Cancel button + backdrop click handler.
+function imageResizeCancel() {
+  for (const p of (state.imageResize.prepared || [])) URL.revokeObjectURL(p.objectUrl);
+  state.imageResize.prepared = [];
+  state.imageResize.chosen = null;
+  state.imageResize._file = null;
+  state.modals.imageResize = false;
+}
+
+// Attach button — stage the chosen variant and close.
+async function imageResizeAttach(_btn) {
+  const ir = state.imageResize;
+  const c = ir.chosen;
+  if (!c) return;
+  const file = ir._file;
+  const bytes = await blobToBytes(c.blob);
+  const filename = (file.name || 'image').replace(/\.[^.]+$/, '')
+                  + (c.key === 'original' ? '' : '_' + c.key)
+                  + '.jpg';
+  // Close (revokes object URLs) BEFORE staging so the modal disappears
+  // promptly — stagePendingAttachment may be slow on large uploads.
+  imageResizeCancel();
+  await stagePendingAttachment({
+    tag: FIELD_IMAGE, bytes, filename,
+    mime: c.key === 'original' ? (file.type || 'image/jpeg') : 'image/jpeg',
+  });
 }
 
 async function stagePendingAttachment(att) {
@@ -5249,15 +5274,20 @@ function buildSensorConfigRow(section, key, sensor) {
   // Inline styling lives on .popover-config in the CSS — caller's
   // markup just needs the class. Same for the checkbox + select
   // size resets.
-  const enable = el('label');
-  const cb = el('input', { type: 'checkbox' });
+  const enable = document.createElement('label');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
   cb.checked = !!sensor.enabled;
   enable.appendChild(cb);
-  enable.appendChild(el('span', { text: 'Enabled' }));
-  const sel = el('select');
+  const lbl = document.createElement('span');
+  lbl.textContent = 'Enabled';
+  enable.appendChild(lbl);
+  const sel = document.createElement('select');
   const snapped = sensorIntervalSnap(Math.round((sensor.interval_ms || 60000) / 1000));
   for (const p of SENSOR_INTERVALS) {
-    const opt = el('option', { value: String(p.value), text: p.label });
+    const opt = document.createElement('option');
+    opt.value = String(p.value);
+    opt.textContent = p.label;
     if (p.value === snapped) opt.selected = true;
     sel.appendChild(opt);
   }
@@ -5753,21 +5783,7 @@ function enterBootstrap() {
 }
 function enterIdentityPicker() {
   show('view-identities');
-  const wrap = $('identity-list');
-  wrap.innerHTML = '';
-  if (state.identities.length === 0) {
-    wrap.appendChild(el('div', { class: 'muted', text: 'No identities yet — create one below.' }));
-  }
-  for (const id of state.identities) {
-    wrap.appendChild(el('div', { class: 'iden-card', onclick: () => enterLogin(id) },
-      identiconEl(id.address, 44),
-      el('div', { style: 'min-width:0' },
-        el('div', { class: 'name', text: id.display_name || '(no name)' }),
-        el('div', { class: 'addr', text: id.address }),
-      ),
-      el('div', null, '→'),
-    ));
-  }
+  // List rendered declaratively from $store.s.identities.
 }
 function enterCreate() {
   show('view-create');
@@ -5822,7 +5838,7 @@ async function bsRescan() {
     const r = await state.transport.wifiScan();
     sel.innerHTML = '<option value="">— pick a network —</option>';
     for (const n of (r.networks || [])) {
-      sel.appendChild(el('option', { value: n.ssid }, n.ssid + (n.secure ? ' 🔒' : '')));
+      { const o = document.createElement('option'); o.value = n.ssid; o.textContent = n.ssid + (n.secure ? ' 🔒' : ''); sel.appendChild(o); }
     }
   } catch (e) { sel.innerHTML = '<option value="">(scan failed)</option>'; }
 }
@@ -5986,48 +6002,41 @@ $('conv-list').addEventListener('click', (ev) => {
 // laptops + Surface-style devices have a usable entry point even when
 // the icon isn't rendered. Discovered rows (data-discovered="1") are
 // excluded — they have nothing to retain or clear.
-let _rowMenuEl = null;
-function closeRowMenu() {
-  if (_rowMenuEl) { _rowMenuEl.remove(); _rowMenuEl = null; }
-}
+function closeRowMenu() { state.rowMenu = null; }
 function openRowMenu(peer, anchor) {
-  closeRowMenu();
-  if (!peer) return;
+  if (!peer) { state.rowMenu = null; return; }
   const items = [
     { label: 'Rename peer…',    fn: () => renamePeerFlow(peer) },
     { label: 'Retention…',      fn: () => openRetentionModal(state.identityId, peer) },
     { label: 'Clear messages…', fn: () => clearConversationFlow(peer), destructive: true },
   ];
-  const menu = el('div', { class: 'row-menu' });
-  for (const it of items) {
-    menu.appendChild(el('button', {
-      class: 'row-menu-item' + (it.destructive ? ' destructive' : ''),
-      onclick: (ev) => { ev.stopPropagation(); closeRowMenu(); it.fn(); },
-    }, it.label));
-  }
-  document.body.appendChild(menu);
-  _rowMenuEl = menu;
-
-  // Anchor near the trigger. anchor is either a DOM element (button)
-  // or a {x, y} for cursor / touch-point. Clamp to viewport so the
-  // menu doesn't get clipped off the bottom or right edge.
+  // Position near the anchor. anchor is either a DOM element (the ⋮
+  // button) or a {x, y} for cursor / touch-point. Clamp to viewport.
+  // Sizes are estimates — the rendered menu may differ; the clamp
+  // tolerates that.
   const rect = (anchor && anchor.getBoundingClientRect)
       ? anchor.getBoundingClientRect()
       : { left: anchor.x, right: anchor.x, top: anchor.y, bottom: anchor.y };
-  const menuW = menu.offsetWidth  || 200;
-  const menuH = menu.offsetHeight || 130;
+  const menuW = 200, menuH = 130;
   let left = Math.min(rect.right - menuW, window.innerWidth - menuW - 8);
   let top  = rect.bottom + 4;
   if (top + menuH > window.innerHeight - 8) top = Math.max(8, rect.top - menuH - 4);
   if (left < 8) left = 8;
-  menu.style.left = left + 'px';
-  menu.style.top  = top  + 'px';
+  state.rowMenu = { items, x: left, y: top };
 }
 // Close on outside click / Esc / scroll. Captured at the document
 // level so any tap outside the menu — including taps on a conv-row —
 // dismisses it before the row's own click handler runs.
 document.addEventListener('mousedown', (ev) => {
-  if (_rowMenuEl && !_rowMenuEl.contains(ev.target)) closeRowMenu();
+  if (!state.rowMenu) return;
+  // Walk up to find the row-menu wrapper; if the click isn't inside
+  // it, close.
+  let n = ev.target;
+  while (n && n !== document.body) {
+    if (n.classList && n.classList.contains('row-menu')) return;
+    n = n.parentNode;
+  }
+  closeRowMenu();
 }, true);
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape') closeRowMenu();
@@ -6309,7 +6318,7 @@ async function scanIntoWifiModal() {
     const r = await state.transport.wifiScan();
     sel.innerHTML = '<option value="">— pick a network —</option>';
     for (const n of (r.networks || [])) {
-      sel.appendChild(el('option', { value: n.ssid }, n.ssid + (n.secure ? ' 🔒' : '')));
+      { const o = document.createElement('option'); o.value = n.ssid; o.textContent = n.ssid + (n.secure ? ' 🔒' : ''); sel.appendChild(o); }
     }
   } catch (e) {
     sel.innerHTML = '<option value="">(scan failed)</option>';
@@ -6424,16 +6433,17 @@ const RADIO_PRESETS = [
 function populateRadioPresets() {
   const sel = $('rd-preset');
   sel.innerHTML = '';
-  // Empty option first — we don't know the user's region. They must
-  // pick one (or "Custom") which then reveals the raw param fields.
-  sel.appendChild(el('option', { value: '__empty' }, '— Pick a region —'));
-  for (const p of RADIO_PRESETS) {
-    sel.appendChild(el('option', { value: p.id }, p.label));
-  }
+  const mk = (value, text) => {
+    const o = document.createElement('option');
+    o.value = value; o.textContent = text;
+    sel.appendChild(o);
+  };
+  mk('__empty', '— Pick a region —');
+  for (const p of RADIO_PRESETS) mk(p.id, p.label);
   // "Custom" lives at the bottom — it's the fallback after the named
   // regions, and ordering it last keeps the common-case picks adjacent
   // to the placeholder at top.
-  sel.appendChild(el('option', { value: '__custom' }, 'Custom (manual)'));
+  mk('__custom', 'Custom (manual)');
 }
 function findMatchingPreset() {
   const freq = Number($('rd-freq').value);
@@ -6559,7 +6569,8 @@ document.addEventListener('click', (ev) => {
       return;
     }
     _closeInfoTooltip();
-    const tip = el('div', { class: 'info-tooltip' });
+    const tip = document.createElement('div');
+    tip.className = 'info-tooltip';
     tip.innerHTML = info;
     tip.dataset.from = info;
     document.body.appendChild(tip);
@@ -6878,57 +6889,55 @@ function snapToPreset(secs) {
 function buildTimeSourceRow(key, cfg) {
   const [label, desc] = TIME_SOURCE_LABELS[key];
   const hasInterval = !!TIME_SOURCE_HAS_INTERVAL[key];
-  const row = el('div', {
+  // Helper to keep the long createElement chain readable.
+  const mk = (tag, attrs, content) => {
+    const n = document.createElement(tag);
+    if (attrs) for (const k in attrs) {
+      if (k === 'style') n.setAttribute('style', attrs[k]);
+      else if (k.startsWith('data-')) n.setAttribute(k, attrs[k]);
+      else if (k === 'class') n.className = attrs[k];
+      else n.setAttribute(k, attrs[k]);
+    }
+    if (content != null) n.textContent = content;
+    return n;
+  };
+  const row = mk('div', {
     class: 'tm-source-row',
     'data-source': key,
     draggable: 'true',
     style: 'margin-bottom:6px;border:1px solid var(--bg-elev-2);border-radius:6px;background:var(--bg-elev);user-select:none;overflow:hidden',
   });
   // -------- collapsed header (always visible) --------
-  const header = el('div', {
-    style: 'display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:grab',
-  });
-  const handle = el('div', {
-    style: 'opacity:0.5;font-size:14px;line-height:1;width:14px;text-align:center;flex:0 0 auto',
-    text: '⋮⋮',
-  });
-  const enable = el('input', {
-    type: 'checkbox',
-    style: 'width:auto;min-height:auto;flex:0 0 auto;margin:0 6px 0 0',
-  });
+  const header = mk('div', { style: 'display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:grab' });
+  const handle = mk('div', { style: 'opacity:0.5;font-size:14px;line-height:1;width:14px;text-align:center;flex:0 0 auto' }, '⋮⋮');
+  const enable = mk('input', { type: 'checkbox', style: 'width:auto;min-height:auto;flex:0 0 auto;margin:0 6px 0 0' });
   enable.checked = !!cfg.enabled;
   enable.dataset.role = 'enable';
   // Clicking the checkbox shouldn't also toggle the expander.
   enable.addEventListener('click', (ev) => ev.stopPropagation());
-  const labelEl = el('div', { style: 'flex:1;min-width:0;font-size:13px' },
-    el('strong', { text: label }));
-  const chev = el('span', {
-    style: 'opacity:0.55;font-size:11px;flex:0 0 auto;transition:transform .12s',
-    text: '▾',
-  });
+  const labelEl = mk('div', { style: 'flex:1;min-width:0;font-size:13px' });
+  const strong = document.createElement('strong');
+  strong.textContent = label;
+  labelEl.appendChild(strong);
+  const chev = mk('span', { style: 'opacity:0.55;font-size:11px;flex:0 0 auto;transition:transform .12s' }, '▾');
   header.appendChild(handle);
   header.appendChild(enable);
   header.appendChild(labelEl);
   header.appendChild(chev);
 
   // -------- expanded body (description + interval) --------
-  const body = el('div', {
-    style: 'display:none;padding:0 10px 10px 38px;font-size:12px',
-  });
-  body.appendChild(el('div', { class: 'muted', style: 'margin-bottom:6px', text: desc }));
+  const body = mk('div', { style: 'display:none;padding:0 10px 10px 38px;font-size:12px' });
+  body.appendChild(mk('div', { class: 'muted', style: 'margin-bottom:6px' }, desc));
   let interval = null;
   if (hasInterval) {
-    const wrap = el('div', { style: 'display:flex;align-items:center;gap:8px' });
-    wrap.appendChild(el('label', {
-      style: 'font-size:12px;color:var(--text);flex:0 0 auto', text: 'Refresh:' }));
-    interval = el('select', {
-      style: 'flex:1;max-width:160px',
-      title: 'How often this source should report a new time.',
-    });
+    const wrap = mk('div', { style: 'display:flex;align-items:center;gap:8px' });
+    wrap.appendChild(mk('label', { style: 'font-size:12px;color:var(--text);flex:0 0 auto' }, 'Refresh:'));
+    interval = mk('select', { style: 'flex:1;max-width:160px',
+                              title: 'How often this source should report a new time.' });
     interval.dataset.role = 'interval';
     const snapped = snapToPreset(cfg.interval_s);
     for (const p of INTERVAL_PRESETS) {
-      const opt = el('option', { value: String(p.value), text: p.label });
+      const opt = mk('option', { value: String(p.value) }, p.label);
       if (p.value === snapped) opt.selected = true;
       interval.appendChild(opt);
     }
@@ -7130,7 +7139,9 @@ function populateIntervalSelect() {
   const sel = $('id-announce-interval');
   sel.innerHTML = '';
   for (const i of ANNOUNCE_INTERVALS) {
-    sel.appendChild(el('option', { value: String(i.ms) }, i.label));
+    const o = document.createElement('option');
+    o.value = String(i.ms); o.textContent = i.label;
+    sel.appendChild(o);
   }
 }
 populateIntervalSelect();
@@ -7520,14 +7531,13 @@ function waitForDeviceAndReload(message) {
   //      origin (the softAP IP) won't resolve once the device drops
   //      its softAP. Use the mDNS hostname captured before reload and
   //      jump to http://<host>.local/ as soon as it answers.
-  document.body.innerHTML = '';
-  const wrap = el('div', { class: 'page' },
-    el('div', { class: 'card' },
-      el('h2', { text: 'Rebooting' }),
-      el('p', { class: 'muted', id: 'rb-status', text: message }),
-    ),
-  );
-  document.body.appendChild(wrap);
+  // Replace the body with a small reboot-in-progress card. innerHTML
+  // is fine here because we're nuking the whole SPA state anyway —
+  // a fresh page load is incoming.
+  document.body.innerHTML =
+    '<div class="page"><div class="card"><h2>Rebooting</h2>' +
+    '<p class="muted" id="rb-status"></p></div></div>';
+  $('rb-status').textContent = message;
   // Captured before the device reboots. Falsey when not yet known
   // (first /api/info hasn't returned by the time we navigate here);
   // we fall back to same-origin in that case.

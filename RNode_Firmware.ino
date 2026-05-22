@@ -1361,22 +1361,12 @@ void lora_receive() {
 inline void kiss_write_packet() {
 
 #ifdef HAS_RNS
-  TRACEF("Received %d byte packet", host_write_len);
-  // CBA send packet received over LoRa to RNS in addition to connected client
-  // CBA RESERVE
-  //RNS::Bytes data();
-  RNS::Bytes data(512);
-  for (uint16_t i = 0; i < host_write_len; i++) {
-    #if MCU_VARIANT == MCU_NRF52
-      portENTER_CRITICAL();
-      uint8_t byte = pbuf[i];
-      portEXIT_CRITICAL();
-    #else
-      uint8_t byte = pbuf[i];
-    #endif
-    data << byte;
+  if (host_write_len > 0) {
+    TRACEF("Received %d byte packet", host_write_len);
+    // CBA send packet received over LoRa to RNS in addition to connected client
+    RNS::Bytes data(pbuf, host_write_len);
+    lora_interface.handle_incoming(data);
   }
-  lora_interface.handle_incoming(data);
 #endif
 
   serial_write(FEND);

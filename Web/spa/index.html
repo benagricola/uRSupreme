@@ -72,7 +72,7 @@
     </div>
     <label>Password</label>
     <input class="mb-10" id="bs-psk" type="password" placeholder="WiFi password">
-    <p class="muted id-code-hint mt-14" ></p>
+    <p class="muted id-code-hint mt-14" x-data x-html="idCodeHintHtml()"></p>
     <label>Identity code</label>
     <input class="font-mono-inline mb-10" id="bs-code" maxlength="6" placeholder="abc123">
     <button class="w-full" id="bs-save">Save WiFi & reboot</button>
@@ -108,7 +108,7 @@
     <details class="mt-14">
       <summary class="muted">Lost a password?</summary>
       <p class="muted">Factory reset wipes <em>every</em> identity on this device — inboxes, sent messages, auth tokens, the lot. Required if every password is forgotten.</p>
-      <p class="muted id-code-hint"></p>
+      <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
       <label>Identity code</label>
       <input class="font-mono-inline mb-2" id="fr-code" maxlength="6" placeholder="abc123">
       <button class="danger w-full" id="btn-factory-reset"  @click="onClickFactoryReset()">Factory reset</button>
@@ -126,7 +126,7 @@
     <input class="mb-2" id="cr-pw1" type="password">
     <label>Confirm password</label>
     <input class="mb-10" id="cr-pw2" type="password">
-    <p class="muted id-code-hint"></p>
+    <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
     <label>Identity code</label>
     <input class="font-mono-inline mb-10" id="cr-code" maxlength="6" placeholder="abc123">
     <div class="row">
@@ -841,7 +841,7 @@
        x-text="$store.s.confirm.body"></p>
     <div class="mb-3" id="mc-code-wrap" x-show="$store.s.confirm.needsCode" x-cloak>
       <label>Identity code</label>
-      <p class="muted id-code-hint mb-6" ></p>
+      <p class="muted id-code-hint mb-6" x-data x-html="idCodeHintHtml()"></p>
       <input class="font-mono-inline" id="mc-code" maxlength="6" placeholder="abc123"
        
        x-model="$store.s.confirm.codeValue"
@@ -884,7 +884,7 @@
     <button class="secondary mb-3" id="cn-wifi-scan"  @click="scanIntoWifiModal()">Rescan networks</button>
     <label>Password</label>
     <input class="mb-2" id="cn-wifi-psk" type="password" placeholder="(leave blank for open networks)">
-    <p class="muted id-code-hint mb-2" ></p>
+    <p class="muted id-code-hint mb-2" x-data x-html="idCodeHintHtml()"></p>
     <label>Identity code</label>
     <input class="font-mono-inline mb-3" id="cn-wifi-code" maxlength="6" placeholder="abc123">
     <div class="row">
@@ -1024,7 +1024,7 @@
          the .id-code-hint span below has the full "how to generate"
          instructions. -->
     <p class="muted"><span id="id-code-modal-hint"></span></p>
-    <p class="muted id-code-hint"></p>
+    <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
     <input class="mb-3 font-mono-inline" id="idc-input" maxlength="6" placeholder="abc123">
     <div class="row">
       <button class="secondary" id="btn-idc-cancel" @click="state.modals.idCode = false">Dismiss</button>
@@ -1061,12 +1061,14 @@
       <div class="tab-panel" data-panel="identity" :class="{ active: $store.s.settingsTab === 'identity' }">
         <div class="card">
           <div class="list-row flex items-center gap-10" >
-            <span class="idc" id="id-modal-idc"></span>
+            <span class="idc" id="id-modal-idc"
+                  x-html="$store.s.self ? identicon($store.s.self.address || $store.s.self.id, 40) : ''"></span>
             <div class="flex-1-min0">
               <input type="text" id="id-display-name" maxlength="96"
                      class="font-bold w-full min-h-auto py-1 px-6"
                      autocomplete="off" spellcheck="false">
-              <div class="muted mono mt-1" id="id-address" ></div>
+              <div class="muted mono mt-1" id="id-address"
+                   x-text="$store.s.self ? ($store.s.self.address || $store.s.self.id) : ''"></div>
             </div>
           </div>
           <div class="muted mt-1" >The label peers see in your identity announce. Changes take effect on the next announce — press the megaphone after editing to re-broadcast immediately.</div>
@@ -1104,7 +1106,10 @@
           </summary>
           <div class="cn-section-body">
             <label>Region preset</label>
-            <p class="muted mx-0 mt-1 mb-6" id="rd-intro">Pick the region preset that matches your local LoRa community. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.</p>
+            <p class="muted mx-0 mt-1 mb-6" id="rd-intro"
+               x-html="$store.s.settingsFirstRun
+                 ? `Before this device can talk to other LoRa nodes, it needs to know which region to operate in. Pick the preset for your local mesh — both ends of a conversation must use the <em>same</em> region settings, or they won't hear each other.`
+                 : `Pick the region preset that matches your local mesh. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.`"></p>
             <select class="mb-6" id="rd-preset">
               <option value="__empty">— Pick a region —</option>
               <template x-for="p in RADIO_PRESETS" :key="p.id">
@@ -1487,7 +1492,7 @@
         <div class="card mt-14" >
           <strong>Factory reset device</strong>
           <p class="muted">Wipes <em>every</em> identity on this device. Only escape if all passwords are lost.</p>
-          <p class="muted id-code-hint"></p>
+          <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
           <label>Identity code</label>
           <input class="font-mono-inline mb-6" id="fr2-code" maxlength="6" placeholder="abc123">
           <button class="danger" id="btn-fr2">Factory reset device</button>
@@ -1741,15 +1746,11 @@ let state = {
   idCodeTtlMs: 60_000,
 };
 
-// Shared copy for the identity-code hint, displayed everywhere a hex code
-// is required. Filled into every <p class="id-code-hint"> by
-// fillIdCodeHints. The "appears for X" duration is rendered at runtime
-// from state.idCodeTtlMs (sourced via /api/info → identity_code_ttl_ms)
-// so it tracks the firmware's compile-time IDENTITY_CODE_TTL_MS — the
-// previous hard-coded "5 minutes" was wrong (firmware actually uses
-// 60 seconds) and would drift again if anyone changes the firmware
-// constant. Fallback to 60 s only if /api/info hasn't been fetched yet
-// (matches the current firmware value).
+// Shared copy for the identity-code hint, displayed everywhere a hex
+// code is required. Each <p class="id-code-hint"> binds
+// `x-html="idCodeHintHtml()"`, so the duration tracks state.idCodeTtlMs
+// reactively (sourced via /api/info → identity_code_ttl_ms). Falls back
+// to 60 s before /api/info has arrived (matches the firmware default).
 function idCodeTtlText() {
   const ms = (state && state.idCodeTtlMs) || 60_000;
   const s  = Math.round(ms / 1000);
@@ -1759,13 +1760,6 @@ function idCodeTtlText() {
 }
 function idCodeHintHtml() {
   return '<strong>Identity code:</strong> a 6-character hex code that proves you\'re physically holding the device — required for any action sensitive enough that doing it remotely should not be possible. To generate one: long-press the device\'s user button (~1 s), release, then short-press within 2 s; the code appears on the OLED for ' + idCodeTtlText() + '.';
-}
-function fillIdCodeHints() {
-  const html = idCodeHintHtml();
-  document.querySelectorAll('.id-code-hint').forEach(e => e.innerHTML = html);
-  // #id-code-modal-hint inside #modal-id-code is owned by
-  // openIdCodeModal — it varies by call site (button-pressed vs
-  // SPA-initiated) and shouldn't be stomped on every refresh.
 }
 
 // ============================== UTIL ==============================
@@ -1968,7 +1962,6 @@ function showConfirm(opts) {
       codeValue:        '',
       _resolve:         resolve,
     });
-    if (opts.needsCode) fillIdCodeHints();
     state.modals.confirm = true;
     // Focus is per-open so it can't live on the store. Defer one tick
     // so the template diff lands first.
@@ -3412,13 +3405,13 @@ async function refreshStatus() {
     applyServerLimits(info.limits || {});
     // Cache identity-code TTL so the hint text reflects the firmware's
     // actual compile-time IDENTITY_CODE_TTL_MS (currently 60 s) rather
-    // than whatever number the SPA happened to ship with. Refresh any
-    // already-rendered hint placeholders in case the value just changed
-    // (e.g. first load before /api/info had arrived).
+    // than whatever number the SPA happened to ship with. The hint
+    // paragraphs bind `x-html="idCodeHintHtml()"`, so writing the
+    // reactive state.idCodeTtlMs is all that's needed — Alpine
+    // re-renders every placement automatically.
     if (typeof info.identity_code_ttl_ms === 'number'
         && info.identity_code_ttl_ms !== state.idCodeTtlMs) {
       state.idCodeTtlMs = info.identity_code_ttl_ms;
-      fillIdCodeHints();
     }
     applyStatusToButton(info);
     // Battery icon is reactive on state.lastInfo / state.system.
@@ -5235,7 +5228,6 @@ function onClickWifiSave(btn) {
 }
 
 async function openAddWifiModal() {
-  fillIdCodeHints();
   $('cn-wifi-psk').value = '';
   $('cn-wifi-code').value = '';
   state.modals.wifiAdd = true;
@@ -5542,8 +5534,6 @@ async function populateIdentityTab() {
     const nameInput = $('id-display-name');
     nameInput.value             = me.display_name || '';
     nameInput.dataset.lastSaved = me.display_name || '';
-    $('id-address').textContent      = me.address || me.id;
-    $('id-modal-idc').innerHTML      = identicon(me.address || me.id, 40);
     const ms = Number(me.announce_interval_ms || 0);
     const exact = ANNOUNCE_INTERVALS.find(i => i.ms === ms);
     $('id-announce-interval').value = exact
@@ -5576,7 +5566,6 @@ function selectSettingsTab(tabId) {
 }
 
 async function populateWifiTab() {
-  fillIdCodeHints();
   populateSavedWifiList();
 }
 
@@ -5933,10 +5922,8 @@ async function openSettingsModal(initialTab, firstRun) {
   // gate, only the Connectivity tab is reachable. Stored on state so
   // the x-for'd tab markup can bind :hidden.
   state.settingsFirstRun = firstRun;
-  // First-run radio intro is more urgent.
-  $('rd-intro').innerHTML = firstRun
-    ? 'Before this device can talk to other LoRa nodes, it needs to know which region to operate in. Pick the preset for your local mesh — both ends of a conversation must use the <em>same</em> region settings, or they won\'t hear each other.'
-    : 'Pick the region preset that matches your local mesh. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won\'t hear each other.';
+  // The #rd-intro paragraph binds x-html to $store.s.settingsFirstRun
+  // and renders the right copy for first-run vs subsequent edits.
   selectSettingsTab(initialTab || 'identity');
 }
 
@@ -6415,7 +6402,6 @@ function waitForDeviceAndReload(message) {
 }
 
 // ============================== START ==============================
-fillIdCodeHints();
 boot();
 
 </script>

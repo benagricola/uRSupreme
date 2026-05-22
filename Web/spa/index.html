@@ -1324,7 +1324,102 @@ summary:hover { color: var(--text); }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h7"/><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L13 14l-4 1 1-4 8.5-8.5z"/></svg>
       </button>
     </header>
-    <div id="conv-list"></div>
+    <div id="conv-list" x-data x-cloak>
+      <!-- Empty state: no chats AND no discovered peers. -->
+      <template x-if="convListData().length === 0 && discoveredListData().length === 0 && pendingInboundList().length === 0">
+        <div class="empty-state">
+          No chats or discovered peers yet. Tap ＋ to start a new conversation, or
+          <strong>📣</strong> to announce yourself so others can find you.
+        </div>
+      </template>
+
+      <!-- Synthetic "Incoming" section: inbound transfers whose sender
+           isn't decrypted yet (peer="" in state.transfers). The top-bar
+           progress strip alone isn't self-explanatory; this row tells
+           the user *what* is happening and clears once `incoming` lands
+           and the synthetic row is replaced by a real conversation. -->
+      <template x-if="pendingInboundList().length > 0">
+        <div class="list-section">Incoming</div>
+      </template>
+      <template x-for="t in pendingInboundList()" :key="'in:' + (t.bytes_total || 0)">
+        <div class="conv-row" data-peer="">
+          <span class="idc" x-html="identicon('inbound:' + (t.bytes_total || 0), 44)"></span>
+          <div class="middle">
+            <div class="name">Incoming attachment</div>
+            <div class="last" x-text="incomingSubText(t)"></div>
+            <div style="height:3px;margin-top:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden">
+              <div :style="'height:100%;width:' + transferPct(t) + '%;background:var(--accent);transition:width 200ms ease-out'"></div>
+            </div>
+          </div>
+          <div class="meta"><div class="when">now</div></div>
+        </div>
+      </template>
+
+      <!-- Chats section. Rows are keyed by peer hash so Alpine reuses
+           DOM across reactive updates — keeps focus + in-flight
+           progress bars stable while a transfer ticks. -->
+      <template x-if="convListData().length > 0">
+        <div class="list-section">Chats</div>
+      </template>
+      <template x-for="c in convListData()" :key="c.peer">
+        <div :class="'conv-row' + (c.peer === $store.s.openPeer ? ' active' : '')"
+             :data-peer="c.peer">
+          <span class="idc"
+                :data-online="isPeerOnline(c.peer) ? '' : null"
+                x-html="identicon(c.peer, 44)"></span>
+          <div class="middle">
+            <div class="name" x-text="nameFor(c.peer)"></div>
+            <div class="last" x-text="convSubText(c)"></div>
+            <template x-if="announceSeenString($store.s.announces[c.peer])">
+              <div :class="'seen' + (isPeerOnline(c.peer) ? ' online' : '')"
+                   x-text="announceSeenString($store.s.announces[c.peer])"></div>
+            </template>
+            <template x-if="activeTransferFor(c.peer)">
+              <div style="height:3px;margin-top:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden">
+                <div :style="'height:100%;width:' + transferPct(activeTransferFor(c.peer)) + '%;background:var(--accent);transition:width 200ms ease-out'"></div>
+              </div>
+            </template>
+          </div>
+          <div class="meta">
+            <div class="when" x-text="relTime(c.last_ts)"></div>
+            <button class="icon row-menu-btn"
+                    title="Conversation actions"
+                    aria-label="Conversation actions"
+                    @click.stop="openRowMenu(c.peer, $event.currentTarget)">
+              <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <!-- Discovered: announces for peers we've never chatted with.
+           Wrapped in <details> so the user can collapse the list when
+           it gets long. Default-open when there are no chats yet. -->
+      <template x-if="discoveredListData().length > 0">
+        <details class="list-group" :open="convListData().length === 0">
+          <summary class="list-section"
+                   x-text="'Discovered (' + discoveredListData().length + ')'"></summary>
+          <template x-for="a in discoveredListData()" :key="a.dest">
+            <div :class="'conv-row' + (a.dest === $store.s.openPeer ? ' active' : '')"
+                 :data-peer="a.dest"
+                 data-discovered="1">
+              <span class="idc"
+                    :data-online="isPeerOnline(a.dest) ? '' : null"
+                    x-html="identicon(a.dest, 44)"></span>
+              <div class="middle">
+                <div class="name" x-text="a.display_name || nameFor(a.dest)"></div>
+                <div class="last" x-text="(a.aspect && a.aspect !== 'lxmf.delivery') ? a.aspect : ''"></div>
+                <template x-if="discoveredAgeLabel(a)">
+                  <div :class="'seen' + (isPeerOnline(a.dest) ? ' online' : '')"
+                       x-text="discoveredAgeLabel(a)"></div>
+                </template>
+              </div>
+              <div class="meta"><div class="when"></div></div>
+            </div>
+          </template>
+        </details>
+      </template>
+    </div>
   </aside>
   <section id="pane-thread">
     <header id="thread-header" hidden>
@@ -2928,234 +3023,116 @@ function withPreservedState(container, fn, opts = {}) {
 // Kept as a no-op so refreshState() / login flow callsites stay valid.
 function renderSelf() {}
 
-function renderConversations() {
-  const wrap = $('conv-list');
-  // Wipe and rebuild — lightweight enough for our conversation counts
-  // (<200). Wrap in withPreservedState so the user's scroll position,
-  // focused input, and the Discovered <details> open-state survive the
-  // rerender (which fires on every SSE incoming/announce event).
-  withPreservedState(wrap, () => _renderConversationsBody(wrap), {
-    detailsKey: (d) => {
-      const s = d.querySelector('summary');
-      return s ? s.textContent.replace(/\s*\(\d+\)\s*$/, '') : '?';
-    },
+// Module-scope helpers that the conv-list template (Alpine) reads via
+// `window.foo(...)`. They also stayed referenced from any still-legacy
+// renderXxx paths until those are deleted in Wave 7.
+
+// Sorted conversations ordered by (boot_epoch, received_ms) — newest
+// activity first. ts is a fallback for legacy records.
+function convListData() {
+  return Object.values(state.conversations).sort((a, b) => {
+    const ba = a.last_boot_epoch || 0, bb = b.last_boot_epoch || 0;
+    if (ba !== bb) return bb - ba;
+    const ra = a.last_received_ms || 0, rb = b.last_received_ms || 0;
+    if (ra !== rb) return rb - ra;
+    return (b.last_ts || 0) - (a.last_ts || 0);
   });
 }
 
-function _renderConversationsBody(wrap) {
-  wrap.innerHTML = '';
-  _convRowEls.clear();
-
-  // Chats: peers with message history OR explicitly-named contacts.
-  // Discovered: lxmf.delivery announces we've heard for peers we have
-  // neither chatted with nor named.
-  // Order conversations by (boot_epoch, received_ms) — see msgCmp.
-  // Newest activity first; peer-clock ts is purely a fallback for
-  // legacy records that pre-date the schema change.
-  const convs = Object.values(state.conversations)
-    .sort((a, b) => {
-      const ba = a.last_boot_epoch || 0, bb = b.last_boot_epoch || 0;
-      if (ba !== bb) return bb - ba;
-      const ra = a.last_received_ms || 0, rb = b.last_received_ms || 0;
-      if (ra !== rb) return rb - ra;
-      return (b.last_ts || 0) - (a.last_ts || 0);
-    });
-  const chattedSet = new Set(convs.map(c => c.peer));
-  const discovered = Object.values(state.announces)
-    .filter(a => !chattedSet.has(a.dest))
+// Discovered = announces for peers we've never chatted with.
+function discoveredListData() {
+  const chatted = new Set(Object.keys(state.conversations));
+  return Object.values(state.announces)
+    .filter(a => !chatted.has(a.dest))
     .sort((a, b) => (b.received_ms || 0) - (a.received_ms || 0));
+}
 
-  if (convs.length === 0 && discovered.length === 0) {
-    wrap.appendChild(el('div', { class: 'empty-state' },
-      'No chats or discovered peers yet. Tap ＋ to start a new conversation, or ',
-      el('strong', { text: '📣' }),
-      ' to announce yourself so others can find you.'));
-    return;
+// Synthetic "Incoming" rows for inbound transfers whose sender isn't
+// decrypted yet (peer="" in state.transfers).
+function pendingInboundList() {
+  if (!state.transfers || Object.keys(state.transfers).length === 0) return [];
+  return Object.values(state.transfers).filter(t => t.incoming && !t.peer);
+}
+
+// "last seen N ago" / "online now" — coarsens with age.
+function announceSeenString(rec) {
+  if (!rec || !rec.seenAt) return '';
+  const ageMs = Math.max(0, Date.now() - rec.seenAt);
+  if (ageMs < 60_000) return 'online now';
+  const m = Math.floor(ageMs / 60_000);
+  if (m < 60) return 'last seen ' + m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return 'last seen ' + h + 'h ago';
+  const d = Math.floor(h / 24);
+  return 'last seen ' + d + 'd ago';
+}
+
+// Discovered-section age label uses a different format (no "last seen"
+// prefix, finer resolution at small times).
+function discoveredAgeLabel(a) {
+  if (!a.seenAt) return '';
+  const ageMs = Math.max(0, Date.now() - a.seenAt);
+  if (ageMs < 60_000) return 'online now';
+  const ageS = Math.floor(ageMs / 1000);
+  return 'last seen ' + (ageS < 3600 ? Math.floor(ageS/60) + 'm'
+                       : ageS < 86400 ? Math.floor(ageS/3600) + 'h'
+                       : Math.floor(ageS/86400) + 'd') + ' ago';
+}
+
+// Is this peer online (heard a real announce in the last 60s)?
+function isPeerOnline(peer) {
+  const a = state.announces[peer];
+  return !!(a && a.seenAt && (Date.now() - a.seenAt) < 60_000);
+}
+
+// Find the active transfer for a given peer (outbound takes priority).
+function activeTransferFor(peer) {
+  if (!state.transfers || Object.keys(state.transfers).length === 0) return null;
+  let outgoing = null, incoming = null;
+  for (const t of Object.values(state.transfers)) {
+    if (t.peer !== peer) continue;
+    if (t.incoming) incoming = t; else outgoing = t;
   }
+  return outgoing || incoming;
+}
 
-  const makeRow = (peer, name, sub, when, active, xfer, discovered) => {
-    // Cross-reference state.announces to derive a "last-seen" indicator.
-    // Online (green dot + bold "now") if heard within the last 60s,
-    // otherwise the age string. Peers we've never heard a real
-    // (lxmf.delivery) announce for show no indicator at all.
-    const announce = state.announces[peer];
-    const seenStr = announceSeenString(announce);
-    const isOnline = announce && (Date.now() - announce.seenAt) < 60_000;
-    const idc = identiconEl(peer, 44);
-    if (isOnline) idc.setAttribute('data-online', '');
-    const middle = el('div', { class: 'middle' },
-      el('div', { class: 'name', text: name }),
-      el('div', { class: 'last', text: sub }),
-    );
-    if (seenStr) middle.appendChild(el('div', { class: 'seen' + (isOnline ? ' online' : ''), text: seenStr }));
-    // Active transfer (inbound OR outbound) — render the same inline
-    // progress bar the synthetic Incoming row uses, so the conv row
-    // visually mirrors what's happening on the link.
-    if (xfer && xfer.bytes_total) {
-      const pct = Math.max(2, Math.min(100, Math.floor(100 * xfer.bytes_done / xfer.bytes_total)));
-      middle.appendChild(
-        el('div', { style: 'height:3px;margin-top:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden' },
-          el('div', { style: 'height:100%;width:' + pct + '%;background:var(--accent);transition:width 200ms ease-out' })),
-      );
-    }
-    // No per-row onclick handler: the conv-list container has a
-    // single delegated click handler (see boot wiring below). If an
-    // SSE event happens to rerender the list between mousedown and
-    // mouseup, this approach still routes the click correctly
-    // because the handler is on the container, not the row.
-    // Discovered peers (no chat history yet) get no row menu — there's
-    // nothing to retain or clear, and rename is already on the inline
-    // .name click. Block / mute / pin would extend this gate when added.
-    const meta = el('div', { class: 'meta' }, el('div', { class: 'when', text: when }));
-    if (!discovered) {
-      const menuBtn = el('button', {
-        class: 'icon row-menu-btn',
-        title: 'Conversation actions',
-        'aria-label': 'Conversation actions',
-        onclick: (ev) => { ev.stopPropagation(); openRowMenu(peer, ev.currentTarget); },
-      });
-      menuBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>';
-      meta.appendChild(menuBtn);
-    }
-    const row = el('div', {
-      class: 'conv-row' + (active ? ' active' : ''),
-      'data-peer': peer,
-    },
-      idc,
-      middle,
-      meta,
-    );
-    if (discovered) row.setAttribute('data-discovered', '1');
-    _convRowEls.set(peer, row);
-    return row;
-  };
-
-  // "last seen N ago" / "online now" — single age helper used by every
-  // peer-presence label so the UI stays consistent. Resolution coarsens
-  // with age: seconds-minutes-hours-days.
-  function announceSeenString(rec) {
-    if (!rec || !rec.seenAt) return '';
-    const ageMs = Math.max(0, Date.now() - rec.seenAt);
-    if (ageMs < 60_000) return 'online now';
-    const m = Math.floor(ageMs / 60_000);
-    if (m < 60) return 'last seen ' + m + 'm ago';
-    const h = Math.floor(m / 60);
-    if (h < 24) return 'last seen ' + h + 'h ago';
-    const d = Math.floor(h / 24);
-    return 'last seen ' + d + 'd ago';
+// Compose the .last subtext for a conv row.
+function convSubText(c) {
+  const xfer = activeTransferFor(c.peer);
+  if (xfer) {
+    const arrow = xfer.incoming ? '↓ ' : '↑ ';
+    const pct   = xfer.bytes_total ? Math.floor(100 * xfer.bytes_done / xfer.bytes_total) : 0;
+    return arrow + formatBytes(xfer.bytes_done) + ' / ' + formatBytes(xfer.bytes_total) + ' (' + pct + '%)';
   }
+  return (c.last_in === false ? '↑ ' : '') + (c.last_body || '');
+}
 
-  // Pick the active (non-finished) transfer involving this peer, if any.
-  // Outgoing transfers take priority — they're the visible-action ones.
-  function activeTransferFor(peer) {
-    if (!state.transfers || Object.keys(state.transfers).length === 0) return null;
-    let outgoing = null, incoming = null;
-    for (const t of Object.values(state.transfers)) {
-      if (t.peer !== peer) continue;
-      if (t.incoming) incoming = t; else outgoing = t;
-    }
-    return outgoing || incoming;
-  }
-  function transferSubText(t) {
-    const arrow = t.incoming ? '↓ ' : '↑ ';
-    const pct = t.bytes_total ? Math.floor(100 * t.bytes_done / t.bytes_total) : 0;
-    return arrow + formatBytes(t.bytes_done) + ' / ' + formatBytes(t.bytes_total) + ' (' + pct + '%)';
-  }
+// Percentage helper — caps at [2, 100] so a fresh-start 0% bar still
+// shows a hairline.
+function transferPct(t) {
+  if (!t || !t.bytes_total) return 0;
+  return Math.max(2, Math.min(100, Math.floor(100 * t.bytes_done / t.bytes_total)));
+}
 
-  // Inbound transfers whose sender isn't known yet (Reticulum hasn't
-  // decrypted the LXMF payload — peer="" is structural, not a bug)
-  // surface as a synthetic "Incoming" section at the top of the
-  // conv list. The top-bar progress strip alone isn't self-
-  // explanatory — this row tells the user *what* is happening
-  // ("Incoming attachment" + size + an inline progress bar).
-  // Once message_complete clears the entry and the LXMF `incoming`
-  // event lands the new message under the right conversation, the
-  // synthetic row disappears.
-  const pendingInbound = (state.transfers && Object.keys(state.transfers).length > 0)
-    ? Object.values(state.transfers).filter(t => t.incoming && !t.peer)
-    : [];
-  if (pendingInbound.length > 0) {
-    wrap.appendChild(el('div', { class: 'list-section' }, 'Incoming'));
-    for (const t of pendingInbound) {
-      const pct = t.bytes_total
-        ? Math.max(2, Math.min(100, Math.floor(100 * t.bytes_done / t.bytes_total)))
-        : 0;
-      // Use a stable seed so the identicon doesn't reshuffle every
-      // tick. bytes_total is the closest thing to a per-transfer
-      // identifier we have pre-decryption.
-      const idc = identiconEl('inbound:' + (t.bytes_total || 0), 44);
-      const subText = formatBytes(t.bytes_done) + ' / ' + formatBytes(t.bytes_total)
-                    + ' · ' + pct + '%';
-      const middle = el('div', { class: 'middle' },
-        el('div', { class: 'name', text: 'Incoming attachment' }),
-        el('div', { class: 'last', text: subText }),
-        // Inline progress bar — slim, accent-coloured fill scaled to pct.
-        // The wrapper div has `position:relative` so the fill sits
-        // along the bottom of the row content without affecting flow.
-        el('div', { style: 'height:3px;margin-top:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden' },
-          el('div', { style: 'height:100%;width:' + pct + '%;background:var(--accent);transition:width 200ms ease-out' })),
-      );
-      const row = el('div', { class: 'conv-row', 'data-peer': '' },
-        idc, middle,
-        el('div', { class: 'meta' }, el('div', { class: 'when', text: 'now' })),
-      );
-      wrap.appendChild(row);
-    }
-  }
+// Synthetic-row subtext: "12 KB / 30 KB · 40%"
+function incomingSubText(t) {
+  const pct = t.bytes_total ? Math.floor(100 * t.bytes_done / t.bytes_total) : 0;
+  return formatBytes(t.bytes_done) + ' / ' + formatBytes(t.bytes_total) + ' · ' + pct + '%';
+}
 
-  if (convs.length > 0) {
-    wrap.appendChild(el('div', { class: 'list-section' }, 'Chats'));
-    for (const c of convs) {
-      const xfer = activeTransferFor(c.peer);
-      const sub  = xfer ? transferSubText(xfer)
-                        : ((c.last_in === false ? '↑ ' : '') + (c.last_body || ''));
-      wrap.appendChild(makeRow(
-        c.peer,
-        nameFor(c.peer),
-        sub,
-        relTime(c.last_ts),
-        c.peer === state.openPeer,
-        xfer,
-        /*discovered*/ false));
-    }
-  }
-
-  if (discovered.length > 0) {
-    // Use a <details> so the user can collapse the discovery list when
-    // it gets long. Default-open when there are no chats yet (because
-    // the announces ARE the most interesting thing on screen then).
-    const det = el('details', { class: 'list-group' });
-    det.open = (convs.length === 0);
-    det.appendChild(el('summary', { class: 'list-section' },
-      'Discovered (' + discovered.length + ')'));
-    for (const a of discovered) {
-      // a.received_ms is device-uptime millis() — meaningless against
-      // Date.now(). a.seenAt is the wall-clock estimate derived from
-      // the device's age_ms reading at fetch / SSE time.
-      const ageMs = a.seenAt ? Math.max(0, Date.now() - a.seenAt) : null;
-      let ageLabel = '';
-      if (ageMs !== null) {
-        if (ageMs < 60_000) {
-          ageLabel = 'online now';
-        } else {
-          const ageS = Math.floor(ageMs / 1000);
-          ageLabel = 'last seen ' + (ageS < 3600 ? Math.floor(ageS/60) + 'm'
-                                    : ageS < 86400 ? Math.floor(ageS/3600) + 'h'
-                                    : Math.floor(ageS/86400) + 'd') + ' ago';
-        }
-      }
-      det.appendChild(makeRow(
-        a.dest,
-        a.display_name || nameFor(a.dest),
-        ageLabel,
-        a.aspect && a.aspect !== 'lxmf.delivery' ? a.aspect : '',
-        a.dest === state.openPeer,
-        /*xfer*/ null,
-        /*discovered*/ true));
-    }
-    wrap.appendChild(det);
+function renderConversations() {
+  // Conv-list is now rendered by Alpine declaratively. Touch the
+  // store so reactive subscribers re-evaluate — this is the bridge
+  // for callers (WS dispatcher, etc.) that still call renderXxx().
+  // No-op once Wave 7 cleans up callers.
+  if (window.Alpine && state) {
+    // Reading a reactive field is enough; Alpine sets up tracking on
+    // first access. Writing isn't needed because mutations elsewhere
+    // already propagate.
+    void Object.keys(state.conversations).length;
   }
 }
+
 
 function renderThread() {
   const peer = state.openPeer;

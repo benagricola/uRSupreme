@@ -2128,7 +2128,22 @@ summary:hover { color: var(--text); }
         <div class="card" style="margin-top:14px">
           <strong>Contacts</strong>
           <div class="muted" style="margin-top:4px">Stored in this browser only — they don't leave the device or sync between browsers.</div>
-          <div id="contacts-list" style="margin-top:8px"></div>
+          <div id="contacts-list" style="margin-top:8px" x-data x-cloak>
+            <template x-if="Object.keys($store.s.contacts).length === 0">
+              <div class="muted">No contacts saved.</div>
+            </template>
+            <template x-for="addr in Object.keys($store.s.contacts)" :key="addr">
+              <div class="list-row" style="display:flex;gap:8px;align-items:center">
+                <span x-html="identicon(addr, 28)"></span>
+                <div style="flex:1;min-width:0">
+                  <div x-text="$store.s.contacts[addr]"></div>
+                  <div class="muted mono" x-text="addr"></div>
+                </div>
+                <button class="ghost"
+                        @click="delete $store.s.contacts[addr]; persistContacts();">×</button>
+              </div>
+            </template>
+          </div>
           <label style="margin-top:8px">Address</label>
           <input id="ct-addr" maxlength="32" style="font-family:ui-monospace,monospace;margin-bottom:6px">
           <label>Name</label>
@@ -2142,12 +2157,40 @@ summary:hover { color: var(--text); }
         <div class="card">
           <strong>Recent announces</strong>
           <div class="muted" style="margin-top:4px">LXMF endpoints heard on the network. Click an entry to start a chat.</div>
-          <div id="announces-card" style="margin-top:8px"></div>
+          <div id="announces-card" style="margin-top:8px" x-data x-cloak>
+            <template x-if="Object.keys($store.s.announces).length === 0">
+              <div class="muted">No announces seen yet.</div>
+            </template>
+            <template x-for="a in Object.values($store.s.announces).sort((x,y) => y.received_ms - x.received_ms)" :key="a.dest">
+              <div class="list-row">
+                <div>
+                  <span x-html="identicon(a.dest, 20)"></span>
+                  <strong x-text="a.display_name || nameFor(a.dest)"></strong>
+                </div>
+                <div class="muted mono" x-text="a.dest"></div>
+                <div class="muted" x-text="'aspect=' + (a.aspect || 'transport/unknown')"></div>
+              </div>
+            </template>
+          </div>
         </div>
         <div class="card" style="margin-top:14px">
           <strong>Known paths</strong>
           <div class="muted" style="margin-top:4px">Every announce we've seen, not just LXMF endpoints — Reticulum transport relays, propagation nodes, etc.</div>
-          <div id="paths-card" style="margin-top:8px"></div>
+          <div id="paths-card" style="margin-top:8px" x-data x-cloak>
+            <template x-if="Object.keys($store.s.paths).length === 0">
+              <div class="muted">No paths known yet.</div>
+            </template>
+            <template x-for="a in Object.values($store.s.paths).sort((x,y) => y.received_ms - x.received_ms)" :key="a.dest">
+              <div class="list-row">
+                <div>
+                  <span x-html="identicon(a.dest, 20)"></span>
+                  <strong x-text="a.display_name || nameFor(a.dest)"></strong>
+                </div>
+                <div class="muted mono" x-text="a.dest"></div>
+                <div class="muted" x-text="'aspect=' + (a.aspect || 'transport/unknown')"></div>
+              </div>
+            </template>
+          </div>
         </div>
       </div>
 
@@ -3765,61 +3808,12 @@ function upsertMessage(m) {
   c.last_in          = last.in;
 }
 
-function renderAnnounces() {
-  const wrap = $('announces-card');
-  withPreservedState(wrap, () => {
-    wrap.innerHTML = '';
-    const arr = Object.values(state.announces).sort((a,b) => b.received_ms - a.received_ms);
-    if (arr.length === 0) { wrap.appendChild(el('div', { class: 'muted', text: 'No announces seen yet.' })); return; }
-    for (const a of arr) {
-      wrap.appendChild(el('div', { class: 'list-row' },
-        el('div', null,
-          identiconEl(a.dest, 20),
-          ' ',
-          el('strong', { text: a.display_name || nameFor(a.dest) }),
-        ),
-        el('div', { class: 'muted mono', text: a.dest }),
-        el('div', { class: 'muted', text: 'aspect=' + (a.aspect || 'transport/unknown') }),
-      ));
-    }
-  });
-}
-function renderPaths() {
-  const wrap = $('paths-card');
-  withPreservedState(wrap, () => {
-    wrap.innerHTML = '';
-    const arr = Object.values(state.paths).sort((a,b) => b.received_ms - a.received_ms);
-    if (arr.length === 0) { wrap.appendChild(el('div', { class: 'muted', text: 'No paths known yet.' })); return; }
-    for (const a of arr) {
-      wrap.appendChild(el('div', { class: 'list-row' },
-        el('div', null,
-          identiconEl(a.dest, 20),
-          ' ',
-          el('strong', { text: a.display_name || nameFor(a.dest) }),
-        ),
-        el('div', { class: 'muted mono', text: a.dest }),
-        el('div', { class: 'muted', text: 'aspect=' + (a.aspect || 'transport/unknown') }),
-      ));
-    }
-  });
-}
-
-function renderContacts() {
-  const wrap = $('contacts-list');
-  wrap.innerHTML = '';
-  const entries = Object.entries(state.contacts);
-  if (entries.length === 0) { wrap.appendChild(el('div', { class: 'muted', text: 'No contacts saved.' })); return; }
-  for (const [addr, name] of entries) {
-    wrap.appendChild(el('div', { class: 'list-row', style:'display:flex;gap:8px;align-items:center' },
-      identiconEl(addr, 28),
-      el('div', { style: 'flex:1;min-width:0' },
-        el('div', { text: name }),
-        el('div', { class: 'muted mono', text: addr }),
-      ),
-      el('button', { class: 'ghost', text: '×', onclick: () => { delete state.contacts[addr]; persistContacts(); renderContacts(); renderConversations(); } }),
-    ));
-  }
-}
+// Announces / Paths / Contacts are all rendered declaratively by Alpine
+// templates against the corresponding $store.s.* fields. These functions
+// stayed only to keep their callsites valid; Wave 7 deletes them.
+function renderAnnounces() {}
+function renderPaths()    {}
+function renderContacts() {}
 
 // ============================== INTERACTIONS ==============================
 async function selectConversation(peer) {

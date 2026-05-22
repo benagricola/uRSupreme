@@ -378,7 +378,12 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   border-radius: 14px;
   font-size: 14px;
   word-break: break-word;
-  white-space: pre-wrap;
+  /* white-space: normal so the inter-element whitespace in our Alpine
+     template (newlines + indentation between block children) doesn't
+     render as visible empty lines inside each bubble. The body text
+     itself still preserves user-typed newlines via white-space: pre-
+     wrap on the inner body <div>. */
+  white-space: normal;
   line-height: 1.35;
 }
 .bubble.in  { align-self: flex-start; background: var(--bubble-in);  border: 1px solid var(--border); border-bottom-left-radius: 4px; }
@@ -1463,14 +1468,27 @@ summary:hover { color: var(--text); }
           <template x-if="m.title">
             <div style="font-weight:600;margin-bottom:2px" x-text="m.title"></div>
           </template>
-          <div x-text="m.body || ''" style="white-space:pre-wrap;word-wrap:break-word"></div>
+          <!-- Only render the body container when there's text — an
+               empty <div> still takes ~line-height worth of vertical
+               space, which on attachment-only messages shows up as a
+               wide gap above the chip. -->
+          <template x-if="m.body">
+            <div x-text="m.body" style="white-space:pre-wrap;word-wrap:break-word"></div>
+          </template>
           <!-- Attachments: each chip is built imperatively so the
                existing renderInboundImage / renderInboundAudio paths
                (which manage blob URLs + audio element lifecycle) stay
-               unchanged. x-init injects the resulting DOM node once. -->
+               unchanged. We use a stable wrapper <div> as the
+               Alpine-tracked element and appendChild the attachment
+               node into it via x-init — replacing $el outright breaks
+               x-for's element tracking, leading to duplicate nodes
+               accumulating on every reactive re-render. `display:
+               contents` keeps the wrapper layout-invisible so the
+               attachment sits directly inline like the legacy code. -->
           <template x-for="a in (m.attachments || [])"
-                    :key="a.filename || a.display_name || a.tag">
-            <span x-init="const n = attachmentNode(m, a); if (n) $el.replaceWith(n)"></span>
+                    :key="(a.filename || a.display_name || '') + ':' + a.tag">
+            <div style="display:contents"
+                 x-init="const n = attachmentNode(m, a); if (n) $el.appendChild(n)"></div>
           </template>
           <template x-if="msgMeta(m)">
             <div class="bmeta" x-text="msgMeta(m)"></div>

@@ -1268,7 +1268,7 @@ summary:hover { color: var(--text); }
      tab pre-selected and "locked" so other tabs are hidden.) -->
 
 <!-- ===================== APP (split-pane chat) ===================== -->
-<div id="view-app" hidden>
+<div id="view-app" hidden x-data :class="{ 'thread-open': $store.s.openPeer }">
   <header id="topbar">
     <span class="idc" id="self-idc"
           x-data
@@ -1422,27 +1422,78 @@ summary:hover { color: var(--text); }
     </div>
   </aside>
   <section id="pane-thread">
-    <header id="thread-header" hidden>
-      <button class="icon btn-back" id="btn-back" title="Back">←</button>
-      <span class="idc" id="thread-idc"></span>
+    <header id="thread-header" x-data x-show="$store.s.openPeer" x-cloak>
+      <button class="icon btn-back" id="btn-back" title="Back"
+              @click="$store.s.openPeer = null">←</button>
+      <span class="idc" id="thread-idc"
+            x-html="$store.s.openPeer ? identicon($store.s.openPeer, 36) : ''"></span>
       <div class="peer-info">
-        <div class="name" id="thread-name" title="Click to rename" style="cursor:pointer"></div>
-        <div class="addr" id="thread-addr"></div>
+        <div class="name" id="thread-name" title="Click to rename" style="cursor:pointer"
+             x-text="$store.s.openPeer ? nameFor($store.s.openPeer) : ''"
+             @click="renamePeerFlow($store.s.openPeer)"></div>
+        <div class="addr" id="thread-addr"
+             x-text="$store.s.openPeer ? shortHex($store.s.openPeer) : ''"
+             :title="$store.s.openPeer"></div>
       </div>
-      <button class="icon" id="btn-conv-retention" title="Retention settings">
+      <button class="icon" id="btn-conv-retention" title="Retention settings"
+              @click="$store.s.openPeer && openRetentionModal($store.s.identityId, $store.s.openPeer)">
         <!-- clock -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       </button>
-      <button class="icon" id="btn-clear-conv" title="Clear conversation">
+      <button class="icon" id="btn-clear-conv" title="Clear conversation"
+              @click="$store.s.openPeer && clearConversationFlow($store.s.openPeer)">
         <!-- trash -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
       </button>
     </header>
-    <div id="thread-empty" class="empty-state">
+    <div id="thread-empty" class="empty-state" x-data x-show="!$store.s.openPeer" x-cloak>
       <div>Select a conversation, or start a new one with <strong>＋</strong>.</div>
     </div>
-    <div id="thread-msgs" hidden></div>
-    <footer id="compose" hidden>
+    <div id="thread-msgs"
+         x-data
+         x-show="$store.s.openPeer"
+         x-effect="$store.s.openPeer; (currentConv() && currentConv().msgs.length); maybeScrollThreadToBottom()"
+         x-cloak>
+      <template x-if="$store.s.openPeer && (!currentConv() || currentConv().msgs.length === 0)">
+        <div class="empty-state">No messages yet. Say hi.</div>
+      </template>
+      <template x-for="m in (currentConv() ? currentConv().msgs : [])"
+                :key="(m.in ? 'i' : 'o') + ':' + (m.seq || ('h' + (m.received_ms || 0)))">
+        <div :class="bubbleClass(m)">
+          <template x-if="m.title">
+            <div style="font-weight:600;margin-bottom:2px" x-text="m.title"></div>
+          </template>
+          <div x-text="m.body || ''" style="white-space:pre-wrap;word-wrap:break-word"></div>
+          <!-- Attachments: each chip is built imperatively so the
+               existing renderInboundImage / renderInboundAudio paths
+               (which manage blob URLs + audio element lifecycle) stay
+               unchanged. x-init injects the resulting DOM node once. -->
+          <template x-for="a in (m.attachments || [])"
+                    :key="a.filename || a.display_name || a.tag">
+            <span x-init="const n = attachmentNode(m, a); if (n) $el.replaceWith(n)"></span>
+          </template>
+          <template x-if="msgMeta(m)">
+            <div class="bmeta" x-text="msgMeta(m)"></div>
+          </template>
+          <template x-if="!m.in && m.status === 'failed'">
+            <button class="ghost" style="margin-top:4px;padding:2px 8px;font-size:11px"
+                    @click="retryFailedMessage(m, $event.currentTarget)">Retry</button>
+          </template>
+        </div>
+      </template>
+      <!-- Active transfer placeholder bubble — shows while a Resource
+           send/receive is in progress for the open peer. -->
+      <template x-if="$store.s.openPeer && activeTransferFor($store.s.openPeer)">
+        <div :class="'bubble ' + (activeTransferFor($store.s.openPeer).incoming ? 'in' : 'out')">
+          <div style="opacity:0.7"
+               x-text="(activeTransferFor($store.s.openPeer).incoming ? '↓ Receiving ' : '↑ Sending ') + transferPct(activeTransferFor($store.s.openPeer)) + '%'"></div>
+          <div style="margin-top:4px; height:4px; background:rgba(255,255,255,0.2); border-radius:2px; overflow:hidden">
+            <div :style="'height:100%; width:' + transferPct(activeTransferFor($store.s.openPeer)) + '%; background:var(--accent-3,#7ad)'"></div>
+          </div>
+        </div>
+      </template>
+    </div>
+    <footer id="compose" x-data x-show="$store.s.openPeer" x-cloak>
       <button class="icon" id="btn-emoji" title="Emoji">
         <!-- smile -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
@@ -3177,181 +3228,106 @@ function renderConversations() {
 }
 
 
-function renderThread() {
-  const peer = state.openPeer;
-  const empty = $('thread-empty');
-  const hdr   = $('thread-header');
-  const msgsEl = $('thread-msgs');
-  const cmp   = $('compose');
-  if (!peer) {
-    empty.hidden = false;
-    hdr.hidden = true;
-    msgsEl.hidden = true;
-    cmp.hidden = true;
-    $('view-app').classList.remove('thread-open');
-    return;
-  }
-  empty.hidden = true;
-  hdr.hidden = false;
-  msgsEl.hidden = false;
-  cmp.hidden = false;
-  $('view-app').classList.add('thread-open');
-  $('thread-name').textContent = nameFor(peer);
-  // Truncated form so the header doesn't run under the retention /
-  // clear-conversation icons on narrow mobile widths. The browser
-  // tooltip carries the full hash for verification on hover / long-press.
-  const addrEl = $('thread-addr');
-  addrEl.textContent = shortHex(peer);
-  addrEl.title       = peer;
-  $('thread-idc').innerHTML = identicon(peer, 36);
-
-  // "Stickiness" detection: if the user is at-or-near the bottom before
-  // we rerender, snap them back to the new bottom (auto-follow new
-  // messages). Otherwise leave their scroll alone — they've scrolled
-  // up to look at history and we shouldn't yank them away.
-  const NEAR_BOTTOM_PX = 80;
-  const atBottom = msgsEl.scrollTop + msgsEl.clientHeight >= msgsEl.scrollHeight - NEAR_BOTTOM_PX;
-  // Preserve focus / selection across the wipe (compose textarea is
-  // *outside* msgsEl so it's not affected, but defence in depth).
-  withPreservedState(msgsEl, () => {
-    msgsEl.innerHTML = '';
-    const c = state.conversations[peer];
-    if (!c || c.msgs.length === 0) {
-      msgsEl.appendChild(el('div', { class: 'empty-state' }, 'No messages yet. Say hi.'));
-      return;
-    }
-    for (const m of c.msgs) {
-      const bubble = el('div', { class: 'bubble ' + (m.in ? 'in' : 'out') + (m.sig_ok === false && m.in ? ' bad' : '') });
-      if (m.title) {
-        bubble.appendChild(el('div', { style: 'font-weight:600;margin-bottom:2px', text: m.title }));
-      }
-      bubble.appendChild(document.createTextNode(m.body || ''));
-      // Attachment chips. Each one fetches its blob lazily from the
-      // device on click. We don't auto-download or pre-fetch (some
-      // peers send junk; bandwidth is precious; the chat history can
-      // be long). Images are previewed inline once fetched; everything
-      // else triggers a Save-As.
-      if (Array.isArray(m.attachments) && m.attachments.length > 0) {
-        for (const a of m.attachments) {
-          // Outbound attachments have no on-disk filename (we don't keep
-          // our own bytes); render them on display_name+size alone.
-          if (!a.filename && !a.display_name && !(a.size > 0)) continue;
-          // Prefer the sender-supplied display_name (Sideband convention)
-          // for the bubble label; fall back to a generic type label for
-          // legacy peers that didn't include one.
-          const icon = a.tag === 5 ? '📎'
-                     : a.tag === 6 ? '🖼'
-                     : a.tag === 7 ? '🎙'
-                     : '📎';
-          const typeWord = a.tag === 5 ? 'file'
-                         : a.tag === 6 ? 'image'
-                         : a.tag === 7 ? 'audio'
-                         : 'attachment';
-          const name = (a.display_name || '').trim();
-          const label = icon + ' ' + (name || typeWord)
-                      + ' (' + formatBytes(a.size || 0) + ')';
-          // Any attachment with a persisted on-disk blob (filename
-          // matches the canonical hash_tag_idx.bin layout) can be
-          // fetched from the device. Holds for both received messages
-          // and ones the user sent themselves when the per-identity
-          // "persist outbound attachments" toggle is on.
-          const hasBlob = /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename || '');
-          // SD-backed attachment when card has been removed → blob is
-          // unreachable until the user re-inserts and reboots. Show a
-          // dead chip with a clear warning rather than let the user
-          // click into a 404.
-          const sdUnreachable = hasBlob && a.backend === 'sd' && state.sdPresent === false;
-          if (sdUnreachable) {
-            bubble.appendChild(el('div', {
-              style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,180,90,0.15);font-size:11px;color:inherit',
-              text: label + ' — SD card unavailable',
-              title: 'This attachment was saved on the SD card. Re-insert the card and reboot the device to recover it.',
-            }));
-          } else if (hasBlob && (a.tag === 6 || a.tag === 7)) {
-            // Auto-render only if the user has opted into auto-downloads
-            // OR the blob is already cached from a manual click — once
-            // fetched, the inline preview persists across rerenders.
-            // Otherwise fall through to the click-to-download chip so
-            // attachments don't silently pull bytes from the device.
-            const alreadyCached = state.attachmentBlobs.has(a.filename);
-            if (state.prefs.autoDownloadAttachments || alreadyCached) {
-              bubble.appendChild(a.tag === 6
-                ? renderInboundImage(a, label)
-                : renderInboundAudio(a, label));
-            } else {
-              const chip = el('button', {
-                class: 'attachment-chip',
-                style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block',
-                text: label + ' — click to load',
-              });
-              chip.addEventListener('click', () => downloadAttachment(state.identityId, a, chip, bubble));
-              bubble.appendChild(chip);
-            }
-          } else if (hasBlob) {
-            const chip = el('button', {
-              class: 'attachment-chip',
-              style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block',
-              text: label + ' — click to download',
-            });
-            chip.addEventListener('click', () => downloadAttachment(state.identityId, a, chip, bubble));
-            bubble.appendChild(chip);
-          } else {
-            bubble.appendChild(el('div', {
-              style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);font-size:11px',
-              text: label,
-            }));
-          }
-        }
-      }
-      const metaParts = [];
-      if (m.ts) metaParts.push(new Date(m.ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
-      if (!m.in && m.status) metaParts.push(m.status);
-      if (m.in && m.sig_ok === false) metaParts.push('⚠ bad sig');
-      if (metaParts.length) {
-        bubble.appendChild(el('div', { class: 'bmeta', text: metaParts.join(' · ') }));
-      }
-      // Manual-retry button for outbound Failed messages. (#108) The
-      // device's auto-retry will have run 3 times before status hits
-      // Failed; clicking this resets that budget and kicks off
-      // another round.
-      if (!m.in && m.status === 'failed') {
-        const retry = el('button', {
-          class: 'ghost',
-          style: 'margin-top:4px;padding:2px 8px;font-size:11px',
-          text: 'Retry',
-        });
-        retry.addEventListener('click', () => retryFailedMessage(m, retry));
-        bubble.appendChild(retry);
-      }
-      msgsEl.appendChild(bubble);
-    }
-    // In-flight transfer placeholder. Resource sends take several seconds
-    // at SF7/BW250k; without this, the UI sits silent and the user has
-    // no idea anything is happening.
-    let activeXfer = null;
-    if (state.transfers && Object.keys(state.transfers).length > 0) {
-      for (const t of Object.values(state.transfers)) {
-        if (t.peer === peer) { activeXfer = t; break; }
-      }
-    }
-    if (activeXfer) {
-      const pct = activeXfer.bytes_total
-                    ? Math.floor(100 * activeXfer.bytes_done / activeXfer.bytes_total)
-                    : 0;
-      const bubble = el('div', { class: 'bubble ' + (activeXfer.incoming ? 'in' : 'out') });
-      bubble.appendChild(el('div', { style: 'opacity:0.7', text:
-        (activeXfer.incoming ? '↓ Receiving' : '↑ Sending') + ' ' + pct + '%' }));
-      // Inline progress bar — pure CSS, no extra deps.
-      bubble.appendChild(el('div', {
-        style: 'margin-top:4px; height:4px; background:rgba(255,255,255,0.2); border-radius:2px; overflow:hidden',
-      }, el('div', {
-        style: 'height:100%; width:' + pct + '%; background:var(--accent-3,#7ad)',
-      })));
-      msgsEl.appendChild(bubble);
-    }
-  });
-  if (atBottom) msgsEl.scrollTop = msgsEl.scrollHeight;
+// ============== THREAD HELPERS (Alpine template support) ==============
+// The conversation currently open. null when state.openPeer is unset
+// (templates show empty-state). Returns the live store reference so
+// `currentConv().msgs.push(...)` would actually mutate the store —
+// not that any template needs to do that.
+function currentConv() {
+  const p = state && state.openPeer;
+  return p ? (state.conversations[p] || null) : null;
 }
+
+function bubbleClass(m) {
+  return 'bubble ' + (m.in ? 'in' : 'out')
+       + (m.sig_ok === false && m.in ? ' bad' : '');
+}
+
+// Metadata footer of a bubble — wall-clock time, outbound status,
+// optional bad-signature warning. Empty string when nothing to show
+// (the template renders that as no footer).
+function msgMeta(m) {
+  const parts = [];
+  if (m.ts) parts.push(new Date(m.ts * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }));
+  if (!m.in && m.status) parts.push(m.status);
+  if (m.in && m.sig_ok === false) parts.push('⚠ bad sig');
+  return parts.join(' · ');
+}
+
+// Build a single attachment chip / inline preview as a DOM Node so
+// the existing renderInboundImage / renderInboundAudio functions can
+// stay imperative (they manage blob URLs + audio element lifecycle
+// themselves). The template uses x-init to inject the node.
+function attachmentNode(m, a) {
+  // Outbound attachments with no on-disk filename can still be shown
+  // via display_name + size; ignore truly empty ones.
+  if (!a.filename && !a.display_name && !(a.size > 0)) return null;
+  const icon = a.tag === 5 ? '📎' : a.tag === 6 ? '🖼' : a.tag === 7 ? '🎙' : '📎';
+  const typeWord = a.tag === 5 ? 'file' : a.tag === 6 ? 'image' : a.tag === 7 ? 'audio' : 'attachment';
+  const name = (a.display_name || '').trim();
+  const label = icon + ' ' + (name || typeWord) + ' (' + formatBytes(a.size || 0) + ')';
+
+  const hasBlob = /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename || '');
+  const sdUnreachable = hasBlob && a.backend === 'sd' && state.sdPresent === false;
+
+  if (sdUnreachable) {
+    return el('div', {
+      style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,180,90,0.15);font-size:11px;color:inherit',
+      text: label + ' — SD card unavailable',
+      title: 'This attachment was saved on the SD card. Re-insert the card and reboot the device to recover it.',
+    });
+  }
+  if (hasBlob && (a.tag === 6 || a.tag === 7)) {
+    const alreadyCached = state.attachmentBlobs.has(a.filename);
+    if (state.prefs.autoDownloadAttachments || alreadyCached) {
+      return a.tag === 6 ? renderInboundImage(a, label) : renderInboundAudio(a, label);
+    }
+    const chip = el('button', {
+      class: 'attachment-chip',
+      style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block',
+      text: label + ' — click to load',
+    });
+    chip.addEventListener('click', () => downloadAttachment(state.identityId, a, chip, chip.parentElement));
+    return chip;
+  }
+  if (hasBlob) {
+    const chip = el('button', {
+      class: 'attachment-chip',
+      style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);border:none;font-size:11px;cursor:pointer;color:inherit;text-align:left;display:block',
+      text: label + ' — click to download',
+    });
+    chip.addEventListener('click', () => downloadAttachment(state.identityId, a, chip, chip.parentElement));
+    return chip;
+  }
+  return el('div', {
+    style: 'margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.12);font-size:11px',
+    text: label,
+  });
+}
+
+// "Stickiness" auto-scroll: if the user was at/near the bottom of the
+// thread before a new message arrived, snap to the new bottom. If they
+// were scrolled up reading history, leave them alone. Called from an
+// x-effect on the thread-msgs container so it re-evaluates whenever
+// the message list changes.
+function maybeScrollThreadToBottom() {
+  const el = document.getElementById('thread-msgs');
+  if (!el || el.hidden) return;
+  const NEAR_BOTTOM_PX = 80;
+  const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - NEAR_BOTTOM_PX;
+  // Defer to next frame so the template has finished applying its
+  // template diff before we measure scrollHeight.
+  requestAnimationFrame(() => {
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  });
+}
+
+// Thread rendering is declarative now — the header / message list /
+// compose row are all bound to $store.s via x-show / x-text / x-for.
+// renderThread() is kept as a no-op so callers like selectConversation()
+// and the WS dispatcher remain unchanged; Wave 7 deletes them.
+function renderThread() {}
+
 
 // Bytes formatter shared by progress UI and attachment chips.
 function formatBytes(n) {

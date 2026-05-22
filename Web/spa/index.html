@@ -1274,7 +1274,8 @@ summary:hover { color: var(--text); }
 
 <!-- ===================== APP (split-pane chat) ===================== -->
 <div id="view-app" x-data x-show="$store.s.view === 'view-app'" :class="{ 'thread-open': $store.s.openPeer }" x-cloak>
-  <header id="topbar">
+  <header id="topbar" x-data
+          x-effect="$store.s.system && $store.s.system.battery && renderTopbarBattery()">
     <span class="idc" id="self-idc"
           x-data
           x-html="$store.s.self ? identicon($store.s.self.address || $store.s.self.id, 32) : ''"></span>
@@ -1547,7 +1548,10 @@ summary:hover { color: var(--text); }
 <!-- ===================== STATUS POPOVER ===================== -->
 <!-- Anchored below #btn-status. Not a modal; clicking elsewhere closes
      it. Contents refresh on each open from /api/info. -->
-<div id="popover-status" class="popover" x-data x-show="$store.s.popovers.status" x-cloak>
+<div id="popover-status" class="popover" x-data
+     x-show="$store.s.popovers.status"
+     x-effect="$store.s.popovers.status && $store.s.system && renderStatusPopover()"
+     x-cloak>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label" id="status-radio-label">RADIO</div>
@@ -1606,7 +1610,10 @@ summary:hover { color: var(--text); }
 <!-- Anchored below #btn-power. Hosts the detailed battery telemetry
      plus future per-knob power-management toggles. The topbar battery
      icon shows just percent + state; full detail lives here. -->
-<div id="popover-power" class="popover" x-data x-show="$store.s.popovers.power" x-cloak>
+<div id="popover-power" class="popover" x-data
+     x-show="$store.s.popovers.power"
+     x-effect="$store.s.popovers.power && $store.s.system && renderPowerPopover($store.s.system)"
+     x-cloak>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label">Battery</div>
@@ -1625,7 +1632,10 @@ summary:hover { color: var(--text); }
 
 <!-- Anchored below #btn-system. Mirrors #popover-status' style but
      hosts device-side state: storage, clock + RTC, on-board sensors. -->
-<div id="popover-system" class="popover" x-data x-show="$store.s.popovers.system" x-cloak>
+<div id="popover-system" class="popover" x-data
+     x-show="$store.s.popovers.system"
+     x-effect="$store.s.popovers.system && $store.s.system && renderSystemPopover($store.s.system)"
+     x-cloak>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label">Storage</div>

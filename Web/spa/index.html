@@ -2128,8 +2128,31 @@ summary:hover { color: var(--text); }
           <summary>TCP clients <span class="cn-dot" id="cn-dot-tcp" hidden></span></summary>
           <div class="cn-section-body">
             <p class="muted" style="margin-bottom:10px">Outbound TCP links to other Reticulum nodes. Useful for joining a remote network over the internet, or for a wired LAN bridge. Each entry connects on boot and reconnects automatically if dropped.</p>
-            <div id="cn-tcp-list" style="margin-bottom:10px">
-              <p class="muted">Loading…</p>
+            <div id="cn-tcp-list" style="margin-bottom:10px" x-data>
+              <template x-if="$store.s.tcpClients === null">
+                <p class="muted">Loading…</p>
+              </template>
+              <template x-if="$store.s.tcpClients && $store.s.tcpClients.length === 0">
+                <p class="muted">No TCP clients configured.</p>
+              </template>
+              <template x-for="c in ($store.s.tcpClients || [])" :key="c.name + ':' + c.host + ':' + c.port">
+                <div class="cn-tcp-row">
+                  <div class="cn-tcp-info">
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span :class="'cn-dot ' + (c.online ? 'ok' : 'err')"></span>
+                      <span x-text="c.name"></span>
+                    </div>
+                    <div class="muted" x-text="c.host + ':' + c.port"></div>
+                  </div>
+                  <button class="secondary"
+                          style="padding:4px 8px;margin:0"
+                          title="Remove this TCP client"
+                          @click="onTcpRemove(c)">✕</button>
+                </div>
+              </template>
+              <template x-if="$store.s.tcpClientsCap && $store.s.tcpClientsLive >= $store.s.tcpClientsCap">
+                <p class="muted" x-text="'All ' + $store.s.tcpClientsCap + ' TCP client slots in use — remove one before adding another.'"></p>
+              </template>
             </div>
             <button class="secondary" id="btn-tcp-add" style="width:100%" @click="openAddTcpModal()">Add a TCP client…</button>
           </div>
@@ -2505,6 +2528,11 @@ let state = {
   // Active tab in the Settings modal. Drives :class="{ active: ... }"
   // on every #settings-tabs > .tab and #modal-settings .tab-panel.
   settingsTab: 'identity',
+  // TCP-clients list as fetched from /api/transport/tcp_clients. null
+  // means "loading" (initial state). Empty array = loaded + none.
+  tcpClients: null,
+  tcpClientsCap:  0,
+  tcpClientsLive: 0,
   // Background-task registry. Keyed by an arbitrary string id. Mirrors
   // the legacy bgTasks Map but as a plain object so Alpine reactivity
   // tracks add / remove / update on the topbar progress strip.
@@ -6830,58 +6858,24 @@ function applyTransportCapabilities() {
 // remove button. Online dot mirrors the firmware's per-client
 // runtime status from /api/transport/tcp_clients.
 async function populateTcpClientsList() {
-  const wrap = $('cn-tcp-list');
-  if (!wrap) return;
   const t = (state.lastInfo && state.lastInfo.transports) || {};
   if (!t.tcp_client) return;
-  wrap.innerHTML = '<p class="muted">Loading…</p>';
+  state.tcpClients = null;  // template shows "Loading…"
   try {
     const r = await state.transport._req('/api/transport/tcp_clients');
-    const clients = r.clients || [];
-    const cap     = r.capacity   ?? 0;
-    const live    = r.live_count ?? 0;
-    // Header dot: green if every configured client is connected,
-    // yellow if some are, red if none are. Hidden when no clients
-    // are configured (no failure state to communicate).
+    state.tcpClients     = r.clients || [];
+    state.tcpClientsCap  = r.capacity   ?? 0;
+    state.tcpClientsLive = r.live_count ?? 0;
     let headerCls = '';
-    if (clients.length > 0) {
-      headerCls = live === clients.length ? 'ok'
-                : live > 0                ? 'warn'
+    if (state.tcpClients.length > 0) {
+      headerCls = state.tcpClientsLive === state.tcpClients.length ? 'ok'
+                : state.tcpClientsLive > 0                          ? 'warn'
                 : 'err';
     }
     setConnectivityDot('cn-dot-tcp', headerCls);
-    if (clients.length === 0) {
-      wrap.innerHTML = '<p class="muted">No TCP clients configured.</p>';
-      return;
-    }
-    wrap.innerHTML = '';
-    for (const c of clients) {
-      const row = el('div', { class: 'cn-tcp-row' });
-      const info = el('div', { class: 'cn-tcp-info' });
-      // Per-row dot: green when this client's link is live, red
-      // otherwise. Sits next to the name so a row's state is
-      // visible at a glance without parsing the subline text.
-      const nameRow = el('div', { style: 'display:flex;align-items:center;gap:6px' },
-        el('span', { class: 'cn-dot ' + (c.online ? 'ok' : 'err') }),
-        el('span', { text: c.name }),
-      );
-      info.append(nameRow);
-      info.append(el('div', { class: 'muted',
-        text: `${c.host}:${c.port}` }));
-      row.append(info);
-      const rmBtn = el('button', { class: 'secondary', text: '✕',
-        title: 'Remove this TCP client', style: 'padding:4px 8px;margin:0' });
-      rmBtn.addEventListener('click', () => onTcpRemove(c));
-      row.append(rmBtn);
-      wrap.append(row);
-    }
-    if (cap && live >= cap) {
-      const note = el('p', { class: 'muted',
-        text: `All ${cap} TCP client slots in use — remove one before adding another.` });
-      wrap.append(note);
-    }
   } catch (e) {
-    wrap.innerHTML = `<p class="muted">Could not load: ${e.message || e}</p>`;
+    state.tcpClients = [];
+    toast('Could not load TCP clients: ' + (e.message || e), 'error');
   }
 }
 function setConnectivityDot(id, cls) {

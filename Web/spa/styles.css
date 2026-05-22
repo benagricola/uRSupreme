@@ -1,0 +1,1330 @@
+:root {
+  --bg:         #0d1117;
+  --bg-elev:    #161b22;
+  --bg-elev-2: #1c2128;
+  --bg-hover:   #21262d;
+  --border:     #30363d;
+  --text:       #c9d1d9;
+  --text-mute:  #8b949e;
+  --text-dim:   #6e7681;
+  --accent:     #58a6ff;
+  --accent-2:   #1f6f3a;
+  --accent-3:   #2ea043;
+  --danger:     #da3633;
+  --danger-2:  #f85149;
+  --warn:       #ffa657;
+  --warn-bg:    #5a1e02;
+  --warn-bd:    #a04500;
+  --bubble-in:  #21262d;
+  --bubble-out: #1f6f3a;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; overscroll-behavior: contain; }
+html { background: var(--bg); }
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.4;
+  font-size: 14px;
+}
+
+button, input, textarea, select {
+  font-family: inherit;
+  font-size: 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  padding: 8px 12px;
+}
+button { background: var(--accent-2); border-color: var(--accent-3); cursor: pointer; }
+button:hover { background: var(--accent-3); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.is-busy::before {
+  content: '';
+  display: inline-block;
+  width: 12px; height: 12px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin 0.7s linear infinite;
+  margin-right: 8px;
+  vertical-align: -2px;
+}
+button.is-busy { opacity: 1; cursor: progress; }
+@keyframes btn-spin { to { transform: rotate(360deg); } }
+button.secondary { background: var(--bg-elev-2); border-color: var(--border); }
+button.secondary:hover { background: var(--bg-hover); }
+button.ghost { background: transparent; border-color: transparent; padding: 6px 8px; }
+button.ghost:hover { background: var(--bg-hover); }
+button.danger { background: var(--danger); border-color: var(--danger-2); }
+button.icon {
+  background: transparent; border: 1px solid transparent;
+  width: 44px; height: 44px; min-width: 44px; min-height: 44px;
+  padding: 0; font-size: 18px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text);
+}
+button.icon:hover { background: var(--bg-hover); border-color: var(--border); }
+button.icon:disabled { opacity: 0.4; cursor: not-allowed; }
+button.icon svg { width: 20px; height: 20px; display: block; }
+button.icon.icon-with-label {
+  width: auto; min-width: 44px; padding: 0 8px 0 6px; gap: 4px;
+}
+button.icon .icon-label {
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  color: var(--text-dim); line-height: 1; white-space: nowrap;
+}
+button.icon.icon-with-label .icon-label:empty { display: none; }
+input, textarea, select { width: 100%; min-height: 36px; }
+input[readonly] { color: var(--text-dim); }
+label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom: 4px; }
+
+.hide, [hidden] { display: none !important; }
+.muted { color: var(--text-mute); font-size: 12px; }
+.mono  { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+
+.warn {
+  background: var(--warn-bg); border: 1px solid var(--warn-bd); color: var(--warn);
+  padding: 8px 12px; border-radius: 6px; font-size: 13px; margin: 12px;
+}
+.row { display: flex; gap: 8px; }
+.row > * { flex: 1; }
+.empty-state { padding: 32px 16px; text-align: center; color: var(--text-dim); font-size: 13px; }
+
+/* Stand-alone "page" views (bootstrap, identity picker, login) — single
+   centered card with full-screen height. */
+.page {
+  display: flex; flex-direction: column;
+  min-height: 100vh; min-height: 100dvh;
+  padding: 16px;
+  align-items: center; justify-content: center;
+}
+.page .card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  width: 100%;
+  max-width: 420px;
+}
+.page h2 { margin: 0 0 12px; font-size: 16px; }
+
+/* ============================== APP SHELL ============================== */
+#view-app {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  grid-template-rows: 56px 1fr;
+  grid-template-areas:
+    "topbar topbar"
+    "list   thread";
+  height: 100vh; height: 100dvh;
+  overflow: hidden;
+}
+
+/* App-wide top bar — same row across both panes. The middle is
+   deliberately left empty so the top-centered toasts can land in it
+   without overlapping any control. Identity details live on the
+   left, announce icon next to them, radio + settings on the right. */
+#topbar {
+  grid-area: topbar;
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px 6px 14px;
+  padding-top: calc(6px + env(safe-area-inset-top));
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  z-index: 5;
+  min-width: 0;
+  position: relative;
+}
+#topbar #self-info { min-width: 0; line-height: 1.15; }
+#topbar #self-info .name { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+#topbar #self-info .addr { font-size: 10px; color: var(--text-dim); font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+#topbar .spacer { flex: 1; min-width: 16px; }
+
+/* Top-bar progress strip. A 3 px sliver flush with the topbar's
+   bottom border, shown whenever there's an active long-running
+   background task (file transfer, large send, attachment upload,
+   migration). Renders one of two modes:
+     - determinate: a fill scaled to the aggregate percent
+     - indeterminate: a sliding bar (anything without a known total) */
+#topbar-progress {
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 3px;
+  pointer-events: none; overflow: hidden;
+  background: transparent;
+}
+#topbar-progress.is-active { background: rgba(255,255,255,0.05); }
+#topbar-progress .bar {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: 0%;
+  background: var(--accent);
+  transition: width 200ms ease-out;
+}
+#topbar-progress.is-indeterminate .bar {
+  width: 30%;
+  animation: topbar-progress-slide 1.4s linear infinite;
+  transition: none;
+}
+@keyframes topbar-progress-slide {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(370%); }
+}
+
+/* Announce icon: small coloured dot in the bottom-right, same pattern
+   as #btn-status. Three states:
+     - "auto"  (green): auto-announce is enabled
+     - "sent"  (yellow): auto-announce is off, but at least one announce
+                         has been sent since boot
+     - "none"  (grey): nothing sent this boot                            */
+#btn-announce-top { position: relative; }
+#btn-announce-top::after {
+  content: '';
+  position: absolute;
+  bottom: 6px; right: 6px;
+  width: 10px; height: 10px;
+  border: 2px solid var(--bg-elev);
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+#btn-announce-top[data-state="auto"]::after { background: var(--accent-3); }
+#btn-announce-top[data-state="sent"]::after { background: var(--warn); }
+#btn-announce-top[data-state="none"]::after { background: var(--text-dim); }
+#announce-countdown {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: ui-monospace, monospace;
+  min-width: 36px;
+  text-align: left;
+  margin-left: -4px;
+}
+#announce-countdown[hidden] { display: none; }
+@media (max-width: 720px) {
+  #topbar #self-info .name, #topbar #self-info .addr { max-width: 36vw; }
+  #announce-countdown { display: none; }
+  /* On narrow screens the icon owns the slot — the percentage text
+     reads as redundant alongside the (now colour-coded + level-fill)
+     battery glyph. Long-press / tap to open the popover for the exact
+     percentage and the dV/dt slope. */
+  #btn-power .icon-label { display: none; }
+  #btn-power.icon-with-label { min-width: 44px; padding: 0; }
+}
+
+#pane-list {
+  grid-area: list;
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elev);
+  min-width: 0;
+  overflow: hidden;
+}
+#list-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px 8px 14px;
+  background: var(--bg-elev);
+}
+#search-wrap { padding: 0 14px 8px; background: var(--bg-elev); }
+#search { background: var(--bg); }
+#conv-list { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+#self-footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  display: flex; gap: 10px; align-items: center;
+  font-size: 12px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+}
+#self-footer .name { font-weight: 600; }
+#self-footer .addr { color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 10px; }
+
+.conv-row {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--bg-elev-2);
+  cursor: pointer;
+  min-height: 60px;
+}
+.conv-row:hover { background: var(--bg-elev-2); }
+.conv-row.active { background: var(--bg-hover); }
+.conv-row .middle { min-width: 0; }
+.conv-row .name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-row .last { color: var(--text-mute); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-row .meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.conv-row .when { color: var(--text-dim); font-size: 11px; }
+/* Per-row ⋮ hamburger button. Hidden by default; the landscape mobile
+   + tablet media query at the bottom of the stylesheet flips it on.
+   Right-click + long-press still open the menu on any viewport — only
+   the always-visible icon is breakpoint-gated. Smaller hit-area than
+   the 44px topbar icons so it doesn't blow out the row height. */
+.conv-row .row-menu-btn {
+  display: none;
+  width: 32px; height: 32px; min-width: 32px; min-height: 32px;
+  background: transparent; border: none; padding: 0;
+}
+.conv-row .row-menu-btn svg { width: 18px; height: 18px; }
+.conv-row .row-menu-btn:hover { background: var(--bg-elev-2); }
+
+/* Floating row context menu. Anchored at runtime by openRowMenu(). */
+.row-menu {
+  position: fixed;
+  z-index: 270;
+  min-width: 180px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+  padding: 4px;
+  font-size: 13px;
+}
+.row-menu-item {
+  display: block; width: 100%;
+  text-align: left;
+  background: transparent; border: none; color: var(--text);
+  padding: 8px 12px; border-radius: 4px;
+  cursor: pointer; font: inherit;
+}
+.row-menu-item:hover { background: var(--bg-elev-2); }
+.row-menu-item.destructive { color: var(--danger, #e57373); }
+.row-menu-item.destructive:hover { background: rgba(229,115,115,0.12); }
+.conv-row .unread {
+  background: var(--accent); color: var(--bg);
+  font-size: 10px; font-weight: 600;
+  border-radius: 10px; padding: 1px 7px;
+  min-width: 18px; text-align: center;
+}
+
+/* Section headers inside the conversation list — small uppercase
+   label for the "Chats" / "Discovered" groupings. */
+.list-section {
+  padding: 8px 14px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.list-group > summary.list-section {
+  list-style: none;
+  cursor: pointer;
+}
+.list-group > summary.list-section::before {
+  content: '▸ ';
+  display: inline-block;
+  transition: transform 0.12s ease;
+}
+.list-group[open] > summary.list-section::before {
+  transform: rotate(90deg);
+}
+
+/* Avatar identicon — rendered into a <span> by JS as an SVG. The
+   data-online attribute adds a small green dot in the bottom-right
+   corner to signal the peer was heard via announce in the last 60s. */
+.idc { display: inline-block; line-height: 0; flex-shrink: 0; position: relative; }
+.idc svg { display: block; border-radius: 6px; }
+.idc[data-online]::after {
+  content: '';
+  position: absolute;
+  bottom: -1px; right: -1px;
+  width: 11px; height: 11px;
+  background: var(--accent-3);
+  border: 2px solid var(--bg-elev);
+  border-radius: 50%;
+}
+.conv-row .seen { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+.conv-row .seen.online { color: var(--accent-3); font-weight: 600; }
+
+/* ============================== THREAD PANE ============================== */
+#pane-thread { grid-area: thread; display: flex; flex-direction: column; min-width: 0; background: var(--bg); overflow: hidden; }
+#thread-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+#thread-header .name { font-weight: 600; }
+#thread-header .addr { color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 11px; }
+#thread-header .peer-info { flex: 1; min-width: 0; }
+#thread-header .btn-back { display: none; }
+
+#thread-msgs {
+  flex: 1; overflow-y: auto; overscroll-behavior: contain;
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+#thread-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  flex-direction: column; gap: 12px; color: var(--text-dim);
+}
+
+.bubble {
+  max-width: 78%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  font-size: 14px;
+  word-break: break-word;
+  /* white-space: normal so the inter-element whitespace in our Alpine
+     template (newlines + indentation between block children) doesn't
+     render as visible empty lines inside each bubble. The body text
+     itself still preserves user-typed newlines via white-space: pre-
+     wrap on the inner body <div>. */
+  white-space: normal;
+  line-height: 1.35;
+}
+.bubble.in  { align-self: flex-start; background: var(--bubble-in);  border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.bubble.out { align-self: flex-end;   background: var(--bubble-out); border: 1px solid var(--accent-3); border-bottom-right-radius: 4px; }
+.bubble.bad { border-color: var(--danger); }
+.bubble .bmeta { font-size: 10px; opacity: 0.7; margin-top: 4px; font-family: ui-monospace, monospace; }
+
+#compose {
+  display: flex; align-items: flex-end; gap: 6px;
+  padding: 8px 10px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+#compose textarea {
+  resize: none;
+  width: 100%;
+  font-size: 16px;  /* prevent iOS auto-zoom */
+  min-height: 40px; max-height: 120px;
+  background: var(--bg);
+  padding: 9px 12px;
+}
+#compose-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+/* Staged-attachment tray: one or more chips above the textarea showing
+   filename, size, and (for known paths) an ETA. Click × to drop. */
+#attach-tray { display: flex; flex-direction: column; gap: 4px; }
+.attach-chip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-elev-2);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.attach-chip .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-chip .eta   { color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 11px; }
+.attach-chip .drop  { cursor: pointer; color: var(--text-dim); padding: 0 4px; }
+.attach-chip .drop:hover { color: var(--danger-2); }
+
+/* Microphone button while recording: red dot pulses to make it
+   unmissable, and the SVG goes red. Click again to stop. */
+#btn-mic.recording svg { color: var(--danger-2); }
+#btn-mic.recording { position: relative; }
+#btn-mic.recording::after {
+  content: '';
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--danger-2);
+  animation: mic-pulse 1s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+/* Recording-status chip that appears in the attach tray during
+   capture: elapsed time + stop / cancel buttons. */
+.record-chip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: rgba(248,81,73,0.15);
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.record-chip .elapsed {
+  flex: 1; min-width: 0;
+  font-family: ui-monospace, monospace; color: var(--danger-2);
+}
+
+/* ============================== SETTINGS MODAL (tabbed) ============================== */
+/* Tall modal that hosts every configuration screen behind a tab bar.
+   Replaces the slide-out drawer + separate page-style radio view so
+   all "settings"-shaped UI uses one display method. */
+.modal.modal-tall {
+  width: 100%; max-width: 560px;
+  /* `100dvh` (dynamic viewport height) tracks the CURRENTLY visible
+     area, so Firefox Android's bottom address bar — and any other
+     collapsible browser chrome — actually counts. `100vh` returns
+     the largest possible viewport, which was leaving tab content
+     (notably Settings → App and Settings → Connectivity) sliding
+     under the address bar on portrait phones. */
+  max-height: calc(100dvh - 96px);
+  display: flex; flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+/* Settings modal anchors to a fixed top offset (just below the top
+   bar) so switching tabs of different heights doesn't shift the box
+   vertically. Other modals (new-conv, identity-code) stay centred. */
+#modal-settings.modal-bg {
+  align-items: flex-start;
+  padding-top: calc(72px + env(safe-area-inset-top));
+}
+@media (max-width: 720px) {
+  #modal-settings.modal-bg {
+    padding-top: calc(64px + env(safe-area-inset-top));
+  }
+}
+.modal-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  /* Non-scrolling parts of .modal-tall must not get squeezed by the
+     body's content. Without flex-shrink: 0, a tall tab-panel ends up
+     compressing the header + tab-bar instead of the body's internal
+     scroller absorbing the overflow — visible on landscape phones
+     where the modal is height-constrained. */
+  flex-shrink: 0;
+}
+.modal-header h3 { flex: 1; margin: 0; font-size: 15px; font-weight: 600; }
+.modal-body {
+  flex: 1; overflow-y: auto; padding: 14px;
+  display: flex; flex-direction: column;
+  /* Flex items default to `min-height: auto`, which refuses to shrink
+     below intrinsic content size. Without `min-height: 0` here, a
+     tall tab-panel would grow .modal-body past the parent's max-height
+     and push the tab bar off the top of the modal instead of giving
+     this scroller a scrollbar. */
+  min-height: 0;
+}
+.modal-body .card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.modal-body .list-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--bg-elev-2);
+  font-size: 13px;
+}
+.modal-body .list-row:last-child { border-bottom: none; }
+
+/* Tab bar inside the settings modal. */
+.tab-bar {
+  display: flex;
+  gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  overflow-x: auto;
+  flex-shrink: 0;            /* see .modal-header rule above */
+}
+.tab-bar .tab {
+  background: transparent; border: none;
+  color: var(--text-mute);
+  font-size: 13px; font-weight: 500;
+  padding: 10px 14px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab-bar .tab:hover { color: var(--text); }
+.tab-bar .tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.tab-bar .tab[hidden] { display: none; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ============================== MODAL ============================== */
+.modal-bg {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 200;
+  padding: 16px;
+}
+.modal {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  width: 100%; max-width: 380px;
+  /* Constrain to visible viewport so modal action buttons (Attach,
+     Confirm, OK, etc.) don't slide under Firefox Android's address
+     bar on narrow screens. .modal-bg has 16 px of inset padding, so
+     the 32 px reserve here = top+bottom of that. dvh, not vh, so
+     the height reflects the CURRENTLY visible area. */
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+.modal h3 { margin: 0 0 12px; font-size: 15px; }
+
+/* Connectivity tab accordion. <details>/<summary> styled to look
+   like a card header that can collapse / expand. JS enforces "one
+   open at a time" so the tab never grows taller than the modal. */
+.cn-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+/* Small status dot shown in each accordion header. Colour comes from
+   the per-section JS — green when the transport is active and a peer
+   is connected, amber when configured-but-down, red on error. Hidden
+   by default; populateConnectivityTab toggles `hidden` + sets style. */
+.cn-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-left: 6px;
+  vertical-align: middle;
+  background: var(--text-mute);
+}
+.cn-dot.ok   { background: #4ade80; }
+.cn-dot.warn { background: #fbbf24; }
+.cn-dot.err  { background: #f87171; }
+/* TCP-client list row inside the Connectivity panel. */
+.cn-tcp-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--bg-elev-2);
+  font-size: 13px;
+}
+.cn-tcp-row:last-child { border-bottom: none; }
+.cn-tcp-row .cn-tcp-info { flex: 1; min-width: 0; }
+.cn-tcp-row .cn-tcp-info .muted { font-size: 11px; }
+.cn-tcp-row label { display: flex; align-items: center; gap: 4px; font-size: 11px; margin: 0; }
+.cn-tcp-row label input { width: auto; min-height: auto; }
+.cn-section > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 12px;
+  background: var(--bg);
+  font-weight: 600;
+  user-select: none;
+  position: relative;
+  /* Flex so the row-level toggle (Discoverable) can sit on the right
+     edge without colliding with the ▸ caret. Caret is positioned
+     absolute so flex doesn't reflow it. */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 32px;  /* reserve room for the absolute caret */
+}
+.cn-section > summary .cn-title { flex: 0 0 auto; }
+.cn-section > summary::-webkit-details-marker { display: none; }
+.cn-section > summary::after {
+  content: '▸';
+  position: absolute;
+  right: 12px; top: 50%;
+  transform: translateY(-50%);
+  transition: transform 0.15s ease;
+  color: var(--text-dim);
+}
+.cn-section[open] > summary::after { transform: translateY(-50%) rotate(90deg); }
+.cn-section[open] > summary { border-bottom: 1px solid var(--bg-elev-2); }
+.cn-section-body { padding: 12px; }
+
+/* Row-level toggle on a `<summary>` — used for "Discoverable" on the
+   LoRa accordion so the user can flip the broadcast on/off without
+   expanding the radio config panel. Sits flush-right of the title.
+   The accordion-toggle click is suppressed in JS so clicking the
+   switch doesn't also open/close the section. */
+.cn-section > summary .cn-row-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-mute);
+  font-weight: 500;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.cn-section > summary .cn-row-toggle:hover { background: var(--bg-elev-2); }
+
+/* Reusable info icon + click-triggered tooltip. Use anywhere a UI
+   element needs explanation but the explanation is too long to live
+   inline. Markup:
+     <button class="info-icon" data-info="Some explanatory text...">ⓘ</button>
+   The tooltip element is created lazily by the document-level handler
+   in JS, positioned below the icon, and closed on outside-click / Esc
+   / scroll. Multiple icons are supported but only one tooltip is
+   visible at a time. */
+.info-icon {
+  width: 16px; height: 16px;
+  background: transparent;
+  border: 1px solid var(--text-mute);
+  border-radius: 50%;
+  color: var(--text-mute);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.info-icon:hover { color: var(--text); border-color: var(--text); }
+.info-tooltip {
+  position: fixed;
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  max-width: 280px;
+  z-index: 280;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+  font-weight: normal;
+}
+.info-tooltip a { color: var(--accent); }
+
+/* iOS/Material-style switch. Reusable — wrap a checkbox so the SPA
+   stops shipping bare browser-default checkboxes wherever a boolean
+   preference is being expressed. Usage:
+     <label class="switch">
+       <input type="checkbox">
+       <span class="switch-slider"></span>
+     </label>
+   The native checkbox stays in the DOM (form semantics, JS listens
+   to `change`), it's just visually replaced by the slider. */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 34px; height: 18px;
+  flex-shrink: 0;
+}
+.switch input {
+  opacity: 0; width: 0; height: 0;
+  position: absolute; pointer-events: none;
+}
+.switch-slider {
+  position: absolute; inset: 0;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+.switch-slider::before {
+  content: '';
+  position: absolute;
+  height: 12px; width: 12px;
+  left: 2px; top: 50%;
+  transform: translateY(-50%);
+  background: var(--text-mute);
+  border-radius: 50%;
+  transition: transform 0.18s ease, background 0.18s ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+}
+.switch input:checked + .switch-slider {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.switch input:checked + .switch-slider::before {
+  transform: translate(16px, -50%);
+  background: #fff;
+}
+.switch input:focus-visible + .switch-slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.switch input:disabled + .switch-slider {
+  opacity: 0.4; cursor: not-allowed;
+}
+
+/* ============================== STATUS INDICATOR + POPOVER ============================== */
+/* Small coloured dot in the bottom-right of the radio antenna icon
+   to signal radio_online / offline / unconfigured at a glance. */
+#btn-status { position: relative; }
+#btn-status::after {
+  content: '';
+  position: absolute;
+  bottom: 6px; right: 6px;
+  width: 10px; height: 10px;
+  border: 2px solid var(--bg-elev);
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+#btn-status[data-state="online"]::after  { background: var(--accent-3); }
+#btn-status[data-state="offline"]::after { background: var(--danger); }
+#btn-status[data-state="unconf"]::after  { background: var(--warn); }
+
+.popover {
+  position: fixed;
+  top: 60px; right: 10px;
+  width: 300px; max-width: calc(100vw - 20px);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+  z-index: 250;
+  font-size: 13px;
+  /* Cap to viewport so long popovers (radio popover with its chart,
+     system popover with all sensor blocks) scroll internally instead
+     of clipping below the fold. Mostly engages on phones — both
+     portrait (height ~890 px so 80 px reserved fits everything) and
+     landscape (height ~412 px, the more painful case). Mobile-portrait
+     and landscape media queries below tighten the reserved space when
+     they need a larger header offset. */
+  max-height: calc(100dvh - 80px - env(safe-area-inset-top));
+  overflow-y: auto;
+}
+.popover-section { padding: 8px 0; border-bottom: 1px solid var(--bg-elev-2); }
+.popover-section:last-child { border-bottom: none; padding-bottom: 0; }
+.popover-section:first-child { padding-top: 0; }
+.popover-row { display: flex; align-items: center; gap: 10px; }
+.popover-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-mute); margin: 0; font-weight: 600;
+}
+/* Consistent two-tier body layout for every popover section:
+   - .popover-value: the main bright line (mono, 13px) — the
+     "primary fact" for the section (eg. the current temperature,
+     the radio config summary, the wall-clock string).
+   - .popover-subline: dimmed secondary info (mono, 11px) — used
+     for "Last read 2s ago (BME280)", "RX 12 / TX 4 packets", etc.
+   Multiple .popover-subline children stack vertically. Both
+   inherit the section's left edge — no extra indent.
+   .popover-row spacer collapses the gap when the value and subline
+   are missing on a hidden section. */
+.popover-value {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 13px;
+  margin-top: 6px;
+  color: var(--text);
+  word-break: break-word;
+}
+.popover-subline {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.popover-subline:first-of-type { margin-top: 4px; }
+/* Units displayed in measurement lines: rendered slightly smaller
+   and dimmer than the value text, with no whitespace separating
+   them from the value. Matches phone-app style ("23.4°C" not
+   "23.4 °C") while still visually grouping the unit as secondary
+   information. Used by both .popover-value (bright primary fact)
+   and .popover-subline (already-dimmed secondary line); on the
+   subline it still reads as ~10% smaller than the value digits. */
+.unit {
+  font-size: 0.85em;
+  color: var(--text-dim);
+  margin-left: 1px;
+}
+.popover-subline .unit {
+  /* Subline text is already var(--text-dim); fade the unit one step
+     further so the value↔unit contrast is preserved. */
+  opacity: 0.85;
+}
+
+/* Inline radio-telemetry chart in #popover-status. Two y-axes (left
+   = utilisation %, right = RSSI dBm) drawn in pure SVG so we don't
+   pull a charting dep into the SPA bundle. The legend below is a
+   compact "color · label · value" row.
+   Width is set per-render to match the popover; height stays fixed. */
+.radio-chart-wrap { margin-top: 8px; }
+.radio-chart-svg  {
+  display: block; width: 100%; height: 56px;
+  background: var(--bg-elev); border: 1px solid var(--bg-elev-2);
+  border-radius: 4px;
+}
+.radio-chart-grid  { stroke: var(--bg-elev-2); stroke-width: 1; }
+.radio-chart-line  { fill: none; stroke-width: 1.4; }
+.radio-chart-line.own    { stroke: #58a6ff; }  /* own TX duty cycle */
+.radio-chart-line.others { stroke: #ff9933; }  /* aggregate non-self DCD-busy */
+.radio-chart-line.rssi   { stroke: #4caf50; }  /* RSSI dBm — right axis */
+.radio-chart-line.noise  { stroke: #b39ddb; stroke-dasharray: 3 2; stroke-width: 1; }
+                                              /* noise-floor dBm — right axis */
+.radio-chart-legend {
+  margin-top: 4px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10px; color: var(--text-dim);
+}
+.radio-chart-legend-row {
+  display: flex; flex-wrap: wrap; gap: 10px;
+}
+.radio-chart-legend-row + .radio-chart-legend-row { margin-top: 2px; }
+.radio-chart-legend .swatch {
+  display: inline-block; width: 8px; height: 8px;
+  margin-right: 4px; vertical-align: middle;
+  border-radius: 1px;
+}
+.radio-chart-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 56px; font-size: 11px; color: var(--text-mute);
+  background: var(--bg-elev); border: 1px solid var(--bg-elev-2);
+  border-radius: 4px;
+}
+/* Sensor / interface configuration row — checkbox + interval
+   dropdown + any extras. Lives at the bottom of an expandable
+   section. Hidden until the user clicks the header (handled in
+   JS via [data-role="header"] + [data-role="config"]). */
+.popover-config {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--bg-elev-2);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.popover-config label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; cursor: pointer; margin: 0;
+}
+.popover-config input[type="checkbox"] {
+  width: auto; min-height: auto; margin: 0;
+}
+.popover-config select {
+  flex: 1; max-width: 140px; font-size: 12px;
+}
+.popover-chev {
+  font-size: 11px; opacity: 0.55;
+  transition: transform .12s;
+}
+.popover-section.is-open .popover-chev { transform: rotate(180deg); }
+
+/* Radio-option cards used by the retention modal (and any future
+   "pick one of N" modals). The global `input { width:100%;
+   min-height:36px }` rule makes raw radio buttons unusable in flex
+   layouts — overrides here put them back to their natural size and
+   wrap each option in a clickable label-card. */
+.cr-option {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; margin-bottom: 6px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-elev);
+  cursor: pointer; user-select: none;
+}
+.cr-option:hover { background: var(--bg-hover); }
+.cr-option input[type="radio"] {
+  width: 18px; height: 18px; min-height: auto;
+  margin: 0; flex: 0 0 auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.cr-option span { font-size: 14px; flex: 0 0 auto; }
+.cr-option-custom { flex-wrap: wrap; }
+.cr-option-custom .cr-num {
+  width: 72px; min-height: 32px; flex: 0 0 auto;
+  text-align: right;
+}
+.cr-option-custom .cr-unit {
+  width: auto; min-height: 32px; flex: 0 0 auto;
+}
+.pill {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+.pill.ok    { background: var(--accent-2); color: var(--text); }
+.pill.bad   { background: var(--danger);   color: var(--text); }
+.pill.warn  { background: var(--warn-bg);  color: var(--warn);  border: 1px solid var(--warn-bd); }
+
+/* ============================== EMOJI POPUP ============================== */
+#popup-emoji {
+  position: absolute;
+  bottom: 60px; left: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+  width: 280px;
+  z-index: 50;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.emoji-cell {
+  display: flex; align-items: center; justify-content: center;
+  height: 32px; cursor: pointer; border-radius: 4px;
+  font-size: 20px;
+}
+.emoji-cell:hover { background: var(--bg-hover); }
+
+/* ============================== TOASTS ============================== */
+#toast-reconnect {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  background: var(--warn-bg); color: var(--warn);
+  border: 1px solid var(--warn-bd);
+  padding: 6px 12px; border-radius: 16px;
+  font-size: 12px; z-index: 300;
+}
+#toast-stack {
+  /* Centred vertically in the 56px top bar for a single-line toast.
+     (56 − 40) / 2 = 8px from the top. Multi-line toasts naturally
+     extend downward past the bar — that's fine because the middle of
+     the bar is reserved empty space precisely so longer toasts have
+     room to grow into it. */
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top));
+  left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; align-items: center;
+  z-index: 400;
+  max-width: calc(100% - 32px);
+  pointer-events: none;
+}
+.toast {
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  max-width: 420px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  animation: toast-in 0.18s ease-out;
+  pointer-events: auto;
+  cursor: pointer;
+  word-wrap: break-word;
+}
+.toast.info    { border-left-color: var(--accent); }
+.toast.success { border-left-color: var(--accent-3); }
+.toast.warn    { border-left-color: var(--warn); }
+.toast.error   { border-left-color: var(--danger-2); }
+.toast .title { font-weight: 600; margin-bottom: 2px; font-size: 13px; }
+.toast .body  { font-size: 12px; color: var(--text-mute); }
+@keyframes toast-in { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes toast-out { from { transform: none; opacity: 1; } to { transform: translateY(8px); opacity: 0; } }
+.toast.dismissing { animation: toast-out 0.18s ease-in forwards; }
+@media (max-width: 720px) {
+  #toast-stack {
+    /* On narrow screens, toasts sit BELOW the topbar so they don't
+       visually or interactively block the status / battery / settings
+       icons. The compose row at the bottom keeps that edge unavailable
+       for toasts too, leaving the under-topbar slot as the only
+       conflict-free position. Topbar is ~56 px tall (6 + 44 + 6) plus
+       its 1 px border and the 3 px progress strip, so 60 px clears it. */
+    top: calc(60px + env(safe-area-inset-top));
+    left: 8px; right: 8px;
+    transform: none;
+    align-items: stretch;
+  }
+  .toast { max-width: none; }
+  /* Popovers sit BELOW the toast slot on mobile so toasts (z-index
+     400) don't overlay popover content (z-index 250). A 70 px band is
+     reserved for the toast stack — fits one multi-line toast or two
+     single-line ones; further stacks would overlap, but those
+     auto-dismiss in seconds. Internal scroll keeps tall popovers from
+     clipping off the bottom of the viewport. */
+  .popover {
+    top: calc(130px + env(safe-area-inset-top));
+    max-height: calc(100dvh - 140px - env(safe-area-inset-top));
+    overflow-y: auto;
+  }
+}
+
+/* ============================== MOBILE ============================== */
+/* iPad portrait + small-laptop range — shrink the list pane so the
+   thread isn't squashed at intermediate widths. */
+@media (min-width: 721px) and (max-width: 960px) {
+  #view-app { grid-template-columns: 280px 1fr; }
+  #topbar #self-info .name,
+  #topbar #self-info .addr { max-width: 160px; }
+}
+
+@media (max-width: 720px) {
+  #view-app {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "topbar"
+      "list";
+  }
+  #view-app.thread-open {
+    grid-template-areas:
+      "topbar"
+      "thread";
+  }
+  #pane-list  { display: flex; }
+  #pane-thread { display: none; }
+  #view-app.thread-open #pane-list  { display: none; }
+  #view-app.thread-open #pane-thread { display: flex; }
+  #thread-header .btn-back { display: inline-flex; }
+}
+
+/* Very-short viewports (landscape phones, foldables in landscape):
+   the settings modal needs to fit even when the keyboard is open. */
+@media (max-height: 480px) {
+  #modal-settings.modal-bg { padding-top: calc(56px + env(safe-area-inset-top)); }
+  .modal.modal-tall        { max-height: calc(100dvh - 64px); }
+  /* Short-height layout (phone in landscape, ~412 px viewport tall).
+     Topbar + thread-header default heights total ~110 px — over a
+     quarter of the screen — leaving the message list cramped. Squeeze
+     them down to ~40 px each, keep the icons usable at 36 px (the
+     Material guideline 32 px floor, with 4 px clear-zone). Saves
+     ~30 vertical px for messages. */
+  #topbar {
+    padding-top: calc(2px + env(safe-area-inset-top));
+    padding-bottom: 2px;
+    gap: 6px;
+  }
+  button.icon {
+    width: 36px; height: 36px; min-width: 36px; min-height: 36px;
+  }
+  button.icon svg { width: 18px; height: 18px; }
+  button.icon.icon-with-label { min-width: 36px; padding: 0 6px 0 4px; }
+  #thread-header { padding: 4px 12px; gap: 8px; }
+  #thread-header .idc { transform: scale(0.85); transform-origin: left center; }
+  /* Compose row: trim top/bottom padding from 8 px to 4 px and drop
+     the textarea's min-height from 40 px to 32 px. The textarea
+     auto-grows up to its max-height when content wraps, so single-
+     line input stays compact in landscape and multi-line still works. */
+  #compose {
+    padding: 4px 10px;
+    padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  }
+  #compose textarea { min-height: 32px; padding: 6px 12px; }
+  /* Landscape phone (~412 px tall, with browser address bar possibly
+     eating another 50–60 px). Pull popovers back near the topbar —
+     the mobile-portrait 130 px offset would leave very little for
+     content. `100dvh` instead of `100vh` so the height reflects the
+     CURRENTLY visible viewport (Firefox Android's bottom address bar
+     would otherwise hide the popover's bottom edge under it).
+     Toasts inherit the desktop default (top: 8 px, centred in topbar)
+     — the topbar in landscape is short enough that toasts overlap it
+     only briefly during their 3-5 s lifespan, and the landscape
+     topbar has more horizontal slack than portrait so the icons
+     under a centered toast are usually still tappable in the gaps. */
+  .popover {
+    top: calc(48px + env(safe-area-inset-top));
+    max-height: calc(100dvh - 56px - env(safe-area-inset-top));
+  }
+}
+
+/* Landscape mobile + tablet: surface the row's actions via the per-
+   row ⋮ menu, drop the redundant thread header where the conv list
+   alongside already provides context + navigation. Right-click and
+   long-press continue to open the row menu in all modes so touch-
+   screen laptops still have an entry point.
+
+   Two rules — broader scope for the ⋮ icon (any landscape
+   phone/tablet) and a narrower scope for the full thread-header
+   hide (split-pane only — at ≤720 the conv list is hidden when a
+   chat is open and the thread header is the only way to navigate
+   back). Boundary is `max-width: 1279px` so a 1280×800 laptop
+   stays in the desktop layout (where the header is wanted). */
+@media (max-width: 1279px) and (orientation: landscape) {
+  #thread-header #btn-conv-retention,
+  #thread-header #btn-clear-conv { display: none; }
+  .conv-row .row-menu-btn { display: inline-flex; }
+}
+@media (min-width: 721px) and (max-width: 1279px) and (orientation: landscape) {
+  #thread-header { display: none; }
+}
+
+/* Identity picker */
+/* Default <summary> shows plain text — add a pointer so users know it's
+   clickable. Same hint applies to anything else expandable. */
+summary { cursor: pointer; }
+summary:hover { color: var(--text); }
+
+.iden-card {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: var(--bg);
+  align-items: center;
+  cursor: pointer;
+}
+.iden-card:hover { background: var(--bg-elev-2); }
+.iden-card .name { font-weight: 600; }
+.iden-card .addr { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-dim); }
+
+/* Hide Alpine-bound elements until the framework has booted and
+   evaluated their x-show / x-if bindings, so we don't see a flash
+   of the wrong state on first paint. The defer'd <script> at the
+   end of <head> guarantees Alpine starts after DOMContentLoaded. */
+[x-cloak] { display: none !important; }
+
+/* ============== utility classes ==============
+   Replace the most common inline styles. Stick to spacing / sizing /
+   flex / monospace — anything with bespoke colours or borders keeps
+   its own component class. The naming follows a small fragment of
+   the Tailwind convention (mt-N / mb-N where N is a 4px step) so a
+   reader who knows Tailwind has a head start. Declared LAST so they
+   reliably win over component rules when both apply. */
+.mt-mini { margin-top: 2px; } .mb-mini { margin-bottom: 2px; }
+.mt-1 { margin-top: 4px; }   .mb-1 { margin-bottom: 4px; }
+.mt-2 { margin-top: 8px; }   .mb-2 { margin-bottom: 8px; }
+.mt-3 { margin-top: 12px; }  .mb-3 { margin-bottom: 12px; }
+.mt-4 { margin-top: 16px; }  .mb-4 { margin-bottom: 16px; }
+.mt-6 { margin-top: 6px; }   .mb-6 { margin-bottom: 6px; }   /* odd offsets that recur */
+.mt-10 { margin-top: 10px; } .mb-10 { margin-bottom: 10px; }
+.mt-14 { margin-top: 14px; } .mb-14 { margin-bottom: 14px; }
+.w-full { width: 100%; }
+.flex-1 { flex: 1; }
+.min-w-0 { min-width: 0; }
+.flex-1-min0 { flex: 1; min-width: 0; }
+.clickable { cursor: pointer; }
+/* Override the global `input { width: 100%; min-height: 36px }` for
+   checkboxes / radios that sit inline next to a label. */
+.input-inline { width: auto; min-height: auto; }
+.font-mono-inline { font-family: ui-monospace, monospace; }
+.font-bold { font-weight: 600; }
+.text-tiny { font-size: 10px; }
+.text-xs { font-size: 11px; }
+.text-sm { font-size: 12px; }
+/* Modal z-indices: layered above each other and the base modal stack
+   (.modal-bg = 200) so identity-code / image / confirm can sit on top
+   of a Settings modal that's already open. */
+.z-260 { z-index: 260; }
+.z-270 { z-index: 270; }
+.z-280 { z-index: 280; }
+/* Reusable card width inside a modal-bg. The base .modal max-width is
+   380px; .modal-wide expands to 460px for forms that need to fit two
+   columns of inputs. */
+.modal-wide { max-width: 460px; }
+/* Small attachment-style chip used inside message bubbles. */
+.chip {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 11px;
+}
+.chip-btn {
+  margin-top: 6px;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+  display: block;
+}
+.chip-error {
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 90, 90, 0.18);
+  font-size: 11px;
+  color: inherit;
+}
+/* Inline progress bar used in conv rows + synthetic incoming rows. */
+.progress-track {
+  height: 3px;
+  margin-top: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 200ms ease-out;
+}
+/* Inline-toggle label: settings rows with a checkbox / radio sitting
+   next to readable text. Differs from the global `label` rule (which
+   is block, 12px, muted). */
+.toggle-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin: 0; }
+
+/* ---- atomic layout / spacing / typography utilities.
+       Each rule sets exactly one CSS property so they compose freely
+       in a class= attribute. Tailwind-flavoured naming. ---- */
+.m-0 { margin: 0; }
+.mt-0 { margin-top: 0; }
+.mb-0 { margin-bottom: 0; }
+.mx-0 { margin-left: 0; margin-right: 0; }
+.my-0 { margin-top: 0; margin-bottom: 0; }
+.mr-6 { margin-right: 6px; }
+.px-6 { padding-left: 6px; padding-right: 6px; }
+.h-4 { height: 4px; }
+.h-full { height: 100%; }
+.bg-white-strong { background: rgba(255, 255, 255, 0.2); }
+.bg-accent-3 { background: var(--accent-3, #7ad); }
+.bg-base { background: var(--bg); }
+.object-contain { object-fit: contain; }
+.flex-shrink-0 { flex-shrink: 0; }
+.rounded-4 { border-radius: 4px; }
+.pt-0 { padding-top: 0; }
+.pr-10 { padding-right: 10px; }
+.pb-10 { padding-bottom: 10px; }
+.pl-38 { padding-left: 38px; }
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.inline-flex { display: inline-flex; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.flex-0 { flex: 0 0 auto; }
+.gap-6 { gap: 6px; }
+.gap-8 { gap: 8px; }
+.gap-10 { gap: 10px; }
+.gap-12 { gap: 12px; }
+.px-10 { padding-left: 10px; padding-right: 10px; }
+.py-1 { padding-top: 4px; padding-bottom: 4px; }
+.py-2 { padding-top: 8px; padding-bottom: 8px; }
+.text-13 { font-size: 13px; }
+.text-14 { font-size: 14px; }
+.text-center { text-align: center; }
+.text-right { text-align: right; }
+.text-dim { color: var(--text-dim); }
+.text-danger { color: var(--danger-2); }
+.text-default { color: var(--text); }
+.text-white { color: #fff; }
+.line-height-1 { line-height: 1; }
+.opacity-50 { opacity: 0.5; }
+.opacity-55 { opacity: 0.55; }
+.opacity-70 { opacity: 0.7; }
+.cursor-grab { cursor: grab; }
+.cursor-zoom-in { cursor: zoom-in; }
+.cursor-zoom-out { cursor: zoom-out; }
+.display-contents { display: contents; }
+.display-block { display: block; }
+.overflow-hidden { overflow: hidden; }
+.overflow-y-auto { overflow-y: auto; }
+.user-select-none { user-select: none; }
+.whitespace-pre { white-space: pre-wrap; }
+.whitespace-pre-break { white-space: pre-wrap; word-wrap: break-word; }
+.w-auto { width: auto; }
+.min-h-auto { min-height: auto; }
+.min-h-14 { min-height: 14px; }
+.w-14 { width: 14px; }
+.max-w-160 { max-width: 160px; }
+.max-w-240 { max-width: 240px; }
+.max-h-240 { max-height: 240px; }
+.max-h-260 { max-height: 260px; }
+.max-w-viewport { max-width: 100vw; }
+.max-h-viewport { max-height: 100dvh; }
+.w-viewport { width: 100vw; }
+.h-viewport { height: 100dvh; }
+.transition-transform-fast { transition: transform .12s; }
+.touch-pinch { touch-action: pinch-zoom; }
+.no-underline { text-decoration: none; }
+.absolute { position: absolute; }
+.top-safe-8 { top: calc(8px + env(safe-area-inset-top, 0px)); }
+.right-8 { right: 8px; }
+.right-60 { right: 60px; }
+.z-10 { z-index: 10; }
+.rounded-2 { border-radius: 2px; }
+.rounded-6 { border-radius: 6px; }
+.border-elev2 { border: 1px solid var(--bg-elev-2); }
+.border-color-default { border-color: var(--border); }
+.border-color-accent { border-color: var(--accent-3); }
+.border-white-soft { border: 1px solid rgba(255,255,255,0.2); }
+.bg-elev { background: var(--bg-elev); }
+.bg-accent-2 { background: var(--accent-2); }
+.bg-image-backdrop { background: rgba(0,0,0,0.92); }
+.bg-modal-btn { background: rgba(0,0,0,0.4); }
+.bg-chip-warn { background: rgba(255,180,90,0.15); }
+.color-inherit { color: inherit; }
+
+/* ---- swatch colours used in the radio-stats footer.
+       Tied to a specific signal/meaning, so named for the meaning
+       rather than the hex value. ---- */
+.swatch-own    { background: #58a6ff; }   /* own channel utilization */
+.swatch-others { background: #ff9933; }   /* others' channel utilization */
+.swatch-rssi   { background: #4caf50; }   /* RSSI */
+.swatch-noise  { background: #b39ddb; }   /* ambient noise */

@@ -6,30 +6,46 @@ import shutil
 
 def embed_spa(env):
     """
-    Generate Web/SPAEmbedded.h from Web/spa/index.html (and the
-    vendored alpine.min.js) on every build. The HTML is the source of
-    truth; the .h file is checked in to keep PR diffs reviewable but
-    is overwritten if any source asset is newer.
+    Generate Web/SPAEmbedded.h from Web/spa/{index.html, styles.css,
+    alpine.min.js} on every build. The source files are the source of
+    truth; the .h file is checked in to keep PR diffs reviewable but is
+    overwritten if any source asset is newer.
+
+    A short hash of the CSS bytes is substituted for the
+    `__STYLES_VERSION__` placeholder in the HTML so the CSS URL changes
+    on every CSS edit. Combined with a long-lived immutable cache
+    header on /styles.css, that keeps the browser-side CSS up to date
+    across firmware ships without paying for a fetch on every reload.
     """
     project_dir = env.subst("$PROJECT_DIR")
     src = os.path.join(project_dir, "Web", "spa", "index.html")
+    css = os.path.join(project_dir, "Web", "spa", "styles.css")
     alpine = os.path.join(project_dir, "Web", "spa", "alpine.min.js")
     dst = os.path.join(project_dir, "Web", "SPAEmbedded.h")
     if not os.path.exists(src):
         return
     src_mtime = os.path.getmtime(src)
+    if os.path.exists(css):
+        src_mtime = max(src_mtime, os.path.getmtime(css))
     if os.path.exists(alpine):
         src_mtime = max(src_mtime, os.path.getmtime(alpine))
     if os.path.exists(dst) and os.path.getmtime(dst) >= src_mtime:
         return
+    import gzip
     with open(src, "rb") as f:
         html = f.read()
-    # gzip for serving via Content-Encoding: gzip (saves ~60% on the wire)
-    import gzip
+    css_bytes = b""
+    css_version = ""
+    if os.path.exists(css):
+        with open(css, "rb") as f:
+            css_bytes = f.read()
+        css_version = hashlib.sha1(css_bytes).hexdigest()[:10]
+        html = html.replace(b"__STYLES_VERSION__", css_version.encode())
     gz = gzip.compress(html, compresslevel=9)
     body = ", ".join("0x{:02x}".format(b) for b in gz)
     header = (
-        "// Auto-generated from Web/spa/index.html — do not edit by hand.\n"
+        "// Auto-generated from Web/spa/{index.html, styles.css, alpine.min.js}\n"
+        "// — do not edit by hand.\n"
         "#pragma once\n"
         "#include <pgmspace.h>\n"
         "namespace Web {\n"
@@ -38,6 +54,17 @@ def embed_spa(env):
         f"    {body}\n"
         "  };\n"
     )
+    if css_bytes:
+        gz_css = gzip.compress(css_bytes, compresslevel=9)
+        css_body = ", ".join("0x{:02x}".format(b) for b in gz_css)
+        header += (
+            f"  static const char SPA_STYLES_CSS_VERSION[] = \"{css_version}\";\n"
+            f"  static const size_t SPA_STYLES_CSS_GZ_LEN = {len(gz_css)};\n"
+            "  static const uint8_t SPA_STYLES_CSS_GZ[] PROGMEM = {\n"
+            f"    {css_body}\n"
+            "  };\n"
+        )
+        print(f"*** Embedded CSS:    {len(css_bytes)} bytes -> {len(gz_css)} bytes gzipped (v{css_version})")
     if os.path.exists(alpine):
         with open(alpine, "rb") as f:
             js = f.read()
@@ -53,7 +80,7 @@ def embed_spa(env):
     header += "}\n"
     with open(dst, "w") as f:
         f.write(header)
-    print(f"*** Embedded SPA: {len(html)} bytes -> {len(gz)} bytes gzipped at {dst}")
+    print(f"*** Embedded SPA:    {len(html)} bytes -> {len(gz)} bytes gzipped at {dst}")
 
 
 

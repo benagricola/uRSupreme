@@ -628,6 +628,7 @@ namespace Web {
       // SPA — single embedded HTML file, served gzipped at / and /index.html
       server.on("/",              HTTP_GET, handle_spa);
       server.on("/index.html",    HTTP_GET, handle_spa);
+      server.on("/styles.css",    HTTP_GET, handle_styles_css);
       server.on("/alpine.min.js", HTTP_GET, handle_alpine_js);
       // Public
       server.on("/api/info",          HTTP_GET,  handle_info);
@@ -780,6 +781,19 @@ namespace Web {
       resp->addHeader("Content-Encoding", "gzip");
       // Alpine doesn't change between SPA versions, so let the browser
       // cache it indefinitely — largest asset by far.
+      resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
+      req->send(resp);
+    }
+
+    static void handle_styles_css(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      AsyncWebServerResponse* resp = req->beginResponse_P(
+          200, "text/css",
+          Web::SPA_STYLES_CSS_GZ, Web::SPA_STYLES_CSS_GZ_LEN);
+      resp->addHeader("Content-Encoding", "gzip");
+      // The SPA HTML embeds the CSS version as a `?v=<hash>` query
+      // string, so each firmware ship gives this URL a new identity
+      // and the immutable cache header is safe.
       resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
       req->send(resp);
     }

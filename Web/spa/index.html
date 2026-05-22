@@ -1259,10 +1259,14 @@ summary:hover { color: var(--text); }
 <!-- ===================== APP (split-pane chat) ===================== -->
 <div id="view-app" hidden>
   <header id="topbar">
-    <span class="idc" id="self-idc"></span>
-    <div id="self-info">
-      <div class="name" id="self-name"></div>
-      <div class="addr" id="self-addr"></div>
+    <span class="idc" id="self-idc"
+          x-data
+          x-html="$store.s.self ? identicon($store.s.self.address || $store.s.self.id, 32) : ''"></span>
+    <div id="self-info" x-data>
+      <div class="name" id="self-name"
+           x-text="($store.s.self && $store.s.self.display_name) || '(no name)'"></div>
+      <div class="addr" id="self-addr"
+           x-text="$store.s.self ? ($store.s.self.address || $store.s.self.id) : ''"></div>
     </div>
     <button class="icon" id="btn-announce-top" title="Announce me — refresh peers' path to this identity">
       <!-- megaphone -->
@@ -2888,13 +2892,11 @@ function withPreservedState(container, fn, opts = {}) {
   container.scrollLeft = Math.min(scrollLeft, container.scrollWidth   - container.clientWidth);
 }
 
-function renderSelf() {
-  if (!state.self) return;
-  $('self-name').textContent = state.self.display_name || '(no name)';
-  $('self-addr').textContent = state.self.address || state.self.id;
-  const idc = $('self-idc');
-  idc.innerHTML = identicon(state.self.address || state.self.id, 32);
-}
+// renderSelf() used to imperatively rewrite the topbar identity bits;
+// those elements are now bound declaratively (#self-idc, #self-name,
+// #self-addr) and Alpine repaints automatically when state.self changes.
+// Kept as a no-op so refreshState() / login flow callsites stay valid.
+function renderSelf() {}
 
 function renderConversations() {
   const wrap = $('conv-list');

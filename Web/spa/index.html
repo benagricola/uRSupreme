@@ -2126,7 +2126,24 @@ summary:hover { color: var(--text); }
           <summary>WiFi <span class="cn-dot" id="cn-dot-wifi" hidden></span></summary>
           <div class="cn-section-body">
             <p class="muted" style="margin-bottom:10px">Networks this device has credentials for. Forgetting one wipes the SSID + password from the device and reboots into softAP for reconfiguration.</p>
-            <div id="cn-wifi-saved-list" style="margin-bottom:10px">
+            <div id="cn-wifi-saved-list" style="margin-bottom:10px" x-data>
+              <template x-if="$store.s.wifiSaved === null">
+                <p class="muted">Loading…</p>
+              </template>
+              <template x-if="$store.s.wifiSaved && $store.s.wifiSaved.length === 0">
+                <p class="muted">No saved networks. The device will come up in softAP for first-time setup.</p>
+              </template>
+              <template x-for="n in ($store.s.wifiSaved || [])" :key="n.ssid">
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--bg-elev-2);border-radius:6px;margin-bottom:6px">
+                  <div style="flex:1">
+                    <div style="font-weight:600" x-text="n.ssid"></div>
+                    <div class="muted" style="font-size:11px"
+                         x-text="n.has_psk ? 'Saved with password' : 'Saved (open network)'"></div>
+                  </div>
+                  <button class="secondary" @click="forgetSavedNetwork(n.ssid)">Forget</button>
+                </div>
+              </template>
+            </div>
               <p class="muted">Loading…</p>
             </div>
             <button class="secondary" id="btn-wifi-add" style="width:100%" @click="openAddWifiModal()">Add a network…</button>
@@ -2542,6 +2559,8 @@ let state = {
   tcpClients: null,
   tcpClientsCap:  0,
   tcpClientsLive: 0,
+  // Saved WiFi networks. null = loading.
+  wifiSaved: null,
   // Background-task registry. Keyed by an arbitrary string id. Mirrors
   // the legacy bgTasks Map but as a plain object so Alpine reactivity
   // tracks add / remove / update on the topbar progress strip.
@@ -7243,33 +7262,13 @@ $('cn-kiss-out').addEventListener('change', async (ev) => {
 });
 
 async function populateSavedWifiList() {
-  const wrap = $('cn-wifi-saved-list');
-  wrap.innerHTML = '<p class="muted">Loading…</p>';
+  state.wifiSaved = null;
   try {
     const r = await state.transport.wifiSavedList();
-    const list = r.networks || [];
-    wrap.innerHTML = '';
-    if (list.length === 0) {
-      wrap.appendChild(el('p', { class: 'muted' }, 'No saved networks. The device will come up in softAP for first-time setup.'));
-      return;
-    }
-    for (const n of list) {
-      const row = el('div', {
-        style: 'display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--bg-elev-2);border-radius:6px;margin-bottom:6px',
-      });
-      const left = el('div', { style: 'flex:1' });
-      left.appendChild(el('div', { style: 'font-weight:600', text: n.ssid }));
-      left.appendChild(el('div', { class: 'muted', style: 'font-size:11px',
-                                   text: n.has_psk ? 'Saved with password' : 'Saved (open network)' }));
-      row.appendChild(left);
-      const btn = el('button', { class: 'secondary', text: 'Forget' });
-      btn.addEventListener('click', () => forgetSavedNetwork(n.ssid));
-      row.appendChild(btn);
-      wrap.appendChild(row);
-    }
+    state.wifiSaved = r.networks || [];
   } catch (e) {
-    wrap.innerHTML = '';
-    wrap.appendChild(el('p', { class: 'muted bad', text: 'Could not load saved networks: ' + (e.message || e) }));
+    state.wifiSaved = [];
+    toast('Could not load saved networks: ' + (e.message || e), 'error');
   }
 }
 

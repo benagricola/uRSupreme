@@ -1817,22 +1817,32 @@ summary:hover { color: var(--text); }
      showConfirm(opts) so call sites don't have to declare their own
      modal HTML for every action. Optional identity-code input for
      physical-presence-gated calls. -->
-<div id="modal-confirm" class="modal-bg" x-data x-show="$store.s.modals.confirm" x-cloak style="z-index:270">
+<div id="modal-confirm" class="modal-bg" x-data x-show="$store.s.modals.confirm"
+     @click.self="confirmCancel()" x-cloak style="z-index:270">
   <div class="modal">
-    <h3 id="mc-title">Confirm</h3>
-    <p class="muted" id="mc-body" style="white-space:pre-wrap"></p>
-    <div id="mc-code-wrap" style="margin-bottom:12px" hidden>
+    <h3 id="mc-title" x-text="$store.s.confirm.title">Confirm</h3>
+    <p class="muted" id="mc-body" style="white-space:pre-wrap"
+       x-text="$store.s.confirm.body"></p>
+    <div id="mc-code-wrap" style="margin-bottom:12px" x-show="$store.s.confirm.needsCode" x-cloak>
       <label>Identity code</label>
       <p class="muted id-code-hint" style="margin-bottom:6px"></p>
-      <input id="mc-code" maxlength="6" placeholder="abc123" style="font-family:ui-monospace,monospace">
+      <input id="mc-code" maxlength="6" placeholder="abc123"
+             style="font-family:ui-monospace,monospace"
+             x-model="$store.s.confirm.codeValue"
+             @keydown.enter.prevent="confirmOk()">
     </div>
-    <div id="mc-input-wrap" style="margin-bottom:12px" hidden>
-      <label id="mc-input-label"></label>
-      <input id="mc-input" type="text">
+    <div id="mc-input-wrap" style="margin-bottom:12px" x-show="$store.s.confirm.needsInput" x-cloak>
+      <label id="mc-input-label" x-text="$store.s.confirm.inputLabel"></label>
+      <input id="mc-input" type="text"
+             x-model="$store.s.confirm.inputValue"
+             :placeholder="$store.s.confirm.inputPlaceholder"
+             @keydown.enter.prevent="confirmOk()">
     </div>
     <div class="row">
-      <button class="secondary" id="mc-cancel">Cancel</button>
-      <button id="mc-ok">OK</button>
+      <button class="secondary" id="mc-cancel" @click="confirmCancel()">Cancel</button>
+      <button id="mc-ok" :class="{ danger: $store.s.confirm.destructive }"
+              x-text="$store.s.confirm.okLabel"
+              @click="confirmOk()">OK</button>
     </div>
   </div>
 </div>
@@ -2499,6 +2509,17 @@ let state = {
   // the legacy bgTasks Map but as a plain object so Alpine reactivity
   // tracks add / remove / update on the topbar progress strip.
   bgTasks: {},
+  // Live confirm-modal config. Populated by showConfirm(opts) and
+  // mutated by confirmOk / confirmCancel. Null when no confirm modal
+  // is open. The _resolve fn isn't enumerated reactively but Alpine
+  // doesn't care — it just lives on the object.
+  confirm: {
+    title: 'Confirm', body: '', okLabel: 'OK', destructive: false,
+    needsCode: false, needsInput: false,
+    inputLabel: '', inputValue: '', inputPlaceholder: '',
+    codeValue: '',
+    _resolve: null,
+  },
   info: null,
   transport: null,
   token: localStorage.getItem(LS.TOKEN) || null,
@@ -2791,63 +2812,53 @@ function toast(message, kind = 'info', durationMs) {
 // }
 function showConfirm(opts) {
   return new Promise((resolve) => {
-    const modal = $('modal-confirm');
-    $('mc-title').textContent = opts.title || 'Confirm';
-    $('mc-body').textContent  = opts.body  || '';
-    $('mc-ok').textContent    = opts.okLabel || 'OK';
-    $('mc-ok').classList.toggle('danger', !!opts.destructive);
-    const codeWrap = $('mc-code-wrap');
-    codeWrap.hidden = !opts.needsCode;
-    if (opts.needsCode) {
-      $('mc-code').value = '';
-      // Refresh the hint line ("Press the device button…").
-      fillIdCodeHints();
-    }
-    const inputWrap = $('mc-input-wrap');
-    const wantInput = !!opts.needsInput;
-    inputWrap.hidden = !wantInput;
-    if (wantInput) {
-      const ic = (typeof opts.needsInput === 'object') ? opts.needsInput : {};
-      $('mc-input-label').textContent = ic.label || '';
-      $('mc-input').value             = ic.value || '';
-      $('mc-input').placeholder       = ic.placeholder || '';
-    }
+    const ic = (typeof opts.needsInput === 'object') ? opts.needsInput : {};
+    Object.assign(state.confirm, {
+      title:       opts.title || 'Confirm',
+      body:        opts.body  || '',
+      okLabel:     opts.okLabel || 'OK',
+      destructive: !!opts.destructive,
+      needsCode:   !!opts.needsCode,
+      needsInput:  !!opts.needsInput,
+      inputLabel:       ic.label       || '',
+      inputValue:       ic.value       || '',
+      inputPlaceholder: ic.placeholder || '',
+      codeValue:        '',
+      _resolve:         resolve,
+    });
+    if (opts.needsCode) fillIdCodeHints();
     state.modals.confirm = true;
+    // Focus is per-open so it can't live on the store. Defer one tick
+    // so the template diff lands first.
     setTimeout(() => {
-      if (wantInput)            $('mc-input').focus();
-      else if (opts.needsCode)  $('mc-code').focus();
-      else                       $('mc-ok').focus();
-      if (wantInput) $('mc-input').select();
+      if (opts.needsInput) { const i = $('mc-input'); if (i) { i.focus(); i.select(); } }
+      else if (opts.needsCode) { const c = $('mc-code'); if (c) c.focus(); }
+      else { const o = $('mc-ok'); if (o) o.focus(); }
     }, 0);
-
-    const cleanup = () => {
-      state.modals.confirm = false;
-      $('mc-ok').removeEventListener('click', onOk);
-      $('mc-cancel').removeEventListener('click', onCancel);
-      $('mc-code').removeEventListener('keydown', onKey);
-      $('mc-input').removeEventListener('keydown', onKey);
-      modal.removeEventListener('click', onBackdrop);
-    };
-    const onOk = () => {
-      const out = {};
-      if (opts.needsCode) {
-        const code = $('mc-code').value.trim();
-        if (!code) { $('mc-code').focus(); return; }
-        out.code = code;
-      }
-      if (wantInput) out.value = $('mc-input').value;
-      cleanup();
-      if (opts.needsCode || wantInput) resolve(out); else resolve(true);
-    };
-    const onCancel = () => { cleanup(); resolve(false); };
-    const onKey = (e) => { if (e.key === 'Enter') { e.preventDefault(); onOk(); } };
-    const onBackdrop = (e) => { if (e.target === modal) onCancel(); };
-    $('mc-ok').addEventListener('click', onOk);
-    $('mc-cancel').addEventListener('click', onCancel);
-    $('mc-code').addEventListener('keydown', onKey);
-    $('mc-input').addEventListener('keydown', onKey);
-    modal.addEventListener('click', onBackdrop);
   });
+}
+function confirmOk() {
+  const c = state.confirm;
+  if (!c || !c._resolve) return;
+  const out = {};
+  if (c.needsCode) {
+    const code = (c.codeValue || '').trim();
+    if (!code) { const e = $('mc-code'); if (e) e.focus(); return; }
+    out.code = code;
+  }
+  if (c.needsInput) out.value = c.inputValue;
+  const resolve = c._resolve;
+  c._resolve = null;
+  state.modals.confirm = false;
+  if (c.needsCode || c.needsInput) resolve(out); else resolve(true);
+}
+function confirmCancel() {
+  const c = state.confirm;
+  if (!c || !c._resolve) return;
+  const resolve = c._resolve;
+  c._resolve = null;
+  state.modals.confirm = false;
+  resolve(false);
 }
 
 // ============================== IDENTICON ==============================

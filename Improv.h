@@ -172,7 +172,7 @@ namespace _detail {
   inline void handle_get_device_info() {
     const char* strings[] = {
       "uRSupreme",            // firmware name
-      "lxmf-gateway-0.1",     // firmware version
+      "lxmf-gateway-0.2",     // firmware version
       "ESP32-S3",             // hardware chip family
       bt_devname,             // device name (e.g. "RNode 7D31")
     };

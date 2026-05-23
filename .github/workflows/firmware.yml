@@ -1,0 +1,198 @@
+name: Firmware
+
+# Builds the T-Beam Supreme firmware for both LoRa variants. On every push
+# to master and every PR the build job runs as a sanity check. Pushing a
+# `v*` tag additionally publishes a GitHub Release with both .bin files
+# attached and auto-generated release notes drawn from the commits + PRs
+# since the previous tag.
+
+on:
+  push:
+    branches: [master]
+    tags:     ['v*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  build:
+    name: Build (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env:     ttgo-t-beam-supreme
+            variant: tbeam_supreme
+            label:   sx1262
+          - env:     ttgo-t-beam-supreme-lr1121
+            variant: tbeam_supreme_lr1121
+            label:   lr1121
+
+    steps:
+      # The firmware's platformio.ini symlinks microReticulum and
+      # microStore from sibling directories (../microReticulum,
+      # ../microStore), so all three repos live under the workspace
+      # root. The default checkout path is GITHUB_WORKSPACE; we use
+      # `path:` to put each repo where the build expects it.
+      - name: Checkout firmware
+        uses: actions/checkout@v4
+        with:
+          path: firmware
+          fetch-depth: 0   # need full history for the release-notes step
+
+      - name: Checkout microReticulum
+        uses: actions/checkout@v4
+        with:
+          repository: attermann/microReticulum
+          path:       microReticulum
+
+      - name: Checkout microStore
+        uses: actions/checkout@v4
+        with:
+          repository: attermann/microStore
+          path:       microStore
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+          cache: pip
+
+      # PlatformIO downloads the espressif32 platform (~250 MB), the
+      # ESP-IDF / Arduino frameworks, and the lib_deps tarballs on
+      # first build. Cache them across runs so subsequent CI is
+      # bound by compile time, not network.
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+            firmware/.pio/libdeps
+          key: pio-${{ runner.os }}-${{ matrix.env }}-${{ hashFiles('firmware/platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-${{ matrix.env }}-
+            pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build firmware
+        working-directory: firmware
+        run: pio run -e ${{ matrix.env }}
+
+      # The output binary is named rnode_firmware_<custom_variant>.bin
+      # by extra_script.py. Stage it under a release-friendly filename
+      # before uploading so the artifact reflects the device variant
+      # rather than the upstream RNode legacy.
+      - name: Stage release artifact
+        id: stage
+        working-directory: firmware
+        run: |
+          set -eu
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            ver="${GITHUB_REF_NAME}"
+          else
+            ver="$(git rev-parse --short HEAD)"
+          fi
+          src=".pio/build/${{ matrix.env }}/rnode_firmware_${{ matrix.variant }}.bin"
+          dst="urSupreme-${{ matrix.label }}-${ver}.bin"
+          mkdir -p ../release
+          cp "$src" "../release/${dst}"
+          # Also publish the ELF for symbolicated crash dumps; small +
+          # priceless when a field unit reports a backtrace.
+          elf=".pio/build/${{ matrix.env }}/rnode_firmware_${{ matrix.variant }}.elf"
+          if [[ -f "$elf" ]]; then
+            cp "$elf" "../release/urSupreme-${{ matrix.label }}-${ver}.elf"
+          fi
+          echo "bin=${dst}"     >> "$GITHUB_OUTPUT"
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.label }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          # Each variant uploads to its own subdirectory; flatten so
+          # `gh release create` gets a single argv list of files.
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      # GitHub's own "auto-generated release notes" use the same engine
+      # as the web UI's "Generate release notes" button — it lists
+      # merged PRs since the previous tag plus first-time contributors.
+      # We fall back to a raw `git log` if no PRs are found (e.g. all
+      # commits landed straight to master without going through a PR),
+      # because the auto-generated notes section is empty in that case.
+      - name: Compose release body
+        id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="${GITHUB_REF_NAME}"
+          prev="$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)"
+          {
+            echo "## Firmware"
+            echo
+            echo "- **SX1262 Supreme V1** — \`urSupreme-sx1262-${tag}.bin\`"
+            echo "- **LR1121 Supreme LR**  — \`urSupreme-lr1121-${tag}.bin\`"
+            echo
+            echo "Flash with the matching PlatformIO env, or use \`esptool.py\` directly at offset 0x10000."
+            echo
+            if [[ -n "$prev" ]]; then
+              echo "## Changes since \`${prev}\`"
+              echo
+              git log --pretty=format:'- %s (%h)' "${prev}..${tag}" | grep -v '^- Merge ' || true
+              echo
+            else
+              echo "## Changes"
+              echo
+              git log --pretty=format:'- %s (%h)' -n 100 "${tag}" | grep -v '^- Merge ' || true
+              echo
+            fi
+          } > release-notes.md
+          echo "path=release-notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "μRSupreme $GITHUB_REF_NAME" \
+            --notes-file "${{ steps.notes.outputs.path }}" \
+            --verify-tag \
+            artifacts/*

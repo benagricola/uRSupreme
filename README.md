@@ -1,4 +1,4 @@
-# uRSupreme
+# μRSupreme
 
 A Reticulum / LXMF node firmware focused on the **LilyGo T-Beam Supreme**
 (ESP32-S3, 8 MB PSRAM, OLED, GPS, IMU, environmental sensors, AXP2101 power
@@ -21,7 +21,7 @@ BME280 for environmental telemetry, and an AXP2101 with charge control
 and battery telemetry. Upstream RNode firmware treats devices as KISS
 radios for an attached host. Upstream microReticulum_Firmware adds the
 RNS stack and transport routing on-device, but stops short of a user
-interface. **uRSupreme adds the user interface.**
+interface. **μRSupreme adds the user interface.**
 
 That means an LXMF inbox / outbox running on the device, a web UI for
 sending messages and attachments, multi-identity support, sensor /
@@ -128,13 +128,13 @@ sensor integrations.
    extension).
 2. Clone this repo and its sibling dependencies into the **same parent
    directory** — the build expects `microReticulum` and `microStore` to
-   sit next to `uRSupreme`:
+   sit next to `μRSupreme`:
    ```sh
-   mkdir uRSupreme-build && cd uRSupreme-build
-   git clone git@github.com:benagricola/uRSupreme.git
+   mkdir μRSupreme-build && cd μRSupreme-build
+   git clone git@github.com:benagricola/μRSupreme.git
    git clone https://github.com/attermann/microReticulum.git
    git clone https://github.com/attermann/microStore.git
-   cd uRSupreme
+   cd μRSupreme
    ```
 3. Build + flash the variant matching your device, plugged in over USB:
    ```sh

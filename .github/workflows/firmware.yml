@@ -202,12 +202,12 @@ jobs:
           {
             echo "## Firmware"
             echo
-            echo "### SX1262 Supreme V1"
+            echo "### Supreme SX1262"
             echo
             echo "- \`urSupreme-sx1262-${tag}.factory.bin\` — full image (bootloader + partitions + app); flash with \`esptool.py --chip esp32s3 -p /dev/ttyACMx write-flash 0x0 urSupreme-sx1262-${tag}.factory.bin\`"
             echo "- \`urSupreme-sx1262-${tag}.bin\` — app-only image for OTA-style upgrades; flash at offset \`0x10000\`"
             echo
-            echo "### LR1121 Supreme LR"
+            echo "### Supreme LR1121"
             echo
             echo "- \`urSupreme-lr1121-${tag}.factory.bin\` — full image (bootloader + partitions + app); flash with \`esptool.py --chip esp32s3 -p /dev/ttyACMx write-flash 0x0 urSupreme-lr1121-${tag}.factory.bin\`"
             echo "- \`urSupreme-lr1121-${tag}.bin\` — app-only image for OTA-style upgrades; flash at offset \`0x10000\`"

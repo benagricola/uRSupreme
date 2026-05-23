@@ -49,16 +49,22 @@ jobs:
           path: firmware
           fetch-depth: 0   # need full history for the release-notes step
 
+      # microReticulum and microStore both carry local ur-patches branches
+      # on top of attermann's master — frequently-rebasing patch series
+      # that haven't (yet) landed upstream. The forks under benagricola/
+      # mirror attermann's repos with the patches applied on `ur-patches`.
       - name: Checkout microReticulum
         uses: actions/checkout@v4
         with:
-          repository: attermann/microReticulum
+          repository: benagricola/microReticulum
+          ref:        ur-patches
           path:       microReticulum
 
       - name: Checkout microStore
         uses: actions/checkout@v4
         with:
-          repository: attermann/microStore
+          repository: benagricola/microStore
+          ref:        ur-patches
           path:       microStore
 
       - name: Set up Python

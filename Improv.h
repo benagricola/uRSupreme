@@ -92,25 +92,42 @@ namespace _detail {
   };
 
   inline Parser& parser() { static Parser p; return p; }
-  inline uint8_t& current_state() {
-    static uint8_t s = STATE_AUTHORIZED;
-    return s;
-  }
   inline bool& prov_in_progress() { static bool b = false; return b; }
   inline uint32_t& prov_started_ms() { static uint32_t t = 0; return t; }
 
+  // The "effective state" — what GET_CURRENT_STATE should answer right
+  // now. Computed dynamically from WiFi.status() so a device that boots
+  // with saved STA creds reports PROVISIONED (not the stale AUTHORIZED
+  // from a cached variable). PROVISIONING wins over both — it's the
+  // mid-flight WIFI_SETTINGS substate driven by Improv::loop.
+  inline uint8_t effective_state() {
+    if (prov_in_progress())              return STATE_PROVISIONING;
+    if (WiFi.status() == WL_CONNECTED)   return STATE_PROVISIONED;
+    return STATE_AUTHORIZED;
+  }
+
+  // Buffer the whole frame and emit via one Serial.write(buf, len) call.
+  // Arduino's HWCDC::write() takes a per-call TX lock but releases it
+  // between calls — so a sequence of one-byte writes can be sandwiched
+  // by a Log.h NOTICEF/WARNINGF emitted from another FreeRTOS task
+  // (the WebUI server task is on a different core). The host's Improv
+  // parser would then see a corrupted frame. Writing once locks once.
   inline void write_frame(uint8_t type, const uint8_t* payload, uint8_t len) {
+    uint8_t buf[6 + 1 + 1 + 1 + 255 + 1];
+    uint8_t pos = 0;
+    memcpy(buf + pos, MAGIC_BYTES, 6); pos += 6;
+    buf[pos++] = PROTO_VERSION;
+    buf[pos++] = type;
+    buf[pos++] = len;
+    if (len > 0 && payload != nullptr) { memcpy(buf + pos, payload, len); pos += len; }
     uint8_t cs = 0;
-    for (uint8_t i = 0; i < 6; i++) { Serial.write(MAGIC_BYTES[i]); cs += MAGIC_BYTES[i]; }
-    Serial.write(PROTO_VERSION); cs += PROTO_VERSION;
-    Serial.write(type);          cs += type;
-    Serial.write(len);            cs += len;
-    for (uint8_t i = 0; i < len; i++) { Serial.write(payload[i]); cs += payload[i]; }
-    Serial.write(cs);
+    for (uint8_t i = 0; i < pos; i++) cs += buf[i];
+    buf[pos++] = cs;
+    Serial.write(buf, pos);
   }
 
   inline void send_current_state() {
-    uint8_t s = current_state();
+    uint8_t s = effective_state();
     write_frame(TYPE_CURRENT_STATE, &s, 1);
   }
 
@@ -221,10 +238,9 @@ namespace _detail {
     wr_pending.requested_ms  = millis();
     wr_pending.pending       = true;
 
-    current_state() = STATE_PROVISIONING;
-    send_current_state();
     prov_in_progress() = true;
     prov_started_ms()  = millis();
+    send_current_state();   // now reports STATE_PROVISIONING via effective_state()
   }
 
   inline void dispatch_packet() {
@@ -330,18 +346,16 @@ inline void loop() {
     String mdns_url = String("http://") + wr_hostname + ".local/";
     const char* strings[] = { sta_url.c_str(), mdns_url.c_str() };
     send_rpc_result(CMD_WIFI_SETTINGS, strings);
-    current_state() = STATE_PROVISIONED;
-    send_current_state();
     prov_in_progress() = false;
+    send_current_state();   // STATE_PROVISIONED via effective_state()
     NOTICEF("Improv: STA up, IP %s", WiFi.localIP().toString().c_str());
     char buf[64];
     snprintf(buf, sizeof(buf), "Improv: %s", WiFi.localIP().toString().c_str());
     Common::Status::say(buf, 8000);
   } else if ((millis() - prov_started_ms()) >= PROVISION_TIMEOUT_MS) {
     send_error_state(ERR_UNABLE_TO_CONNECT);
-    current_state() = STATE_AUTHORIZED;
-    send_current_state();
     prov_in_progress() = false;
+    send_current_state();   // STATE_AUTHORIZED via effective_state()
     NOTICE("Improv: provisioning timed out");
     Common::Status::say("Improv: connect failed", 8000);
     // Cancel the pending provision in the WifiPhase machine too —

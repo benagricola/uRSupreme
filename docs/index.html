@@ -123,7 +123,7 @@
 
   <div class="card">
     <h3>T-Beam Supreme LR — LR1121</h3>
-    <p class="sub">Same board, LR1121 wide-band LoRa front-end. Also enables TCP transport.</p>
+    <p class="sub">Same board, LR1121 wide-band LoRa front-end (sub-GHz + 2.4 GHz).</p>
     <esp-web-install-button manifest="manifest-lr1121.json" support-improv></esp-web-install-button>
     <div class="unsupported">
       Your browser doesn't support Web Serial. Use a Chromium-based browser
@@ -139,12 +139,21 @@
     <li>Asks you to pick the USB-serial port the device shows up on.</li>
     <li>Erases the flash and writes the full image (bootloader, partition
         table, app) in one shot.</li>
-    <li>Reboots the device. The OLED will show the softAP SSID
-        <code>RNode XXXX</code> within a few seconds.</li>
-    <li>Join that softAP, browse to <code>http://10.0.0.1/</code>, and walk
-        through first-run setup (pick a region preset, set a password, join
-        your WiFi).</li>
+    <li>Reboots the device and, over the same USB-serial port, prompts
+        you for the SSID + password of the WiFi network you want it on
+        (Improv WiFi).</li>
+    <li>Once the device joins, the page hands you back a link straight
+        to its web UI &mdash; no softAP hop required.</li>
   </ul>
+
+  <h2>Already flashed? Reconfigure WiFi without re-flashing</h2>
+  <p>If a device is already running this firmware and you just need to
+     move it to a different network &mdash; or you flashed it on one machine
+     and want to set credentials from another &mdash; plug the device in,
+     click the same install button above, pick its port, and choose
+     <strong>Configure WiFi</strong> in the dialog that appears. The
+     button automatically detects an already-flashed device over Improv
+     and offers configure / logs / visit options instead of re-flashing.</p>
 
   <h2>If the device isn't recognised</h2>
   <ul>

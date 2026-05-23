@@ -2,9 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>μRSupreme — Web Flasher</title>
+<title>μRSupreme Web Flasher</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Flash μRSupreme firmware to a LilyGo T-Beam Supreme straight from your browser. No toolchain, no Python, no esptool — just plug in the USB cable.">
+<meta name="description" content="Flash μRSupreme firmware to a LilyGo T-Beam Supreme straight from your browser. Just plug in the USB cable, click install, and the page does the rest.">
 
 <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
 
@@ -116,26 +116,25 @@
 <body>
 <main>
 
-  <h1>μRSupreme — Web Flasher</h1>
+  <h1>μRSupreme Web Flasher</h1>
 
   <p>
-    μRSupreme turns a LilyGo T-Beam Supreme into a self-contained
+    μRSupreme makes a LilyGo T-Beam Supreme a standalone
     <a href="https://reticulum.network/">Reticulum</a> /
-    <a href="https://reticulum.network/manual/lxmf.html">LXMF</a> mesh node.
-    The board is the radio, the gateway, and the chat client — you reach the
-    chat UI from any browser on the same network. No host computer, no
-    companion app, no <code>rnsd</code> running on a laptop somewhere.
+    <a href="https://reticulum.network/manual/lxmf.html">LXMF</a> mesh node
+    with a built-in chat client. You reach it from any browser on the same
+    network. There's no host computer involved.
   </p>
   <p>
     It builds on
-    <a href="https://github.com/attermann/microReticulum_Firmware">microReticulum_Firmware</a>
-    (which puts the
+    <a href="https://github.com/attermann/microReticulum_Firmware">microReticulum_Firmware</a>,
+    which puts the
     <a href="https://github.com/attermann/microReticulum">microReticulum</a>
     C++ stack on top of
-    <a href="https://github.com/markqvist/RNode_Firmware">RNode firmware</a>)
-    and adds the user interface: on-device LXMF inbox + outbox, a web SPA
-    for messages and attachments, multi-identity support, GPS and sensor
-    telemetry, and discovery announces for community-map listeners like
+    <a href="https://github.com/markqvist/RNode_Firmware">RNode firmware</a>.
+    The fork adds the user interface: a web app for LXMF chat with
+    attachments, multi-identity support, GPS and sensor telemetry, and
+    discovery announces for community-map listeners like
     <a href="https://rmap.world/info.html">rmap.world</a>.
   </p>
 
@@ -170,27 +169,25 @@
     <li>Downloads the latest <code>.factory.bin</code> from the
         <a href="https://github.com/benagricola/uRSupreme/releases/latest">latest release</a>.</li>
     <li>Asks you to pick the USB-serial port the device shows up on.</li>
-    <li>Erases the flash and writes the full image (bootloader, partition
-        table, app) in one shot.</li>
+    <li>Erases the flash and writes the full firmware image in one shot.</li>
     <li>Reboots the device and, over the same USB-serial port, prompts
         you for the SSID + password of the WiFi network you want it on
         (Improv WiFi).</li>
     <li>Once the device joins, the page hands you back a link straight
-        to its web UI &mdash; no softAP hop required.</li>
+        to its web app. No softAP hop required.</li>
   </ul>
 
   <h2>Already flashed? Reconfigure WiFi without re-flashing</h2>
   <p>If a device is already running this firmware and you just need to
-     move it to a different network &mdash; or you flashed it on one machine
-     and want to set credentials from another &mdash; plug the device in,
-     click the same install button above, pick its port, and choose
-     <strong>Configure WiFi</strong> in the dialog that appears. The
-     button automatically detects an already-flashed device over Improv
-     and offers configure / logs / visit options instead of re-flashing.</p>
+     move it to a different network, plug it in, click the same install
+     button above, pick its port, and choose <strong>Configure WiFi</strong>
+     in the dialog that appears. The button detects an already-flashed
+     device over Improv and offers reconfiguration options instead of
+     re-flashing.</p>
 
   <h2>If the device isn't recognised</h2>
   <ul>
-    <li>Try a different USB cable — some are charge-only and don't carry
+    <li>Try a different USB cable. Some are charge-only and don't carry
         data.</li>
     <li>If the chip never appears in the port list, hold the
         <kbd>BOOT</kbd> button while plugging in to force ROM download

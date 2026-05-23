@@ -2,167 +2,170 @@
 
 A Reticulum / LXMF node firmware focused on the **LilyGo T-Beam Supreme**
 (ESP32-S3, 8 MB PSRAM, OLED, GPS, IMU, environmental sensors, AXP2101 power
-management). Builds on
-[microReticulum_Firmware](https://github.com/attermann/microReticulum_Firmware)
-— which integrates the
+management). It builds on
+[microReticulum_Firmware](https://github.com/attermann/microReticulum_Firmware),
+which integrates the
 [microReticulum](https://github.com/attermann/microReticulum) stack into
-[RNode_Firmware](https://github.com/markqvist/RNode_Firmware) — and turns
-the T-Beam Supreme into a **standalone Reticulum node you can talk to from
-a browser**: no host computer, no companion app, no `rnsd` running on a
-laptop somewhere. The board itself is the node, the gateway, and the chat
-client.
+[RNode_Firmware](https://github.com/markqvist/RNode_Firmware).
+
+μRSupreme makes the T-Beam Supreme a standalone Reticulum node with a
+built-in chat client. You reach it from any browser on the same network.
+There's no host computer involved.
 
 ## Why this fork
 
-The T-Beam Supreme has enough memory and peripherals to run Reticulum
-locally — PSRAM for the path table, an OLED for at-a-glance status, GPS
-and an RTC for time discipline, a compass and IMU for orientation, a
-BME280 for environmental telemetry, and an AXP2101 with charge control
-and battery telemetry. Upstream RNode firmware treats devices as KISS
-radios for an attached host. Upstream microReticulum_Firmware adds the
-RNS stack and transport routing on-device, but stops short of a user
-interface.
+μRSupreme exists to give the T-Beam Supreme a built-in user interface.
+Upstream RNode firmware treats devices as KISS radios for an attached
+host. Upstream microReticulum_Firmware adds the RNS stack and transport
+routing on-device, but stops short of a UI. The Supreme has WiFi, so it
+can host the web UI directly. Its sensor and GPS payload also make it
+attractive as an all-in-one mesh communicator and telemetry device.
 
-**μRSupreme adds the user interface.**
+The web app runs LXMF chat with attachments. It supports multiple
+identities, surfaces sensor and position telemetry, can publish
+discovery announces for community-map listeners like
+[rmap.world](https://rmap.world), and exposes a settings panel for the
+radio and transport stack. Everything is served from the device over
+WiFi.
 
-That means an LXMF inbox / outbox running on the device, a web UI for
-sending messages and attachments, multi-identity support, sensor /
-position telemetry, discovery announces for community-map listeners like
-[rmap.world](https://rmap.world), and a settings UI for everything the
-radio and transport stack can do — all served from the device over WiFi.
+## A note on AI assistance
 
-## A note on AI-authored code
-
-The bulk of the work in this repository — the SPA, the web UI surface,
-most of the LXMF gateway code, the sensor / power / GPS / RTC
-integrations, the build and release pipeline, this README — is written
-by an AI agent (Claude) with me as the director: deciding what to
-build, reviewing the work, redirecting when it goes off-track, and
-testing it on real hardware. The Reticulum stack itself, the
-microReticulum library, and the upstream RNode firmware are not part of
-that — they're the work of Mark Qvist and Aaron Attermann respectively
-(see Credits).
+Substantial portions of the code added in this fork have been written
+with the help of AI tooling. That includes the web app, most of the
+LXMF gateway code, the sensor / power / GPS / RTC integrations, the
+build and release pipeline, and this README.
 
 Some people object to using AI-generated code in projects they care
 about, and that's a reasonable position. If that's you, this project
-isn't the right tool for you and there are excellent alternatives in
-the [Reticulum ecosystem](https://reticulum.network/).
+isn't the right tool for you. There are excellent alternatives in the
+[Reticulum ecosystem](https://reticulum.network/).
 
-I work this way because the alternative isn't "the same project but
-hand-written" — it's "no project at all". Between work, family, and
-the rest of life, the time budget I have for hobby firmware is small.
-With AI assistance I can build things I'd otherwise never finish. I'd
-rather have it exist.
+I work this way because, without AI tooling, this project wouldn't
+exist at all. Between work, family, and the rest of life, the time
+budget for hobby firmware is small. AI assistance lets me build things
+I'd otherwise never finish.
 
 ## Features
 
 ### Reticulum / LXMF on-device
 
-- **Standalone RNS transport node** — routes for other nodes without a
+- **Standalone RNS transport node.** Routes for other nodes without a
   host attached.
-- **Multi-identity LXMF**: up to 4 identities per device, each with
-  their own inbox, sent log, retention policy, display name, and
-  announce schedule.
-- **Attachments**: send and receive images and audio inline in the chat
-  UI; images resize before send; sends and receives show a progress
-  bar.
-- **Forward secrecy** for LXMF — in-flight messages still decrypt
+- **Multi-identity LXMF.** Up to 4 identities per device. Each has its
+  own inbox, sent log, retention policy, display name, and announce
+  schedule.
+- **Attachments.** Send and receive images and audio inline in the
+  chat UI. Images resize before send. Sends and receives show a
+  progress bar.
+- **Forward secrecy for LXMF.** In-flight messages still decrypt
   across key rotations.
-- **Discovery announces** with PoW stamps (default cost 14 leading-zero
-  bits, configurable in Settings → Discovery; set cost to 0 to disable).
-  Announces advertise the device's interfaces, region settings, and (if
-  GPS-locked) approximate location to community listeners.
+- **Discovery announces with PoW stamps.** Default cost is 14
+  leading-zero bits. Configurable in Settings → Discovery; set cost to
+  0 to disable. Announces advertise the device's radio interfaces and
+  region settings. When GPS has a lock, they also carry an approximate
+  location for community listeners.
 
 ### Transports
 
-- **LoRa** via SX1262 (Supreme V1) or LR1121 (Supreme LR variant).
-  Region presets for EU, US, AU, NZ, RU, IN, KR; full manual override
-  for frequency / bandwidth / SF / coding rate / TX power / airtime
+- **LoRa** via SX1262 (Supreme SX1262) or LR1121 (Supreme LR1121).
+  Region presets for EU, US, AU, NZ, RU, IN, KR. Full manual override
+  for frequency, bandwidth, SF, coding rate, TX power, and airtime
   caps.
-- **TCP client transport** — outbound TCP links to other Reticulum
-  nodes, for joining a remote network over the internet or a wired LAN
-  bridge. Available on both Supreme variants.
-- **WiFi**: station mode with one saved network, automatic fallback to
-  softAP for first-time setup or when the saved network is unreachable.
+- **TCP client transport.** Outbound TCP links to other Reticulum
+  nodes, for joining a remote network over the internet or a wired
+  LAN bridge. Available on both Supreme variants.
+- **WiFi.** Station mode with one saved network. If STA fails to
+  connect for ~3 minutes at boot, the device brings up a recovery
+  softAP. Runtime drops never expose the AP; only a reboot re-enters
+  the recovery window.
+- **Improv WiFi over USB-serial.** The
+  [web flasher](https://benagricola.github.io/uRSupreme/) prompts for
+  WiFi credentials right after flash, and the device joins without
+  ever going through a softAP step. Already-flashed devices can also
+  be re-configured this way without a re-flash.
 - **BLE** for serial / KISS over Bluetooth Low Energy.
 
-### Web UI
+### Web app
 
-- **Single-page chat client** at `http://<device>/` — login per
-  identity, conversation list, threaded view, compose with emoji picker,
-  attach tray (camera capture, audio record, file pick), reactive
-  unread / online / path-state indicators.
+- **Web chat client** at `http://<device>/`. Login per identity,
+  conversation list, threaded view, compose with emoji picker, attach
+  tray (camera capture, audio record, file pick), reactive unread /
+  online / path-state indicators.
 - **Identity switcher** for hopping between identities on the same
   device without re-logging-in.
 - **Settings**:
-  - *Identity*: display name, announce cadence, attachments on/off
-  - *Connectivity*: LoRa region + manual radio params, WiFi credentials,
-    TCP clients, BLE, serial / KISS diagnostics
-  - *Discovery*: master toggle, advertised name, cadence, stamp cost
-  - *Time*: GPS / RTC / NTP source priority
-  - *App*: UI prefs, per-chat retention defaults
-  - *Activity*: telemetry + max send / receive size sliders
-  - *Reset*: per-identity delete + factory reset
-- **Live status** in the top bar — battery icon, radio status pill
+  - *Identity*: display name, announce cadence, attachments on/off.
+  - *Connectivity*: LoRa region and manual radio params, WiFi
+    credentials, TCP clients, BLE, serial / KISS diagnostics.
+  - *Discovery*: master toggle, advertised name, cadence, stamp cost.
+  - *Time*: GPS / RTC / NTP source priority.
+  - *App*: UI prefs, per-chat retention defaults.
+  - *Activity*: telemetry, max send / receive size sliders.
+  - *Reset*: per-identity delete and factory reset.
+- **Live status** in the top bar. Battery icon, radio status pill
   (online / offline / not-configured), and a system popover with LoRa
   channel utilisation (own vs others), RSSI vs noise floor, uptime,
-  free heap / PSRAM, and the SD-migrate helper.
-- **Auth**: per-identity password (hashed on device); identity-code
-  gating for physical-presence-required actions (WiFi reconfig, factory
-  reset, enabling discovery).
+  free heap and PSRAM, and the SD-migrate helper.
+- **Auth.** Per-identity password (hashed on device). Identity-code
+  gating for actions that require physical-presence proof, like WiFi
+  reconfig or factory reset.
 
-### Sensors + telemetry
+### Sensors and telemetry
 
-- **Battery** (AXP2101): voltage, charge / discharge current, percentage,
-  charger state, USB-power detect.
-- **Position** (L76K GPS): lat / lon / altitude / fix quality / HDOP /
+- **Battery** (AXP2101): voltage, charge / discharge current,
+  percentage, charger state, USB-power detect.
+- **Position** (L76K GPS): lat, lon, altitude, fix quality, HDOP,
   satellite count. Used to discipline the RTC and tag discovery
   announces.
-- **Clock** (PCF8563 hardware RTC): synced from GPS or NTP; source
+- **Clock** (PCF8563 hardware RTC): synced from GPS or NTP. Source
   priority configurable.
 - **Environment** (BME280): temperature, humidity, pressure.
-- **Motion** (QMI8658 IMU): orientation + tilt.
+- **Motion** (QMI8658 IMU): orientation and tilt.
 - **Compass** (QMC6310): heading.
 
 ### Storage
 
-- **Optional SD card**: auto-detected; when present, attachments overflow
-  to it. A migrate-from-flash helper lives in the system popover (the
-  CPU icon in the top bar).
-- **Per-chat retention policies**: forever / N days / last-N messages.
+- **Optional SD card**: auto-detected. When present, attachments
+  overflow to it. A migrate-from-flash helper lives in the system
+  popover (the CPU icon in the top bar).
+- **Per-chat retention**. Either forever, or bounded by N days or
+  last N messages.
 
 ## Hardware
 
-Primary targets — both ESP32-S3, both 8 MB PSRAM, both shipped with the
-full sensor + power-management complement (OLED, AXP2101, BME280,
+Both primary targets are ESP32-S3 with 8 MB PSRAM, shipped with the
+full sensor and power-management complement (OLED, AXP2101, BME280,
 QMI8658, QMC6310, L76K, PCF8563):
 
-- **LilyGo T-Beam Supreme V1** (SX1262) — PIO env `ttgo-t-beam-supreme`
-- **LilyGo T-Beam Supreme LR** (LR1121) — PIO env
-  `ttgo-t-beam-supreme-lr1121`
+- **LilyGo T-Beam Supreme SX1262.** PIO env `ttgo-t-beam-supreme`.
+- **LilyGo T-Beam Supreme LR1121.** PIO env
+  `ttgo-t-beam-supreme-lr1121`.
 
 The codebase inherits microReticulum_Firmware's PIO envs for other
-RNode-style boards (T-Beam classic, LilyGo T3-S3, T-Deck, Heltec V2/V3/V4,
-RAK4631, NG-20/21, Lora32 variants, etc.), and they should still build,
-but the Supreme is what gets the day-to-day testing, the web UI, and the
-sensor integrations.
+RNode-style boards (T-Beam classic, LilyGo T3-S3, T-Deck, Heltec
+V2/V3/V4, RAK4631, NG-20/21, Lora32 variants, etc.). They should
+still build, but only the Supreme gets day-to-day testing, the web
+app, and the sensor integrations.
 
 ## Quick start
 
-The fastest path — open the in-browser flasher, plug in the device, click
-the button matching your variant:
+The fastest path is the in-browser flasher. Plug in the device and
+click the button matching your variant:
 
 ### 👉 [benagricola.github.io/uRSupreme](https://benagricola.github.io/uRSupreme/)
 
-Chromium-based browsers only (Chrome, Edge, Brave, Opera). The flasher
-talks to the device over Web Serial, no toolchain or terminal involved.
+Chromium-based browsers only (Chrome, Edge, Brave, Opera). The
+flasher talks to the device over Web Serial. No toolchain or
+terminal involved. After the firmware lands, the page asks you for
+the WiFi network to join and hands you back the device's URL when
+it's online.
 
 ### …or flash manually with esptool
 
-If you'd rather drive `esptool` yourself, or your browser doesn't ship
-Web Serial:
+If you'd rather drive `esptool` yourself, or your browser doesn't
+ship Web Serial:
 
-1. Plug your T-Beam Supreme into your computer over USB-C.
+1. Plug your T-Beam Supreme into your computer over USB.
 2. Install [esptool](https://docs.espressif.com/projects/esptool/):
    ```sh
    pipx install esptool       # or: pip install --user esptool
@@ -170,8 +173,8 @@ Web Serial:
 3. Grab the latest release from the
    [Releases page](https://github.com/benagricola/uRSupreme/releases).
    You need the `.factory.bin` for your variant:
-   - **SX1262** (T-Beam Supreme V1) → `urSupreme-sx1262-<version>.factory.bin`
-   - **LR1121** (T-Beam Supreme LR) → `urSupreme-lr1121-<version>.factory.bin`
+   - **Supreme SX1262** → `urSupreme-sx1262-<version>.factory.bin`
+   - **Supreme LR1121** → `urSupreme-lr1121-<version>.factory.bin`
 4. Find the USB port:
    - Linux: `/dev/ttyACM0` (or `ACM1`, …)
    - macOS: `/dev/cu.usbmodemXXXXXX`
@@ -185,16 +188,19 @@ For an OTA-style upgrade where the device already runs μRSupreme,
 download the `.bin` (without `.factory`) and flash it at offset
 `0x10000` instead.
 
-### First boot
+### First boot (manual flash)
 
 The device comes up in **softAP mode** with SSID `RNode XXXX` (four
-hex chars from the BT MAC, also shown on the OLED). Join that network,
-open `http://10.0.0.1/`, and walk through the first-run setup: pick a
-region preset, set a password, join your home WiFi.
+hex chars from the BT MAC, also shown on the OLED). Join that
+network, open `http://10.0.0.1/`, and walk through the first-run
+setup: pick a region preset, set a password, join your home WiFi.
 
 Subsequent boots auto-join WiFi. Reach the device via mDNS at
-`http://rnodexxxx.local/` (same four hex chars, lowercase) or by the IP
-shown on the OLED.
+`http://rnodexxxx.local/` (same four hex chars, lowercase), or by
+the IP shown on the OLED.
+
+If you used the web flasher, the WiFi handshake already happened
+over USB-serial and you can skip the softAP step entirely.
 
 ## Developer setup
 
@@ -202,9 +208,10 @@ For building from source.
 
 1. Install [PlatformIO](https://platformio.org) (CLI or VS Code
    extension).
-2. Clone this repo and its sibling dependencies into the **same parent
-   directory** — the build expects `microReticulum` and `microStore`
-   on the matching `ur-patches` branches to sit next to `uRSupreme`:
+2. Clone this repo and its sibling dependencies into the **same
+   parent directory**. The build expects `microReticulum` and
+   `microStore` on the matching `ur-patches` branches to sit next to
+   `uRSupreme`:
    ```sh
    mkdir uRSupreme-build && cd uRSupreme-build
    git clone git@github.com:benagricola/uRSupreme.git
@@ -212,54 +219,56 @@ For building from source.
    git clone -b ur-patches git@github.com:benagricola/microStore.git
    cd uRSupreme
    ```
-3. Build + flash the variant matching your device, plugged in over USB:
+3. Build and flash the variant matching your device, plugged in over
+   USB:
    ```sh
    pio run -e ttgo-t-beam-supreme-lr1121 -t upload --upload-port /dev/ttyACM0
    # or, for the SX1262 Supreme:
    pio run -e ttgo-t-beam-supreme        -t upload --upload-port /dev/ttyACM0
    ```
 
-`master` carries the most recent work; tagged releases (`v*`) trigger
-the CI that publishes the `.factory.bin` artefacts the Quick start
-section uses.
+`master` carries the most recent work. Tagged releases (`v*`)
+trigger the CI that publishes the `.factory.bin` artefacts the
+Quick start section uses.
 
-## Status + caveats
+## Status and caveats
 
 - This is a **fork for personal use** as much as it is a published
-  project. Things change quickly; the `master` branch is what runs on
-  the test rig.
-- Only one WiFi network can be saved at a time — re-running first-run
-  setup replaces it.
+  project. Things change quickly. The `master` branch is what runs
+  on the test rig.
+- Only one WiFi network can be saved at a time. Configuring a new
+  one replaces it.
 - Stamp PoW is on by default (cost 14). Disabling it (cost 0 in
-  Settings → Discovery) will cause strict listeners like rmap.world to
-  drop the announce.
+  Settings → Discovery) will cause strict listeners like rmap.world
+  to drop the announce.
 - The non-Supreme build envs are inherited from upstream and are not
   routinely tested here. If something on a non-Supreme board breaks,
-  please open an issue but expect a slower turnaround than for Supreme
-  bugs.
+  please open an issue, but expect a slower turnaround than for
+  Supreme bugs.
 
 ## Credits
 
-- **Mark Qvist** — [Reticulum](https://github.com/markqvist/Reticulum)
+- **Mark Qvist**: [Reticulum](https://github.com/markqvist/Reticulum)
   and [RNode_Firmware](https://github.com/markqvist/RNode_Firmware).
-- **Aaron Attermann** —
+- **Aaron Attermann**:
   [microReticulum](https://github.com/attermann/microReticulum) and
   [microReticulum_Firmware](https://github.com/attermann/microReticulum_Firmware),
   on which this fork is built.
-- **LilyGo / Lewis He** — hardware and the
-  [SensorLib](https://github.com/lewisxhe/SensorLib) +
-  [XPowersLib](https://github.com/lewisxhe/XPowersLib) drivers for the
-  T-Beam Supreme peripherals.
-- **Adafruit** — BME280 / SH110X / Unified Sensor libraries.
-- **ESP32Async** — the maintained
+- **LilyGo / Lewis He**: hardware and the
+  [SensorLib](https://github.com/lewisxhe/SensorLib) and
+  [XPowersLib](https://github.com/lewisxhe/XPowersLib) drivers for
+  the T-Beam Supreme peripherals.
+- **Adafruit**: BME280, SH110X, and Unified Sensor libraries.
+- **ESP32Async**: the maintained
   [AsyncTCP](https://github.com/ESP32Async/AsyncTCP) and
   [ESPAsyncWebServer](https://github.com/ESP32Async/ESPAsyncWebServer)
   forks that the web stack relies on.
-- **Benoit Blanchon** —
+- **Benoit Blanchon**:
   [ArduinoJson](https://github.com/bblanchon/ArduinoJson).
-- **Hideaki Tai** — [MsgPack for Arduino](https://github.com/hideakitai/MsgPack).
+- **Hideaki Tai**:
+  [MsgPack for Arduino](https://github.com/hideakitai/MsgPack).
 
 ## Licence
 
-GPLv3, inherited from RNode_Firmware. See the upstream repositories for
-their respective licences.
+GPLv3, inherited from RNode_Firmware. See the upstream repositories
+for their respective licences.

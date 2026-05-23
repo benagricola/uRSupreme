@@ -915,7 +915,7 @@
 <div id="modal-wifi-add" class="modal-bg z-260" x-data x-show="$store.s.modals.wifiAdd" x-cloak>
   <div class="modal modal-wide">
     <h3>Add a WiFi network</h3>
-    <p class="muted mb-10" >Pick a network for this device to join. The device transitions to the new network in place — no reboot. If the saved network isn't reachable on next boot, the softAP comes up automatically after ~3 minutes as a recovery channel.</p>
+    <p class="muted mb-10" >Pick a network for this device to join. The device transitions to the new network in place, no reboot needed. If the saved network isn't reachable on next boot, the softAP comes up automatically after ~3 minutes as a recovery channel.</p>
     <label>Network</label>
     <select class="mb-2" id="cn-wifi-ssid" x-model="$store.s.forms.wifiAdd.ssid">
       <option value=""
@@ -1198,7 +1198,7 @@
               </div>
               <div class="row mb-2" >
                 <div>
-                  <label>Spreading factor <button type="button" class="info-icon" data-info="SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom — useful for long links.">i</button></label>
+                  <label>Spreading factor <button type="button" class="info-icon" data-info="SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom, useful for long links.">i</button></label>
                   <input id="rd-sf" type="number" min="6" max="12" x-model.number="$store.s.forms.radio.sf">
                 </div>
                 <div>
@@ -1212,11 +1212,11 @@
               </div>
               <div class="row mb-2" >
                 <div>
-                  <label>Airtime cap (% short-term) <button type="button" class="info-icon" data-info="Instantaneous duty-cycle ceiling. <strong>Airtime caps are regulatory limits</strong> — picking a region preset sets a sane default; 0 disables (only use where allowed).">i</button></label>
+                  <label>Airtime cap (% short-term) <button type="button" class="info-icon" data-info="Instantaneous duty-cycle ceiling. <strong>Airtime caps are regulatory limits.</strong> Picking a region preset sets a sane default; 0 disables (only use where allowed).">i</button></label>
                   <input id="rd-airtime" type="number" min="0" max="99" x-model.number="$store.s.forms.radio.airtime">
                 </div>
                 <div>
-                  <label>Airtime cap (% long-term) <button type="button" class="info-icon" data-info="Long-term averaged duty-cycle ceiling — what regulators care about. 0 disables (only use where allowed).">i</button></label>
+                  <label>Airtime cap (% long-term) <button type="button" class="info-icon" data-info="Long-term averaged duty-cycle ceiling. This is the figure regulators care about. 0 disables (only use where allowed).">i</button></label>
                   <input id="rd-airtime-lt" type="number" min="0" max="99" x-model.number="$store.s.forms.radio.airtimeLt">
                 </div>
               </div>

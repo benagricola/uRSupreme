@@ -65,7 +65,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-          cache: pip
 
       # PlatformIO downloads the espressif32 platform (~250 MB), the
       # ESP-IDF / Arduino frameworks, and the lib_deps tarballs on

@@ -44,6 +44,15 @@
 	#define WR_WIFI_OFF        0x00
 	#define WR_WIFI_STA        0x01
 	#define WR_WIFI_AP         0x02
+	// Runtime-only — never written to EEPROM. The boot path stays at
+	// AP-only or STA-only; APSTA exists for two windows:
+	//   1. Boot with saved STA creds — AP runs concurrently for ~2 min
+	//      after STA stabilises so the user can recover if STA was
+	//      misconfigured.
+	//   2. Runtime provisioning from the softAP web flow — AP keeps
+	//      serving the HTTP response while STA connects, then is
+	//      deauthed + torn down on a 2-min grace.
+	#define WR_WIFI_APSTA      0x03
 	#define WR_STATE_NA        0xff
 	#define WR_STATE_OFF       0x00
 	#define WR_STATE_ON        0x01

@@ -553,22 +553,48 @@ void drawBitmap(int16_t startX, int16_t startY, const uint8_t* bitmap, int16_t b
 extern uint8_t wifi_mode;
 extern bool wifi_is_connected();
 extern bool wifi_host_is_connected();
+
+// 5×4 corner glyph drawn over the STA icon when the AP is also active
+// (concurrent APSTA mode, e.g. during the 2-minute grace window after
+// provisioning). The letter A in a tiny font; legible at 1× zoom on
+// the 128×64 OLED.
+static const uint8_t PROGMEM bm_ap_corner[] = {
+  0b01100000,  // ░██░░░░░
+  0b10010000,  // █░░█░░░░
+  0b11110000,  // ████░░░░
+  0b10010000,  // █░░█░░░░
+};
+
 void draw_cable_icon(int px, int py) {
   #if HAS_WIFI
     if (wifi_mode == WR_WIFI_OFF) {
       if      (cable_state == CABLE_STATE_DISCONNECTED) { stat_area.drawBitmap(px, py, bm_cable+0*32, 16, 16, SSD1306_WHITE, SSD1306_BLACK); }
       else if (cable_state == CABLE_STATE_CONNECTED)    { stat_area.drawBitmap(px, py, bm_cable+1*32, 16, 16, SSD1306_WHITE, SSD1306_BLACK); }
     } else {
-      if (wifi_mode == WR_WIFI_STA) {
+      // Concurrent AP+STA: pick the icon that carries the more useful
+      // information. If STA is up, draw the STA icon (that's the
+      // relevant link the device is using) and overlay a tiny "A"
+      // glyph so a power-user can see the AP is also live. If STA is
+      // still negotiating, AP is the channel the user is reaching the
+      // device on — draw the AP icon.
+      bool is_apsta = (wifi_mode == WR_WIFI_APSTA);
+      if (wifi_mode == WR_WIFI_STA || (is_apsta && wifi_is_connected())) {
         if (wifi_is_connected()) {
           stat_area.drawBitmap(px, py, bm_wifi+3*32, 16, 16, SSD1306_WHITE, SSD1306_BLACK);
           if (!wifi_host_is_connected()) { stat_area.fillRect(px+5, py+12, 6, 3, SSD1306_BLACK); }
+          if (is_apsta) {
+            // Top-right corner of the 16×16 icon. Punch a black hole
+            // first so the glyph reads against any underlying icon
+            // pixels that happen to be white.
+            stat_area.fillRect(px+11, py, 5, 4, SSD1306_BLACK);
+            stat_area.drawBitmap(px+11, py, bm_ap_corner, 5, 4, SSD1306_WHITE, SSD1306_BLACK);
+          }
         } else { stat_area.drawBitmap(px, py, bm_wifi+2*32, 16, 16, SSD1306_WHITE, SSD1306_BLACK); }
-      
-      } else if (wifi_mode == WR_WIFI_AP) {
+
+      } else if (wifi_mode == WR_WIFI_AP || is_apsta) {
         if (wifi_host_is_connected()) { stat_area.drawBitmap(px, py, bm_wifi+1*32, 16, 16, SSD1306_WHITE, SSD1306_BLACK); }
         else                          { stat_area.drawBitmap(px, py, bm_wifi+0*32, 16, 16, SSD1306_WHITE, SSD1306_BLACK); }
-      
+
       } else {
         if      (cable_state == CABLE_STATE_DISCONNECTED) { stat_area.drawBitmap(px, py, bm_cable+0*32, 16, 16, SSD1306_WHITE, SSD1306_BLACK); }
         else if (cable_state == CABLE_STATE_CONNECTED)    { stat_area.drawBitmap(px, py, bm_cable+1*32, 16, 16, SSD1306_WHITE, SSD1306_BLACK); }

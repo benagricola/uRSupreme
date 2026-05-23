@@ -26,13 +26,20 @@
       // where the device will be after reboot.
       doc["mdns_hostname"] = wr_hostname;
       // WiFi mode + transitional state for the SPA's redirect logic:
-      //   "off"      → WiFi off entirely
-      //   "ap"       → softAP (bootstrap or runtime force)
-      //   "sta"      → connected to a configured network
-      //   "sta_wait" → STA configured but not yet associated
-      doc["wifi_mode"] = (wifi_mode == WR_WIFI_OFF) ? "off"
-                       : (wifi_mode == WR_WIFI_AP)  ? "ap"
-                       : (wr_wifi_status == WL_CONNECTED) ? "sta" : "sta_wait";
+      //   "off"        → WiFi off entirely
+      //   "ap"         → softAP (bootstrap or runtime force)
+      //   "sta"        → connected to a configured network, AP not up
+      //   "sta_wait"   → STA configured but not yet associated, AP not up
+      //   "apsta"      → boot grace or post-provision grace: AP up AND STA up
+      //   "apsta_wait" → boot or post-provision: AP up, STA still negotiating
+      const bool sta_up = (wr_wifi_status == WL_CONNECTED);
+      doc["wifi_mode"] = (wifi_mode == WR_WIFI_OFF)   ? "off"
+                       : (wifi_mode == WR_WIFI_AP)    ? "ap"
+                       : (wifi_mode == WR_WIFI_APSTA) ? (sta_up ? "apsta" : "apsta_wait")
+                       : (sta_up ? "sta" : "sta_wait");
+      // Convenience boolean for "the softAP at 10.0.0.1 is also reachable
+      // right now" — true in any APSTA phase, false elsewhere.
+      doc["ap_active"] = (wifi_mode == WR_WIFI_AP || wifi_mode == WR_WIFI_APSTA);
       // Time state lives on the WS `hello` frame now — the login
       // screen doesn't show it, and post-login the SPA only consumes
       // the WS-pinned clock anchor. Removed from /api/info.

@@ -880,7 +880,14 @@ void setup() {
     } else {
       #if HAS_WIFI
         wifi_mode = EEPROM.read(eeprom_addr(ADDR_CONF_WIFI));
-        if (wifi_mode == WR_WIFI_STA || wifi_mode == WR_WIFI_AP) { wifi_remote_init(); }
+        // Boot policy: when STA creds are saved, come up in APSTA so the
+        // softAP is reachable as a recovery channel while STA negotiates.
+        // The phase machine in wifi_pump_phase() drops the AP 2 minutes
+        // after STA stabilises; if STA never connects, the AP stays up
+        // indefinitely until reboot. EEPROM keeps WR_WIFI_STA — APSTA is
+        // a runtime-only mode value.
+        if (wifi_mode == WR_WIFI_STA) { wifi_mode = WR_WIFI_APSTA; }
+        if (wifi_mode == WR_WIFI_APSTA || wifi_mode == WR_WIFI_AP) { wifi_remote_init(); }
         #if defined(HAS_LXMF_GATEWAY)
           // Bootstrap fallback: if WiFi is not configured at all, bring up a
           // softAP using the device's BT name so the user can reach the web

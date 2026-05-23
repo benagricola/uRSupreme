@@ -4955,8 +4955,20 @@ function onClickBsSave(btn) {
     const code = (f.code || '').trim();
     if (!code) { toast('Enter the identity code from the device OLED', 'warn'); return; }
     try {
-      await state.transport.wifiConfigure(ssid, f.psk, code);
-      waitForDeviceAndReload('Saving WiFi & rebooting…');
+      const r = await state.transport.wifiConfigure(ssid, f.psk, code);
+      // Two response shapes:
+      //   - { status: 'connected', sta_ip, hostname, sta_url, mdns_url }
+      //     — inline transition, no reboot. Device joined the new
+      //       network while we were holding the softAP. Show the
+      //       URLs; the AP will be deauthed by the device within
+      //       a second so this page goes unreachable shortly after.
+      //   - { restart: true } — legacy reboot path. Use the polling
+      //     screen as before.
+      if (r && r.restart) {
+        waitForDeviceAndReload('Saving WiFi & rebooting…');
+      } else {
+        showWifiProvisionedPanel(r);
+      }
     } catch (e) {
       toast('Save failed: ' + (e.message || e), 'error');
     }
@@ -5398,9 +5410,13 @@ function onClickWifiSave(btn) {
     const code = (f.code || '').trim();
     if (!code) { toast('Identity code required to change WiFi.', 'error'); return; }
     try {
-      await state.transport.wifiConfigure(f.ssid, f.psk, code);
+      const r = await state.transport.wifiConfigure(f.ssid, f.psk, code);
       state.modals.wifiAdd = false;
-      waitForDeviceAndReload('Saving WiFi & rebooting…');
+      if (r && r.restart) {
+        waitForDeviceAndReload('Saving WiFi & rebooting…');
+      } else {
+        showWifiProvisionedPanel(r);
+      }
     } catch (e) {
       toast('WiFi save failed: ' + (e.message || e), 'error');
     }
@@ -6484,6 +6500,30 @@ function onClickIdcOk() {
   const code = state.forms.idCode.input;
   state.modals.idCode = false;
   if (state.pendingIdCodeAction) { state.pendingIdCodeAction(code); state.pendingIdCodeAction = null; }
+}
+
+// ============================== WIFI PROVISIONED PANEL ==============================
+// Called after /api/wifi/configure responds with sta_ip + hostname
+// (the in-place APSTA transition completed). The AP is about to be
+// deauthed by the device (~1 s after the response flushes), so this
+// page will become unreachable shortly. Replace the body content
+// with a terminal "Done!" screen carrying both URLs so the user can
+// switch their WiFi back to their home network and reach the device.
+function showWifiProvisionedPanel(resp) {
+  const ip       = resp && resp.sta_ip   ? resp.sta_ip   : '';
+  const hostname = resp && resp.hostname ? resp.hostname : '';
+  const stUrl    = resp && resp.sta_url  ? resp.sta_url  : (ip       ? 'http://' + ip       + '/' : '');
+  const mdUrl    = resp && resp.mdns_url ? resp.mdns_url : (hostname ? 'http://' + hostname + '.local/' : '');
+  document.body.innerHTML =
+    '<div class="page"><div class="card">' +
+      '<h2>WiFi configured</h2>' +
+      '<p class="muted">Your device is on your home network now. Switch your computer back to that network, then visit one of the URLs below.</p>' +
+      (stUrl ? '<p><strong>Always works:</strong> <a id="urlIp">' + stUrl + '</a></p>' : '') +
+      (mdUrl ? '<p><strong>Friendlier (where mDNS resolves):</strong> <a id="urlMdns">' + mdUrl + '</a></p>' : '') +
+      '<p class="muted">This page will lose its softAP connection in a moment — that\'s expected. The device is fine.</p>' +
+    '</div></div>';
+  if (stUrl) { const a = document.getElementById('urlIp');   if (a) a.href = stUrl; }
+  if (mdUrl) { const a = document.getElementById('urlMdns'); if (a) a.href = mdUrl; }
 }
 
 // ============================== REBOOT WAITER ==============================

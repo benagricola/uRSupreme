@@ -17,6 +17,17 @@
 #include <ArduinoJson.h>
 #include "../Common/PsramAllocator.h"
 #include "../Common/RnsLock.h"
+#include "../Common/WifiTransition.h"   // shared APSTA-state types
+
+// Variables and constants owned by Remote.h's WiFi state machine.
+// Remote.h is included after WebUI.h in the .ino translation unit,
+// but the WiFi transition handlers below need to reference them, so
+// we extern-declare them here.
+extern WifiPhase        wifi_phase;
+extern uint32_t         wifi_apsta_deauth_at_ms;
+extern PendingProvision wr_pending;
+extern char             wr_hostname[10];
+// Timing constants come from Common/WifiTransition.h above.
 #include <ChunkPrint.h>
 #include <Log.h>
 #include <Reticulum.h>
@@ -201,6 +212,13 @@ namespace Web {
       // rather than getting a TCP-drop error mid-flight.
       check_scheduled_reboot();
 
+      // WiFi-provision response handoff — when handle_wifi_configure
+      // parks a request waiting for STA to come up, this is where we
+      // send the response (or a timeout error). Lives in the main
+      // loop because the WiFi phase machine in Remote.h advances on
+      // the same tick; doing it from a WebServer task would race.
+      drain_wifi_provision_response();
+
       // SD ejection edge — verify_or_disable in the SD write paths
       // flips a flag when a card stops responding mid-session. Drain
       // it here so the SPA's Settings sliders + toast respond
@@ -372,6 +390,38 @@ namespace Web {
     // need to spawn or pump a handler loop here. Handlers still take
     // the rns_lock themselves around any RNS access.
     static void start_task() {}
+
+    // Sends the response to a handle_wifi_configure() request that has
+    // been parked waiting for STA to come up. Three cases:
+    //   - STA reached WL_CONNECTED → respond with sta_ip + hostname,
+    //     then schedule the deauth so the response can flush before
+    //     the AP-side socket dies.
+    //   - The provision attempt timed out → respond with 504.
+    //   - Neither yet → no-op, try again next tick.
+    static void drain_wifi_provision_response() {
+      if (wr_pending.req == nullptr) return;
+      if (wifi_phase == WifiPhase::ApStaGrace) {
+        Common::PsramJsonDocument doc;
+        doc["status"]   = "connected";
+        doc["sta_ip"]   = WiFi.localIP().toString();
+        doc["hostname"] = String(wr_hostname);
+        doc["mdns_url"] = String("http://") + wr_hostname + ".local/";
+        doc["sta_url"]  = String("http://") + WiFi.localIP().toString() + "/";
+        AsyncWebServerRequest* req = wr_pending.req;
+        wr_pending.req = nullptr;
+        send_json(req, 200, doc);
+        // TCP-flush margin before deauthing AP clients. Web::WebUI is
+        // upstream of Remote.h's pump in the include graph; we set the
+        // deadline here and the pump fires the deauth when millis()
+        // catches up.
+        wifi_apsta_deauth_at_ms = millis() + WR_APSTA_DEAUTH_DELAY;
+      } else if (wifi_phase == WifiPhase::ApStaConnecting
+                 && (millis() - wr_pending.requested_ms) >= WR_PROVISION_TIMEOUT_MS) {
+        AsyncWebServerRequest* req = wr_pending.req;
+        wr_pending.req = nullptr;
+        send_error(req, 504, "sta_timeout");
+      }
+    }
 
     // Called from the button handler in RNode_Firmware.ino when the user
     // short-presses the device's USR1 button. Generates a fresh 16-byte

@@ -15,10 +15,17 @@
 
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <esp_wifi.h>           // esp_wifi_deauth_sta — drops AP clients
+                                // on the WIFI layer, not just at HTTP.
 #if defined(UDP_TRANSPORT)
 #include <WiFiUdp.h>
 #include <Bytes.h>
 #endif
+
+// Shared WiFi transition types — both this file and Web/WebUI.h
+// reference WifiPhase / PendingProvision, so the types live in
+// Common/ and neither side has to pull the other's full header.
+#include "Common/WifiTransition.h"
 
 #if CONFIG_IDF_TARGET_ESP32
   #include "esp32/rom/rtc.h"
@@ -79,6 +86,37 @@ volatile bool wr_force_softap_pending = false;
 // bootstrap UI gets a clean slate. The SPA reads this via /api/info
 // to decide whether to surface the "switch to softAP" button.
 bool wr_runtime_softap = false;
+
+// =================== APSTA TRANSITION STATE ===================
+// On boot with saved STA creds, and again whenever the softAP web
+// handler accepts new credentials, the device sits in APSTA mode for
+// a bounded window:
+//
+//   - ApStaConnecting: STA is associating. AP is live as a recovery
+//                      channel; HTTP request (if any) is parked.
+//   - ApStaGrace:      STA reached WL_CONNECTED. We respond to the
+//                      parked request, then ~1 s later deauth all AP
+//                      clients (force their devices to reconnect to
+//                      their original WiFi), then 2 min later tear
+//                      the AP interface down entirely.
+//
+// Once teardown completes we're STA-only and don't re-arm AP on STA
+// drops — see the policy note in handle_wifi_configure. The only ways
+// back to AP at that point are a reboot (boot path may go AP if STA
+// fails) or an authenticated /api/wifi/softap call (which already
+// requires the identity-code physical-presence proof).
+// WifiPhase + PendingProvision come from Common/WifiTransition.h —
+// included near the top of this file so the variable definitions
+// below resolve.
+WifiPhase wifi_phase                 = WifiPhase::Idle;
+uint32_t  wifi_phase_started_ms      = 0;     // when we entered the current phase
+uint32_t  wifi_apsta_deauth_at_ms    = 0;     // 0 = not scheduled
+bool      wifi_apsta_deauth_done     = false; // one-shot for the current grace
+PendingProvision wr_pending;
+
+// WR_PROVISION_TIMEOUT_MS, WR_APSTA_DEAUTH_DELAY, WR_APSTA_GRACE_MS
+// live in Common/WifiTransition.h so both this file and Web/WebUI.h
+// agree on the timings.
 
 char wr_ssid[33];
 char wr_psk[33];
@@ -159,10 +197,57 @@ void wifi_remote_stop() {
   wifi_initialized = false;
 }
 
+// APSTA boot: bring up the softAP first (so the bootstrap UI is
+// reachable while STA is still negotiating), then kick STA with the
+// saved credentials. The phase machine in wifi_pump_phase() handles
+// the transition to STA-only after STA stabilises.
+void wifi_remote_start_apsta() {
+  WiFi.mode(WIFI_AP_STA);
+  // softAP — open, named after bt_devname. Matches the bootstrap softAP
+  // exactly (same SSID format, no PSK) so a user joining "RNode XXXX"
+  // sees the same network whether the device is freshly out of the
+  // box or coming up in the APSTA boot grace window. Using wr_psk
+  // would advertise the user's home-WiFi password as the AP PSK —
+  // unhelpful and a soft security leak.
+  WiFi.softAP(bt_devname, NULL, wr_channel);
+  delay(150);
+  WiFi.softAPConfig(ap_ip, ap_ip, ap_nm);
+  // STA — same wiring as wifi_remote_start_sta(), minus the bare
+  // WiFi.mode(WIFI_STA) call that would tear down the AP we just set
+  // up.
+  uint8_t ip[4]; bool ip_ok = true;
+  for (uint8_t i = 0; i < 4; i++) { ip[i] = EEPROM.read(config_addr(ADDR_CONF_IP+i)); }
+  if (ip[0]==0x00 && ip[1]==0x00 && ip[2]==0x00 && ip[3]==0x00) { ip_ok = false; }
+  if (ip[0]==0xFF && ip[1]==0xFF && ip[2]==0xFF && ip[3]==0xFF) { ip_ok = false; }
+  uint8_t nm[4]; bool nm_ok = true;
+  for (uint8_t i = 0; i < 4; i++) { nm[i] = EEPROM.read(config_addr(ADDR_CONF_NM+i)); }
+  if (nm[0]==0x00 && nm[1]==0x00 && nm[2]==0x00 && nm[3]==0x00) { nm_ok = false; }
+  if (nm[0]==0xFF && nm[1]==0xFF && nm[2]==0xFF && nm[3]==0xFF) { nm_ok = false; }
+  if (ip_ok && nm_ok) {
+    IPAddress sta_ip(ip[0], ip[1], ip[2], ip[3]);
+    IPAddress sta_nm(nm[0], nm[1], nm[2], nm[3]);
+    WiFi.config(sta_ip, sta_ip, sta_nm);
+  }
+  delay(100);
+  if (wr_ssid[0] != 0x00) {
+    if (wr_psk[0] != 0x00) { WiFi.begin(wr_ssid, wr_psk); }
+    else                   { WiFi.begin(wr_ssid); }
+  }
+  delay(500);
+  wr_wifi_status = WiFi.status();
+  wifi_initialized = true;
+  wr_last_connect_try = millis();
+  wifi_phase           = WifiPhase::ApStaConnecting;
+  wifi_phase_started_ms = millis();
+  wifi_apsta_deauth_done = false;
+  wifi_apsta_deauth_at_ms = 0;
+}
+
 void wifi_remote_start() {
-  if      (wifi_mode == WR_WIFI_AP)  { wifi_remote_start_ap(); }
-  else if (wifi_mode == WR_WIFI_STA) { wifi_remote_start_sta(); }
-  else                               { wifi_remote_stop(); }
+  if      (wifi_mode == WR_WIFI_AP)    { wifi_remote_start_ap(); }
+  else if (wifi_mode == WR_WIFI_APSTA) { wifi_remote_start_apsta(); }
+  else if (wifi_mode == WR_WIFI_STA)   { wifi_remote_start_sta(); }
+  else                                 { wifi_remote_stop(); }
 
   if (wifi_initialized == true) {
     remote_listener.begin();
@@ -225,6 +310,84 @@ void wifi_runtime_force_softap(const char* reason) {
   wr_sta_fallback_armed = false;
   wifi_remote_init();
   wr_runtime_softap = true;
+}
+
+// Called every wifi_update_status() tick. Drives the WifiPhase state
+// machine — applies pending provisions, detects STA-connect, runs the
+// deauth + teardown timers. The HTTP-response side of the parked
+// request is owned by Web::WebUI::loop() so this file doesn't have to
+// drag in the AsyncWebServer headers — wr_pending.req is just data
+// to those who care.
+void wifi_pump_phase() {
+  // -------- 1. Apply pending provision from the HTTP task --------
+  if (wr_pending.pending) {
+    wr_pending.pending = false;
+    NOTICEF("WiFi: applying new SSID '%s'", wr_pending.ssid);
+
+    // Make sure AP is up so the requesting client can still receive
+    // the response. softAP() is idempotent — if we're already in
+    // APSTA from boot this is a no-op.
+    if (wifi_mode != WR_WIFI_APSTA) {
+      wifi_mode = WR_WIFI_APSTA;
+      WiFi.mode(WIFI_AP_STA);
+      WiFi.softAP(bt_devname, NULL, wr_channel);  // open AP — see wifi_remote_start_apsta
+      delay(50);
+      WiFi.softAPConfig(ap_ip, ap_ip, ap_nm);
+    }
+
+    // Swap creds in RAM and kick STA.
+    strncpy(wr_ssid, wr_pending.ssid, 32); wr_ssid[32] = 0;
+    strncpy(wr_psk,  wr_pending.psk,  32); wr_psk[32]  = 0;
+    if (WiFi.status() == WL_CONNECTED) {
+      WiFi.disconnect(/*wifioff=*/false);
+      delay(50);
+    }
+    if (wr_ssid[0] != 0x00) {
+      if (wr_psk[0] != 0x00) { WiFi.begin(wr_ssid, wr_psk); }
+      else                   { WiFi.begin(wr_ssid); }
+    }
+    wifi_phase             = WifiPhase::ApStaConnecting;
+    wifi_phase_started_ms  = millis();
+    wifi_apsta_deauth_done = false;
+    wifi_apsta_deauth_at_ms = 0;
+  }
+
+  // -------- 2. STA-connected transition --------
+  if (wifi_phase == WifiPhase::ApStaConnecting) {
+    if (WiFi.status() == WL_CONNECTED) {
+      wifi_phase            = WifiPhase::ApStaGrace;
+      wifi_phase_started_ms = millis();
+      wr_device_ip          = WiFi.localIP();
+      NOTICEF("WiFi: STA up, IP %s — AP grace 2 min",
+              wr_device_ip.toString().c_str());
+      // Web::WebUI::loop() will see ApStaGrace + a non-null wr_pending.req
+      // and send the HTTP response carrying sta_ip + hostname; once the
+      // response is in flight it bumps wifi_apsta_deauth_at_ms so the
+      // deauth fires after a TCP-flush margin.
+    }
+  }
+
+  // -------- 3. Deauth + teardown --------
+  if (wifi_phase == WifiPhase::ApStaGrace) {
+    if (!wifi_apsta_deauth_done
+        && wifi_apsta_deauth_at_ms != 0
+        && millis() >= wifi_apsta_deauth_at_ms) {
+      int n = WiFi.softAPgetStationNum();
+      esp_wifi_deauth_sta(0);   // 0 == all associated stations
+      wifi_apsta_deauth_done = true;
+      NOTICEF("WiFi: deauthed %d AP client(s); AP down at +%lus",
+              n, (unsigned long)(WR_APSTA_GRACE_MS / 1000));
+    }
+    if ((millis() - wifi_phase_started_ms) >= WR_APSTA_GRACE_MS) {
+      WiFi.softAPdisconnect(true);
+      WiFi.mode(WIFI_STA);
+      wifi_mode             = WR_WIFI_STA;
+      wifi_phase            = WifiPhase::Idle;
+      wifi_phase_started_ms = 0;
+      wifi_apsta_deauth_at_ms = 0;
+      NOTICE("WiFi: AP grace expired — STA only");
+    }
+  }
 }
 
 void wifi_remote_close_all() {
@@ -298,6 +461,11 @@ void wifi_update_status() {
     return;
   }
 
+  // Drive the APSTA transition state machine (boot grace + post-
+  // provision teardown). Must run before the existing STA-status
+  // reading below so the phase is up-to-date for everything else.
+  wifi_pump_phase();
+
   wr_wifi_status = WiFi.status();
   if (wr_wifi_status == WL_CONNECTED) {
     wr_device_ip = WiFi.localIP();
@@ -332,14 +500,32 @@ void wifi_update_status() {
   }
   if (wifi_mode == WR_WIFI_AP && wifi_initialized) { wr_device_ip = WiFi.softAPIP(); wr_wifi_status = WL_CONNECTED; }
   if (wifi_init_ran && wifi_mode == WR_WIFI_STA && wr_wifi_status != WL_CONNECTED) {
-    // Auto-fallback: we've been trying STA for too long without ever
-    // connecting. Go softAP so the bootstrap UI is reachable.
+    // STA-only path — legacy (no AP in play). The 30 s fallback drops
+    // us to softAP so the user can recover, but only if we've never
+    // managed to connect this boot. Once STA has been up at least
+    // once, wr_sta_fallback_armed is false and the device keeps
+    // retrying STA without touching the AP.
     if (wr_sta_fallback_armed && wr_sta_first_attempt_ms != 0
         && (millis() - wr_sta_first_attempt_ms) >= WR_STA_FALLBACK_MS) {
       wifi_runtime_force_softap("STA timeout after 30s");
       return;
     }
     if (millis()-wr_last_connect_try >= WR_RECONNECT_INTERVAL_MS) { wifi_remote_init(); }
+  }
+  if (wifi_init_ran && wifi_mode == WR_WIFI_APSTA && wr_wifi_status != WL_CONNECTED) {
+    // APSTA path — AP is already up as the recovery channel, so we
+    // don't tear down on STA timeout. Just keep retrying STA in the
+    // background; the user can either wait it out or reconfigure via
+    // the AP.
+    if (millis() - wr_last_connect_try >= WR_RECONNECT_INTERVAL_MS) {
+      WiFi.disconnect(/*wifioff=*/false);
+      delay(50);
+      if (wr_ssid[0] != 0x00) {
+        if (wr_psk[0] != 0x00) { WiFi.begin(wr_ssid, wr_psk); }
+        else                   { WiFi.begin(wr_ssid); }
+      }
+      wr_last_connect_try = millis();
+    }
   }
 }
 

@@ -34,6 +34,13 @@
         send_error(req, 400, "invalid_psk");
         return;
       }
+      // Refuse mid-flight provisioning if a previous request is still
+      // parked — otherwise we'd race two concurrent /api/wifi/configure
+      // calls trying to drive the same phase machine.
+      if (wr_pending.req != nullptr || wr_pending.pending) {
+        send_error(req, 409, "provision_in_progress");
+        return;
+      }
       // Write SSID, PSK, and STA mode to EEPROM using the same code paths
       // as CMD_WIFI_SSID / CMD_WIFI_PSK / CMD_WIFI_MODE in serial_callback.
       for (uint8_t i = 0; i < 33; i++) {
@@ -46,11 +53,29 @@
       }
       wr_conf_save(WR_WIFI_STA);
 
-      Common::PsramJsonDocument doc;
-      doc["status"]  = "saved";
-      doc["restart"] = true;
-      // Deferred reboot so the response flushes cleanly.
-      respond_and_reboot(req, doc);
+      // Two cases:
+      //   - AP up (wifi_mode == AP or APSTA): the SPA reached us over
+      //     the AP-side socket, so we can hold the request open and
+      //     respond when STA comes up. No reboot. Phase machine in
+      //     Remote.h drives the transition.
+      //   - STA only (wifi_mode == STA): the SPA reached us over the
+      //     current STA network; if we change SSID inline the socket
+      //     dies and the response never lands. Save EEPROM and
+      //     reboot — boot policy lifts us back into APSTA, so the
+      //     user's recovery channel is restored automatically.
+      const bool ap_up = (wifi_mode == WR_WIFI_AP || wifi_mode == WR_WIFI_APSTA);
+      if (ap_up) {
+        strncpy(wr_pending.ssid, ssid.c_str(), 32); wr_pending.ssid[32] = 0;
+        strncpy(wr_pending.psk,  psk.c_str(),  32); wr_pending.psk[32]  = 0;
+        wr_pending.req           = req;
+        wr_pending.requested_ms  = millis();
+        wr_pending.pending       = true;
+      } else {
+        Common::PsramJsonDocument doc;
+        doc["status"]  = "saved";
+        doc["restart"] = true;
+        respond_and_reboot(req, doc);
+      }
     }
 
     // GET /api/wifi/saved — list the WiFi networks the device has

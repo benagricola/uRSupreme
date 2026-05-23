@@ -542,7 +542,14 @@ void wifi_update_status() {
     // burns through internal SRAM (we measured ~85 KB lost in 60 s).
     static bool s_mdns_started = false;
     static uint32_t s_mdns_next_retry_ms = 0;
-    if (!s_mdns_started && wifi_mode == WR_WIFI_STA
+    // Start mDNS whenever STA is associated, regardless of whether
+    // we're STA-only or APSTA. Holding it off during the post-
+    // provisioning APSTA grace means a freshly Improv-provisioned
+    // device isn't resolvable as <hostname>.local for the first
+    // ~2 minutes — exactly the window when the SPA most needs the
+    // friendly URL.
+    const bool sta_carrier = (wifi_mode == WR_WIFI_STA || wifi_mode == WR_WIFI_APSTA);
+    if (!s_mdns_started && sta_carrier
         && (int32_t)(millis() - s_mdns_next_retry_ms) >= 0) {
       if (MDNS.begin(wr_hostname)) {
         MDNS.addService("http", "tcp", 80);

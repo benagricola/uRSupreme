@@ -117,6 +117,28 @@
 <main>
 
   <h1>μRSupreme — Web Flasher</h1>
+
+  <p>
+    μRSupreme turns a LilyGo T-Beam Supreme into a self-contained
+    <a href="https://reticulum.network/">Reticulum</a> /
+    <a href="https://reticulum.network/manual/lxmf.html">LXMF</a> mesh node.
+    The board is the radio, the gateway, and the chat client — you reach the
+    chat UI from any browser on the same network. No host computer, no
+    companion app, no <code>rnsd</code> running on a laptop somewhere.
+  </p>
+  <p>
+    It builds on
+    <a href="https://github.com/attermann/microReticulum_Firmware">microReticulum_Firmware</a>
+    (which puts the
+    <a href="https://github.com/attermann/microReticulum">microReticulum</a>
+    C++ stack on top of
+    <a href="https://github.com/markqvist/RNode_Firmware">RNode firmware</a>)
+    and adds the user interface: on-device LXMF inbox + outbox, a web SPA
+    for messages and attachments, multi-identity support, GPS and sensor
+    telemetry, and discovery announces for community-map listeners like
+    <a href="https://rmap.world/info.html">rmap.world</a>.
+  </p>
+
   <p class="lede">
     Plug a LilyGo T-Beam Supreme into your computer via USB, then click the
     button that matches your variant. Your browser talks to the device over

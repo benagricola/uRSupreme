@@ -31,6 +31,29 @@ position telemetry, discovery announces for community-map listeners like
 [rmap.world](https://rmap.world), and a settings UI for everything the
 radio and transport stack can do — all served from the device over WiFi.
 
+## A note on AI-authored code
+
+The bulk of the work in this repository — the SPA, the web UI surface,
+most of the LXMF gateway code, the sensor / power / GPS / RTC
+integrations, the build and release pipeline, this README — is written
+by an AI agent (Claude) with me as the director: deciding what to
+build, reviewing the work, redirecting when it goes off-track, and
+testing it on real hardware. The Reticulum stack itself, the
+microReticulum library, and the upstream RNode firmware are not part of
+that — they're the work of Mark Qvist and Aaron Attermann respectively
+(see Credits).
+
+Some people object to using AI-generated code in projects they care
+about, and that's a reasonable position. If that's you, this project
+isn't the right tool for you and there are excellent alternatives in
+the [Reticulum ecosystem](https://reticulum.network/).
+
+I work this way because the alternative isn't "the same project but
+hand-written" — it's "no project at all". Between work, family, and
+the rest of life, the time budget I have for hobby firmware is small.
+With AI assistance I can build things I'd otherwise never finish. I'd
+rather have it exist.
+
 ## Features
 
 ### Reticulum / LXMF on-device

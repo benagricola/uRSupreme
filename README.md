@@ -33,17 +33,16 @@ radio and transport stack can do — all served from the device over WiFi.
 
 ### Reticulum / LXMF on-device
 
-- **Standalone RNS transport node** via embedded microReticulum — routes
-  for other nodes without a host attached.
-- **Multi-identity LXMF gateway**: up to 4 identities per device. Each
-  identity has its own inbox, sent log, retention policy, display name,
-  and announce schedule.
+- **Standalone RNS transport node** — routes for other nodes without a
+  host attached.
+- **Multi-identity LXMF**: up to 4 identities per device, each with
+  their own inbox, sent log, retention policy, display name, and
+  announce schedule.
 - **Attachments**: send and receive images and audio inline in the chat
-  UI; image previews resize and re-encode in the browser before send;
-  large attachments stream from PSRAM with a progress bar.
-- **X25519 ratchet ring** for LXMF forward secrecy — the last 16
-  ratchet privkeys are kept so in-flight messages still decrypt across
-  rotations.
+  UI; images resize before send; sends and receives show a progress
+  bar.
+- **Forward secrecy** for LXMF — in-flight messages still decrypt
+  across key rotations.
 - **Discovery announces** with PoW stamps (default cost 14 leading-zero
   bits, configurable in Settings → Discovery; set cost to 0 to disable).
   Announces advertise the device's interfaces, region settings, and (if
@@ -83,10 +82,9 @@ radio and transport stack can do — all served from the device over WiFi.
   (online / offline / not-configured), and a system popover with LoRa
   channel utilisation (own vs others), RSSI vs noise floor, uptime,
   free heap / PSRAM, and the SD-migrate helper.
-- **Auth**: per-identity password, hashed on device with PBKDF2-HMAC-SHA256
-  (20 000 iterations, per-identity 16-byte salt); bearer tokens issued at
-  login; identity-code gating for physical-presence-required actions
-  (WiFi reconfig, factory reset, enabling discovery).
+- **Auth**: per-identity password (hashed on device); identity-code
+  gating for physical-presence-required actions (WiFi reconfig, factory
+  reset, enabling discovery).
 
 ### Sensors + telemetry
 
@@ -100,19 +98,13 @@ radio and transport stack can do — all served from the device over WiFi.
 - **Environment** (BME280): temperature, humidity, pressure.
 - **Motion** (QMI8658 IMU): orientation + tilt.
 - **Compass** (QMC6310): heading.
-- Sensor reads are coalesced into a single periodic WebSocket frame so
-  the SPA stays live without polling.
 
 ### Storage
 
-- **LittleFS on internal flash** for identities, config, inbox
-  indexes, small attachments.
-- **Optional SD card**: auto-detected; when present, large attachment
-  bodies and inbox spillover go to SD, otherwise everything stays on
-  flash. A migrate-from-flash helper lives in the system popover (the
+- **Optional SD card**: auto-detected; when present, attachments overflow
+  to it. A migrate-from-flash helper lives in the system popover (the
   CPU icon in the top bar).
-- **Per-chat retention policies** (forever / N days / last-N messages),
-  with eviction at the device end rather than the client.
+- **Per-chat retention policies**: forever / N days / last-N messages.
 
 ## Hardware
 

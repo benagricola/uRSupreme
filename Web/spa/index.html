@@ -114,7 +114,8 @@
       <label>Identity code</label>
       <input class="font-mono-inline mb-2" id="fr-code" maxlength="6" placeholder="abc123"
              x-model="$store.s.forms.factoryReset.code">
-      <button class="danger w-full" id="btn-factory-reset"  @click="onClickFactoryReset()">Factory reset</button>
+      <button class="danger w-full" id="btn-factory-reset"
+              @click="onClickFactoryReset($event.currentTarget)">Factory reset</button>
     </details>
   </div>
 </div>
@@ -135,7 +136,7 @@
            x-model="$store.s.forms.createIdent.code">
     <div class="row">
       <button class="secondary" id="btn-create-cancel" @click="enterIdentityPicker()">Back</button>
-      <button id="btn-create-go" @click="onClickCreateGo()">Create</button>
+      <button id="btn-create-go" @click="onClickCreateGo($event.currentTarget)">Create</button>
     </div>
   </div>
 </div>
@@ -147,6 +148,7 @@
     <p class="muted">Enter the password you set when this identity was created. No physical-presence proof is needed for login — the password is the only key.</p>
     <label>Password</label>
     <input class="mb-3" id="login-pw" type="password" x-model="$store.s.forms.login.pw"
+           x-effect="$store.s.view === 'view-login' && $nextTick(() => $el.focus())"
            @keydown.enter.prevent="onClickLoginGo($refs.loginGo)">
     <div class="row">
       <button class="secondary" id="btn-login-back" @click="enterIdentityPicker()">Back</button>
@@ -493,7 +495,8 @@
         <!-- smile -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
       </button>
-      <button class="icon" id="btn-attach" title="Attach a file or image" @click="pickAttachment()">
+      <button class="icon" id="btn-attach" title="Attach a file or image"
+              @click="$refs.attachFile.value = ''; $refs.attachFile.click()">
         <!-- paperclip -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
@@ -503,7 +506,7 @@
         <!-- microphone -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
       </button>
-      <input id="attach-file" type="file" hidden @change="onChangeAttachFile($event)">
+      <input id="attach-file" type="file" hidden x-ref="attachFile" @change="onChangeAttachFile($event)">
       <div id="compose-mid">
         <div id="attach-tray" x-data="attachTrayData()" x-show="visible" x-cloak>
           <template x-if="recording">
@@ -526,7 +529,8 @@
             </div>
           </template>
         </div>
-        <textarea id="compose-text" placeholder="Message…" rows="1" maxlength="4096"
+        <textarea id="compose-text" placeholder="Message…" rows="1"
+                  :maxlength="$store.s.ui.composeMaxLength"
                   x-model="$store.s.forms.compose.text"
                   @keydown="onComposeKeydown($event)"
                   @input="onComposeInput($event)"></textarea>
@@ -878,21 +882,27 @@
       <label>Identity code</label>
       <p class="muted id-code-hint mb-6" x-data x-html="idCodeHintHtml()"></p>
       <input class="font-mono-inline" id="mc-code" maxlength="6" placeholder="abc123"
-       
-       x-model="$store.s.confirm.codeValue"
-       @keydown.enter.prevent="confirmOk()">
+             x-model="$store.s.confirm.codeValue"
+             x-effect="$store.s.confirm.refocusTick;
+                       $store.s.modals.confirm && $store.s.confirm.needsCode && !$store.s.confirm.needsInput
+                         && $nextTick(() => $el.focus())"
+             @keydown.enter.prevent="confirmOk()">
     </div>
     <div class="mb-3" id="mc-input-wrap" x-show="$store.s.confirm.needsInput" x-cloak>
       <label id="mc-input-label" x-text="$store.s.confirm.inputLabel"></label>
       <input id="mc-input" type="text"
              x-model="$store.s.confirm.inputValue"
              :placeholder="$store.s.confirm.inputPlaceholder"
+             x-effect="$store.s.modals.confirm && $store.s.confirm.needsInput
+                         && $nextTick(() => { $el.focus(); $el.select(); })"
              @keydown.enter.prevent="confirmOk()">
     </div>
     <div class="row">
       <button class="secondary" id="mc-cancel" @click="confirmCancel()">Cancel</button>
       <button id="mc-ok" :class="{ danger: $store.s.confirm.destructive }"
               x-text="$store.s.confirm.okLabel"
+              x-effect="$store.s.modals.confirm && !$store.s.confirm.needsCode && !$store.s.confirm.needsInput
+                          && $nextTick(() => $el.focus())"
               @click="confirmOk()">OK</button>
     </div>
   </div>
@@ -1067,6 +1077,7 @@
     <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
     <input class="mb-3 font-mono-inline" id="idc-input" maxlength="6" placeholder="abc123"
            x-model="$store.s.forms.idCode.input"
+           x-effect="$store.s.modals.idCode && $nextTick(() => $el.focus())"
            @keydown.enter.prevent="onClickIdcOk()">
     <div class="row">
       <button class="secondary" id="btn-idc-cancel" @click="state.modals.idCode = false">Dismiss</button>
@@ -1577,7 +1588,7 @@
           <label>Identity code</label>
           <input class="font-mono-inline mb-6" id="fr2-code" maxlength="6" placeholder="abc123"
                  x-model="$store.s.forms.factoryReset2.code">
-          <button class="danger" id="btn-fr2" @click="onClickFr2()">Factory reset device</button>
+          <button class="danger" id="btn-fr2" @click="onClickFr2($event.currentTarget)">Factory reset device</button>
         </div>
       </div>
 
@@ -1900,6 +1911,7 @@ let state = {
     composeCounter: '',              // composer character/byte counter
     composeCounterShown: false,      // toggles composer counter visibility
     composeCounterDanger: false,     // colour the counter red near the cap
+    composeMaxLength: 4096,          // maxlength on the composer textarea
     idAddress: '',                   // address line in Settings → Identity
     idNameStatus: '',                // saved/saving caption next to name input
     idCodeModalHint: '',             // per-call context line in #modal-id-code
@@ -2146,13 +2158,9 @@ function showConfirm(opts) {
       _resolve:         resolve,
     });
     state.modals.confirm = true;
-    // Focus is per-open so it can't live on the store. Defer one tick
-    // so the template diff lands first.
-    setTimeout(() => {
-      if (opts.needsInput) { const i = $('mc-input'); if (i) { i.focus(); i.select(); } }
-      else if (opts.needsCode) { const c = $('mc-code'); if (c) c.focus(); }
-      else { const o = $('mc-ok'); if (o) o.focus(); }
-    }, 0);
+    // Focus is driven by x-effect on #mc-input / #mc-code / #mc-ok:
+    // each watches $store.s.modals.confirm + the relevant needsX flag
+    // and calls $el.focus() in $nextTick when its branch wins.
   });
 }
 function confirmOk() {
@@ -2161,7 +2169,14 @@ function confirmOk() {
   const out = {};
   if (c.needsCode) {
     const code = (c.codeValue || '').trim();
-    if (!code) { const e = $('mc-code'); if (e) e.focus(); return; }
+    if (!code) {
+      // Bump the refocus tick — #mc-code's x-effect picks it up as a
+      // reactive dependency and re-runs the focus call. Lets us drive
+      // an imperative-feeling "snap back to the code field" through
+      // the same Alpine declaration as the initial open.
+      state.confirm.refocusTick = (state.confirm.refocusTick || 0) + 1;
+      return;
+    }
     out.code = code;
   }
   if (c.needsInput) out.value = c.inputValue;
@@ -3179,13 +3194,10 @@ function formatEta(ms) {
   return '≈' + Math.round(s / 60) + ' min';
 }
 
-// Open the file picker. Image files take a detour through the resize
-// modal; everything else stages immediately.
-async function pickAttachment() {
-  const input = $('attach-file');
-  input.value = '';
-  input.click();
-}
+// The attach button's @click in the markup opens the file picker
+// directly via $refs.attachFile.click(); image files take a detour
+// through the resize modal (handled by onChangeAttachFile), everything
+// else stages immediately. No imperative wrapper needed here.
 
 
 // ----- audio capture -----
@@ -3555,9 +3567,8 @@ async function forceAnnounce() {
 // cap (matching the firmware's accept/reject behaviour) and surface
 // a counter to the user.
 function applyServerLimits(limits) {
-  const ct = $('compose-text');
-  if (ct && limits.max_body_bytes) {
-    ct.maxLength = limits.max_body_bytes;
+  if (limits.max_body_bytes) {
+    state.ui.composeMaxLength = limits.max_body_bytes;
   }
   // attachment count / name / mime are enforced inside
   // stagePendingAttachment() at queue time.
@@ -4541,7 +4552,7 @@ setInterval(refreshAnnounceCountdown, 1000);
 // Re-render the conv list every 30s to keep "last seen" labels fresh.
 // Cheap: state.conversations is small and the DOM diff is wholesale.
 setInterval(() => {
-  if (!$('view-app').hidden) renderConversations();
+  if (state.view === 'view-app') renderConversations();
 }, 30000);
 
 function persistContacts() { localStorage.setItem(LS.CONTACTS, JSON.stringify(state.contacts)); }
@@ -4891,10 +4902,9 @@ function enterLogin(identity) {
   state.identityId = identity.id;
   state.ui.loginTitle = 'Login: ' + (identity.display_name || identity.id);
   state.forms.login.pw = '';
-  // setTimeout to next tick so focus lands after the view becomes
-  // visible; calling focus() while the element is in a hidden parent
-  // is a no-op in some browsers.
-  setTimeout(() => $('login-pw').focus(), 0);
+  // #login-pw has x-effect bound to $store.s.view === 'view-login' that
+  // calls $el.focus() inside $nextTick, so flipping the view above is
+  // enough — no imperative focus needed here.
 }
 async function enterApp() {
   show('view-app');
@@ -4972,7 +4982,7 @@ async function onClickBsSkip() {
 }
 
 // ============================== IDENTITY PICKER / CREATE / LOGIN ==============================
-async function onClickFactoryReset() {
+async function onClickFactoryReset(btn) {
   const ok = await showConfirm({
     title: 'Factory reset?',
     body: 'This permanently erases every identity, message, and saved token on this device.',
@@ -4980,7 +4990,7 @@ async function onClickFactoryReset() {
     destructive: true,
   });
   if (!ok) return;
-  await withBusy($('btn-factory-reset'), async () => {
+  await withBusy(btn, async () => {
     try {
       await state.transport.factoryReset(state.forms.factoryReset.code);
       waitForDeviceAndReload('Factory-resetting & rebooting…');
@@ -4990,11 +5000,11 @@ async function onClickFactoryReset() {
   }, { label: 'Resetting…', alsoDisable: ['#fr-code', '#btn-show-create'] });
 }
 
-function onClickCreateGo() {
+function onClickCreateGo(btn) {
   const f = state.forms.createIdent;
   if (f.pw1 !== f.pw2)        { toast('Passwords do not match', 'warn'); return; }
   if ((f.pw1 || '').length < 8) { toast('Password must be at least 8 chars', 'warn'); return; }
-  return withBusy($('btn-create-go'), async () => {
+  return withBusy(btn, async () => {
     try {
       const r = await state.transport.createIdentity(f.name, f.pw1, f.code);
       state.token = r.token;
@@ -6343,7 +6353,7 @@ async function onClickDeleteSelf(btn) {
 }
 
 // Bound via @click on #btn-fr2 in the Reset tab.
-async function onClickFr2() {
+async function onClickFr2(btn) {
   const ok = await showConfirm({
     title: 'Factory reset?',
     body: 'Every identity, inbox, outbox, and saved token on this device will be wiped.',
@@ -6351,7 +6361,7 @@ async function onClickFr2() {
     destructive: true,
   });
   if (!ok) return;
-  await withBusy($('btn-fr2'), async () => {
+  await withBusy(btn, async () => {
     try {
       await state.transport.factoryReset(state.forms.factoryReset2.code);
       waitForDeviceAndReload('Factory-resetting & rebooting…');
@@ -6465,9 +6475,9 @@ function openIdCodeModal(opts) {
     ? 'A code is on the device OLED for ~' + idCodeTtlText() + '. Read the 6 hex chars and type them below.'
     : 'A 6-character code is needed to authorise this action. If one is not already on the device OLED, press the device button (see below) to generate one, then type it below.';
   state.modals.idCode = true;
-  // Focus the input next tick so the box doesn't fight the modal's
-  // own paint for first-frame attention.
-  setTimeout(() => $('idc-input').focus(), 0);
+  // #idc-input has x-effect bound to $store.s.modals.idCode that calls
+  // $el.focus() inside $nextTick, so flipping the modal flag above is
+  // enough — no imperative focus needed here.
 }
 // Bound @click on #btn-idc-ok and @keydown.enter on #idc-input.
 function onClickIdcOk() {

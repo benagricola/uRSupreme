@@ -915,7 +915,7 @@
 <div id="modal-wifi-add" class="modal-bg z-260" x-data x-show="$store.s.modals.wifiAdd" x-cloak>
   <div class="modal modal-wide">
     <h3>Add a WiFi network</h3>
-    <p class="muted mb-10" >Pick a network for this device to join. Saving reboots the device. The softAP fallback engages automatically if the saved network isn't reachable on next boot.</p>
+    <p class="muted mb-10" >Pick a network for this device to join. The device transitions to the new network in place — no reboot. If the saved network isn't reachable on next boot, the softAP comes up automatically after ~3 minutes as a recovery channel.</p>
     <label>Network</label>
     <select class="mb-2" id="cn-wifi-ssid" x-model="$store.s.forms.wifiAdd.ssid">
       <option value=""
@@ -1198,7 +1198,7 @@
               </div>
               <div class="row mb-2" >
                 <div>
-                  <label>Spreading factor</label>
+                  <label>Spreading factor <button type="button" class="info-icon" data-info="SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom — useful for long links.">i</button></label>
                   <input id="rd-sf" type="number" min="6" max="12" x-model.number="$store.s.forms.radio.sf">
                 </div>
                 <div>
@@ -1212,15 +1212,14 @@
               </div>
               <div class="row mb-2" >
                 <div>
-                  <label title="Instantaneous duty-cycle ceiling; 0 = no limit">Airtime cap (% short-term)</label>
+                  <label>Airtime cap (% short-term) <button type="button" class="info-icon" data-info="Instantaneous duty-cycle ceiling. <strong>Airtime caps are regulatory limits</strong> — picking a region preset sets a sane default; 0 disables (only use where allowed).">i</button></label>
                   <input id="rd-airtime" type="number" min="0" max="99" x-model.number="$store.s.forms.radio.airtime">
                 </div>
                 <div>
-                  <label title="Long-term (averaged) duty-cycle ceiling — what regulators care about">Airtime cap (% long-term)</label>
+                  <label>Airtime cap (% long-term) <button type="button" class="info-icon" data-info="Long-term averaged duty-cycle ceiling — what regulators care about. 0 disables (only use where allowed).">i</button></label>
                   <input id="rd-airtime-lt" type="number" min="0" max="99" x-model.number="$store.s.forms.radio.airtimeLt">
                 </div>
               </div>
-              <p class="muted mb-14" >SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom — useful for long links.<br><strong>Airtime caps are regulatory limits</strong> — picking a region preset sets a sane default; 0 disables (only use where allowed).</p>
             </div>
             <button class="w-full" id="btn-radio-save"
                     :disabled="$store.s.forms.radio.preset === '__empty' || !!$store.s.busyButtons['btn-radio-save']"
@@ -1229,11 +1228,12 @@
         </details>
 
         <details class="cn-section" data-cn="wifi">
-          <summary>WiFi <span class="cn-dot" id="cn-dot-wifi"
-                                :class="$store.s.ui.cnDotWifi"
-                                x-show="!!$store.s.ui.cnDotWifi"></span></summary>
+          <summary>WiFi
+            <button type="button" class="info-icon" @click.stop data-info="Networks this device has credentials for. Forgetting one wipes the SSID + password from the device and reboots into softAP for reconfiguration.">i</button>
+            <span class="cn-dot" id="cn-dot-wifi"
+                  :class="$store.s.ui.cnDotWifi"
+                  x-show="!!$store.s.ui.cnDotWifi"></span></summary>
           <div class="cn-section-body">
-            <p class="muted mb-10" >Networks this device has credentials for. Forgetting one wipes the SSID + password from the device and reboots into softAP for reconfiguration.</p>
             <div class="mb-10" id="cn-wifi-saved-list" x-data>
               <template x-if="$store.s.wifiSaved === null">
                 <p class="muted">Loading…</p>
@@ -1257,11 +1257,12 @@
         </details>
 
         <details class="cn-section" data-cn="tcp" x-show="$store.s.ui.showTcpSection" x-cloak>
-          <summary>TCP clients <span class="cn-dot" id="cn-dot-tcp"
-                                      :class="$store.s.ui.cnDotTcp"
-                                      x-show="!!$store.s.ui.cnDotTcp"></span></summary>
+          <summary>TCP clients
+            <button type="button" class="info-icon" @click.stop data-info="Outbound TCP links to other Reticulum nodes. Useful for joining a remote network over the internet, or for a wired LAN bridge. Each entry connects on boot and reconnects automatically if dropped.">i</button>
+            <span class="cn-dot" id="cn-dot-tcp"
+                  :class="$store.s.ui.cnDotTcp"
+                  x-show="!!$store.s.ui.cnDotTcp"></span></summary>
           <div class="cn-section-body">
-            <p class="muted mb-10" >Outbound TCP links to other Reticulum nodes. Useful for joining a remote network over the internet, or for a wired LAN bridge. Each entry connects on boot and reconnects automatically if dropped.</p>
             <div class="mb-10" id="cn-tcp-list" x-data>
               <template x-if="$store.s.tcpClients === null">
                 <p class="muted">Loading…</p>

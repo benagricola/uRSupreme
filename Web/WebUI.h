@@ -76,6 +76,7 @@ extern char             wr_hostname[10];
 extern RNS::Reticulum reticulum;
 extern void eeprom_update(int mapped_addr, uint8_t byte);
 extern void wr_conf_save(uint8_t mode);
+extern void wifi_remote_eeprom_write_sta_creds(const char* ssid, const char* psk);
 extern bool eeprom_have_conf();
 extern uint32_t lora_freq;
 extern uint32_t lora_bw;

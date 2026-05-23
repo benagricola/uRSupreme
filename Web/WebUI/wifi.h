@@ -41,17 +41,10 @@
         send_error(req, 409, "provision_in_progress");
         return;
       }
-      // Write SSID, PSK, and STA mode to EEPROM using the same code paths
-      // as CMD_WIFI_SSID / CMD_WIFI_PSK / CMD_WIFI_MODE in serial_callback.
-      for (uint8_t i = 0; i < 33; i++) {
-        uint8_t c = (i < ssid.length() && i < 32) ? (uint8_t)ssid[i] : 0x00;
-        eeprom_update(config_addr(ADDR_CONF_SSID + i), c);
-      }
-      for (uint8_t i = 0; i < 33; i++) {
-        uint8_t c = (i < psk.length() && i < 32) ? (uint8_t)psk[i] : 0x00;
-        eeprom_update(config_addr(ADDR_CONF_PSK + i), c);
-      }
-      wr_conf_save(WR_WIFI_STA);
+      // Write SSID, PSK, and STA mode to EEPROM. Shared with the Improv
+      // serial provisioning path so both end up with identical EEPROM
+      // layout — the helper lives in Remote.h.
+      wifi_remote_eeprom_write_sta_creds(ssid.c_str(), psk.c_str());
 
       // Two cases:
       //   - AP up (wifi_mode == AP or APSTA): the SPA reached us over

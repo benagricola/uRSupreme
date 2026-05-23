@@ -52,6 +52,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include "Utilities.h"
+#include "Improv.h"   // Improv WiFi over USB CDC — taps Serial.read in buffer_serial
 
 // CBA SD
 #if HAS_SDCARD
@@ -2970,6 +2971,10 @@ void loop() {
     if (!fifo_isempty_locked(&serialFIFO)) serial_poll();
   #endif
 
+  #if HAS_WIFI
+    Improv::loop();   // drives WIFI_SETTINGS provisioning state + parser timeout
+  #endif
+
   #if HAS_DISPLAY && MCU_VARIANT != MCU_ESP32
     // ESP32 builds run the OLED refresh in display_refresh_task on
     // core 0 (see start_display_refresh_task above). Other MCUs keep
@@ -3216,7 +3221,17 @@ void buffer_serial() {
         #if HAS_WIFI
         else if (wifi_host_is_connected())       { if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, wifi_remote_read()); } }
         #endif
-        else                                     { if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, Serial.read()); } }
+        else {
+          // USB CDC path: Improv WiFi sniffs the byte first; if the
+          // parser consumed it (mid-frame or magic match), drop it so
+          // KISS doesn't see partial Improv bytes mixed into a KISS
+          // frame. Bytes outside an Improv frame still go to KISS as
+          // normal.
+          uint8_t sb = Serial.read();
+          if (!Improv::on_byte(sb)) {
+            if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, sb); }
+          }
+        }
       #else
         if (!fifo_isfull(&serialFIFO)) { fifo_push(&serialFIFO, Serial.read()); }
       #endif

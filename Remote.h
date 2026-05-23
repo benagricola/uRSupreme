@@ -319,6 +319,24 @@ void wifi_runtime_force_softap(const char* reason) {
   wr_runtime_softap = true;
 }
 
+// Write SSID + PSK to EEPROM in the single saved-network slot and mark
+// the configured WiFi mode as STA. Shared between handle_wifi_configure
+// (HTTP path) and Improv::handle_wifi_settings (Serial provisioning)
+// so both end up with byte-identical EEPROM layout.
+void wifi_remote_eeprom_write_sta_creds(const char* ssid, const char* psk) {
+  const size_t ssid_n = ssid ? strnlen(ssid, 32) : 0;
+  const size_t psk_n  = psk  ? strnlen(psk,  32) : 0;
+  for (uint8_t i = 0; i < 33; i++) {
+    uint8_t c = (i < ssid_n) ? (uint8_t)ssid[i] : 0x00;
+    eeprom_update(config_addr(ADDR_CONF_SSID + i), c);
+  }
+  for (uint8_t i = 0; i < 33; i++) {
+    uint8_t c = (i < psk_n) ? (uint8_t)psk[i] : 0x00;
+    eeprom_update(config_addr(ADDR_CONF_PSK + i), c);
+  }
+  wr_conf_save(WR_WIFI_STA);
+}
+
 // Promote a STA-only device to APSTA without touching the running STA
 // attempt: brings up the recovery softAP alongside, leaves STA driver
 // untouched so it keeps retrying in the background. Called by the boot

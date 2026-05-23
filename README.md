@@ -128,13 +128,13 @@ sensor integrations.
    extension).
 2. Clone this repo and its sibling dependencies into the **same parent
    directory** — the build expects `microReticulum` and `microStore` to
-   sit next to `μRSupreme`:
+   sit next to `uRSupreme`:
    ```sh
-   mkdir μRSupreme-build && cd μRSupreme-build
-   git clone git@github.com:benagricola/μRSupreme.git
+   mkdir uRSupreme-build && cd uRSupreme-build
+   git clone git@github.com:benagricola/uRSupreme.git
    git clone https://github.com/attermann/microReticulum.git
    git clone https://github.com/attermann/microStore.git
-   cd μRSupreme
+   cd uRSupreme
    ```
 3. Build + flash the variant matching your device, plugged in over USB:
    ```sh

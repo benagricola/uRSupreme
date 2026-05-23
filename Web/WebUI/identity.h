@@ -40,6 +40,16 @@
       // Convenience boolean for "the softAP at 10.0.0.1 is also reachable
       // right now" — true in any APSTA phase, false elsewhere.
       doc["ap_active"] = (wifi_mode == WR_WIFI_AP || wifi_mode == WR_WIFI_APSTA);
+      // Last transient status message (Common::Status). Lets the SPA
+      // surface the WiFi countdown / lifecycle in a topbar tag without
+      // its own polling endpoint. Omitted entirely when the ring is
+      // empty or the latest entry has expired.
+      {
+        char status_buf[Common::Status::MAX_MESSAGE_LEN];
+        if (Common::Status::latest(status_buf, sizeof(status_buf))) {
+          doc["last_status"] = status_buf;
+        }
+      }
       // Time state lives on the WS `hello` frame now — the login
       // screen doesn't show it, and post-login the SPA only consumes
       // the WS-pinned clock anchor. Removed from /api/info.

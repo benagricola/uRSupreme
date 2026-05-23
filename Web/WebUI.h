@@ -18,6 +18,7 @@
 #include "../Common/PsramAllocator.h"
 #include "../Common/RnsLock.h"
 #include "../Common/WifiTransition.h"   // shared APSTA-state types
+#include "../Common/Status.h"           // Status::latest for /api/info
 
 // Variables and constants owned by Remote.h's WiFi state machine.
 // Remote.h is included after WebUI.h in the .ino translation unit,

@@ -26,6 +26,7 @@
 // reference WifiPhase / PendingProvision, so the types live in
 // Common/ and neither side has to pull the other's full header.
 #include "Common/WifiTransition.h"
+#include "Common/Status.h"      // Status::say for WiFi countdown / lifecycle
 
 #if CONFIG_IDF_TARGET_ESP32
   #include "esp32/rom/rtc.h"
@@ -68,10 +69,11 @@ uint8_t wifi_mode = WIFI_OFF;
 bool wifi_init_ran = false;
 bool wifi_initialized = false;
 // Tracks the millis() value of the first STA-mode init attempt this
-// boot. Used by the 30-second auto-softAP fallback so a device whose
-// STA network has gone away (changed SSID, router off, moved) doesn't
-// stay unreachable forever — once the timer expires we drop into
-// softAP so the user can recover via the bootstrap UI.
+// boot. Drives the "no AP at boot, promote to APSTA after 3 min if
+// STA hasn't connected" recovery policy — see WR_STA_BEFORE_AP_DELAY_MS
+// in wifi_update_status(). Cleared on first successful STA-connect
+// so subsequent runtime drops never re-arm AP; only a reboot can
+// re-enter the AP-recovery window.
 uint32_t wr_sta_first_attempt_ms = 0;
 bool wr_sta_fallback_armed = false;
 // Set by the web handler when the user wants to switch out of STA
@@ -183,11 +185,16 @@ void wifi_remote_start_sta() {
 
   delay(500);
   //delay(10000);
-  wr_wifi_status = WiFi.status(); 
+  wr_wifi_status = WiFi.status();
   //Serial.print("WiFi status: ");
   //Serial.println(wr_wifi_status);
   wifi_initialized = true;
   wr_last_connect_try = millis();
+  if (wr_ssid[0] != 0x00) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "WiFi: connecting %s", wr_ssid);
+    Common::Status::say(buf);
+  }
 }
 
 void wifi_remote_stop() {
@@ -310,6 +317,29 @@ void wifi_runtime_force_softap(const char* reason) {
   wr_sta_fallback_armed = false;
   wifi_remote_init();
   wr_runtime_softap = true;
+}
+
+// Promote a STA-only device to APSTA without touching the running STA
+// attempt: brings up the recovery softAP alongside, leaves STA driver
+// untouched so it keeps retrying in the background. Called by the boot
+// 3-minute timeout when STA hasn't connected, and never again this
+// boot (wr_sta_fallback_armed flips to false). EEPROM untouched; a
+// reboot resets the timer.
+void wifi_promote_to_apsta(const char* reason) {
+  NOTICEF("WiFi: STA timeout — promoting STA→APSTA (%s)",
+          reason ? reason : "boot delay expired");
+  Common::Status::say("WiFi: no network found, AP recovery up");
+  wifi_mode = WR_WIFI_APSTA;
+  // softAP first — open, named after bt_devname (matches the bootstrap
+  // softAP exactly). WiFi.mode() with WIFI_AP_STA doesn't tear down
+  // the active STA attempt; it just enables the AP interface alongside.
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(bt_devname, NULL, wr_channel);
+  delay(50);
+  WiFi.softAPConfig(ap_ip, ap_ip, ap_nm);
+  // Disarm permanently for this boot — security policy: AP can only be
+  // brought up by boot path or by explicit authenticated request.
+  wr_sta_fallback_armed = false;
 }
 
 // Called every wifi_update_status() tick. Drives the WifiPhase state
@@ -445,11 +475,14 @@ uint8_t wifi_remote_read() {
 void wifi_remote_write(uint8_t byte) { if (connection) { connection.write(byte); } }
 
 // If the device can't reach its configured STA network within this
-// window after the first attempt, automatically fall back to softAP
-// so the user can recover. 30 s is long enough for a slow router
-// to come up but short enough not to leave a deployed device
-// silently unreachable.
-#define WR_STA_FALLBACK_MS 30000UL
+// window after the first attempt, promote STA→APSTA so the user has
+// a recovery channel. 3 minutes is long enough that a router power
+// blip / DHCP renewal / brief outage doesn't expose the recovery AP
+// in the normal happy path, but short enough that someone with a
+// genuinely broken WiFi setup isn't waiting forever. Security: this
+// only fires at boot. Runtime STA drops never re-arm the timer (see
+// wr_sta_fallback_armed clear on first WL_CONNECTED).
+#define WR_STA_BEFORE_AP_DELAY_MS (3UL * 60UL * 1000UL)
 
 void wifi_update_status() {
   // Web handler asked for a switch to softAP — apply it on the main
@@ -469,9 +502,14 @@ void wifi_update_status() {
   wr_wifi_status = WiFi.status();
   if (wr_wifi_status == WL_CONNECTED) {
     wr_device_ip = WiFi.localIP();
-    // Once we've successfully attached at least once, disarm the
-    // fallback timer — a transient drop later shouldn't kick us
-    // out of STA (the existing 10 s reconnect logic handles that).
+    // First-time STA-connect this boot: announce the URL and disarm
+    // the AP-recovery timer permanently. Subsequent drops will retry
+    // STA without ever bringing up the AP.
+    if (wr_sta_fallback_armed) {
+      char buf[64];
+      snprintf(buf, sizeof(buf), "WiFi: %s", wr_device_ip.toString().c_str());
+      Common::Status::say(buf, 8000);
+    }
     wr_sta_fallback_armed = false;
     // mDNS: advertise the device under wr_hostname.local so the SPA
     // can redirect to it after a WiFi-save reboot, and so users on the
@@ -500,15 +538,36 @@ void wifi_update_status() {
   }
   if (wifi_mode == WR_WIFI_AP && wifi_initialized) { wr_device_ip = WiFi.softAPIP(); wr_wifi_status = WL_CONNECTED; }
   if (wifi_init_ran && wifi_mode == WR_WIFI_STA && wr_wifi_status != WL_CONNECTED) {
-    // STA-only path — legacy (no AP in play). The 30 s fallback drops
-    // us to softAP so the user can recover, but only if we've never
-    // managed to connect this boot. Once STA has been up at least
-    // once, wr_sta_fallback_armed is false and the device keeps
-    // retrying STA without touching the AP.
-    if (wr_sta_fallback_armed && wr_sta_first_attempt_ms != 0
-        && (millis() - wr_sta_first_attempt_ms) >= WR_STA_FALLBACK_MS) {
-      wifi_runtime_force_softap("STA timeout after 30s");
-      return;
+    // STA-only path — no AP in play. Two things happen here:
+    //   1. Boot timer: if STA hasn't connected within
+    //      WR_STA_BEFORE_AP_DELAY_MS (3 min), promote to APSTA so
+    //      the user has a recovery channel. Only fires while
+    //      wr_sta_fallback_armed is true — i.e. only during the
+    //      first boot window before any successful STA connection.
+    //   2. Reconnect: every WR_RECONNECT_INTERVAL_MS, re-run the
+    //      WiFi init. Once promoted to APSTA the wifi_mode check
+    //      above no longer matches and the APSTA branch below takes
+    //      over instead.
+    if (wr_sta_fallback_armed && wr_sta_first_attempt_ms != 0) {
+      uint32_t elapsed = millis() - wr_sta_first_attempt_ms;
+      if (elapsed >= WR_STA_BEFORE_AP_DELAY_MS) {
+        wifi_promote_to_apsta("no STA connection in 3 min");
+        return;
+      }
+      // Throttle to ~1Hz — update() replaces the most recent ring
+      // entry in place, so we don't fill the ring with countdown
+      // ticks. The OLED / SPA marquee sees a single message whose
+      // text changes each second.
+      static uint32_t s_next_countdown_ms = 0;
+      if ((int32_t)(millis() - s_next_countdown_ms) >= 0) {
+        uint32_t remaining_s = (WR_STA_BEFORE_AP_DELAY_MS - elapsed) / 1000;
+        char buf[64];
+        snprintf(buf, sizeof(buf), "WiFi: no network, AP in %lu:%02lu",
+                 (unsigned long)(remaining_s / 60),
+                 (unsigned long)(remaining_s % 60));
+        Common::Status::update(buf);
+        s_next_countdown_ms = millis() + 1000;
+      }
     }
     if (millis()-wr_last_connect_try >= WR_RECONNECT_INTERVAL_MS) { wifi_remote_init(); }
   }

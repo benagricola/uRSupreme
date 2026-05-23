@@ -1,0 +1,16 @@
+{
+  "name": "μRSupreme — T-Beam Supreme LR (LR1121)",
+  "version": "latest",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "https://github.com/benagricola/uRSupreme/releases/latest/download/urSupreme-lr1121.factory.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

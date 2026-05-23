@@ -1,0 +1,16 @@
+{
+  "name": "μRSupreme — T-Beam Supreme V1 (SX1262)",
+  "version": "latest",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "https://github.com/benagricola/uRSupreme/releases/latest/download/urSupreme-sx1262.factory.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

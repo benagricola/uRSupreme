@@ -126,7 +126,18 @@ sensor integrations.
 
 ## Quick start
 
-For a device you just want to use — no toolchain, no compiler.
+The fastest path — open the in-browser flasher, plug in the device, click
+the button matching your variant:
+
+### 👉 [benagricola.github.io/uRSupreme](https://benagricola.github.io/uRSupreme/)
+
+Chromium-based browsers only (Chrome, Edge, Brave, Opera). The flasher
+talks to the device over Web Serial, no toolchain or terminal involved.
+
+### …or flash manually with esptool
+
+If you'd rather drive `esptool` yourself, or your browser doesn't ship
+Web Serial:
 
 1. Plug your T-Beam Supreme into your computer over USB-C.
 2. Install [esptool](https://docs.espressif.com/projects/esptool/):
@@ -146,20 +157,21 @@ For a device you just want to use — no toolchain, no compiler.
    ```sh
    esptool.py --chip esp32s3 -p /dev/ttyACM0 write-flash 0x0 urSupreme-sx1262-<version>.factory.bin
    ```
-   `--erase-all` is *not* needed — the factory image already covers the
-   full flash layout.
-6. First boot brings the device up in **softAP mode** with SSID
-   `RNode XXXX` (four hex chars from the BT MAC, also shown on the
-   OLED). Join that network, open `http://10.0.0.1/`, and walk through
-   the first-run setup: pick a region preset, set a password, join
-   your home WiFi.
-7. Subsequent boots auto-join WiFi. Reach the device via mDNS at
-   `http://rnodexxxx.local/` (same four hex chars, lowercase) or by
-   the IP shown on the OLED.
 
 For an OTA-style upgrade where the device already runs μRSupreme,
 download the `.bin` (without `.factory`) and flash it at offset
 `0x10000` instead.
+
+### First boot
+
+The device comes up in **softAP mode** with SSID `RNode XXXX` (four
+hex chars from the BT MAC, also shown on the OLED). Join that network,
+open `http://10.0.0.1/`, and walk through the first-run setup: pick a
+region preset, set a password, join your home WiFi.
+
+Subsequent boots auto-join WiFi. Reach the device via mDNS at
+`http://rnodexxxx.local/` (same four hex chars, lowercase) or by the IP
+shown on the OLED.
 
 ## Developer setup
 

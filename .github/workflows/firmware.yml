@@ -135,6 +135,15 @@ jobs:
             0x8000  "$bd/partitions.bin" \
             0xe000  "$boot_app0" \
             0x10000 "$src"
+          # Version-less duplicate of the factory image, only attached
+          # on tag pushes. The docs/ web flasher targets
+          #   releases/latest/download/urSupreme-<variant>.factory.bin
+          # so the manifest stays static across releases instead of
+          # needing a code change every tag.
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            cp "../release/${base}.factory.bin" \
+               "../release/urSupreme-${{ matrix.label }}.factory.bin"
+          fi
           echo "version=${ver}" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact

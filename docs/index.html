@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>μRSupreme — Web Flasher</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Flash μRSupreme firmware to a LilyGo T-Beam Supreme straight from your browser. No toolchain, no Python, no esptool — just plug in the USB-C cable.">
+
+<link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:       #0d1117;
+    --bg-elev:  #161b22;
+    --border:   #30363d;
+    --text:     #e6edf3;
+    --text-dim: #9aa4b2;
+    --accent:   #2ea043;
+    --accent-2: #238636;
+    --warn-bg:  rgba(255, 180, 90, 0.10);
+    --warn-bd:  rgba(255, 180, 90, 0.35);
+    --warn:     #ffba6a;
+  }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main {
+    max-width: 720px;
+    padding: 32px 24px 64px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 28px;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+  .lede {
+    color: var(--text-dim);
+    margin: 0 0 28px;
+  }
+  h2 {
+    font-size: 20px;
+    margin: 36px 0 8px;
+    letter-spacing: -0.01em;
+  }
+  p { margin: 8px 0; }
+  code, kbd {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 13px;
+  }
+  a { color: #58a6ff; }
+  .card {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 14px 0;
+  }
+  .card h3 { margin: 0 0 4px; font-size: 16px; }
+  .card .sub { color: var(--text-dim); font-size: 14px; margin: 0 0 14px; }
+  esp-web-install-button {
+    --esp-tools-button-color: var(--text);
+    --esp-tools-button-background-color: var(--accent-2);
+    --esp-tools-button-border-radius: 6px;
+  }
+  esp-web-install-button[install-unsupported] { display: none; }
+  .unsupported {
+    display: none;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-bd);
+    color: var(--warn);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin: 14px 0;
+  }
+  /* The install button injects an [install-unsupported] attribute on
+     itself when the browser can't do Web Serial. We use a sibling
+     selector to surface the explanation banner in that case. */
+  esp-web-install-button[install-unsupported] + .unsupported { display: block; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  footer {
+    margin-top: 48px;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+</style>
+
+<!-- ESP Web Tools — the same component ESPHome / Nabu Casa ships on their
+     installers. Handles port chooser, chip detection, factory-flash, and
+     post-write reboot. Pinned to a major version. -->
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+
+</head>
+<body>
+<main>
+
+  <h1>μRSupreme — Web Flasher</h1>
+  <p class="lede">
+    Plug a LilyGo T-Beam Supreme into your computer via USB-C, then click the
+    button that matches your variant. Your browser talks to the device over
+    Web Serial; no toolchain or terminal involved.
+  </p>
+
+  <div class="card">
+    <h3>T-Beam Supreme V1 — SX1262</h3>
+    <p class="sub">The classic Supreme: ESP32-S3, 8 MB PSRAM, SX1262 LoRa radio.</p>
+    <esp-web-install-button manifest="manifest-sx1262.json"></esp-web-install-button>
+    <div class="unsupported">
+      Your browser doesn't support Web Serial. Use a Chromium-based browser
+      (Chrome, Edge, Brave, Opera) on a desktop OS. Firefox and Safari don't
+      ship Web Serial yet.
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>T-Beam Supreme LR — LR1121</h3>
+    <p class="sub">Same board, LR1121 wide-band LoRa front-end. Also enables TCP transport.</p>
+    <esp-web-install-button manifest="manifest-lr1121.json"></esp-web-install-button>
+    <div class="unsupported">
+      Your browser doesn't support Web Serial. Use a Chromium-based browser
+      (Chrome, Edge, Brave, Opera) on a desktop OS. Firefox and Safari don't
+      ship Web Serial yet.
+    </div>
+  </div>
+
+  <h2>What this does</h2>
+  <ul>
+    <li>Downloads the latest <code>.factory.bin</code> from the
+        <a href="https://github.com/benagricola/uRSupreme/releases/latest">latest release</a>.</li>
+    <li>Asks you to pick the USB-serial port the device shows up on.</li>
+    <li>Erases the flash and writes the full image (bootloader, partition
+        table, app) in one shot.</li>
+    <li>Reboots the device. The OLED will show the softAP SSID
+        <code>RNode XXXX</code> within a few seconds.</li>
+    <li>Join that softAP, browse to <code>http://10.0.0.1/</code>, and walk
+        through first-run setup (pick a region preset, set a password, join
+        your WiFi).</li>
+  </ul>
+
+  <h2>If the device isn't recognised</h2>
+  <ul>
+    <li>Try a different USB-C cable — some are charge-only and don't carry
+        data.</li>
+    <li>If the chip never appears in the port list, hold the
+        <kbd>BOOT</kbd> button while plugging in to force ROM download
+        mode.</li>
+    <li>On Linux you may need <code>sudo usermod -aG dialout $USER</code>
+        (then log out + back in) for the browser to see the port.</li>
+  </ul>
+
+  <footer>
+    <a href="https://github.com/benagricola/uRSupreme">Source on GitHub</a> ·
+    Powered by <a href="https://esphome.github.io/esp-web-tools/">ESP Web Tools</a>.
+  </footer>
+
+</main>
+</body>
+</html>

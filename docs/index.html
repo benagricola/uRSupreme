@@ -79,12 +79,25 @@
     color: var(--warn);
     border-radius: 8px;
     padding: 12px 14px;
-    margin: 14px 0;
+    margin: 14px 0 22px;
   }
-  /* The install button injects an [install-unsupported] attribute on
-     itself when the browser can't do Web Serial. We use a sibling
-     selector to surface the explanation banner in that case. */
-  esp-web-install-button[install-unsupported] + .unsupported { display: block; }
+  /* Browser-can't-Web-Serial state, driven by an inline JS feature
+     check at the bottom of <body>. One banner up top instead of
+     duplicating per card; each card's install button is replaced
+     by a disabled-looking pill so the layout doesn't collapse. */
+  body.no-web-serial .unsupported { display: block; }
+  body.no-web-serial esp-web-install-button { display: none; }
+  body.no-web-serial .install-disabled { display: inline-block; }
+  .install-disabled {
+    display: none;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 14px;
+    cursor: not-allowed;
+  }
   ul { padding-left: 22px; }
   li { margin: 4px 0; }
   footer {
@@ -110,26 +123,24 @@
     Web Serial; no toolchain or terminal involved.
   </p>
 
+  <div class="unsupported">
+    Your browser doesn't support Web Serial. Use a Chromium-based browser
+    (Chrome, Edge, Brave, Opera) on a desktop OS. Firefox and Safari don't
+    ship Web Serial yet.
+  </div>
+
   <div class="card">
     <h3>T-Beam Supreme V1 — SX1262</h3>
     <p class="sub">The classic Supreme: ESP32-S3, 8 MB PSRAM, SX1262 LoRa radio.</p>
     <esp-web-install-button manifest="manifest-sx1262.json" support-improv></esp-web-install-button>
-    <div class="unsupported">
-      Your browser doesn't support Web Serial. Use a Chromium-based browser
-      (Chrome, Edge, Brave, Opera) on a desktop OS. Firefox and Safari don't
-      ship Web Serial yet.
-    </div>
+    <span class="install-disabled" aria-disabled="true">Browser not supported</span>
   </div>
 
   <div class="card">
     <h3>T-Beam Supreme LR — LR1121</h3>
     <p class="sub">Same board, LR1121 wide-band LoRa front-end (sub-GHz + 2.4 GHz).</p>
     <esp-web-install-button manifest="manifest-lr1121.json" support-improv></esp-web-install-button>
-    <div class="unsupported">
-      Your browser doesn't support Web Serial. Use a Chromium-based browser
-      (Chrome, Edge, Brave, Opera) on a desktop OS. Firefox and Safari don't
-      ship Web Serial yet.
-    </div>
+    <span class="install-disabled" aria-disabled="true">Browser not supported</span>
   </div>
 
   <h2>What this does</h2>
@@ -165,6 +176,18 @@
     <li>On Linux you may need <code>sudo usermod -aG dialout $USER</code>
         (then log out + back in) for the browser to see the port.</li>
   </ul>
+
+  <script>
+    // Single point of truth for browser support: if navigator.serial
+    // isn't there, mark the body so the banner appears once at the
+    // top and each card swaps its install button for the disabled
+    // pill. The install button does its own install-unsupported
+    // detection too, but it ends up showing the same warning twice
+    // unless we coordinate.
+    if (!('serial' in navigator)) {
+      document.body.classList.add('no-web-serial');
+    }
+  </script>
 
   <footer>
     <a href="https://github.com/benagricola/uRSupreme">Source on GitHub</a> ·

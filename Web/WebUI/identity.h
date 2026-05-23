@@ -8,7 +8,7 @@
     static void handle_info(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       Common::PsramJsonDocument doc;
-      doc["fw_version"] = "lxmf-gateway-0.2";
+      doc["fw_version"] = FW_VERSION_STRING;
       doc["uptime_ms"]  = (uint32_t)millis();
       doc["bootstrap"]  = bootstrap_mode;
       doc["identity_code_pending"] = !id_code().hex6.empty() && !id_code().consumed

@@ -128,9 +128,15 @@ jobs:
           # boot_app0 lives inside the arduino-esp32 package install.
           boot_app0="$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
           pip install --quiet esptool
+          # --flash-mode keep / --flash-freq keep / --flash-size keep:
+          # preserve whatever the PIO-built bootloader.bin has in its
+          # header. Overriding to qio here corrupts the bootloader's
+          # SPI-mode byte and the chip ends up in a TG0WDT crash loop
+          # in the ROM stage. arduino-esp32 v2.x builds the bootloader
+          # in DIO mode regardless of board.json's memory_type hint.
           esptool.py --chip esp32s3 merge-bin \
             --output "../release/${base}.factory.bin" \
-            --flash-mode qio --flash-freq 80m --flash-size 8MB \
+            --flash-mode keep --flash-freq keep --flash-size keep \
             0x0     "$bd/bootloader.bin" \
             0x8000  "$bd/partitions.bin" \
             0xe000  "$boot_app0" \

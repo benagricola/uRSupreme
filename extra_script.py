@@ -267,6 +267,40 @@ Import("env")
 env.Replace(PROGNAME="rnode_firmware_%s" % env.GetProjectOption("custom_variant"))
 print("PROGNAME:", env.subst("$PROGNAME"))
 
+
+def compute_firmware_version(env):
+    """Inject a FW_VERSION_STRING preprocessor macro from `git describe`.
+
+    Shapes:
+      v0.2.0                    — exactly on a tag
+      v0.2.0-3-g5f3a92e         — 3 commits past v0.2.0
+      v0.2.0-3-g5f3a92e-dirty   — uncommitted changes in the tree
+      5f3a92e                   — no tags yet (only the short hash)
+      5f3a92e-dirty             — no tags, dirty tree
+      unknown                   — git not available / not a repo
+
+    CI must fetch tags (fetch-depth: 0 in the checkout step) for tag
+    names to be visible.
+    """
+    import subprocess
+    project_dir = env.subst("$PROJECT_DIR")
+    try:
+        version = subprocess.check_output(
+            ["git", "-C", project_dir, "describe",
+             "--tags", "--dirty", "--always"],
+            stderr=subprocess.DEVNULL,
+        ).decode("ascii", errors="replace").strip()
+    except Exception:
+        version = "unknown"
+    print("Firmware version:", version)
+    # CPPDEFINES tuple form with manually-escaped embedded quotes — the
+    # compiler ends up seeing `-DFW_VERSION_STRING="v0.2.0"` and the
+    # source sees a literal const-char* string.
+    env.Append(CPPDEFINES=[("FW_VERSION_STRING", '\\"%s\\"' % version)])
+
+
+compute_firmware_version(env)
+
 print("*** Running custom script...")
 # microReticulum patches used to be applied here. They're now committed
 # directly to the local microReticulum repo at ../microReticulum, on the

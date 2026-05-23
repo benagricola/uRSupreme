@@ -172,7 +172,7 @@ namespace _detail {
   inline void handle_get_device_info() {
     const char* strings[] = {
       "uRSupreme",            // firmware name
-      "lxmf-gateway-0.2",     // firmware version
+      FW_VERSION_STRING,      // firmware version (injected by extra_script.py)
       "ESP32-S3",             // hardware chip family
       bt_devname,             // device name (e.g. "RNode 7D31")
     };
@@ -219,7 +219,11 @@ namespace _detail {
     memcpy(ssid, data + 1,                 ssid_len);
     memcpy(psk,  data + 1 + ssid_len + 1,  psk_len);
     NOTICEF("Improv: WIFI_SETTINGS ssid='%s'", ssid);
-    Common::Status::say("Improv: provisioning");
+    // 35 s TTL — slightly longer than PROVISION_TIMEOUT_MS so the
+    // "provisioning…" message naturally ages out by the time the
+    // success / failure message lands, and doesn't permanently win
+    // the latest() lookup against the TTL'd success message.
+    Common::Status::say("Improv: provisioning", 35000);
 
     // EEPROM-persist via the shared helper, then route through the
     // existing wr_pending pump so the WifiPhase machine in Remote.h
@@ -351,13 +355,16 @@ inline void loop() {
     NOTICEF("Improv: STA up, IP %s", WiFi.localIP().toString().c_str());
     char buf[64];
     snprintf(buf, sizeof(buf), "Improv: %s", WiFi.localIP().toString().c_str());
-    Common::Status::say(buf, 8000);
+    // Sticky success message — there's nothing more useful to say
+    // after provisioning succeeds, and we don't want the older
+    // "provisioning…" message to come back into view.
+    Common::Status::say(buf);
   } else if ((millis() - prov_started_ms()) >= PROVISION_TIMEOUT_MS) {
     send_error_state(ERR_UNABLE_TO_CONNECT);
     prov_in_progress() = false;
     send_current_state();   // STATE_AUTHORIZED via effective_state()
     NOTICE("Improv: provisioning timed out");
-    Common::Status::say("Improv: connect failed", 8000);
+    Common::Status::say("Improv: connect failed");   // sticky
     // Cancel the pending provision in the WifiPhase machine too —
     // otherwise the AP teardown timer keeps ticking.
     wr_pending.pending = false;

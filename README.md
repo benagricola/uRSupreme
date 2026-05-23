@@ -21,7 +21,9 @@ BME280 for environmental telemetry, and an AXP2101 with charge control
 and battery telemetry. Upstream RNode firmware treats devices as KISS
 radios for an attached host. Upstream microReticulum_Firmware adds the
 RNS stack and transport routing on-device, but stops short of a user
-interface. **μRSupreme adds the user interface.**
+interface.
+
+**μRSupreme adds the user interface.**
 
 That means an LXMF inbox / outbox running on the device, a web UI for
 sending messages and attachments, multi-identity support, sensor /
@@ -124,16 +126,55 @@ sensor integrations.
 
 ## Quick start
 
+For a device you just want to use — no toolchain, no compiler.
+
+1. Plug your T-Beam Supreme into your computer over USB-C.
+2. Install [esptool](https://docs.espressif.com/projects/esptool/):
+   ```sh
+   pipx install esptool       # or: pip install --user esptool
+   ```
+3. Grab the latest release from the
+   [Releases page](https://github.com/benagricola/uRSupreme/releases).
+   You need the `.factory.bin` for your variant:
+   - **SX1262** (T-Beam Supreme V1) → `urSupreme-sx1262-<version>.factory.bin`
+   - **LR1121** (T-Beam Supreme LR) → `urSupreme-lr1121-<version>.factory.bin`
+4. Find the USB port:
+   - Linux: `/dev/ttyACM0` (or `ACM1`, …)
+   - macOS: `/dev/cu.usbmodemXXXXXX`
+   - Windows: `COM3` (or higher; check Device Manager)
+5. Flash:
+   ```sh
+   esptool.py --chip esp32s3 -p /dev/ttyACM0 write-flash 0x0 urSupreme-sx1262-<version>.factory.bin
+   ```
+   `--erase-all` is *not* needed — the factory image already covers the
+   full flash layout.
+6. First boot brings the device up in **softAP mode** with SSID
+   `RNode XXXX` (four hex chars from the BT MAC, also shown on the
+   OLED). Join that network, open `http://10.0.0.1/`, and walk through
+   the first-run setup: pick a region preset, set a password, join
+   your home WiFi.
+7. Subsequent boots auto-join WiFi. Reach the device via mDNS at
+   `http://rnodexxxx.local/` (same four hex chars, lowercase) or by
+   the IP shown on the OLED.
+
+For an OTA-style upgrade where the device already runs μRSupreme,
+download the `.bin` (without `.factory`) and flash it at offset
+`0x10000` instead.
+
+## Developer setup
+
+For building from source.
+
 1. Install [PlatformIO](https://platformio.org) (CLI or VS Code
    extension).
 2. Clone this repo and its sibling dependencies into the **same parent
-   directory** — the build expects `microReticulum` and `microStore` to
-   sit next to `uRSupreme`:
+   directory** — the build expects `microReticulum` and `microStore`
+   on the matching `ur-patches` branches to sit next to `uRSupreme`:
    ```sh
    mkdir uRSupreme-build && cd uRSupreme-build
    git clone git@github.com:benagricola/uRSupreme.git
-   git clone https://github.com/attermann/microReticulum.git
-   git clone https://github.com/attermann/microStore.git
+   git clone -b ur-patches git@github.com:benagricola/microReticulum.git
+   git clone -b ur-patches git@github.com:benagricola/microStore.git
    cd uRSupreme
    ```
 3. Build + flash the variant matching your device, plugged in over USB:
@@ -142,14 +183,10 @@ sensor integrations.
    # or, for the SX1262 Supreme:
    pio run -e ttgo-t-beam-supreme        -t upload --upload-port /dev/ttyACM0
    ```
-4. First boot brings the device up in **softAP mode** with SSID
-   `RNode XXXX` (where `XXXX` is four hex chars derived from the BT MAC,
-   visible on the OLED). Connect to it, browse to
-   `http://10.0.0.1/`, walk through the first-run setup (pick a region
-   preset, set a password, join your WiFi).
-5. Subsequent boots auto-join your WiFi. Find the device via mDNS at
-   `http://rnodexxxx.local/` (same `xxxx` as the SSID, lowercase) or via
-   the IP shown on the OLED.
+
+`master` carries the most recent work; tagged releases (`v*`) trigger
+the CI that publishes the `.factory.bin` artefacts the Quick start
+section uses.
 
 ## Status + caveats
 

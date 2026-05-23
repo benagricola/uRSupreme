@@ -100,7 +100,7 @@ jobs:
       # by extra_script.py. Stage it under a release-friendly filename
       # before uploading so the artifact reflects the device variant
       # rather than the upstream RNode legacy.
-      - name: Stage release artifact
+      - name: Stage release artifacts
         id: stage
         working-directory: firmware
         run: |
@@ -110,17 +110,31 @@ jobs:
           else
             ver="$(git rev-parse --short HEAD)"
           fi
-          src=".pio/build/${{ matrix.env }}/rnode_firmware_${{ matrix.variant }}.bin"
-          dst="urSupreme-${{ matrix.label }}-${ver}.bin"
+          bd=".pio/build/${{ matrix.env }}"
+          src="$bd/rnode_firmware_${{ matrix.variant }}.bin"
+          base="urSupreme-${{ matrix.label }}-${ver}"
           mkdir -p ../release
-          cp "$src" "../release/${dst}"
-          # Also publish the ELF for symbolicated crash dumps; small +
-          # priceless when a field unit reports a backtrace.
-          elf=".pio/build/${{ matrix.env }}/rnode_firmware_${{ matrix.variant }}.elf"
-          if [[ -f "$elf" ]]; then
-            cp "$elf" "../release/urSupreme-${{ matrix.label }}-${ver}.elf"
-          fi
-          echo "bin=${dst}"     >> "$GITHUB_OUTPUT"
+          # App-only image: drop this at flash offset 0x10000 with
+          # esptool for OTA-style upgrades on a device whose
+          # bootloader is already up to date.
+          cp "$src" "../release/${base}.bin"
+          # Symbolicated crash dumps need the .elf.
+          elf="$bd/rnode_firmware_${{ matrix.variant }}.elf"
+          [[ -f "$elf" ]] && cp "$elf" "../release/${base}.elf"
+          # Factory image: one merged blob covering bootloader +
+          # partition table + boot_app0 + app, so end users on a
+          # blank device can `esptool.py write_flash 0x0 <this>`
+          # and not worry about the four-offset choreography.
+          # boot_app0 lives inside the arduino-esp32 package install.
+          boot_app0="$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+          pip install --quiet esptool
+          esptool.py --chip esp32s3 merge-bin \
+            --output "../release/${base}.factory.bin" \
+            --flash-mode qio --flash-freq 80m --flash-size 8MB \
+            0x0     "$bd/bootloader.bin" \
+            0x8000  "$bd/partitions.bin" \
+            0xe000  "$boot_app0" \
+            0x10000 "$src"
           echo "version=${ver}" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
@@ -173,10 +187,17 @@ jobs:
           {
             echo "## Firmware"
             echo
-            echo "- **SX1262 Supreme V1** — \`urSupreme-sx1262-${tag}.bin\`"
-            echo "- **LR1121 Supreme LR**  — \`urSupreme-lr1121-${tag}.bin\`"
+            echo "### SX1262 Supreme V1"
             echo
-            echo "Flash with the matching PlatformIO env, or use \`esptool.py\` directly at offset 0x10000."
+            echo "- \`urSupreme-sx1262-${tag}.factory.bin\` — full image (bootloader + partitions + app); flash with \`esptool.py --chip esp32s3 -p /dev/ttyACMx write-flash 0x0 urSupreme-sx1262-${tag}.factory.bin\`"
+            echo "- \`urSupreme-sx1262-${tag}.bin\` — app-only image for OTA-style upgrades; flash at offset \`0x10000\`"
+            echo
+            echo "### LR1121 Supreme LR"
+            echo
+            echo "- \`urSupreme-lr1121-${tag}.factory.bin\` — full image (bootloader + partitions + app); flash with \`esptool.py --chip esp32s3 -p /dev/ttyACMx write-flash 0x0 urSupreme-lr1121-${tag}.factory.bin\`"
+            echo "- \`urSupreme-lr1121-${tag}.bin\` — app-only image for OTA-style upgrades; flash at offset \`0x10000\`"
+            echo
+            echo "\`.elf\` files for each variant are also attached for symbolicated crash-dump analysis."
             echo
             if [[ -n "$prev" ]]; then
               echo "## Changes since \`${prev}\`"

@@ -995,13 +995,18 @@
       <button class="ghost" @click="refresh()" :disabled="loading">Refresh</button>
       <button class="secondary" @click="state.modals.topology = false">Close</button>
     </div>
-    <!-- Body painted by renderSvg() in topologyModalData. Alpine's
+    <!-- Tree is painted by renderSvg() in topologyModalData. Alpine's
          <template x-for> doesn't switch to the SVG namespace, so the
          children would come out as HTML elements and not render. We
-         own the DOM here via plain createElementNS instead. -->
-    <svg viewBox="0 0 600 420" id="topology-svg" preserveAspectRatio="xMidYMid meet"
-         xmlns="http://www.w3.org/2000/svg"
-         x-effect="nodes; renderSvg()"></svg>
+         own the DOM here via plain createElementNS instead. The
+         viewBox is rewritten per render to fit the tree's actual
+         extent; the wrapper allows horizontal scroll when a peer-rich
+         interface (e.g. rmap) makes the tree wider than the modal. -->
+    <div id="topology-svg-wrap">
+      <svg id="topology-svg" preserveAspectRatio="xMinYMid meet"
+           xmlns="http://www.w3.org/2000/svg"
+           x-effect="tree; renderSvg()"></svg>
+    </div>
     <div class="muted text-xs mt-6">
       Each dot is a destination this device has heard. Distance from the centre
       reflects hop count. Colour reflects aspect: green = LXMF identity,
@@ -3722,34 +3727,30 @@ function batteryBtnData() {
     },
   };
 }
-// Reactive data backing #modal-topology. Renders /api/paths as a
-// star graph: self at the centre, each known destination on a ring
-// keyed to hop count, edge colour per aspect, opacity per age.
+// Reactive data backing #modal-topology. Builds a tree from /api/paths
+// by chaining each peer's next_hop pointer back toward self, then
+// renders it as a top-down hierarchy: self → interfaces → relays →
+// leaf peers.
 function topologyModalData() {
-  // SVG dimensions match the viewBox in markup. Keep cx/cy at the
-  // visual centre and scale ring radii from there.
-  const CX = 300, CY = 200, RING_PX = 90;
+  // Layout constants.
+  const ROW_PX = 90;      // vertical gap between tree levels
+  const COL_PX = 110;     // horizontal slot per leaf
+  const TOP_PADDING_PX = 50;
   return {
-    nodes:    [],
+    tree:     null,         // root node after build
+    flat:     [],           // flat list of all nodes (for hit-testing + selection strip)
     selected: null,
     loading:  false,
     error:    '',
     lastFetchedMs: 0,
-    cx: CX,
-    cy: CY,
-    // Hop rings drawn as faint guides. Bounded so a misreported
-    // 200-hop path can't push a ring off-screen.
-    get ringRadii() {
-      const maxHops = Math.min(4, Math.max(1, ...this.nodes.map(n => n.hops || 1)));
-      const rs = [];
-      for (let h = 1; h <= maxHops; h++) rs.push(h * RING_PX);
-      return rs;
-    },
+    // Computed viewBox dimensions (driven by leaf count).
+    vbW: 600,
+    vbH: 420,
     get statusLine() {
       if (this.error) return this.error;
       if (this.loading) return 'Refreshing…';
-      const n = this.nodes.length;
-      return n + ' peer' + (n === 1 ? '' : 's') + ' known';
+      const peerCount = this.flat.filter(n => !n.is_self && !n.is_unknown).length;
+      return peerCount + ' peer' + (peerCount === 1 ? '' : 's') + ' known';
     },
     async refresh() {
       this.loading = true;
@@ -3761,11 +3762,20 @@ function topologyModalData() {
                               { headers: { 'Authorization': 'Bearer ' + tok } });
         if (!r.ok) { this.error = 'Fetch failed (' + r.status + ').'; return; }
         const j = await r.json();
-        this.nodes = layoutTopologyPaths(j.paths || [], this.cx, this.cy, RING_PX);
+        this.tree = buildTopologyTree(j.paths || []);
+        layoutTopologyTree(this.tree, COL_PX, ROW_PX, TOP_PADDING_PX);
+        this.flat = flattenTopologyTree(this.tree);
+        // Size the viewBox to the layout's extent, padded.
+        let maxX = 0, maxY = 0;
+        for (const n of this.flat) {
+          if (n.x > maxX) maxX = n.x;
+          if (n.y > maxY) maxY = n.y;
+        }
+        this.vbW = Math.max(600, Math.ceil(maxX + COL_PX / 2));
+        this.vbH = Math.max(300, Math.ceil(maxY + 60));
         this.lastFetchedMs = Date.now();
-        // Drop selection if the selected peer is no longer in the set.
         if (this.selected
-            && !this.nodes.some(n => n.dest === this.selected.dest)) {
+            && !this.flat.some(n => n.dest === this.selected.dest)) {
           this.selected = null;
         }
       } catch (e) {
@@ -3775,74 +3785,114 @@ function topologyModalData() {
       }
     },
     select(node) {
-      // Re-clicking the selected node deselects.
+      if (node.is_self || node.is_unknown) return;
       this.selected = (this.selected && this.selected.dest === node.dest) ? null : node;
     },
     renderSvg() {
       const svg = document.getElementById('topology-svg');
       if (!svg) return;
       const NS = 'http://www.w3.org/2000/svg';
+      svg.setAttribute('viewBox', `0 0 ${this.vbW} ${this.vbH}`);
       while (svg.firstChild) svg.removeChild(svg.firstChild);
+      if (!this.tree) return;
       const setAttrs = (el, attrs) => {
         for (const k in attrs) el.setAttribute(k, attrs[k]);
         return el;
       };
-      // Hop rings.
-      for (const r of this.ringRadii) {
-        svg.appendChild(setAttrs(document.createElementNS(NS, 'circle'), {
-          cx: this.cx, cy: this.cy, r: r,
-          fill: 'none', stroke: 'var(--border)', 'stroke-width': 1,
-          'stroke-dasharray': '3 4', opacity: 0.5,
-        }));
+      const aspectColor = this.aspectColor.bind(this);
+      const ageOpacity  = this.ageOpacity.bind(this);
+      // Edges: walk every node, draw a line from parent to it.
+      const walkEdges = (node) => {
+        for (const c of node.children) {
+          svg.appendChild(setAttrs(document.createElementNS(NS, 'line'), {
+            x1: node.x, y1: node.y, x2: c.x, y2: c.y,
+            stroke: c.is_unknown ? 'var(--border)' : aspectColor(c.aspect),
+            'stroke-width': c.is_unknown ? 1.5 : 2,
+            'stroke-dasharray': c.is_unknown ? '4 3' : 'none',
+            opacity: c.is_unknown ? 0.6 : ageOpacity(c.age_ms || 0),
+          }));
+          walkEdges(c);
+        }
+      };
+      walkEdges(this.tree);
+      // Edge labels: small interface name placed mid-edge so the
+      // viewer can see *which* link a child uses. Only labelled when
+      // the child is a direct branch of self (level 1) — beyond that
+      // the link is implied by the parent.
+      for (const c of this.tree.children) {
+        if (!c.next_hop_if) continue;
+        const lx = (this.tree.x + c.x) / 2;
+        const ly = (this.tree.y + c.y) / 2 - 4;
+        const lbl = setAttrs(document.createElementNS(NS, 'text'), {
+          x: lx, y: ly,
+          'text-anchor': 'middle', 'font-size': 9,
+          fill: 'var(--text-dim)',
+        });
+        lbl.textContent = c.next_hop_if;
+        svg.appendChild(lbl);
       }
-      // Edges (self → peer).
-      for (const n of this.nodes) {
-        svg.appendChild(setAttrs(document.createElementNS(NS, 'line'), {
-          x1: this.cx, y1: this.cy, x2: n.x, y2: n.y,
-          stroke: this.aspectColor(n.aspect), 'stroke-width': 2,
-          opacity: this.ageOpacity(n.age_ms),
-        }));
-      }
-      // Self node.
-      svg.appendChild(setAttrs(document.createElementNS(NS, 'circle'), {
-        cx: this.cx, cy: this.cy, r: 22,
-        fill: 'var(--accent-2)', stroke: 'white', 'stroke-width': 2,
-      }));
-      const selfLabel = setAttrs(document.createElementNS(NS, 'text'), {
-        x: this.cx, y: this.cy + 4,
-        'text-anchor': 'middle', fill: 'white',
-        'font-size': 12, 'font-weight': 600,
-      });
-      selfLabel.textContent = 'self';
-      svg.appendChild(selfLabel);
-      // Peer circles + labels.
-      for (const n of this.nodes) {
+      // Nodes.
+      for (const n of this.flat) {
+        const radius = n.is_self ? 22 : (n.is_unknown ? 8 : 14);
+        const fill   = n.is_self ? 'var(--accent-2)'
+                     : n.is_unknown ? 'var(--bg-elev)'
+                     : aspectColor(n.aspect);
         const c = setAttrs(document.createElementNS(NS, 'circle'), {
-          cx: n.x, cy: n.y, r: 14,
-          fill: this.aspectColor(n.aspect),
-          stroke: 'white', 'stroke-width': 2,
+          cx: n.x, cy: n.y, r: radius,
+          fill: fill, stroke: n.is_unknown ? 'var(--border)' : 'white',
+          'stroke-width': n.is_unknown ? 1 : 2,
         });
-        c.style.cursor = 'pointer';
-        c.addEventListener('click', () => this.select(n));
+        if (!n.is_self && !n.is_unknown) {
+          c.style.cursor = 'pointer';
+          c.addEventListener('click', () => this.select(n));
+        }
         svg.appendChild(c);
-        const label = setAttrs(document.createElementNS(NS, 'text'), {
-          x: n.x, y: n.y + 32,
-          'text-anchor': 'middle', 'font-size': 11, fill: 'var(--text)',
-        });
-        label.textContent = n.display_name || n.dest.slice(0, 8);
-        svg.appendChild(label);
+        // Labels.
+        if (n.is_self) {
+          const t = setAttrs(document.createElementNS(NS, 'text'), {
+            x: n.x, y: n.y + 4,
+            'text-anchor': 'middle', fill: 'white',
+            'font-size': 12, 'font-weight': 600,
+          });
+          t.textContent = 'self';
+          svg.appendChild(t);
+        } else if (!n.is_unknown) {
+          const label = setAttrs(document.createElementNS(NS, 'text'), {
+            x: n.x, y: n.y + radius + 12,
+            'text-anchor': 'middle', 'font-size': 10, fill: 'var(--text)',
+          });
+          label.textContent = n.display_name || n.dest.slice(0, 8);
+          svg.appendChild(label);
+          // Second line: hops badge.
+          const sub = setAttrs(document.createElementNS(NS, 'text'), {
+            x: n.x, y: n.y + radius + 24,
+            'text-anchor': 'middle', 'font-size': 9,
+            fill: 'var(--text-dim)',
+          });
+          sub.textContent = n.hops + 'h';
+          svg.appendChild(sub);
+        }
+        // Unknown intermediates get just a tiny address hint.
+        if (n.is_unknown) {
+          const t = setAttrs(document.createElementNS(NS, 'text'), {
+            x: n.x, y: n.y + 18,
+            'text-anchor': 'middle', 'font-size': 9,
+            fill: 'var(--text-dim)',
+          });
+          t.textContent = n.dest.slice(0, 6) + '…';
+          svg.appendChild(t);
+        }
       }
     },
     aspectColor(a) {
       switch (a) {
-        case 'lxmf.delivery':     return '#2ea043';  // green: person/identity
-        case 'lxmf.propagation':  return '#fb8c00';  // orange: propagation node
-        case 'nomadnetwork.node': return '#1e88e5';  // blue: NomadNet node
-        default:                  return '#6e7681';  // grey: transport / unknown
+        case 'lxmf.delivery':     return '#2ea043';
+        case 'lxmf.propagation':  return '#fb8c00';
+        case 'nomadnetwork.node': return '#1e88e5';
+        default:                  return '#6e7681';
       }
     },
     ageOpacity(ageMs) {
-      // 0 ms → 1.0, 24 h → 0.35. Linear-ish but capped.
       const day = 24 * 60 * 60 * 1000;
       const t   = Math.max(0, Math.min(1, ageMs / day));
       return 1.0 - t * 0.65;
@@ -3856,34 +3906,109 @@ function topologyModalData() {
   };
 }
 
-// Position each path entry on a ring. Same-hop peers split the
-// circumference evenly; the +π/2 offset starts the first peer at the
-// top so the layout doesn't look lopsided when there's only one or
-// two peers.
-function layoutTopologyPaths(paths, cx, cy, ringPx) {
-  const byHops = new Map();
+// Build a tree from /api/paths entries by chaining next_hop pointers.
+// Each path's parent is whoever its next_hop refers to:
+//   - empty next_hop or next_hop === dest → direct child of self
+//   - next_hop matches another path's dest → child of that path
+//   - next_hop is some hash we have no info about → child of a
+//     synthetic "unknown intermediate" node which itself attaches to
+//     self (we have no further chain to walk)
+function buildTopologyTree(paths) {
+  const SELF = '__self__';
+  const nodes = new Map();
+  const self  = {
+    dest: SELF, display_name: 'self', is_self: true,
+    aspect: '', hops: 0, age_ms: 0, children: [],
+  };
+  nodes.set(SELF, self);
+  // First: a node entry per real path destination.
   for (const p of paths) {
-    const h = Math.max(1, Math.min(4, p.hops | 0 || 1));
-    if (!byHops.has(h)) byHops.set(h, []);
-    byHops.get(h).push(p);
-  }
-  const out = [];
-  for (const [hops, peers] of byHops) {
-    const r = hops * ringPx;
-    const n = peers.length;
-    peers.forEach((p, i) => {
-      const angle = (2 * Math.PI * i / n) - Math.PI / 2;
-      out.push({
-        dest:         p.dest,
-        display_name: p.display_name || '',
-        aspect:       p.aspect || 'transport',
-        hops:         hops,
-        age_ms:       p.age_ms || 0,
-        x:            cx + r * Math.cos(angle),
-        y:            cy + r * Math.sin(angle),
-      });
+    nodes.set(p.dest, {
+      dest:         p.dest,
+      display_name: p.display_name || '',
+      aspect:       p.aspect       || 'transport',
+      hops:         p.hops         || 0,
+      age_ms:       p.age_ms       || 0,
+      next_hop:     p.next_hop     || '',
+      next_hop_if:  p.next_hop_if  || '',
+      children:     [],
     });
   }
+  // Second: synthesise unknown-intermediate nodes for any next_hop
+  // that isn't itself in the path list.
+  for (const p of paths) {
+    if (!p.next_hop || p.next_hop === p.dest) continue;
+    if (nodes.has(p.next_hop))                continue;
+    nodes.set(p.next_hop, {
+      dest:         p.next_hop,
+      display_name: '',
+      aspect:       'transport',
+      hops:         Math.max(0, (p.hops || 0) - 1),
+      age_ms:       0,
+      next_hop_if:  p.next_hop_if || '',
+      is_unknown:   true,
+      children:     [],
+    });
+  }
+  // Third: wire children. Direct (1-hop) peers attach to self with
+  // their interface labelled on the connecting edge. Multi-hop peers
+  // attach to their next_hop node, which itself either resolves to
+  // another peer or to an unknown intermediate. Unknown intermediates
+  // attach to self.
+  for (const p of paths) {
+    const node   = nodes.get(p.dest);
+    if (!p.next_hop || p.next_hop === p.dest) {
+      self.children.push(node);
+    } else {
+      const parent = nodes.get(p.next_hop) || self;
+      parent.children.push(node);
+    }
+  }
+  for (const node of nodes.values()) {
+    if (node.is_unknown) self.children.push(node);
+  }
+  // Sort children of self so interface groupings cluster: LoRa first,
+  // then named interfaces alphabetically. Within each parent, peers
+  // by hops then display name.
+  self.children.sort((a, b) => {
+    const aIf = (a.next_hop_if || '').toLowerCase();
+    const bIf = (b.next_hop_if || '').toLowerCase();
+    return aIf.localeCompare(bIf);
+  });
+  const sortDescendants = (node) => {
+    node.children.sort((a, b) => {
+      if (a.hops !== b.hops) return a.hops - b.hops;
+      return (a.display_name || a.dest).localeCompare(b.display_name || b.dest);
+    });
+    for (const c of node.children) sortDescendants(c);
+  };
+  for (const c of self.children) sortDescendants(c);
+  return self;
+}
+
+// Reingold-Tilford-ish in spirit: bottom-up, each parent centred over
+// its children's horizontal extent. Single-pass since we don't need
+// the proper RT conflict-avoidance for our balanced-ish trees.
+function layoutTopologyTree(root, colPx, rowPx, topPx) {
+  let leafCursor = 0;
+  const walk = (node, depth) => {
+    node.y = topPx + depth * rowPx;
+    if (node.children.length === 0) {
+      node.x = (leafCursor + 0.5) * colPx;
+      leafCursor++;
+      return;
+    }
+    for (const c of node.children) walk(c, depth + 1);
+    const xs = node.children.map(c => c.x);
+    node.x = (Math.min(...xs) + Math.max(...xs)) / 2;
+  };
+  walk(root, 0);
+}
+
+function flattenTopologyTree(root) {
+  const out = [];
+  const walk = (n) => { out.push(n); for (const c of n.children) walk(c); };
+  walk(root);
   return out;
 }
 

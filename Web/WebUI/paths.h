@@ -30,6 +30,16 @@
         obj["aspect"] = it->aspect.empty() ? "transport" : it->aspect;
         // Live hop count from Transport.
         obj["hops"]   = (int)RNS::Transport::hops_to(it->destination);
+        // Next-hop destination hash and the outbound interface name —
+        // the SPA chains these to build a tree rather than a star, so
+        // a peer reached via rmap.world (TCP) shows as a child of the
+        // rmap node, not a direct edge from self. next_hop may equal
+        // the destination itself for direct (1-hop) peers; the SPA
+        // treats that as "no further chain".
+        RNS::Bytes nh = RNS::Transport::next_hop(it->destination);
+        if (!nh.empty()) obj["next_hop"] = nh.toHex();
+        const std::string nh_if = reticulum.get_next_hop_if_name(it->destination);
+        if (!nh_if.empty()) obj["next_hop_if"] = nh_if;
       }
       doc["count"] = (uint32_t)ring.size();
       send_json(req, 200, doc);

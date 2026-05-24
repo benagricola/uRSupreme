@@ -1191,16 +1191,22 @@ summary:hover { color: var(--text); }
    380px; .modal-wide expands to 460px for forms that need to fit two
    columns of inputs. */
 .modal-wide { max-width: 460px; }
-/* Topology modal is wider — the SVG graph needs the horizontal room
-   to spread peers around the centre without crowding the labels. */
-#modal-topology .modal { max-width: 640px; }
-#topology-svg {
-  display: block;
-  width: 100%;
-  height: auto;
+/* Topology modal width capped; the SVG inside scrolls horizontally
+   when the tree is wider than the viewport (e.g. when rmap is
+   connected and 30+ leaves share a single relay parent). */
+#modal-topology .modal { max-width: 720px; }
+#topology-svg-wrap {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-height: 60vh;
+}
+#topology-svg {
+  display: block;
+  height: 60vh;
+  min-width: 100%;
 }
 .cursor-pointer { cursor: pointer; }
 /* Small attachment-style chip used inside message bubbles. */

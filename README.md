@@ -28,6 +28,21 @@ discovery announces for community-map listeners like
 radio and transport stack. Everything is served from the device over
 WiFi.
 
+## Screenshots
+
+A walk through the web app on the LR1121 rig.
+
+| | |
+|:--:|:--:|
+| ![Login / identity picker](docs/img/01-login-picker.png) | ![Chat list](docs/img/02-chat-list.png) |
+| Pick which identity to log in as. | Conversations the device has had, grouped by peer. |
+| ![Conversation](docs/img/03-conversation.png) | ![Compose with attachment](docs/img/04-attach-tray.png) |
+| An in-progress chat including an inline image attachment. | Composing a message with a staged image. |
+| ![Settings: Connectivity](docs/img/05-settings-connectivity.png) | ![Settings: Discovery](docs/img/06-settings-discovery.png) |
+| Radio configuration: region preset, manual params, airtime caps. | rmap.world announce config and PoW stamp cost. |
+| ![Settings: Identity](docs/img/07-settings-identity.png) | ![System popover](docs/img/08-system-popover.png) |
+| Per-identity prefs: display name, announce cadence, attachments. | Heap, PSRAM, channel utilisation, GPS, battery. |
+
 ## A note on AI assistance
 
 Substantial portions of the code added in this fork have been written

@@ -3732,10 +3732,12 @@ function batteryBtnData() {
 // renders it as a top-down hierarchy: self → interfaces → relays →
 // leaf peers.
 function topologyModalData() {
-  // Layout constants.
-  const ROW_PX = 90;      // vertical gap between tree levels
-  const COL_PX = 110;     // horizontal slot per leaf
-  const TOP_PADDING_PX = 50;
+  // Layout constants. ringPx is the radial distance per tree depth
+  // (self at radius 0, direct children at ringPx, grandchildren at
+  // 2 × ringPx, …). PADDING leaves room around the outermost ring
+  // for node radii and labels.
+  const RING_PX = 100;
+  const PADDING_PX = 40;
   return {
     tree:     null,         // root node after build
     flat:     [],           // flat list of all nodes (for hit-testing + selection strip)
@@ -3743,7 +3745,11 @@ function topologyModalData() {
     loading:  false,
     error:    '',
     lastFetchedMs: 0,
-    // Computed viewBox dimensions (driven by leaf count).
+    // Computed viewBox origin + dimensions. The layout produces
+    // coordinates centred on (0, 0) — self sits at the origin and
+    // peers radiate out — so vbX / vbY are typically negative.
+    vbX: -300,
+    vbY: -210,
     vbW: 600,
     vbH: 420,
     get statusLine() {
@@ -3763,16 +3769,22 @@ function topologyModalData() {
         if (!r.ok) { this.error = 'Fetch failed (' + r.status + ').'; return; }
         const j = await r.json();
         this.tree = buildTopologyTree(j.paths || []);
-        layoutTopologyTree(this.tree, COL_PX, ROW_PX, TOP_PADDING_PX);
+        layoutTopologyTree(this.tree, 0, RING_PX, 0);
         this.flat = flattenTopologyTree(this.tree);
-        // Size the viewBox to the layout's extent, padded.
-        let maxX = 0, maxY = 0;
+        // Coordinates are centred on the origin (self at 0,0) and can
+        // be negative. Track full extent and translate via a viewBox
+        // origin shift so the SVG paints with origin in the middle.
+        let minX = 0, minY = 0, maxX = 0, maxY = 0;
         for (const n of this.flat) {
+          if (n.x < minX) minX = n.x;
+          if (n.y < minY) minY = n.y;
           if (n.x > maxX) maxX = n.x;
           if (n.y > maxY) maxY = n.y;
         }
-        this.vbW = Math.max(600, Math.ceil(maxX + COL_PX / 2));
-        this.vbH = Math.max(300, Math.ceil(maxY + 60));
+        this.vbX = Math.floor(minX - PADDING_PX);
+        this.vbY = Math.floor(minY - PADDING_PX);
+        this.vbW = Math.ceil((maxX - minX) + 2 * PADDING_PX);
+        this.vbH = Math.ceil((maxY - minY) + 2 * PADDING_PX);
         this.lastFetchedMs = Date.now();
         if (this.selected
             && !this.flat.some(n => n.dest === this.selected.dest)) {
@@ -3792,7 +3804,7 @@ function topologyModalData() {
       const svg = document.getElementById('topology-svg');
       if (!svg) return;
       const NS = 'http://www.w3.org/2000/svg';
-      svg.setAttribute('viewBox', `0 0 ${this.vbW} ${this.vbH}`);
+      svg.setAttribute('viewBox', `${this.vbX} ${this.vbY} ${this.vbW} ${this.vbH}`);
       while (svg.firstChild) svg.removeChild(svg.firstChild);
       if (!this.tree) return;
       const setAttrs = (el, attrs) => {
@@ -3986,23 +3998,45 @@ function buildTopologyTree(paths) {
   return self;
 }
 
-// Reingold-Tilford-ish in spirit: bottom-up, each parent centred over
-// its children's horizontal extent. Single-pass since we don't need
-// the proper RT conflict-avoidance for our balanced-ish trees.
-function layoutTopologyTree(root, colPx, rowPx, topPx) {
-  let leafCursor = 0;
-  const walk = (node, depth) => {
-    node.y = topPx + depth * rowPx;
-    if (node.children.length === 0) {
-      node.x = (leafCursor + 0.5) * colPx;
-      leafCursor++;
-      return;
-    }
-    for (const c of node.children) walk(c, depth + 1);
-    const xs = node.children.map(c => c.x);
-    node.x = (Math.min(...xs) + Math.max(...xs)) / 2;
+// Radial layout: self at the centre, each direct subtree gets an
+// angular sector around it proportional to that subtree's leaf count,
+// recursive children sub-divide their parent's sector. Position is
+// polar: radius = depth × ringPx, angle = midpoint of the node's
+// assigned sector. The viewBox origin is centred so x/y are negative
+// for the left/top hemisphere; renderSvg translates to canvas
+// coordinates.
+function layoutTopologyTree(root, _ignoredColPx, ringPx, _ignoredTopPx) {
+  const leafCount = (n) => {
+    if (n.children.length === 0) return 1;
+    let s = 0;
+    for (const c of n.children) s += leafCount(c);
+    return s;
   };
-  walk(root, 0);
+  const walk = (node, depth, a0, a1) => {
+    const fullCircle = (a1 - a0) >= 2 * Math.PI - 1e-6;
+    // Default mid-angle is the midpoint of the sector. If the sector
+    // is the whole circle (= the node is the only direct child of
+    // self), the midpoint is degenerate; pin it to 12 o'clock so the
+    // node doesn't collide with self at the origin.
+    const mid = fullCircle ? -Math.PI / 2 : (a0 + a1) / 2;
+    node.angle = mid;
+    if (depth === 0) {
+      node.x = 0; node.y = 0;
+    } else {
+      const r = depth * ringPx;
+      node.x = r * Math.cos(mid);
+      node.y = r * Math.sin(mid);
+    }
+    if (node.children.length === 0) return;
+    const total = leafCount(node);
+    let cursor = a0;
+    for (const c of node.children) {
+      const span = (a1 - a0) * (leafCount(c) / total);
+      walk(c, depth + 1, cursor, cursor + span);
+      cursor += span;
+    }
+  };
+  walk(root, 0, 0, 2 * Math.PI);
 }
 
 function flattenTopologyTree(root) {

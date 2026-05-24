@@ -1191,6 +1191,18 @@ summary:hover { color: var(--text); }
    380px; .modal-wide expands to 460px for forms that need to fit two
    columns of inputs. */
 .modal-wide { max-width: 460px; }
+/* Topology modal is wider — the SVG graph needs the horizontal room
+   to spread peers around the centre without crowding the labels. */
+#modal-topology .modal { max-width: 640px; }
+#topology-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.cursor-pointer { cursor: pointer; }
 /* Small attachment-style chip used inside message bubbles. */
 .chip {
   padding: 4px 8px;

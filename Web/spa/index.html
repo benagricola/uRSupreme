@@ -219,6 +219,10 @@
       <!-- chip / cpu -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
     </button>
+    <button class="icon" id="btn-topology" title="Network topology" @click="state.modals.topology = true">
+      <!-- network: three connected dots in a triangle -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><line x1="11" y1="7" x2="6" y2="16"/><line x1="13" y1="7" x2="18" y2="16"/><line x1="7" y1="18" x2="17" y2="18"/></svg>
+    </button>
     <button class="icon" id="btn-settings"  title="Settings" @click="openSettingsModal('identity', false)">
       <!-- gear -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -974,6 +978,52 @@
   </div>
 </div>
 
+<!-- ===================== TOPOLOGY MODAL ===================== -->
+<!-- Live view of every destination this device has heard an announce
+     from. Self at the centre, peers placed on rings by hop count, edge
+     colour by aspect (LXMF identity / propagation node / NomadNet node
+     / bare transport). Refreshes on open and on Refresh button. -->
+<div id="modal-topology" class="modal-bg z-260" x-data="topologyModalData()"
+     x-show="$store.s.modals.topology"
+     x-init="$watch('$store.s.modals.topology', o => { if (o) refresh(); })"
+     @click.self="state.modals.topology = false" x-cloak>
+  <div class="modal modal-wide">
+    <h3>Network topology</h3>
+    <div class="row items-center mb-10">
+      <span class="muted text-xs" x-text="statusLine"></span>
+      <div class="flex-1"></div>
+      <button class="ghost" @click="refresh()" :disabled="loading">Refresh</button>
+      <button class="secondary" @click="state.modals.topology = false">Close</button>
+    </div>
+    <!-- Body painted by renderSvg() in topologyModalData. Alpine's
+         <template x-for> doesn't switch to the SVG namespace, so the
+         children would come out as HTML elements and not render. We
+         own the DOM here via plain createElementNS instead. -->
+    <svg viewBox="0 0 600 420" id="topology-svg" preserveAspectRatio="xMidYMid meet"
+         xmlns="http://www.w3.org/2000/svg"
+         x-effect="nodes; renderSvg()"></svg>
+    <div class="muted text-xs mt-6">
+      Each dot is a destination this device has heard. Distance from the centre
+      reflects hop count. Colour reflects aspect: green = LXMF identity,
+      orange = LXMF propagation node, blue = NomadNet node, grey = transport.
+      Edges fade as announces get older.
+    </div>
+    <!-- Selected node detail strip. -->
+    <div class="card mt-10" x-show="selected" x-cloak>
+      <div class="row items-baseline gap-10">
+        <strong x-text="(selected && (selected.display_name || selected.dest.slice(0,8))) || ''"></strong>
+        <span class="muted text-xs" x-text="selected ? selected.aspect : ''"></span>
+      </div>
+      <div class="muted text-xs font-mono-inline" x-text="selected ? selected.dest : ''"></div>
+      <div class="muted text-xs mt-mini">
+        <span x-text="selected ? (selected.hops + ' hop' + (selected.hops === 1 ? '' : 's')) : ''"></span>
+        ·
+        <span x-text="selected ? formatAge(selected.age_ms) + ' ago' : ''"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ===================== IMAGE VIEWER MODAL ===================== -->
 <!-- Full-screen image preview opened by clicking any inline-rendered
      image attachment in a chat bubble. Tap the image to toggle between
@@ -1711,6 +1761,7 @@ let state = {
     convRetention:  false,
     idCode:         false,
     settings:       false,
+    topology:       false,
   },
   // Per-popover visibility flags. Same pattern as modals.
   popovers: {
@@ -3671,6 +3722,171 @@ function batteryBtnData() {
     },
   };
 }
+// Reactive data backing #modal-topology. Renders /api/paths as a
+// star graph: self at the centre, each known destination on a ring
+// keyed to hop count, edge colour per aspect, opacity per age.
+function topologyModalData() {
+  // SVG dimensions match the viewBox in markup. Keep cx/cy at the
+  // visual centre and scale ring radii from there.
+  const CX = 300, CY = 200, RING_PX = 90;
+  return {
+    nodes:    [],
+    selected: null,
+    loading:  false,
+    error:    '',
+    lastFetchedMs: 0,
+    cx: CX,
+    cy: CY,
+    // Hop rings drawn as faint guides. Bounded so a misreported
+    // 200-hop path can't push a ring off-screen.
+    get ringRadii() {
+      const maxHops = Math.min(4, Math.max(1, ...this.nodes.map(n => n.hops || 1)));
+      const rs = [];
+      for (let h = 1; h <= maxHops; h++) rs.push(h * RING_PX);
+      return rs;
+    },
+    get statusLine() {
+      if (this.error) return this.error;
+      if (this.loading) return 'Refreshing…';
+      const n = this.nodes.length;
+      return n + ' peer' + (n === 1 ? '' : 's') + ' known';
+    },
+    async refresh() {
+      this.loading = true;
+      this.error   = '';
+      try {
+        const tok = state.token;
+        if (!tok) { this.error = 'Not logged in.'; return; }
+        const r = await fetch('/api/paths',
+                              { headers: { 'Authorization': 'Bearer ' + tok } });
+        if (!r.ok) { this.error = 'Fetch failed (' + r.status + ').'; return; }
+        const j = await r.json();
+        this.nodes = layoutTopologyPaths(j.paths || [], this.cx, this.cy, RING_PX);
+        this.lastFetchedMs = Date.now();
+        // Drop selection if the selected peer is no longer in the set.
+        if (this.selected
+            && !this.nodes.some(n => n.dest === this.selected.dest)) {
+          this.selected = null;
+        }
+      } catch (e) {
+        this.error = 'Network error.';
+      } finally {
+        this.loading = false;
+      }
+    },
+    select(node) {
+      // Re-clicking the selected node deselects.
+      this.selected = (this.selected && this.selected.dest === node.dest) ? null : node;
+    },
+    renderSvg() {
+      const svg = document.getElementById('topology-svg');
+      if (!svg) return;
+      const NS = 'http://www.w3.org/2000/svg';
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      const setAttrs = (el, attrs) => {
+        for (const k in attrs) el.setAttribute(k, attrs[k]);
+        return el;
+      };
+      // Hop rings.
+      for (const r of this.ringRadii) {
+        svg.appendChild(setAttrs(document.createElementNS(NS, 'circle'), {
+          cx: this.cx, cy: this.cy, r: r,
+          fill: 'none', stroke: 'var(--border)', 'stroke-width': 1,
+          'stroke-dasharray': '3 4', opacity: 0.5,
+        }));
+      }
+      // Edges (self → peer).
+      for (const n of this.nodes) {
+        svg.appendChild(setAttrs(document.createElementNS(NS, 'line'), {
+          x1: this.cx, y1: this.cy, x2: n.x, y2: n.y,
+          stroke: this.aspectColor(n.aspect), 'stroke-width': 2,
+          opacity: this.ageOpacity(n.age_ms),
+        }));
+      }
+      // Self node.
+      svg.appendChild(setAttrs(document.createElementNS(NS, 'circle'), {
+        cx: this.cx, cy: this.cy, r: 22,
+        fill: 'var(--accent-2)', stroke: 'white', 'stroke-width': 2,
+      }));
+      const selfLabel = setAttrs(document.createElementNS(NS, 'text'), {
+        x: this.cx, y: this.cy + 4,
+        'text-anchor': 'middle', fill: 'white',
+        'font-size': 12, 'font-weight': 600,
+      });
+      selfLabel.textContent = 'self';
+      svg.appendChild(selfLabel);
+      // Peer circles + labels.
+      for (const n of this.nodes) {
+        const c = setAttrs(document.createElementNS(NS, 'circle'), {
+          cx: n.x, cy: n.y, r: 14,
+          fill: this.aspectColor(n.aspect),
+          stroke: 'white', 'stroke-width': 2,
+        });
+        c.style.cursor = 'pointer';
+        c.addEventListener('click', () => this.select(n));
+        svg.appendChild(c);
+        const label = setAttrs(document.createElementNS(NS, 'text'), {
+          x: n.x, y: n.y + 32,
+          'text-anchor': 'middle', 'font-size': 11, fill: 'var(--text)',
+        });
+        label.textContent = n.display_name || n.dest.slice(0, 8);
+        svg.appendChild(label);
+      }
+    },
+    aspectColor(a) {
+      switch (a) {
+        case 'lxmf.delivery':     return '#2ea043';  // green: person/identity
+        case 'lxmf.propagation':  return '#fb8c00';  // orange: propagation node
+        case 'nomadnetwork.node': return '#1e88e5';  // blue: NomadNet node
+        default:                  return '#6e7681';  // grey: transport / unknown
+      }
+    },
+    ageOpacity(ageMs) {
+      // 0 ms → 1.0, 24 h → 0.35. Linear-ish but capped.
+      const day = 24 * 60 * 60 * 1000;
+      const t   = Math.max(0, Math.min(1, ageMs / day));
+      return 1.0 - t * 0.65;
+    },
+    formatAge(ms) {
+      if (ms < 60_000)    return Math.floor(ms / 1000) + 's';
+      if (ms < 3_600_000) return Math.floor(ms / 60_000) + 'm';
+      if (ms < 86_400_000) return Math.floor(ms / 3_600_000) + 'h';
+      return Math.floor(ms / 86_400_000) + 'd';
+    },
+  };
+}
+
+// Position each path entry on a ring. Same-hop peers split the
+// circumference evenly; the +π/2 offset starts the first peer at the
+// top so the layout doesn't look lopsided when there's only one or
+// two peers.
+function layoutTopologyPaths(paths, cx, cy, ringPx) {
+  const byHops = new Map();
+  for (const p of paths) {
+    const h = Math.max(1, Math.min(4, p.hops | 0 || 1));
+    if (!byHops.has(h)) byHops.set(h, []);
+    byHops.get(h).push(p);
+  }
+  const out = [];
+  for (const [hops, peers] of byHops) {
+    const r = hops * ringPx;
+    const n = peers.length;
+    peers.forEach((p, i) => {
+      const angle = (2 * Math.PI * i / n) - Math.PI / 2;
+      out.push({
+        dest:         p.dest,
+        display_name: p.display_name || '',
+        aspect:       p.aspect || 'transport',
+        hops:         hops,
+        age_ms:       p.age_ms || 0,
+        x:            cx + r * Math.cos(angle),
+        y:            cy + r * Math.sin(angle),
+      });
+    });
+  }
+  return out;
+}
+
 // Reactive data backing the radio/wifi/transport popover. Every field
 // is computed from $store.s.lastInfo / $store.s.radioTlm.
 function statusPopoverData() {

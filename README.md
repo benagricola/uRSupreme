@@ -285,5 +285,13 @@ Quick start section uses.
 
 ## Licence
 
-GPLv3, inherited from RNode_Firmware. See the upstream repositories
-for their respective licences.
+μRSupreme as a whole is published under GPL-3.0 (see [LICENSE](LICENSE)).
+The fork inherits the licence from microReticulum_Firmware, which in
+turn inherits it from RNode_Firmware.
+
+Individual upstream libraries that the build links in keep their own
+licences (MIT, BSD-2-Clause, Apache-2.0, and LGPL-3.0 between them).
+Anyone reusing a specific file or library extracted from this project
+is bound by that file's original licence, not by GPL-3.0. The full
+inventory, including notes on GPL-3.0 compatibility and how to add new
+dependencies, is in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

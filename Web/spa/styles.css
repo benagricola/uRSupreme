@@ -1191,22 +1191,6 @@ summary:hover { color: var(--text); }
    380px; .modal-wide expands to 460px for forms that need to fit two
    columns of inputs. */
 .modal-wide { max-width: 460px; }
-/* Topology modal: radial tree layout fits naturally in a square-ish
-   aspect ratio, so we cap the modal slightly wider than the rest and
-   give the SVG a comfortable viewport-height. */
-#modal-topology .modal { max-width: 720px; }
-#topology-svg-wrap {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-#topology-svg {
-  display: block;
-  width: 100%;
-  max-height: 65vh;
-}
-.cursor-pointer { cursor: pointer; }
 /* Small attachment-style chip used inside message bubbles. */
 .chip {
   padding: 4px 8px;

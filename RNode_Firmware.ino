@@ -466,7 +466,7 @@ static void heap_sampler_task(void* /*arg*/) {
             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
 
@@ -823,6 +823,13 @@ void setup() {
       // Take periodic display refresh off the main loop so radio-busy
       // periods can't stall the OLED.
       if (disp_ready) start_display_refresh_task();
+      // Heap sampler — periodic [HEAP] line on serial so we can
+      // observe SRAM trajectory under load. Cheap (one read of the
+      // heap stats per tick) and only emits a single log line per
+      // sample, but the sampler task itself does occupy 3 KB of
+      // stack. Disable by commenting this out if you need every
+      // last byte back.
+      start_heap_sampler_task();
     #endif
   #endif
 

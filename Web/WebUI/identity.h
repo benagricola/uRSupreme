@@ -40,6 +40,20 @@
       // Convenience boolean for "the softAP at 10.0.0.1 is also reachable
       // right now" — true in any APSTA phase, false elsewhere.
       doc["ap_active"] = (wifi_mode == WR_WIFI_AP || wifi_mode == WR_WIFI_APSTA);
+      // Diagnostic snapshot of internal-SRAM headroom. Lets an external
+      // poller correlate HTTP latency / hangs with heap pressure
+      // without having to scrape serial. Internal/DMA are the SRAM
+      // pools AsyncWebServer + lwIP allocate from; PSRAM is plentiful
+      // and tracked separately. min_free_internal is the watermark
+      // (lowest internal-SRAM-free since boot) — when this approaches
+      // 0 the next per-request alloc fails.
+      JsonObject mem = doc["mem"].to<JsonObject>();
+      mem["free_internal"]      = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+      mem["largest_internal"]   = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+      mem["min_free_internal"]  = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+      mem["free_dma"]           = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_DMA);
+      mem["largest_dma"]        = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
+      mem["free_psram"]         = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
       // Last transient status message (Common::Status). Lets the SPA
       // surface the WiFi countdown / lifecycle in a topbar tag without
       // its own polling endpoint. Omitted entirely when the ring is

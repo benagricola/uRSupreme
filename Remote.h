@@ -190,11 +190,9 @@ void wifi_remote_start_sta() {
   //Serial.println(wr_wifi_status);
   wifi_initialized = true;
   wr_last_connect_try = millis();
-  if (wr_ssid[0] != 0x00) {
-    char buf[64];
-    snprintf(buf, sizeof(buf), "WiFi: connecting %s", wr_ssid);
-    Common::Status::say(buf);
-  }
+  // No "WiFi: connecting <SSID>" affirmation — the topbar WiFi icon
+  // already shows the state, and the marquee strip is reserved for
+  // things the user can act on (errors, recovery countdown).
 }
 
 void wifi_remote_stop() {
@@ -520,13 +518,13 @@ void wifi_update_status() {
   wr_wifi_status = WiFi.status();
   if (wr_wifi_status == WL_CONNECTED) {
     wr_device_ip = WiFi.localIP();
-    // First-time STA-connect this boot: announce the URL and disarm
-    // the AP-recovery timer permanently. Subsequent drops will retry
-    // STA without ever bringing up the AP.
+    // First-time STA-connect this boot: clear any countdown / "no
+    // network" message the marquee was showing, disarm the AP-recovery
+    // timer permanently. We don't announce the IP on the marquee —
+    // the WiFi icon shows connected state and the SPA / /api/info
+    // surface the IP for anyone who needs it.
     if (wr_sta_fallback_armed) {
-      char buf[64];
-      snprintf(buf, sizeof(buf), "WiFi: %s", wr_device_ip.toString().c_str());
-      Common::Status::say(buf, 8000);
+      Common::Status::clear();
     }
     wr_sta_fallback_armed = false;
     // mDNS: advertise the device under wr_hostname.local so the SPA
@@ -590,7 +588,11 @@ void wifi_update_status() {
         snprintf(buf, sizeof(buf), "WiFi: no network, AP in %lu:%02lu",
                  (unsigned long)(remaining_s / 60),
                  (unsigned long)(remaining_s % 60));
-        Common::Status::update(buf);
+        // 1.5 s TTL: each update auto-expires before the next one
+        // arrives, so when STA finally connects (and we stop updating)
+        // the message naturally falls off the marquee within ~1.5 s
+        // without needing a separate clear.
+        Common::Status::update(buf, 1500);
         s_next_countdown_ms = millis() + 1000;
       }
     }

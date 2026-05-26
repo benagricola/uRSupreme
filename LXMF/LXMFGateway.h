@@ -9,6 +9,7 @@
 #include "../Storage/SDCard.h"
 #include "../Storage/OutboundStaging.h"
 #include "../Storage/Streaming.h"
+#include "../Common/Status.h"   // OLED marquee for in-flight RX progress
 #include <SD.h>
 
 #include <memory>
@@ -572,6 +573,9 @@ namespace LXMF {
           });
       // Resource progress: fire SSE events so the SPA can render an
       // in-flight progress bar on the mid-transfer message bubble.
+      // Also surfaces inbound progress on the OLED marquee so a user
+      // looking at the device (not the SPA) knows a transfer is
+      // landing and how far through it is.
       a.lxmf.set_progress_callback(
           [p](const RNS::Bytes& peer_hash, const RNS::Bytes& link_hash,
               bool incoming, uint32_t bytes_done, uint32_t bytes_total) {
@@ -579,6 +583,26 @@ namespace LXMF {
             Web::publish_lxmf_progress(p->id, peer_hash, link_hash,
                                        incoming, bytes_done, bytes_total,
                                        /*finished=*/false);
+            // OLED marquee: incoming only. Outbound progress is shown
+            // by the SPA on the bubble; the device-side user isn't
+            // typically watching their own send. Use update() (not
+            // say()) so the ring head slot is reused for each chunk
+            // instead of stacking N messages per transfer. 5 s TTL
+            // means the marquee auto-clears if the transfer aborts
+            // mid-flight rather than getting stuck on the last %.
+            if (incoming && bytes_total > 0) {
+              const uint32_t pct = (uint32_t)(((uint64_t)bytes_done * 100)
+                                              / bytes_total);
+              char buf[Common::Status::MAX_MESSAGE_LEN];
+              if (bytes_total < 1024) {
+                snprintf(buf, sizeof(buf), "Recv %uB %u%%",
+                         (unsigned)bytes_total, (unsigned)pct);
+              } else {
+                snprintf(buf, sizeof(buf), "Recv %uK %u%%",
+                         (unsigned)(bytes_total / 1024), (unsigned)pct);
+              }
+              Common::Status::update(buf, 5000);
+            }
           });
       // Inbound receive-complete: symmetric counterpart to the outbox
       // Sent/Delivered terminal in set_outbox_status_callback above.

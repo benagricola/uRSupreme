@@ -50,6 +50,7 @@
 // widths, causing the code to overflow the 64-px disp_area on some
 // glyph combinations.
 #include "Fonts/Picopixel.h"
+#include "Common/Status.h"     // marquee strip at the bottom of stat_area
 #define DISP_W 128
 #define DISP_H 64
 
@@ -802,6 +803,87 @@ void draw_waterfall(int px, int py) {
 }
 
 bool stat_area_intialised = false;
+// Render any non-expired Common::Status message as a scrolling marquee
+// across the bottom strip of stat_area (rows 56-63 of the 64×64
+// canvas, = screen rows 120-127 in portrait). Overlays the
+// battery/quality/signal indicators when a message is present; reverts
+// to the normal bar when the ring is empty. Picopixel is used because
+// it's the only monospace font we ship that fits 6 px tall.
+//
+// Scrolling: text wider than 64 px slides left by 1 px per
+// update_display() tick (~30 Hz → ~30 px/s), with a 16 px pause at
+// the start and a wrap-around when the tail clears the left edge.
+// Reset to position 0 whenever the message text changes (FNV-1a hash
+// over the bytes — cheap and good enough for "did the string change").
+static void draw_status_marquee(int px, int py, int width, int height) {
+  char buf[Common::Status::MAX_MESSAGE_LEN];
+  if (!Common::Status::latest(buf, sizeof(buf))) return;
+  if (buf[0] == '\0') return;
+
+  // Hash for change detection — FNV-1a 32-bit. Any change in the
+  // message text resets the scroll position and re-introduces the
+  // head-pause.
+  uint32_t h = 2166136261u;
+  for (const char* c = buf; *c; c++) {
+    h ^= (uint8_t)*c;
+    h *= 16777619u;
+  }
+  static uint32_t last_hash      = 0;
+  static uint32_t scroll_anchor  = 0;  // wall-clock anchor for time-based scroll
+  if (h != last_hash) {
+    last_hash     = h;
+    scroll_anchor = millis() + 600;  // hold head visible 600 ms before scrolling
+  }
+
+  // Measure text in Picopixel.
+  stat_area.setFont(&Picopixel);
+  stat_area.setTextSize(1);
+  stat_area.setTextWrap(false);
+  int16_t  bx, by;
+  uint16_t bw, bh;
+  stat_area.getTextBounds(buf, 0, 0, &bx, &by, &bw, &bh);
+
+  // Clear the marquee strip — black background, full-width.
+  stat_area.fillRect(px, py, width, height, SSD1306_BLACK);
+  stat_area.setTextColor(SSD1306_WHITE);
+
+  // Picopixel baseline is at the bottom of the glyph; py+6 lands a
+  // 6-px-tall glyph inside the strip with 1 px of headroom.
+  const int baseline_y = py + 6;
+
+  if ((int)bw <= width) {
+    // Fits — centre it, no scroll.
+    const int cx = px + (width - (int)bw) / 2;
+    stat_area.setCursor(cx, baseline_y);
+    stat_area.print(buf);
+  } else {
+    // Scroll at ~80 px/s, derived from elapsed wall-clock time rather
+    // than per-frame stepping. That keeps the speed predictable even
+    // if frames are skipped (e.g. during a busy serial burst). 80 px/s
+    // ≈ 20 Picopixel chars / s — fast enough to read a 60-char line in
+    // under 4 s, slow enough to actually read it.
+    constexpr int SCROLL_PX_PER_SEC = 80;
+    constexpr int GAP_PX            = 12;
+    const  int    loop_w            = (int)bw + GAP_PX;
+    const  uint32_t now             = millis();
+    int scroll_px = 0;
+    if ((int32_t)(now - scroll_anchor) > 0) {
+      const uint32_t elapsed_ms = now - scroll_anchor;
+      scroll_px = (int)((elapsed_ms * SCROLL_PX_PER_SEC) / 1000);
+      scroll_px %= loop_w;
+    }
+    stat_area.setCursor(px - scroll_px, baseline_y);
+    stat_area.print(buf);
+    // Repeat once shifted by loop width so the wrap-around is visible
+    // without a blank frame.
+    stat_area.setCursor(px - scroll_px + loop_w, baseline_y);
+    stat_area.print(buf);
+  }
+
+  // Restore the default font so callers don't see Picopixel leak out.
+  stat_area.setFont(SMALL_FONT);
+}
+
 void draw_stat_area() {
   if (device_init_done) {
     if (!stat_area_intialised) {
@@ -819,6 +901,9 @@ void draw_stat_area() {
     if (radio_online) {
       draw_waterfall(27, 4);
     }
+    // Marquee — drawn LAST so it overlays the indicator strip when a
+    // status message is present.
+    draw_status_marquee(0, 56, 64, 8);
   }
 }
 

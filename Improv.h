@@ -353,12 +353,11 @@ inline void loop() {
     prov_in_progress() = false;
     send_current_state();   // STATE_PROVISIONED via effective_state()
     NOTICEF("Improv: STA up, IP %s", WiFi.localIP().toString().c_str());
-    char buf[64];
-    snprintf(buf, sizeof(buf), "Improv: %s", WiFi.localIP().toString().c_str());
-    // Sticky success message — there's nothing more useful to say
-    // after provisioning succeeds, and we don't want the older
-    // "provisioning…" message to come back into view.
-    Common::Status::say(buf);
+    // No IP-on-marquee affirmation — the WiFi icon shows connected
+    // state and the URL has already been handed back over USB-CDC to
+    // the web flasher. Clear so the "Improv: provisioning" message
+    // doesn't linger.
+    Common::Status::clear();
   } else if ((millis() - prov_started_ms()) >= PROVISION_TIMEOUT_MS) {
     send_error_state(ERR_UNABLE_TO_CONNECT);
     prov_in_progress() = false;

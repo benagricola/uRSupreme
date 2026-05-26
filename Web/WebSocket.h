@@ -32,6 +32,9 @@
 #include <vector>
 #include <string>
 #include <stdint.h>
+#include <esp_heap_caps.h>
+#include <memory>
+#include <type_traits>
 #include "../LXMF/LXMFTypes.h"
 #include "../LXMF/AnnounceLog.h"
 #include "../Telemetry/Radio.h"
@@ -100,19 +103,91 @@ namespace WS {
   // sized exactly from measureJson(doc), serialised directly into via
   // serializeJson(doc, ptr, len). The shared_ptr is ref-counted across
   // all targeted clients — srv.text(id, buf) does NOT copy.
+  // PSRAM-backed AsyncWebSocketSharedBuffer construction.
+  //
+  // AsyncWebSocketSharedBuffer is `std::shared_ptr<std::vector<uint8_t>>`
+  // (typedef in ESPAsyncWebServer/AsyncWebSocket.h), and the inner
+  // std::vector uses the default `std::allocator<uint8_t>` which goes
+  // to internal SRAM. With the 1 Hz sensor / radio-telemetry /
+  // progress broadcasts, every call allocates `n` bytes of internal
+  // SRAM, serializes the JSON in, then frees on shared_ptr refcount
+  // drop. Even though net usage stays flat, the alloc/free churn
+  // fragments internal SRAM until the WiFi PHY can't grab a 1.6 KB
+  // esf_buf and the device crashes.
+  //
+  // Fix: build a shared_ptr<std::vector<uint8_t>> whose backing
+  // storage lives in PSRAM. We can't change the vector's allocator
+  // type (would change `std::vector<uint8_t>` to a different type the
+  // lib won't accept), but we *can* swap out the destructor via the
+  // shared_ptr's custom-deleter slot, and we *can* construct a
+  // layout-compatible "fake vector" whose pointer triplet (start,
+  // finish, end_of_storage) points into PSRAM-allocated memory.
+  //
+  // Layout assumption: libstdc++ implements std::vector<T, Alloc>
+  // (with empty Alloc via EBO) as three raw pointers in this order:
+  //   T* _M_start
+  //   T* _M_finish
+  //   T* _M_end_of_storage
+  // The static_assert below catches any future ABI break.
+  namespace _psram_ws {
+    struct VecGuts {
+      uint8_t* start;
+      uint8_t* finish;
+      uint8_t* end_of_storage;
+    };
+    static_assert(sizeof(VecGuts) == sizeof(std::vector<uint8_t>),
+                  "std::vector<uint8_t> layout assumption broken");
+    static_assert(std::is_standard_layout<VecGuts>::value,
+                  "VecGuts must be standard layout for type-punning");
+  }
+
+  // Build a PSRAM-backed AsyncWebSocketSharedBuffer of `n` bytes.
+  // Returns an empty shared_ptr on PSRAM exhaustion (8 MB; unlikely).
+  // The custom deleter frees both PSRAM allocations and crucially
+  // does NOT call ~vector() — which would try std::allocator::
+  // deallocate on PSRAM memory and crash.
+  inline AsyncWebSocketSharedBuffer make_psram_ws_buffer(size_t n) {
+    auto* data = static_cast<uint8_t*>(
+      heap_caps_malloc(n, MALLOC_CAP_SPIRAM));
+    if (!data) return {};
+    auto* guts = static_cast<_psram_ws::VecGuts*>(
+      heap_caps_malloc(sizeof(_psram_ws::VecGuts), MALLOC_CAP_SPIRAM));
+    if (!guts) { heap_caps_free(data); return {}; }
+    guts->start          = data;
+    guts->finish         = data + n;
+    guts->end_of_storage = data + n;
+    auto deleter = [data, guts](std::vector<uint8_t>* /*v*/) {
+      // Deliberately do NOT call v->~vector() — the vector was never
+      // constructed (we type-punned VecGuts onto it). Calling the dtor
+      // would invoke std::allocator::deallocate on `data`, which lives
+      // in PSRAM, not the default heap → crash.
+      heap_caps_free(data);
+      heap_caps_free(guts);
+    };
+    return AsyncWebSocketSharedBuffer(
+      reinterpret_cast<std::vector<uint8_t>*>(guts),
+      std::move(deleter));
+  }
+
   inline void broadcast(const JsonDocument& doc, const LXMF::IdentityId& scope = {}) {
+    // Early out when nobody's listening — covers the LR-rig boot case
+    // where the SPA hasn't connected yet and 1 Hz emitters would
+    // otherwise generate a steady stream of unwanted alloc/free
+    // cycles. Even though our PSRAM-backed make_psram_ws_buffer
+    // doesn't churn internal SRAM, doing the JSON measure +
+    // serialization is still wasted work with no subscribers.
+    bool any_subscriber = false;
+    for (const auto& c : clients()) {
+      if (!c.authed) continue;
+      if (!scope.empty() && c.identity_id != scope) continue;
+      any_subscriber = true;
+      break;
+    }
+    if (!any_subscriber) return;
     const size_t n = measureJson(doc);
     if (n == 0) return;
-    AsyncWebSocketSharedBuffer buf;
-    try {
-      buf = std::make_shared<std::vector<uint8_t>>(n);
-    }
-    catch (const std::bad_alloc&) {
-      // Default heap is too fragmented to allocate even the buffer.
-      // Silently drop the event — losing a sensor_update is preferable
-      // to crashing or recursively fragmenting the heap further.
-      return;
-    }
+    AsyncWebSocketSharedBuffer buf = make_psram_ws_buffer(n);
+    if (!buf) return;  // PSRAM exhausted; drop the event silently
     serializeJson(doc, buf->data(), n);
     auto& srv = server();
     for (const auto& c : clients()) {

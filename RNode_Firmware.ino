@@ -64,6 +64,8 @@ SPIClass SDSPI(HSPI);
   #include <esp_task_wdt.h>
   #include <esp_heap_caps.h>
   #include <esp_debug_helpers.h>  // esp_backtrace_print() in on_heap_alloc_failed
+  #include <esp_timer.h>          // periodic heap-watermark sampler
+  #include "Common/HeapWatermark.h"
 #endif
 
 // WDT timeout
@@ -450,39 +452,6 @@ static void start_display_refresh_task() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Heap sampler — periodic DMA-cap + internal-SRAM heap stats so we can see
-// the moment-by-moment trajectory during Resource transfers. Without this
-// we only see snapshots at AES enc[ENTER/EXIT]; with it we see what
-// happens in between (where the 11.6 KiB drain over 977 ms was observed).
-//
-// Output every 100 ms; lots of serial volume but tractable. Set sampling
-// interval lower (e.g. 50 ms) if needed for finer trajectory.
-// ---------------------------------------------------------------------------
-static void heap_sampler_task(void* /*arg*/) {
-  for (;;) {
-    NOTICEF("[HEAP] dma_free=%u dma_largest=%u int_free=%u int_largest=%u",
-            (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
-            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA),
-            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-    vTaskDelay(pdMS_TO_TICKS(1000));
-  }
-}
-
-static void start_heap_sampler_task() {
-  static TaskHandle_t handle = nullptr;
-  if (handle) return;
-  xTaskCreatePinnedToCore(
-    heap_sampler_task,
-    "heap_sampler",
-    3072,
-    nullptr,
-    1,
-    &handle,
-    0  // core 0
-  );
-}
 
 // Alloc-failure hook — fires from inside heap_caps_malloc when it returns
 // NULL. We get the requested size, requested caps, and the calling
@@ -513,6 +482,31 @@ static void on_heap_alloc_failed(size_t size, uint32_t caps, const char* functio
     // Dump heap info for the requested caps mask — prints each free
     // block size + count per region. Reveals fragmentation pattern.
     heap_caps_print_heap_info(caps);
+  }
+}
+#endif
+
+// Internal-SRAM low-water sampler. Driven from the IDF esp_timer service
+// task, so there is no dedicated task and no extra stack: that task
+// already exists in every IDF/Arduino build. Deliberately outside the
+// HAS_DISPLAY guard so it runs on headless boards too. 250 ms is ample
+// because heap_caps_get_minimum_free_size() already records the exact
+// since-boot trough; this only feeds the resettable per-window low that
+// /api/diag/mem exposes.
+#if MCU_VARIANT == MCU_ESP32
+static void start_heap_watermark_timer() {
+  static esp_timer_handle_t handle = nullptr;
+  if (handle) return;
+  const esp_timer_create_args_t args = {
+    .callback              = [](void*) { Common::HeapWatermark::sample(); },
+    .arg                   = nullptr,
+    .dispatch_method       = ESP_TIMER_TASK,
+    .name                  = "heapwm",
+    .skip_unhandled_events = true,
+  };
+  if (esp_timer_create(&args, &handle) == ESP_OK) {
+    esp_timer_start_periodic(handle, 250000);  // 250 ms
+    Common::HeapWatermark::mark();             // seed the first window
   }
 }
 #endif
@@ -573,14 +567,40 @@ void setup() {
 	//printf("Total flash: %zu bytes\n", RNS::Utilities::OS::storage_size());
 
 #if defined(ESP32)
-  // Heap diagnostic — register failure callback. Sampler task is
-  // disabled (concurrent Serial writes from two tasks tangle the output
-  // at the per-byte level). The per-encrypt AES enc[ENTER/EXIT] logs
-  // and the alloc-failure dump are sufficient + serialised.
+  // Heap diagnostics. The alloc-failure callback fires with a backtrace +
+  // pool dump when any heap_caps_malloc returns NULL. The watermark timer
+  // samples internal-SRAM free continuously. Both are display-independent.
+  // The old 1 Hz serial [HEAP] sampler task is gone — its data is served
+  // over /api/diag/mem instead (exact since-boot trough + resettable
+  // per-window low), which avoids the two-tasks-tangling-Serial problem.
   heap_caps_register_failed_alloc_callback(on_heap_alloc_failed);
+#endif
+#if MCU_VARIANT == MCU_ESP32
+  start_heap_watermark_timer();
 #endif
 
 #if defined(ESP32)
+  // Route generic heap allocations >= this size to PSRAM, leaving scarce
+  // internal SRAM for the allocations that MUST be internal — WiFi
+  // esf_buf, lwIP pbufs and DMA descriptors request MALLOC_CAP_INTERNAL /
+  // MALLOC_CAP_DMA explicitly and bypass this threshold, so the relief is
+  // one-directional: our message bodies, JSON/HTTP scratch and container
+  // nodes move out of internal, and the WiFi stack keeps the internal
+  // headroom it cannot get anywhere else.
+  //
+  // The IDF default (CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL) is 4096. 512 was
+  // chosen empirically on the LR rig: the bulk of unrouted internal
+  // allocations sit in the 512..2048 band, so a 2048 threshold freed
+  // almost nothing and the device still crash-looped under the rmap.world
+  // announce firehose, whereas 512 lifts idle internal-free from ~40K to
+  // ~69K and holds a >39K floor under sustained transport+web+LoRa load
+  // (historical floor without this was ~32 bytes). Tunable via
+  // -DHEAP_EXTMEM_THRESHOLD=N.
+  #ifndef HEAP_EXTMEM_THRESHOLD
+    #define HEAP_EXTMEM_THRESHOLD 512
+  #endif
+  heap_caps_malloc_extmem_enable(HEAP_EXTMEM_THRESHOLD);
+
   // Reserve 32 KiB (2 x 16 KiB) of MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL
   // for Token's AES staging scratch. This MUST happen before BLE and
   // WiFi initialise — once they're up they consume most of the DMA-cap
@@ -823,13 +843,6 @@ void setup() {
       // Take periodic display refresh off the main loop so radio-busy
       // periods can't stall the OLED.
       if (disp_ready) start_display_refresh_task();
-      // Heap sampler — periodic [HEAP] line on serial so we can
-      // observe SRAM trajectory under load. Cheap (one read of the
-      // heap stats per tick) and only emits a single log line per
-      // sample, but the sampler task itself does occupy 3 KB of
-      // stack. Disable by commenting this out if you need every
-      // last byte back.
-      start_heap_sampler_task();
     #endif
   #endif
 

@@ -19,6 +19,7 @@
 #include "../Common/RnsLock.h"
 #include "../Common/WifiTransition.h"   // shared APSTA-state types
 #include "../Common/Status.h"           // Status::latest for /api/info
+#include "../Common/HeapWatermark.h"    // window_low for /api/diag/mem
 
 // Variables and constants owned by Remote.h's WiFi state machine.
 // Remote.h is included after WebUI.h in the .ino translation unit,
@@ -684,6 +685,10 @@ namespace Web {
       server.on("/alpine.min.js", HTTP_GET, handle_alpine_js);
       // Public
       server.on("/api/info",          HTTP_GET,  handle_info);
+      // Diagnostics (bearer-gated). GET reads heap headroom; POST resets
+      // the per-window low-water marker (Common::HeapWatermark).
+      server.on("/api/diag/mem",      HTTP_GET,  handle_diag_mem);
+      on_json_post("/api/diag/mem",     handle_diag_mem_reset);
       // Auth
       on_json_post("/api/auth/login",   handle_login);
       server.on("/api/auth/logout",   HTTP_POST, handle_logout);
@@ -823,6 +828,7 @@ namespace Web {
     #include "WebUI/helpers.h"
     #include "WebUI/static_assets.h"
     #include "WebUI/identity.h"
+    #include "WebUI/diag.h"
     #include "WebUI/system.h"
     #include "WebUI/time_gps.h"
     #include "WebUI/config_storage.h"

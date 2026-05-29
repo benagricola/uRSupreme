@@ -263,7 +263,7 @@ void on_receive_packet(const RNS::Bytes& raw, const RNS::Interface& interface) {
 	}
 #endif  // HAS_SDCARD
 
-#if defined(HAS_LXMF_GATEWAY)
+#if defined(HAS_LXMF_GATEWAY) && defined(RNS_VERBOSE_DIAG)
   // Diagnostic: log every inbound packet at the raw-bytes level before
   // attempting an unpack, so we see packets that may be in a format we
   // can't parse. Then attempt unpack and classify by packet_type.
@@ -326,7 +326,7 @@ void on_transmit_packet(const RNS::Bytes& raw, const RNS::Interface& interface) 
 	}
 #endif  // HAS_SDCARD
 
-#if defined(HAS_LXMF_GATEWAY)
+#if defined(HAS_LXMF_GATEWAY) && defined(RNS_VERBOSE_DIAG)
   NOTICEF("TX RAW %u bytes (head: %02x %02x %02x %02x)",
           (unsigned)raw.size(),
           raw.size() > 0 ? raw.data()[0] : 0,
@@ -1845,7 +1845,7 @@ void transmit(uint16_t size) {
 #endif
   }
   if (radio_online) {
-#if defined(HAS_LXMF_GATEWAY)
+#if defined(HAS_LXMF_GATEWAY) && defined(RNS_VERBOSE_DIAG)
     NOTICEF("LoRa TX from queue: size=%u (head: %02x %02x %02x %02x) promisc=%d",
             (unsigned)size,
             size > 0 ? tbuf[0] : 0, size > 1 ? tbuf[1] : 0,

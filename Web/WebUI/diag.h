@@ -27,6 +27,29 @@
       doc["free_psram"]        = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
       doc["window_low"]        = Common::HeapWatermark::window_low();
       doc["window_start_ms"]   = Common::HeapWatermark::window_start_ms();
+      // Leak-vs-fragmentation discriminator. int_allocated rising over time is
+      // a real internal-SRAM leak (something holds ever more bytes). Flat
+      // int_allocated with int_free_blocks rising and largest_internal falling
+      // is pure fragmentation (same bytes, more scattered). int_alloc_blocks
+      // rising flags accumulation of many small long-lived allocations.
+      multi_heap_info_t hi;
+      heap_caps_get_info(&hi, MALLOC_CAP_INTERNAL);
+      doc["int_allocated"]     = (uint32_t)hi.total_allocated_bytes;
+      doc["int_alloc_blocks"]  = (uint32_t)hi.allocated_blocks;
+      doc["int_free_blocks"]   = (uint32_t)hi.free_blocks;
+      // WebSocket backpressure: a growing aggregate send-queue means the client
+      // drains slower than we broadcast, so AsyncWebSocket/AsyncTCP retain
+      // frames (internal-SRAM message objects + TX buffers) - a prime suspect
+      // for internal-SRAM growth that tracks WS activity.
+      size_t ws_queue = 0; uint32_t ws_clients = 0;
+      for (const auto& c : Web::WS::clients()) {
+        if (!c.authed) continue;
+        ws_clients++;
+        AsyncWebSocketClient* wc = Web::WS::server().client(c.client_id);
+        if (wc) ws_queue += wc->queueLen();
+      }
+      doc["ws_clients"]        = ws_clients;
+      doc["ws_queue"]          = (uint32_t)ws_queue;
       send_json(req, 200, doc);
     }
 

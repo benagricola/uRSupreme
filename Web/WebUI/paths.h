@@ -9,11 +9,9 @@
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
       // We read from AnnounceLog::paths() rather than Transport's path
-      // table because microReticulum's get_path_table() returns the
-      // in-memory _path_table which is dead code in current versions
-      // (see Transport.cpp:2204-2216 — the surrounding logic was
-      // migrated to the microStore-backed _new_path_table which has no
-      // public iteration API). Our path log is fed by an
+      // table: the live table is the microStore-backed (flash) _new_path_table,
+      // which is private and has no public iteration API, and walking it per
+      // request would decode every entry from flash. Our path log is fed by an
       // AnnounceHandler registered with nullptr aspect_filter, so it
       // sees every announce regardless of aspect.
       const auto& ring = LXMF::AnnounceLog::paths();

@@ -70,6 +70,8 @@
       ae["interfaces"]  = aq_ifaces;
       ae["drained"]     = RNS::Interface::drained_announces();
       ae["bitrate_max"] = br_max;
+      ae["rate_blocks"] = RNS::Transport::announce_rate_blocks();
+      ae["rate_table"]  = (uint32_t)RNS::Transport::get_announce_rate_table().size();
       // Inbound safety drops (malformed/misflagged packets rejected before
       // parsing). `ifac` should stay ~0 on the open rmap network; a climbing
       // value would mean legitimate traffic is being dropped by the IFAC-flag

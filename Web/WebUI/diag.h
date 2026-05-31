@@ -70,6 +70,13 @@
       ae["interfaces"]  = aq_ifaces;
       ae["drained"]     = RNS::Interface::drained_announces();
       ae["bitrate_max"] = br_max;
+      // Inbound safety drops (malformed/misflagged packets rejected before
+      // parsing). `ifac` should stay ~0 on the open rmap network; a climbing
+      // value would mean legitimate traffic is being dropped by the IFAC-flag
+      // guard, so it is worth watching during a soak.
+      JsonObject idr = doc["inbound_drops"].to<JsonObject>();
+      idr["runt"] = RNS::Transport::runt_drops();
+      idr["ifac"] = RNS::Transport::ifac_flagged_drops();
 #if defined(URTN_REBROADCAST_DIAG)
       // Announce re-broadcast leak instrumentation. `live` per site (allocs-frees)
       // growing pinpoints which site leaks; live_hashes lists un-freed objects by

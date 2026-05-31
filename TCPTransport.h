@@ -144,7 +144,9 @@ namespace TCPTransport {
   // (does not replace; caller should remove_client() first if it
   // wants to swap host/port for the same name).
   inline bool add_client(const char* name, const char* host, uint16_t port,
-                          uint32_t reconnect_ms = TCPClientInterface::DEFAULT_RECONNECT_MS) {
+                          uint32_t reconnect_ms = TCPClientInterface::DEFAULT_RECONNECT_MS,
+                          const char* ifac_netname = "", const char* ifac_netkey = "",
+                          uint16_t ifac_size = 0) {
     if (!name || !*name || !host || !*host) return false;
     if (find_client_slot(name) >= 0) return false;
     int slot = -1;
@@ -160,6 +162,10 @@ namespace TCPTransport {
     client_impls[slot] = impl;
     client_interfaces[slot] = impl;
     client_interfaces[slot].mode(RNS::Type::Interface::MODE_GATEWAY);
+    if (ifac_size > 0) {
+      // Private (IFAC) interface: derive + install the access key/identity.
+      client_interfaces[slot].configure_ifac(ifac_netname, ifac_netkey, ifac_size);
+    }
     RNS::Transport::register_interface(client_interfaces[slot]);
     client_count = 0;
     for (uint8_t i = 0; i < TCP_MAX_CLIENTS; ++i) if (client_impls[i]) ++client_count;
@@ -209,7 +215,9 @@ namespace TCPTransport {
     for (const auto& kv : Discovery::Config::all()) {
       if (kv.second.type != Discovery::Config::Type::TcpClient) continue;
       add_client(kv.first.c_str(), kv.second.host.c_str(),
-                 (uint16_t)kv.second.port);
+                 (uint16_t)kv.second.port, TCPClientInterface::DEFAULT_RECONNECT_MS,
+                 kv.second.ifac_netname.c_str(), kv.second.ifac_netkey.c_str(),
+                 kv.second.ifac_size);
     }
 
     if (server_cfg.enabled) {

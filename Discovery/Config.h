@@ -61,6 +61,12 @@ struct Entry {
   int         port    = 0;
   // udp:
   bool        enabled = false;
+  // IFAC (private interface). ifac_netname/netkey derive the access key;
+  // ifac_size is the access-code length in BYTES (0 = open interface). The
+  // JSON "ifac_size" is in bits, matching RNS configs, and is divided by 8.
+  std::string ifac_netname;
+  std::string ifac_netkey;
+  uint16_t    ifac_size = 0;
 };
 
 namespace _detail {
@@ -122,6 +128,9 @@ inline void load() {
     e.host         = (const char*)(kv.value()["host"] | "");
     e.port         = kv.value()["port"]    | 0;
     e.enabled      = kv.value()["enabled"] | false;
+    e.ifac_netname = (const char*)(kv.value()["ifac_netname"] | "");
+    e.ifac_netkey  = (const char*)(kv.value()["ifac_netkey"]  | "");
+    e.ifac_size    = (uint16_t)((kv.value()["ifac_size"] | 0) / 8);  // bits -> bytes
     map[std::string(kv.key().c_str())] = e;
   }
   NOTICEF("Discovery::Config: loaded %u interface entries from %s",
@@ -141,6 +150,12 @@ inline bool save() {
     if (kv.second.type == Type::TcpClient || kv.second.type == Type::Udp) {
       if (kv.second.type == Type::TcpClient) o["host"] = kv.second.host;
       o["port"] = kv.second.port;
+      // Persist IFAC config (bytes -> bits, RNS-compatible).
+      if (kv.second.ifac_size > 0) {
+        o["ifac_netname"] = kv.second.ifac_netname;
+        o["ifac_netkey"]  = kv.second.ifac_netkey;
+        o["ifac_size"]    = (int)kv.second.ifac_size * 8;
+      }
     }
     if (kv.second.type == Type::Udp) {
       o["enabled"] = kv.second.enabled;

@@ -596,16 +596,19 @@ void setup() {
   // nodes move out of internal, and the WiFi stack keeps the internal
   // headroom it cannot get anywhere else.
   //
-  // The IDF default (CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL) is 4096. 512 was
-  // chosen empirically on the LR rig: the bulk of unrouted internal
-  // allocations sit in the 512..2048 band, so a 2048 threshold freed
-  // almost nothing and the device still crash-looped under the rmap.world
-  // announce firehose, whereas 512 lifts idle internal-free from ~40K to
-  // ~69K and holds a >39K floor under sustained transport+web+LoRa load
-  // (historical floor without this was ~32 bytes). Tunable via
-  // -DHEAP_EXTMEM_THRESHOLD=N.
+  // The IDF default (CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL) is 4096. We lower it
+  // to 256 so the 256..4095 B band of generic allocations routes to PSRAM,
+  // leaving scarce internal SRAM for the forced-internal DMA buffers that WiFi
+  // (esf_buf) and the radio require. 256 is required, not just preferred: under
+  // sustained transport-instance announce re-broadcast plus the rmap.world
+  // firehose carried over LoRa, the tighter LR1121 board exhausts internal SRAM
+  // and the WiFi DMA pool fails to allocate a PM null-frame (esf_buf_alloc ->
+  // WiFi loses the AP -> reboot). At 512 the LR held only a ~2K internal floor
+  // under load spikes and crash-looped; 256 holds a >40K floor. The SX1262
+  // board has more headroom and tolerates 512, but both ship 256 so production
+  // matches the validated config. Tunable via -DHEAP_EXTMEM_THRESHOLD=N.
   #ifndef HEAP_EXTMEM_THRESHOLD
-    #define HEAP_EXTMEM_THRESHOLD 512
+    #define HEAP_EXTMEM_THRESHOLD 256
   #endif
   heap_caps_malloc_extmem_enable(HEAP_EXTMEM_THRESHOLD);
 

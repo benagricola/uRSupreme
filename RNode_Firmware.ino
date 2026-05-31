@@ -21,6 +21,9 @@
 #include <Log.h>
 #include <Bytes.h>
 #endif
+#if defined(URTN_HEAP_TRACE)
+#include "HeapTrace.h"
+#endif
 #if defined(UDP_TRANSPORT)
 #include "UDPInterface.h"
 #endif
@@ -527,6 +530,11 @@ static void* psram_or_internal(size_t n) {
 }
 
 void setup() {
+#if defined(URTN_HEAP_TRACE)
+  // Begin tracking internal-SRAM allocation sites as early as possible (PSRAM
+  // is already up here, so the tracker's own table allocates off-chip).
+  HeapTrace::init();
+#endif
 
   // Allocate the four big radio/UART buffers in PSRAM (~14 KB freed
   // from internal SRAM on PSRAM boards). MUST happen before fifo_init.

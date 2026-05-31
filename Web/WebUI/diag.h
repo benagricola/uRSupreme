@@ -72,6 +72,9 @@
       ae["bitrate_max"] = br_max;
       ae["rate_blocks"] = RNS::Transport::announce_rate_blocks();
       ae["rate_table"]  = (uint32_t)RNS::Transport::get_announce_rate_table().size();
+      // Bounded path-request table (was the dominant internal-SRAM leak; should
+      // now hold at its cap instead of growing toward tens of thousands).
+      ae["path_requests"] = (uint32_t)RNS::Transport::path_requests_size();
       // Inbound safety drops (malformed/misflagged packets rejected before
       // parsing). `ifac` should stay ~0 on the open rmap network; a climbing
       // value would mean legitimate traffic is being dropped by the IFAC-flag
@@ -118,3 +121,41 @@
       doc["window_low"] = seed;
       send_json(req, 200, doc);
     }
+
+#if defined(URTN_HEAP_TRACE)
+    // GET /api/diag/heaptrace — live allocations aggregated by caller (innermost
+    // two return addresses), sorted by bytes, each tagged `where`:internal|psram.
+    // In leak-finder mode (default) only internal-SRAM blocks appear; fetch twice
+    // minutes apart and the site whose `bytes` grows is the leak. In threshold-
+    // survey mode (URTN_HEAP_TRACE_MIN_SIZE>0) every block >= that size appears
+    // with its landing heap. Decode ra0/ra1 with xtensa-esp32s3-elf-addr2line.
+    static void handle_diag_heaptrace(AsyncWebServerRequest* req) {
+      if (require_auth(req).empty()) return;
+      Common::PsramJsonDocument doc;
+      static HeapTrace::Agg aggs[256];
+      int n = HeapTrace::aggregate(aggs, 256);
+      uint32_t total = 0, psram_bytes = 0, int_bytes = 0;
+      for (int i = 0; i < n; i++) {
+        total += aggs[i].bytes;
+        if (aggs[i].internal) int_bytes += aggs[i].bytes; else psram_bytes += aggs[i].bytes;
+      }
+      JsonArray sites = doc["sites"].to<JsonArray>();
+      for (int i = 0; i < n && i < 200; i++) {
+        JsonObject o = sites.add<JsonObject>();
+        char b0[16], b1[16];
+        snprintf(b0, sizeof(b0), "%p", aggs[i].ra0);
+        snprintf(b1, sizeof(b1), "%p", aggs[i].ra1);
+        o["ra0"]   = b0;
+        o["ra1"]   = b1;
+        o["count"] = aggs[i].count;
+        o["bytes"] = aggs[i].bytes;
+        o["avg"]   = aggs[i].count ? aggs[i].bytes / aggs[i].count : 0;
+        o["where"] = aggs[i].internal ? "internal" : "psram";
+      }
+      doc["distinct_sites"] = n;
+      doc["tracked_bytes"]  = total;
+      doc["psram_bytes"]    = psram_bytes;
+      doc["internal_bytes"] = int_bytes;
+      send_json(req, 200, doc);
+    }
+#endif

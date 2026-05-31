@@ -1236,7 +1236,12 @@ void setup() {
       lora_interface = new LoRaInterface();
       lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
       RNS::Transport::register_interface(lora_interface);
-      TRACEF("LoRaInterface hash: %s", lora_interface.get_hash().toHex().c_str());
+      // Seed the interface bitrate from the value the radio computed at boot
+      // (updateBitrate() keeps it live afterwards). Without this, announce_cap
+      // rate-limiting and next-hop airtime estimates see bitrate 0 and the
+      // wait-time math collapses to zero.
+      lora_interface.bitrate(lora_bitrate);
+      TRACEF("LoRaInterface hash: %s (bitrate %u bps)", lora_interface.get_hash().toHex().c_str(), (unsigned)lora_bitrate);
 
 #if HAS_WIFI && defined(UDP_TRANSPORT)
       HEAD("Registering UDP Interface...", RNS::LOG_TRACE);

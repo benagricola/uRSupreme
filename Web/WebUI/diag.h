@@ -50,6 +50,52 @@
       }
       doc["ws_clients"]        = ws_clients;
       doc["ws_queue"]          = (uint32_t)ws_queue;
+      // Announce egress health. `drained` climbing over time proves queued
+      // re-broadcasts are reaching the wire (the headline transport-port fix);
+      // `queued`/`queued_max` are the live per-interface egress backlog (sitting
+      // near MAX_QUEUED_ANNOUNCES under a firehose is expected rate-limiting,
+      // *not* a fault, as long as `drained` keeps rising).
+      uint32_t aq_total = 0, aq_max = 0, aq_ifaces = 0, br_max = 0;
+      for (auto& kv : RNS::Transport::get_interfaces()) {
+        uint32_t n = (uint32_t)kv.second.announce_queue().size();
+        aq_total += n;
+        if (n > aq_max) aq_max = n;
+        uint32_t br = kv.second.bitrate();
+        if (br > br_max) br_max = br;
+        aq_ifaces++;
+      }
+      JsonObject ae = doc["announce_egress"].to<JsonObject>();
+      ae["queued"]      = aq_total;
+      ae["queued_max"]  = aq_max;
+      ae["interfaces"]  = aq_ifaces;
+      ae["drained"]     = RNS::Interface::drained_announces();
+      ae["bitrate_max"] = br_max;
+#if defined(URTN_REBROADCAST_DIAG)
+      // Announce re-broadcast leak instrumentation. `live` per site (allocs-frees)
+      // growing pinpoints which site leaks; live_hashes lists un-freed objects by
+      // announce-hash prefix so individual announces can be followed.
+      JsonObject rb = doc["rebroadcast"].to<JsonObject>();
+      static const char* RB_NAMES[3] = { "announce_entry", "retx_dest", "retx_packet" };
+      for (int s = 0; s < 3; s++) {
+        JsonObject so = rb[RB_NAMES[s]].to<JsonObject>();
+        so["live"]   = RNS::RebroadcastDiag::live((RNS::RebroadcastDiag::Site)s);
+        so["allocs"] = RNS::RebroadcastDiag::allocs((RNS::RebroadcastDiag::Site)s);
+        so["frees"]  = RNS::RebroadcastDiag::frees((RNS::RebroadcastDiag::Site)s);
+      }
+      rb["overflow"]        = RNS::RebroadcastDiag::overflow();
+      rb["untracked_frees"] = RNS::RebroadcastDiag::untracked_frees();
+      rb["live_count"]      = RNS::RebroadcastDiag::live_count();
+      RNS::RebroadcastDiag::Live snap[40];
+      int sn = RNS::RebroadcastDiag::snapshot(snap, 40);
+      JsonArray live_hashes = rb["live_hashes"].to<JsonArray>();
+      for (int i = 0; i < sn; i++) {
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%02x%02x%02x%02x%02x%02x:%u",
+                 snap[i].hash[0], snap[i].hash[1], snap[i].hash[2],
+                 snap[i].hash[3], snap[i].hash[4], snap[i].hash[5], snap[i].site);
+        live_hashes.add(buf);
+      }
+#endif
       send_json(req, 200, doc);
     }
 

@@ -1260,6 +1260,11 @@ void setPreamble() {
 	kiss_indicate_phy_stats();
 }
 
+// Defined in the main sketch (RNode_Firmware.ino); declared here so
+// updateBitrate() can mirror the computed on-air bitrate into the Reticulum
+// interface used for announce-egress shaping and next-hop airtime estimates.
+extern RNS::Interface lora_interface;
+
 void updateBitrate() {
 	#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
 		if (!radio_online) { lora_bitrate = 0; }
@@ -1292,6 +1297,10 @@ void updateBitrate() {
 			lora_header_time_ms   = (ceil)(PHY_HEADER_LORA_SYMBOLS * lora_symbol_time_ms);
 		}
 	#endif
+	// Mirror the on-air rate into the Reticulum interface so announce_cap
+	// rate-limiting and next-hop airtime estimates use the real bitrate.
+	// Guarded: lora_interface is NONE until register_interface() runs.
+	if (lora_interface) lora_interface.bitrate(lora_bitrate);
 }
 
 void setSpreadingFactor() {

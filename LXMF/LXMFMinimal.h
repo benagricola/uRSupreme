@@ -188,6 +188,7 @@ namespace LXMF {
     struct PendingOppSend {
       RNS::PacketReceipt receipt{RNS::Type::NONE};
       RNS::Bytes         record_hash;
+      RNS::Bytes         dest_hash;     // peer destination, for retain-on-delivery
       LXMFMinimal*       owner = nullptr;
       uint64_t           started_ms = 0;
     };
@@ -644,6 +645,7 @@ namespace LXMF {
           PendingOppSend op;
           op.receipt     = receipt;
           op.record_hash = out_rec.packet_hash;
+          op.dest_hash   = dest_hash;
           op.owner       = this;
           op.started_ms  = (uint64_t)millis();
           pending_opp_sends()[out_rec.packet_hash] = std::move(op);
@@ -1016,6 +1018,9 @@ namespace LXMF {
             if (ps.owner && ps.owner->_on_outbox_status) {
               try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
             }
+            // Retain-on-delivery: pin the peer against known-destinations churn,
+            // mirroring upstream LXMRouter.process_outbound (LXMRouter.py:2516).
+            RNS::Identity::retain_destination(ps.dest_hash);
             // Deliberately *not* firing a final _on_progress here — the
             // gateway's outbox-status callback already publishes
             // message_complete (finished=true) which the SPA treats as
@@ -1195,6 +1200,10 @@ namespace LXMF {
           if (op.owner && op.owner->_on_outbox_status) {
             try { op.owner->_on_outbox_status(op.record_hash, OutboxStatus::Delivered); } catch (...) {}
           }
+          // Retain-on-delivery: pin the peer so its identity/key survives the
+          // known-destinations churn on a node bridging a busy backbone.
+          // Mirrors upstream LXMRouter.process_outbound (LXMRouter.py:2516).
+          RNS::Identity::retain_destination(op.dest_hash);
           it = m.erase(it);
         } else if (st == RNS::Type::PacketReceipt::FAILED ||
                    st == RNS::Type::PacketReceipt::CULLED ||

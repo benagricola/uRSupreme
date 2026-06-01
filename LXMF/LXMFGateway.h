@@ -134,6 +134,9 @@ namespace LXMF {
       // loop dropped a frame, etc.) so the map can't grow unbounded.
       LXMFMinimal::tick_retries();
       LXMFMinimal::sweep_orphaned_pending();
+      // Advance opportunistic (single-packet) sends: proof -> Delivered,
+      // timeout -> Failed. Same shared-static cadence as the retry tick.
+      LXMFMinimal::tick_opportunistic_receipts();
     }
 
     // Update the auto-announce interval for a single identity and

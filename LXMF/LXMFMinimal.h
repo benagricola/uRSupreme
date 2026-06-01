@@ -179,6 +179,25 @@ namespace LXMF {
       OutboxStatus status = OutboxStatus::Queued;
     };
 
+    // In-flight opportunistic (single-packet) send. Unlike the Link path
+    // there is no per-stage callback chain; instead we hold the RNS
+    // PacketReceipt and poll its status from tick_opportunistic_receipts():
+    // a delivery proof flips it to DELIVERED, a timeout (or Transport
+    // receipt-table cull) to FAILED. record_hash is the outbox key (==
+    // the packet hash) so the SPA bubble can be transitioned.
+    struct PendingOppSend {
+      RNS::PacketReceipt receipt{RNS::Type::NONE};
+      RNS::Bytes         record_hash;
+      LXMFMinimal*       owner = nullptr;
+      uint64_t           started_ms = 0;
+    };
+    // Defensive backstop: a receipt should resolve (proof or timeout)
+    // within first_hop_timeout + per-hop allowance — tens of seconds even
+    // on a multi-hop LoRa path. If one is still unresolved after this, it
+    // was lost from Transport's receipt table without a terminal status;
+    // fail it so the bubble doesn't hang queued forever.
+    static constexpr uint64_t OPP_RECEIPT_MAX_MS = 5ULL * 60ULL * 1000ULL; // 5 min
+
     // Outbox-retry tuning. Both static for now — wire to per-identity
     // settings later (task #113). Backoff is 30s × attempt index, so:
     //   attempt 1: send fails -> wait 30s -> retry 1
@@ -210,6 +229,14 @@ namespace LXMF {
         RNS::Type::Destination::SINGLE,
         "lxmf", "delivery"
       );
+
+      // Prove inbound opportunistic deliveries. Upstream LXMF sets the
+      // delivery destination to PROVE_ALL so a single-packet message
+      // generates an RNS proof back to the sender (Transport auto-proves
+      // PROVE_ALL destinations on receive). Without this, a sender's
+      // PacketReceipt can never reach DELIVERED, so the outbox bubble for
+      // an opportunistic message would have no way to confirm delivery.
+      _destination.set_proof_strategy(RNS::Type::Destination::PROVE_ALL);
 
       // Register this instance for dispatch by destination hash. The static
       // trampoline below looks us up on every incoming packet.
@@ -596,15 +623,39 @@ namespace LXMF {
       }
 
       // OPPORTUNISTIC: single packet to the SINGLE destination. Fast path
-      // for short messages; status -> Sent immediately. This is what works
-      // today and we keep the existing behaviour for compatibility.
+      // for short messages. send() returns a PacketReceipt; we hold it and
+      // poll its status (tick_opportunistic_receipts). This mirrors
+      // upstream LXMF (LXMessage.py:467-472): the message goes Sent on
+      // hand-off and is upgraded to Delivered only if the recipient's
+      // delivery proof arrives. Upstream sets NO timeout callback for
+      // opportunistic, so a missing proof does NOT mark the message
+      // failed — best-effort delivery over a lossy link (LoRa) routinely
+      // delivers the packet while the small return proof is lost, and
+      // showing "failed" for a message that actually arrived would be
+      // worse than the old always-"sent". The previous code here latched
+      // Sent the instant send() returned and never updated it; now Sent
+      // is the honest hand-off state and Delivered is a real confirmation.
       if (total <= LXMF_OPPORTUNISTIC_MAX) {
         RNS::Packet packet(remote_dest, wire);
-        packet.send();
-        out_rec.status      = OutboxStatus::Sent;
+        RNS::PacketReceipt receipt = packet.send();
         out_rec.packet_hash = packet.get_hash();
-        NOTICEF("LXMF: sent OPPORTUNISTIC to %s (%u bytes)",
-                dest_hash.toHex().c_str(), (unsigned)total);
+        if (receipt) {
+          out_rec.status = OutboxStatus::Sent;
+          PendingOppSend op;
+          op.receipt     = receipt;
+          op.record_hash = out_rec.packet_hash;
+          op.owner       = this;
+          op.started_ms  = (uint64_t)millis();
+          pending_opp_sends()[out_rec.packet_hash] = std::move(op);
+          NOTICEF("LXMF: sent OPPORTUNISTIC to %s (%u bytes), awaiting proof",
+                  dest_hash.toHex().c_str(), (unsigned)total);
+        } else {
+          // No interface accepted the packet — a genuine transmit failure
+          // (no path / no interface), distinct from a missing proof.
+          out_rec.status = OutboxStatus::Failed;
+          WARNINGF("LXMF: OPPORTUNISTIC send to %s failed — no interface accepted the packet",
+                   dest_hash.toHex().c_str());
+        }
         return true;
       }
 
@@ -689,6 +740,15 @@ namespace LXMF {
     // until the resource (or in-link packet) concludes / link closes.
     static std::map<RNS::Bytes, PendingLinkSend>& pending_link_sends() {
       static std::map<RNS::Bytes, PendingLinkSend> p;
+      return p;
+    }
+
+    // In-flight opportunistic sends awaiting a delivery proof / timeout,
+    // keyed by the outbox record hash (== packet hash). Shared static
+    // across all LXMFMinimal instances, polled by
+    // tick_opportunistic_receipts().
+    static std::map<RNS::Bytes, PendingOppSend>& pending_opp_sends() {
+      static std::map<RNS::Bytes, PendingOppSend> p;
       return p;
     }
 
@@ -1109,6 +1169,42 @@ namespace LXMF {
             try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
           }
           _release_wire_file(ps);
+        }
+      }
+    }
+
+    // Poll opportunistic (single-packet) sends for a delivery proof. The
+    // receipt is the same object Transport tracks, so it advances on its
+    // own: a delivery proof flips it to DELIVERED, the periodic receipt
+    // check flips it to FAILED on timeout (or CULLED when the table
+    // overflows). Only DELIVERED is surfaced (Sent -> Delivered); a
+    // timed-out/culled receipt is NOT marked failed — it just stops being
+    // polled and the message stays Sent, mirroring upstream LXMF, which
+    // registers no timeout callback for opportunistic sends (a lost return
+    // proof on a lossy link is not a delivery failure). Shared static map
+    // -> one call covers every identity; called from LXMFGateway::loop.
+    static void tick_opportunistic_receipts() {
+      auto& m = pending_opp_sends();
+      const uint64_t now = (uint64_t)millis();
+      for (auto it = m.begin(); it != m.end(); ) {
+        PendingOppSend& op = it->second;
+        const auto st = op.receipt ? op.receipt.status()
+                                   : RNS::Type::PacketReceipt::FAILED;
+        if (st == RNS::Type::PacketReceipt::DELIVERED) {
+          // Proof returned: upgrade Sent -> Delivered.
+          if (op.owner && op.owner->_on_outbox_status) {
+            try { op.owner->_on_outbox_status(op.record_hash, OutboxStatus::Delivered); } catch (...) {}
+          }
+          it = m.erase(it);
+        } else if (st == RNS::Type::PacketReceipt::FAILED ||
+                   st == RNS::Type::PacketReceipt::CULLED ||
+                   (op.started_ms > 0 && (now - op.started_ms) > OPP_RECEIPT_MAX_MS)) {
+          // No proof within the receipt window (or receipt lost from
+          // tracking). Stop polling; leave the message Sent — opportunistic
+          // delivery is best-effort and unconfirmed, not failed.
+          it = m.erase(it);
+        } else {
+          ++it;
         }
       }
     }

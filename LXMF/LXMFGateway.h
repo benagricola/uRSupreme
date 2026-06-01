@@ -42,6 +42,8 @@ namespace Web {
   namespace WS {
     void publish_incoming(const LXMF::IdentityId& identity_id,
                           const LXMF::MessageRecord& m);
+    void publish_outbound(const LXMF::IdentityId& identity_id,
+                          const LXMF::MessageRecord& m);
     void publish_outbox_status(const LXMF::IdentityId& identity_id,
                                const RNS::Bytes& link_hash,
                                const char* status_name);
@@ -137,6 +139,9 @@ namespace LXMF {
       // Advance opportunistic (single-packet) sends: proof -> Delivered,
       // timeout -> Failed. Same shared-static cadence as the retry tick.
       LXMFMinimal::tick_opportunistic_receipts();
+      // Auto-send messages whose recipient key has now arrived via the
+      // path request issued at send time (AP-mode on-demand key learning).
+      tick_pending_identity_sends();
     }
 
     // Update the auto-announce interval for a single identity and
@@ -316,11 +321,109 @@ namespace LXMF {
         if (out_err) *out_err = "No such identity is logged in on this device.";
         return false;
       }
+      // Auto-retry on an unknown recipient key. In AP mode the LoRa
+      // interface no longer floods announces, so a recipient's public key
+      // is learned on demand via a path request — the first message to a
+      // new contact would otherwise fail until the user resends. Queue it
+      // and resend automatically once the key arrives (tick_pending_
+      // identity_sends). Attachment-free only: the staged attachment
+      // buffers can't be safely held across the retry window.
+      if ((attachments == nullptr || attachments->empty()) &&
+          !RNS::Identity::recall(dest_hash)) {
+        RNS::Transport::request_path(dest_hash);
+        if (queue_pending_identity_send(iden_id, dest_hash, title, content)) {
+          if (out_err) *out_err = "Fetching the recipient's key. The message will send automatically when it arrives.";
+        } else if (out_err) {
+          *out_err = "Recipient's key is not known yet and the auto-send queue is full. Please resend in a moment.";
+        }
+        return false;
+      }
       if (!a->lxmf.send_message(dest_hash, title, content, attachments, out_rec, out_err)) {
         return false;
       }
-      if (a->outbox) a->outbox->append(out_rec);
+      if (a->outbox) {
+        a->outbox->append(out_rec);
+        // Broadcast the new outbound message so every connected client
+        // (not just the one that issued the send, and including API-only
+        // senders) shows the bubble live instead of only after a refresh.
+        Web::WS::publish_outbound(iden_id, out_rec);
+      }
       return true;
+    }
+
+    // Auto-retry queue for sends whose recipient key wasn't known yet
+    // (see send()). Each entry is re-attempted once the key arrives via
+    // the path request, then dropped. Bounded + short-lived; the message
+    // text/dest are copied (large bodies land in PSRAM via the heap
+    // threshold). Attachment-free by construction.
+    struct PendingIdentitySend {
+      IdentityId  iden_id;
+      RNS::Bytes  dest;
+      std::string title;
+      std::string content;
+      uint8_t     attempts    = 0;
+      uint64_t    next_at_ms  = 0;
+    };
+    static constexpr uint8_t  PENDING_ID_MAX          = 8;
+    static constexpr uint8_t  PENDING_ID_MAX_ATTEMPTS = 6;
+    static constexpr uint32_t PENDING_ID_BACKOFF_MS   = 4000;
+    static std::vector<PendingIdentitySend>& pending_identity_sends() {
+      static std::vector<PendingIdentitySend> v;
+      return v;
+    }
+
+    static bool queue_pending_identity_send(const IdentityId& iden,
+                                            const RNS::Bytes& dest,
+                                            const std::string& title,
+                                            const std::string& content) {
+      auto& q = pending_identity_sends();
+      // Coalesce an identical re-queue (user mashing send) — refresh its
+      // schedule instead of stacking duplicates.
+      for (auto& p : q) {
+        if (p.iden_id == iden && p.dest == dest &&
+            p.title == title && p.content == content) {
+          p.attempts = 0;
+          p.next_at_ms = (uint64_t)millis() + PENDING_ID_BACKOFF_MS;
+          return true;
+        }
+      }
+      if (q.size() >= PENDING_ID_MAX) return false;
+      PendingIdentitySend p;
+      p.iden_id = iden; p.dest = dest; p.title = title; p.content = content;
+      p.next_at_ms = (uint64_t)millis() + PENDING_ID_BACKOFF_MS;
+      q.push_back(std::move(p));
+      return true;
+    }
+
+    // Called from loop(): when a queued send's recipient key has arrived,
+    // send it for real (which appends the outbox record + broadcasts it,
+    // so the bubble appears). Give up after PENDING_ID_MAX_ATTEMPTS.
+    static void tick_pending_identity_sends() {
+      auto& q = pending_identity_sends();
+      const uint64_t now = (uint64_t)millis();
+      for (auto it = q.begin(); it != q.end(); ) {
+        if (now < it->next_at_ms) { ++it; continue; }
+        if (RNS::Identity::recall(it->dest)) {
+          MessageRecord rec;
+          const char* err = nullptr;
+          if (send(it->iden_id, it->dest, it->title, it->content, nullptr, rec, &err)) {
+            NOTICEF("LXMF: auto-sent queued message to %s once its key arrived",
+                    it->dest.toHex().c_str());
+          } else {
+            WARNINGF("LXMF: auto-send to %s failed after key arrived: %s",
+                     it->dest.toHex().c_str(), err ? err : "unknown");
+          }
+          it = q.erase(it);
+        } else if (++it->attempts >= PENDING_ID_MAX_ATTEMPTS) {
+          WARNINGF("LXMF: giving up auto-send to %s — key never arrived after %u tries",
+                   it->dest.toHex().c_str(), (unsigned)it->attempts);
+          it = q.erase(it);
+        } else {
+          RNS::Transport::request_path(it->dest);  // nudge the path request again
+          it->next_at_ms = now + (uint64_t)PENDING_ID_BACKOFF_MS * it->attempts;
+          ++it;
+        }
+      }
     }
 
     // Read-only access to identities list.

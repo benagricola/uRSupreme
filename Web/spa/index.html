@@ -53,6 +53,17 @@
   </template>
 </div>
 
+<!-- ===================== LOADING ===================== -->
+<!-- Shown until boot()'s first /api/info resolves and routes to the
+     correct view. Without this, the store's initial view would render a
+     real screen (e.g. first-time setup) for a frame before identities
+     load. -->
+<div id="view-loading" class="page" x-data x-show="$store.s.view === 'view-loading'" x-cloak>
+  <div class="card">
+    <p class="muted">Loading…</p>
+  </div>
+</div>
+
 <!-- ===================== BOOTSTRAP WIFI SETUP ===================== -->
 <div id="view-bootstrap" class="page" x-data x-show="$store.s.view === 'view-bootstrap'" x-cloak>
   <div class="card">
@@ -1671,11 +1682,11 @@ document.addEventListener('alpine:init', () => {
   // bootstrap path may have flipped one before Alpine init runs).
   // Re-evaluated as state.view changes drive all top-level x-show.
   state.view = state.view || (() => {
-    for (const v of ['view-bootstrap', 'view-identities', 'view-create', 'view-login', 'view-app']) {
+    for (const v of ['view-loading', 'view-bootstrap', 'view-identities', 'view-create', 'view-login', 'view-app']) {
       const el = document.getElementById(v);
       if (el && !el.hidden) return v;
     }
-    return 'view-bootstrap';
+    return 'view-loading';
   })();
   state = Alpine.reactive(state);
   window.state = state;            // expose for console debugging
@@ -1742,10 +1753,13 @@ function savePrefs(p) {
 // (let semantics), so all existing `state.foo` reads / writes start
 // flowing through the reactive proxy automatically once Alpine boots.
 let state = {
-  // Top-level view shown to the user. One of view-bootstrap /
-  // view-identities / view-create / view-login / view-app. Drives
-  // x-show on each top-level page div. Mutated by show(viewId).
-  view: 'view-bootstrap',
+  // Top-level view shown to the user. One of view-loading /
+  // view-bootstrap / view-identities / view-create / view-login /
+  // view-app. Drives x-show on each top-level page div. Mutated by
+  // show(viewId). Starts on view-loading so no real screen flashes
+  // before boot()'s first /api/info resolves and routes to the
+  // correct view.
+  view: 'view-loading',
   // Per-modal visibility flags. Each maps 1:1 to a `<div
   // class="modal-bg">` and is wired via x-show in markup.
   // Stacked modals (image / id-code / confirm on top of settings)
@@ -3029,6 +3043,12 @@ function upsertMessage(m) {
     }
     if (typeof m.status === 'string' && m.status !== existing.status) {
       existing.status = m.status;
+    }
+    // Fill in a packet_hash the existing record lacked (e.g. an
+    // optimistic send whose /send response carried none) so the later
+    // outbox_status lifecycle pill can match this bubble by hash.
+    if (m.packet_hash && !existing.packet_hash) {
+      existing.packet_hash = m.packet_hash;
     }
     if (Array.isArray(m.attachments) && m.attachments.length > (existing.attachments || []).length) {
       existing.attachments = m.attachments;
@@ -4757,6 +4777,28 @@ function dispatchEvent(ev) {
       received_ms: m.received_ms || 0,
       title: m.title || '', body: m.body || '',
       in: true, sig_ok: !!m.sig_ok, status: 'delivered',
+      attachments: m.attachments || [],
+    });
+    renderConversations();
+    if (state.openPeer === m.peer) renderThread();
+  } else if (ev.type === 'outbox_new') {
+    // An outbound message hit the outbox — from the HTTP API, another
+    // browser tab, or our own send. upsertMessage dedups on seq +
+    // direction, so a bubble this tab already added optimistically
+    // (sendMessage uses the same queued seq) is merged in place rather
+    // than duplicated; sends from elsewhere create a fresh bubble and
+    // the conversation if it's new. The firmware's `pkt` maps to our
+    // `packet_hash` so the later outbox_status lifecycle pill can match.
+    const m = ev.msg || {};
+    upsertMessage({
+      peer: m.peer, seq: m.seq, ts: m.ts,
+      // boot_epoch + received_ms drive sort order (see msgCmp); without
+      // them a new message mis-sorts to the top of the thread.
+      boot_epoch: m.boot_epoch || 0,
+      received_ms: m.received_ms || 0,
+      title: m.title || '', body: m.body || '',
+      in: false, sig_ok: true, status: m.status || 'sent',
+      packet_hash: m.pkt || '',
       attachments: m.attachments || [],
     });
     renderConversations();

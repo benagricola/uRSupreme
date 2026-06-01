@@ -234,6 +234,41 @@ namespace WS {
     broadcast(doc, identity_id);
   }
 
+  // A newly-appended OUTBOUND message. Lets every connected client render
+  // the sender bubble live, including for sends that originated from the
+  // API or another browser session. The SPA dedups against its own
+  // optimistic bubble by seq / pkt.
+  inline void publish_outbound(const LXMF::IdentityId& identity_id,
+                               const LXMF::MessageRecord& m) {
+    Common::PsramJsonDocument doc;
+    doc["type"]        = "outbox_new";
+    JsonObject msg     = doc["msg"].to<JsonObject>();
+    msg["seq"]         = m.seq;
+    msg["ts"]          = m.ts;
+    msg["boot_epoch"]  = m.boot_epoch;
+    msg["received_ms"] = m.received_ms;
+    msg["peer"]        = m.peer_hash.toHex();
+    msg["title"]       = m.title;
+    msg["body"]        = m.content;
+    msg["body_size"]   = m.body_size;
+    msg["in"]          = false;
+    msg["status"]      = LXMF::outbox_status_name(m.status);
+    if (m.packet_hash.size() > 0) msg["pkt"] = m.packet_hash.toHex();
+    if (!m.attachments.empty()) {
+      JsonArray atts = msg["attachments"].to<JsonArray>();
+      for (const auto& a : m.attachments) {
+        JsonObject o = atts.add<JsonObject>();
+        o["tag"]      = a.tag;
+        o["size"]     = a.size;
+        o["filename"] = a.filename;
+        if (!a.display_name.empty()) o["display_name"] = a.display_name;
+        if (!a.mime.empty())         o["mime"]         = a.mime;
+        if (!a.backend.empty())      o["backend"]      = a.backend;
+      }
+    }
+    broadcast(doc, identity_id);
+  }
+
   // Outbound progress event. `finished=true` makes the SPA swap the
   // in-flight progress bubble for the final delivered/sent/failed form.
   inline void publish_progress(const LXMF::IdentityId& identity_id,

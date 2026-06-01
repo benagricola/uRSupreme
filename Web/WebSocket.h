@@ -375,6 +375,10 @@ namespace WS {
     // /api/info refresh that previously gated those numbers.
     doc["rx_packets"] = (uint32_t)RNS::Transport::packets_received();
     doc["tx_packets"] = (uint32_t)RNS::Transport::packets_sent();
+    // Outbound packets dropped because the LoRa TX ring was full — the
+    // honest counterpart to tx_packets. Climbs when the radio can't keep
+    // up (e.g. duty-cycle airtime lock holding the queue).
+    doc["tx_dropped"] = (uint32_t)lora_tx_dropped;
     broadcast(doc);
   }
 

@@ -94,6 +94,7 @@ extern bool     radio_online;
 // radio is actually doing work rather than just reporting `online: true`.
 extern uint32_t stat_rx;          // total packets received since boot
 extern uint32_t stat_tx;          // total packets transmitted since boot
+extern volatile uint32_t lora_tx_dropped;  // LoRa packets dropped: TX ring full
 extern int      last_rssi;        // RSSI of the last received packet (dBm)
 extern uint8_t  last_snr_raw;     // SNR of the last received packet (raw scale)
 extern int      noise_floor;      // measured noise floor (dBm)
@@ -821,6 +822,11 @@ namespace Web {
       // disable / read paths are bearer-only.
       server.on("/api/transport/lora/discoverable", HTTP_GET, handle_lora_discoverable_get);
       on_json_post("/api/transport/lora/discoverable",         handle_lora_discoverable_set);
+      // Full LoRa interface config: mode + IFAC (+ discoverable). Mode and
+      // IFAC apply on reboot. Read is bearer-only; enabling IFAC/discovery
+      // requires identity-code physical presence (enforced in the handler).
+      server.on("/api/transport/lora/config",       HTTP_GET, handle_lora_config_get);
+      on_json_post("/api/transport/lora/config",               handle_lora_config_set);
     }
 
 

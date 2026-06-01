@@ -1224,6 +1224,55 @@
             <button class="w-full" id="btn-radio-save"
                     :disabled="$store.s.forms.radio.preset === '__empty' || !!$store.s.busyButtons['btn-radio-save']"
                     @click="onClickRadioSave($event.currentTarget)">Save &amp; reboot</button>
+
+            <hr class="border-color-default mt-14 mb-14">
+            <label>Interface mode
+              <button type="button" class="info-icon" data-info="How this interface participates in the wider network. <strong>Gateway</strong> is the right mode for a node that bridges LoRa to a wider network: it propagates announces and discovers paths so other nodes can route through it. <strong>Access Point</strong> suppresses spontaneous announce broadcast. Use it for a node that only serves directly-connected peers. The others (<strong>Full</strong>, <strong>Point-to-Point</strong>, <strong>Roaming</strong>, <strong>Boundary</strong>) are advanced Reticulum interface modes. Mode changes apply after a reboot.">i</button>
+            </label>
+            <select id="rd-lora-mode" x-model="$store.s.forms.loraCfg.mode">
+              <option value="full">Full</option>
+              <option value="gateway">Gateway</option>
+              <option value="access_point">Access Point</option>
+              <option value="pointtopoint">Point-to-Point</option>
+              <option value="roaming">Roaming</option>
+              <option value="boundary">Boundary</option>
+            </select>
+            <div class="muted mt-1" x-show="$store.s.forms.loraCfg.modeDefault">No mode is stored yet, so the device is using the Gateway default.</div>
+
+            <label class="mt-14">IFAC network name
+              <button type="button" class="info-icon" data-info="Interface Access Code (IFAC). When set, this interface only talks to peers that share the same network name and key, and its traffic is hidden from nodes that don't. Leave the name empty to keep the interface open. Changes apply after a reboot.">i</button>
+            </label>
+            <input id="rd-ifac-netname" type="text" placeholder="(open interface)" maxlength="32"
+                   x-model="$store.s.forms.loraCfg.ifacNetname">
+            <div class="row mt-2">
+              <div>
+                <label>IFAC network key</label>
+                <input id="rd-ifac-netkey" type="password" autocomplete="new-password"
+                       :placeholder="$store.s.forms.loraCfg.ifacConfigured ? 'unchanged' : '(required to enable)'"
+                       x-model="$store.s.forms.loraCfg.ifacNetkey">
+              </div>
+              <div>
+                <label>IFAC size (bits)</label>
+                <select id="rd-ifac-size" x-model.number="$store.s.forms.loraCfg.ifacSize">
+                  <option :value="0">Off</option>
+                  <option :value="8">8</option>
+                  <option :value="16">16</option>
+                  <option :value="32">32</option>
+                  <option :value="64">64</option>
+                  <option :value="128">128</option>
+                  <option :value="160">160</option>
+                  <option :value="256">256</option>
+                </select>
+              </div>
+            </div>
+            <div class="muted mt-1" x-show="$store.s.forms.loraCfg.ifacConfigured"
+                 x-text="'IFAC is currently configured at ' + $store.s.forms.loraCfg.ifacConfiguredSize + ' bits. Leave the key blank to keep it; set size to Off to clear it.'"></div>
+            <div class="muted mt-1" x-show="!$store.s.forms.loraCfg.ifacConfigured">IFAC is off. This interface is open to any nearby Reticulum node.</div>
+
+            <button class="w-full mt-10" id="btn-lora-cfg-save"
+                    :disabled="!!$store.s.busyButtons['btn-lora-cfg-save']"
+                    @click="onClickLoraCfgSave($event.currentTarget)">Save mode &amp; IFAC</button>
+            <div class="muted mt-2 text-xs" id="rd-lora-cfg-status" x-text="$store.s.ui.cnLoraCfgStatus"></div>
           </div>
         </details>
 
@@ -1865,6 +1914,14 @@ let state = {
     radio:           { discoverable: false, preset: '__empty',
                        freq: 0, bw: 0, sf: 0, cr: 0, tx: 0,
                        airtime: 0, airtimeLt: 0 },
+    // LoRa interface mode + IFAC. mode/ifac* are the editable inputs;
+    // modeDefault / ifacConfigured / ifacConfiguredSize mirror the GET
+    // so the UI can show "(default)" and "already configured" hints.
+    // ifacNetkey is write-only: GET never returns it, and a blank value
+    // on save keeps the existing key.
+    loraCfg:         { mode: 'gateway', modeDefault: true,
+                       ifacNetname: '', ifacNetkey: '', ifacSize: 0,
+                       ifacConfigured: false, ifacConfiguredSize: 0 },
     discovery:       { enabled: false, advertisedName: '', interval: '360', stampCost: '14' },
     prefs:           { enterSends: false, autoDownloadAttachments: false,
                        inboxDefaultRetention: '' },
@@ -1919,6 +1976,7 @@ let state = {
     idCodeModalTitle: 'Identity code required',  // h3 in #modal-id-code
     inboxConfigStatus: '',           // saved/error caption under retention select
     cnTcpStatus: '',                 // saved/error caption under tcp-add modal
+    cnLoraCfgStatus: '',             // saved/error/reboot caption under LoRa mode+IFAC save
     storageMaxSendMax: 1048576,      // live max bytes for the send slider
     storageMaxRecvMax: 1048576,      // live max bytes for the recv slider
     showRadioSection: true,          // Connectivity tab — toggled by
@@ -5624,6 +5682,7 @@ async function populateRadioTab() {
     const d = await state.transport._req('/api/transport/lora/discoverable');
     state.forms.radio.discoverable = !!d.discoverable;
   } catch { /* leave toggle in last state */ }
+  await populateLoraConfig();
   // Header dot reflects the radio's live state, not the discoverable
   // flag — "is the LoRa interface up and able to send/receive?", not
   // "are we advertising it?".
@@ -5704,6 +5763,95 @@ function onChangeRdDiscoverable() {
   } else {
     apply();
   }
+}
+
+// Load the LoRa interface mode + IFAC state into the form. Called from
+// populateRadioTab alongside the discoverable fetch. The netkey is a
+// secret and is never returned, so ifacNetkey always starts blank; a
+// blank key on save keeps the stored one.
+async function populateLoraConfig() {
+  try {
+    const c = await state.transport._req('/api/transport/lora/config');
+    const ifac = c.ifac || {};
+    Object.assign(state.forms.loraCfg, {
+      mode:               c.mode || 'gateway',
+      modeDefault:        !!c.mode_default,
+      ifacNetname:        ifac.netname || '',
+      ifacNetkey:         '',
+      ifacSize:           Number(ifac.size_bits || 0),
+      ifacConfigured:     !!ifac.configured,
+      ifacConfiguredSize: Number(ifac.size_bits || 0),
+    });
+    state.ui.cnLoraCfgStatus = '';
+  } catch (e) {
+    // Leave whatever defaults the form holds; surface the reason quietly.
+    state.ui.cnLoraCfgStatus = 'Could not read mode/IFAC: ' + (e.message || e);
+  }
+}
+
+// Save mode + IFAC. Mirrors onChangeRdDiscoverable's physical-presence
+// flow: enabling IFAC or otherwise touching the interface may need an
+// identity code, so we POST first and, if the server rejects with a
+// presence error, retry with a code. mode/IFAC changes take effect on
+// the next reboot, so the caption + toast say so when the server
+// reports reboot_required.
+function onClickLoraCfgSave(btn) {
+  const f = state.forms.loraCfg;
+  const body = { mode: f.mode };
+  const size = Number(f.ifacSize || 0);
+  const netname = (f.ifacNetname || '').trim();
+  if (size > 0 && netname) {
+    // IFAC on: send name + size. Only send a key if the user typed one
+    // (blank keeps the existing key on edit).
+    body.ifac_netname = netname;
+    body.ifac_size    = size;
+    if (f.ifacNetkey) body.ifac_netkey = f.ifacNetkey;
+    // Enabling IFAC fresh requires a key.
+    if (!f.ifacConfigured && !f.ifacNetkey) {
+      state.ui.cnLoraCfgStatus = 'A network key is required to enable IFAC.';
+      return;
+    }
+  } else {
+    // IFAC off / cleared.
+    body.ifac_size    = 0;
+    body.ifac_netname = '';
+  }
+  return withBusy(btn, async () => {
+    state.ui.cnLoraCfgStatus = '';
+    const apply = async (code) => {
+      const payload = code ? Object.assign({ identity_code: code }, body) : body;
+      const r = await state.transport._req('/api/transport/lora/config',
+        { method: 'POST', body: payload });
+      const reboot = !!r.reboot_required;
+      const msg = reboot
+        ? 'Saved. The change applies after a reboot.'
+        : 'Saved.';
+      state.ui.cnLoraCfgStatus = msg;
+      toast(reboot ? 'LoRa config saved. Reboot the device to apply.' : 'LoRa config saved');
+      // Refresh so ifacConfigured / modeDefault reflect the new state
+      // and the key field shows "unchanged" next time.
+      await populateLoraConfig();
+    };
+    try {
+      await apply();
+    } catch (e) {
+      // 403 from the presence guard => retry once with an identity code.
+      if (e.status === 403) {
+        await new Promise((resolve) => {
+          state.pendingIdCodeAction = async (code) => {
+            if (!code) { resolve(); return; }
+            try { await apply(code); }
+            catch (e2) { state.ui.cnLoraCfgStatus = 'Save failed: ' + (e2.message || e2); }
+            resolve();
+          };
+          openIdCodeModal();
+        });
+      } else {
+        state.ui.cnLoraCfgStatus = 'Save failed: ' + (e.message || e);
+        toast('Could not save LoRa config: ' + (e.message || e), 'error');
+      }
+    }
+  }, { label: 'Saving…' });
 }
 
 async function populateIdentityTab() {

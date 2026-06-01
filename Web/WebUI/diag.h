@@ -50,6 +50,10 @@
       }
       doc["ws_clients"]        = ws_clients;
       doc["ws_queue"]          = (uint32_t)ws_queue;
+      // Outbound LoRa packets dropped because the TX ring was full (radio
+      // couldn't keep up — e.g. a duty-cycle airtime lock holding the queue).
+      // Non-zero + climbing means user/announce TX is being silently lost.
+      doc["lora_tx_dropped"]   = (uint32_t)lora_tx_dropped;
       // Announce egress health. `drained` climbing over time proves queued
       // re-broadcasts are reaching the wire (the headline transport-port fix);
       // `queued`/`queued_max` are the live per-interface egress backlog (sitting

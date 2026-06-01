@@ -45,6 +45,7 @@ extern uint8_t  cw_max;
 extern bool     airtime_lock;
 extern uint32_t stat_rx;
 extern uint32_t stat_tx;
+extern volatile uint32_t lora_tx_dropped;  // packets dropped because TX ring full
 
 namespace Telemetry {
 namespace Radio {

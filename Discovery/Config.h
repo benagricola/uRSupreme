@@ -56,6 +56,12 @@ enum class Type : uint8_t {
 struct Entry {
   Type        type         = Type::Unknown;
   bool        discoverable = false;
+  // RNS interface mode (one of Type::Interface::modes). 0 = unset, in
+  // which case the registration site applies its built-in default
+  // (GATEWAY on this bridge device). Persisted as a canonical string
+  // ("full" / "gateway" / "access_point" / "pointtopoint" / "roaming" /
+  // "boundary"), matching upstream RNS interface config.
+  uint8_t     mode    = 0;
   // tcp_client / udp:
   std::string host;
   int         port    = 0;
@@ -64,6 +70,7 @@ struct Entry {
   // IFAC (private interface). ifac_netname/netkey derive the access key;
   // ifac_size is the access-code length in BYTES (0 = open interface). The
   // JSON "ifac_size" is in bits, matching RNS configs, and is divided by 8.
+  // Applies to any interface type (lora / tcp_client / udp).
   std::string ifac_netname;
   std::string ifac_netkey;
   uint16_t    ifac_size = 0;
@@ -90,6 +97,34 @@ namespace _detail {
     if (strcmp(s, "tcp_client") == 0) return Type::TcpClient;
     if (strcmp(s, "udp")        == 0) return Type::Udp;
     return Type::Unknown;
+  }
+
+  // RNS interface mode <-> canonical string. Accepts the same aliases
+  // upstream Reticulum does (gw/ap/ptp); emits one canonical name per
+  // mode. Returns 0 for an empty/unknown string ("unset" sentinel).
+  inline uint8_t mode_from_str(const char* s) {
+    if (!s || !*s) return 0;
+    if (strcmp(s, "full")         == 0) return RNS::Type::Interface::MODE_FULL;
+    if (strcmp(s, "gateway")      == 0 ||
+        strcmp(s, "gw")           == 0) return RNS::Type::Interface::MODE_GATEWAY;
+    if (strcmp(s, "access_point") == 0 ||
+        strcmp(s, "ap")           == 0) return RNS::Type::Interface::MODE_ACCESS_POINT;
+    if (strcmp(s, "pointtopoint") == 0 ||
+        strcmp(s, "ptp")          == 0) return RNS::Type::Interface::MODE_POINT_TO_POINT;
+    if (strcmp(s, "roaming")      == 0) return RNS::Type::Interface::MODE_ROAMING;
+    if (strcmp(s, "boundary")     == 0) return RNS::Type::Interface::MODE_BOUNDARY;
+    return 0;
+  }
+  inline const char* mode_to_str(uint8_t m) {
+    switch (m) {
+      case RNS::Type::Interface::MODE_FULL:           return "full";
+      case RNS::Type::Interface::MODE_GATEWAY:        return "gateway";
+      case RNS::Type::Interface::MODE_ACCESS_POINT:   return "access_point";
+      case RNS::Type::Interface::MODE_POINT_TO_POINT: return "pointtopoint";
+      case RNS::Type::Interface::MODE_ROAMING:        return "roaming";
+      case RNS::Type::Interface::MODE_BOUNDARY:       return "boundary";
+      default:                                        return "";
+    }
   }
 }
 
@@ -125,6 +160,7 @@ inline void load() {
     Entry e;
     e.type         = _detail::type_from_str(kv.value()["type"] | "");
     e.discoverable = kv.value()["discoverable"] | false;
+    e.mode         = _detail::mode_from_str(kv.value()["mode"] | "");
     e.host         = (const char*)(kv.value()["host"] | "");
     e.port         = kv.value()["port"]    | 0;
     e.enabled      = kv.value()["enabled"] | false;
@@ -147,18 +183,23 @@ inline bool save() {
     JsonObject o = root[kv.first].to<JsonObject>();
     o["type"]         = _detail::type_to_str(kv.second.type);
     o["discoverable"] = kv.second.discoverable;
+    // Interface mode is meaningful for every interface type, so persist
+    // it generically (only when set — an unset mode falls back to the
+    // registration-site default).
+    if (kv.second.mode != 0) o["mode"] = _detail::mode_to_str(kv.second.mode);
+    if (kv.second.type == Type::TcpClient) o["host"] = kv.second.host;
     if (kv.second.type == Type::TcpClient || kv.second.type == Type::Udp) {
-      if (kv.second.type == Type::TcpClient) o["host"] = kv.second.host;
       o["port"] = kv.second.port;
-      // Persist IFAC config (bytes -> bits, RNS-compatible).
-      if (kv.second.ifac_size > 0) {
-        o["ifac_netname"] = kv.second.ifac_netname;
-        o["ifac_netkey"]  = kv.second.ifac_netkey;
-        o["ifac_size"]    = (int)kv.second.ifac_size * 8;
-      }
     }
     if (kv.second.type == Type::Udp) {
       o["enabled"] = kv.second.enabled;
+    }
+    // IFAC config applies to any interface type (lora / tcp_client / udp).
+    // Persist bytes -> bits to stay RNS-compatible.
+    if (kv.second.ifac_size > 0) {
+      o["ifac_netname"] = kv.second.ifac_netname;
+      o["ifac_netkey"]  = kv.second.ifac_netkey;
+      o["ifac_size"]    = (int)kv.second.ifac_size * 8;
     }
   }
   std::string out;
@@ -173,6 +214,12 @@ inline bool save() {
   }
   return true;
 }
+
+// Public mode <-> string forwarders (the implementations live in
+// _detail so load/save can use them). Exposed for the HTTP handlers
+// that validate a user-supplied mode string and report the current one.
+inline uint8_t     mode_from_str(const char* s) { return _detail::mode_from_str(s); }
+inline const char* mode_to_str(uint8_t m)       { return _detail::mode_to_str(m); }
 
 // Look up an entry. Returns true if found (out_entry filled).
 inline bool get(const std::string& name, Entry* out_entry = nullptr) {
@@ -222,6 +269,23 @@ inline bool remove(const std::string& name) {
 inline const std::map<std::string, Entry>& all() {
   if (!_detail::loaded_ref()) load();
   return _detail::entries_ref();
+}
+
+// Apply an entry's persisted mode + IFAC config to a live interface.
+// Every interface-registration site (LoRa / TCP / UDP) routes through
+// here so the mode/IFAC plumbing lives in one place. `default_mode` is
+// used when the entry leaves mode unset. Safe to call with a
+// default-constructed Entry (no mode, no IFAC) — it just applies the
+// default mode, which is exactly what an interface with no config row
+// should get.
+inline void apply_mode_ifac(RNS::Interface& iface, const Entry& e,
+                            RNS::Type::Interface::modes default_mode) {
+  const uint8_t m = e.mode ? e.mode : (uint8_t)default_mode;
+  iface.mode((RNS::Type::Interface::modes)m);
+  if (e.ifac_size > 0) {
+    iface.configure_ifac(e.ifac_netname.c_str(), e.ifac_netkey.c_str(),
+                         e.ifac_size);
+  }
 }
 
 // Convenience: "is the interface named X currently set to discoverable?"

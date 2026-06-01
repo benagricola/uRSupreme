@@ -146,7 +146,7 @@ namespace TCPTransport {
   inline bool add_client(const char* name, const char* host, uint16_t port,
                           uint32_t reconnect_ms = TCPClientInterface::DEFAULT_RECONNECT_MS,
                           const char* ifac_netname = "", const char* ifac_netkey = "",
-                          uint16_t ifac_size = 0) {
+                          uint16_t ifac_size = 0, uint8_t mode = 0) {
     if (!name || !*name || !host || !*host) return false;
     if (find_client_slot(name) >= 0) return false;
     int slot = -1;
@@ -161,10 +161,16 @@ namespace TCPTransport {
     auto* impl = new TCPClientInterface(name, host, port, reconnect_ms);
     client_impls[slot] = impl;
     client_interfaces[slot] = impl;
-    client_interfaces[slot].mode(RNS::Type::Interface::MODE_GATEWAY);
-    if (ifac_size > 0) {
-      // Private (IFAC) interface: derive + install the access key/identity.
-      client_interfaces[slot].configure_ifac(ifac_netname, ifac_netkey, ifac_size);
+    // Apply mode (default GATEWAY) + optional IFAC via the shared helper
+    // so all interface types resolve mode/IFAC the same way.
+    {
+      Discovery::Config::Entry cfg;
+      cfg.mode         = mode;
+      cfg.ifac_netname = ifac_netname ? ifac_netname : "";
+      cfg.ifac_netkey  = ifac_netkey  ? ifac_netkey  : "";
+      cfg.ifac_size    = ifac_size;
+      Discovery::Config::apply_mode_ifac(client_interfaces[slot], cfg,
+                                         RNS::Type::Interface::MODE_GATEWAY);
     }
     RNS::Transport::register_interface(client_interfaces[slot]);
     client_count = 0;
@@ -217,7 +223,7 @@ namespace TCPTransport {
       add_client(kv.first.c_str(), kv.second.host.c_str(),
                  (uint16_t)kv.second.port, TCPClientInterface::DEFAULT_RECONNECT_MS,
                  kv.second.ifac_netname.c_str(), kv.second.ifac_netkey.c_str(),
-                 kv.second.ifac_size);
+                 kv.second.ifac_size, kv.second.mode);
     }
 
     if (server_cfg.enabled) {

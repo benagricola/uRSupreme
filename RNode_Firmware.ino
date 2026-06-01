@@ -103,6 +103,11 @@ volatile uint8_t queue_height = 0;
 volatile uint16_t queued_bytes = 0;
 volatile uint16_t queue_cursor = 0;
 volatile uint16_t current_packet_start = 0;
+// Count of outbound LoRa packets dropped because the TX ring was full
+// (the radio could not keep up — e.g. duty-cycle airtime lock holding the
+// queue, or a genuine burst). Exposed via diag so a full queue is visible
+// instead of a silent drop.
+volatile uint32_t lora_tx_dropped = 0;
 volatile bool serial_buffering = false;
 #if HAS_BLUETOOTH || HAS_BLE == true
   bool bt_init_ran = false;
@@ -165,34 +170,35 @@ protected:
     TRACEF("LoRaInterface.send_outgoing: (%u bytes) data: %s", data.size(), data.toHex().c_str());
     try {
       TRACE("LoRaInterface.send_outgoing: adding packet to outgoing queue...");
-      for (size_t i = 0; i < data.size(); i++) {
-          if (queue_height < CONFIG_QUEUE_MAX_LENGTH && queued_bytes < CONFIG_QUEUE_SIZE) {
-              queued_bytes++;
-              packet_queue[queue_cursor++] = data.data()[i];
-              if (queue_cursor == CONFIG_QUEUE_SIZE) queue_cursor = 0;
-          }
+      // Atomic enqueue: accept the packet only if it fits whole. The old
+      // per-byte guard could write a packet partially when the ring filled
+      // mid-write — the trailing bytes were skipped, the finalize block was
+      // gated off, and current_packet_start was left stale, so the next
+      // packet's length was mis-measured across the orphaned bytes. All or
+      // nothing: bounds-check up front, then write the whole packet.
+      const size_t len = data.size();
+      if (len < MIN_L || len > MTU ||
+          fifo16_isfull(&packet_starts) ||
+          queue_height >= CONFIG_QUEUE_MAX_LENGTH ||
+          (uint32_t)queued_bytes + len > CONFIG_QUEUE_SIZE) {
+          lora_tx_dropped++;
+          WARNINGF("LoRa TX queue full: dropped %u-byte packet "
+                   "(queue_height=%u queued_bytes=%u dropped_total=%lu)",
+                   (unsigned)len, (unsigned)queue_height,
+                   (unsigned)queued_bytes, (unsigned long)lora_tx_dropped);
+          InterfaceImpl::handle_outgoing(data);
+          return;
       }
-      if (!fifo16_isfull(&packet_starts) && queued_bytes < CONFIG_QUEUE_SIZE) {
-          uint16_t s = current_packet_start;
-          int16_t e = queue_cursor-1; if (e == -1) e = CONFIG_QUEUE_SIZE-1;
-          uint16_t l;
-
-          if (s != e) {
-              l = (s < e) ? e - s + 1 : CONFIG_QUEUE_SIZE - s + e + 1;
-          } else {
-              l = 1;
-          }
-
-          if (l >= MIN_L) {
-              queue_height++;
-
-              fifo16_push(&packet_starts, s);
-              fifo16_push(&packet_lengths, l);
-
-              current_packet_start = queue_cursor;
-          }
-
+      const uint16_t s = queue_cursor;
+      for (size_t i = 0; i < len; i++) {
+          packet_queue[queue_cursor++] = data.data()[i];
+          if (queue_cursor == CONFIG_QUEUE_SIZE) queue_cursor = 0;
       }
+      queued_bytes += (uint16_t)len;
+      queue_height++;
+      fifo16_push(&packet_starts, s);
+      fifo16_push(&packet_lengths, (uint16_t)len);
+      current_packet_start = queue_cursor;
       // Perform post-send housekeeping
       InterfaceImpl::handle_outgoing(data);
     }
@@ -1251,7 +1257,19 @@ void setup() {
 
       HEAD("Registering LoRA Interface...", RNS::LOG_TRACE);
       lora_interface = new LoRaInterface();
-      lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+      // Per-interface mode + IFAC come from /reticulum/interfaces.json
+      // (Discovery::Config, keyed by the interface name). The filesystem
+      // is mounted well before this, so get() auto-loads. Absent entry =>
+      // default GATEWAY, no IFAC — the right default for a LoRa node that
+      // bridges a backbone (propagates announces + discovers paths for
+      // the segment behind it). Settable at runtime via the SPA/API; a
+      // reboot applies the change.
+      {
+        Discovery::Config::Entry lora_cfg;
+        Discovery::Config::get("LoRaInterface", &lora_cfg);
+        Discovery::Config::apply_mode_ifac(lora_interface, lora_cfg,
+                                           RNS::Type::Interface::MODE_GATEWAY);
+      }
       RNS::Transport::register_interface(lora_interface);
       // Seed the interface bitrate from the value the radio computed at boot
       // (updateBitrate() keeps it live afterwards). Without this, announce_cap
@@ -1263,7 +1281,12 @@ void setup() {
 #if HAS_WIFI && defined(UDP_TRANSPORT)
       HEAD("Registering UDP Interface...", RNS::LOG_TRACE);
       udp_interface = new UDPInterface();
-      udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+      {
+        Discovery::Config::Entry udp_cfg;
+        Discovery::Config::get("UDPInterface", &udp_cfg);
+        Discovery::Config::apply_mode_ifac(udp_interface, udp_cfg,
+                                           RNS::Type::Interface::MODE_GATEWAY);
+      }
       RNS::Transport::register_interface(udp_interface);
       TRACEF("UDPInterface hash: %s", udp_interface.get_hash().toHex().c_str());
 #endif

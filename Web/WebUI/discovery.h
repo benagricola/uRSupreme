@@ -136,6 +136,96 @@
       handle_lora_discoverable_get(req);
     }
 
+    // Full LoRa interface config: mode + IFAC (+ discoverable). The mode
+    // and IFAC apply at the next boot (the interface is constructed once
+    // at startup from this entry), so the SET response carries
+    // reboot_required so the SPA can prompt. The IFAC netkey is a secret
+    // and is never returned by GET.
+    static void handle_lora_config_get(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      Common::PsramJsonDocument doc;
+      Discovery::Config::Entry e;
+      const bool have = Discovery::Config::get(LORA_IFACE_NAME, &e);
+      doc["name"] = LORA_IFACE_NAME;
+      // Effective mode: the configured value, or the GATEWAY default when
+      // unset (mode_default flags which one the SPA is showing).
+      const uint8_t eff = (have && e.mode) ? e.mode
+                                           : RNS::Type::Interface::MODE_GATEWAY;
+      doc["mode"]         = Discovery::Config::mode_to_str(eff);
+      doc["mode_default"] = !(have && e.mode);
+      doc["discoverable"] = have && e.discoverable;
+      JsonObject ifac = doc["ifac"].to<JsonObject>();
+      ifac["configured"] = have && e.ifac_size > 0;
+      ifac["netname"]    = have ? e.ifac_netname : std::string();
+      ifac["size_bits"]  = have ? (int)e.ifac_size * 8 : 0;
+      send_json(req, 200, doc);
+    }
+
+    static void handle_lora_config_set(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      Discovery::Config::Entry e;
+      Discovery::Config::get(LORA_IFACE_NAME, &e);
+      e.type = Discovery::Config::Type::Lora;
+      bool reboot_needed = false;
+
+      // mode (optional). Reject an unknown non-empty string.
+      if (body["mode"].is<const char*>()) {
+        const uint8_t m = Discovery::Config::mode_from_str(body["mode"] | "");
+        if (m == 0) {
+          send_error_with_message(req, 400, "invalid_mode",
+            "mode must be one of: full, gateway, access_point, pointtopoint, roaming, boundary.");
+          return;
+        }
+        if (m != e.mode) { e.mode = m; reboot_needed = true; }
+      }
+
+      // IFAC (optional). ifac_size<=0 or empty netname clears it (open
+      // interface). Setting a key is security-relevant -> physical auth.
+      if (body["ifac_size"].is<int>() || body["ifac_netname"].is<const char*>()) {
+        const int bits = body["ifac_size"] | 0;
+        const std::string netname = (const char*)(body["ifac_netname"] | "");
+        const std::string netkey  = (const char*)(body["ifac_netkey"]  | "");
+        if (bits <= 0 || netname.empty()) {
+          if (e.ifac_size != 0) reboot_needed = true;
+          e.ifac_size = 0; e.ifac_netname.clear(); e.ifac_netkey.clear();
+        } else {
+          if (!require_physical_auth(req, body)) return;
+          // GET never returns the netkey, so an edit that doesn't re-supply
+          // it keeps the existing one. Require a key when enabling fresh.
+          if (netkey.empty() && e.ifac_netkey.empty()) {
+            send_error_with_message(req, 400, "ifac_netkey_required",
+              "Provide ifac_netkey when enabling IFAC on this interface.");
+            return;
+          }
+          e.ifac_netname = netname;
+          if (!netkey.empty()) e.ifac_netkey = netkey;
+          e.ifac_size = (uint16_t)(bits / 8);
+          reboot_needed = true;
+        }
+      }
+
+      // discoverable (optional). Enabling requires physical presence, same
+      // rule as handle_lora_discoverable_set.
+      if (body["discoverable"].is<bool>()) {
+        const bool want = body["discoverable"].as<bool>();
+        const bool enabling = want && !e.discoverable;
+        if (enabling && !require_physical_auth(req, body)) return;
+        e.discoverable = want;
+      }
+
+      if (!Discovery::Config::upsert(LORA_IFACE_NAME, e)) {
+        send_error_with_message(req, 500, "persist_failed",
+          "Could not persist LoRa interface config.");
+        return;
+      }
+      Common::PsramJsonDocument doc;
+      doc["status"]          = "updated";
+      doc["reboot_required"] = reboot_needed;
+      send_json(req, 200, doc);
+    }
+
     static void handle_discovery_identity_get(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;

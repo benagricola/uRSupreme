@@ -998,7 +998,13 @@ void setup() {
   RNS::Transport::path_table_maxsize(URTN_PATH_TABLE_MAX_RECS);
   RNS::Transport::announce_table_maxsize(50);
   RNS::Transport::hashlist_maxsize(50);
-  RNS::Identity::known_destinations_maxsize(50);
+  // Keep the identity cache at least as large as the path table: a peer's key
+  // must not be evicted while we still hold a route to it. The cache is
+  // PSRAM-backed (ContainerAllocator), so matching the 500-entry path store is
+  // cheap. With recall() now falling back to the path record's inline announce
+  // this is no longer correctness-critical, but a generous cache keeps recall
+  // on the fast RAM path under a high-cardinality announce feed.
+  RNS::Identity::known_destinations_maxsize(URTN_PATH_TABLE_MAX_RECS);
   RNS::Transport::max_pr_tags(50);
   RNS::Reticulum::clean_interval(60*15); // 60 minutes
   //RNS::Reticulum::clean_interval(60*15); // 15 minutes

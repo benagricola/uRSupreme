@@ -363,9 +363,17 @@ namespace LXMF {
 
       RNS::Identity remote_identity = RNS::Identity::recall(dest_hash);
       if (!remote_identity) {
-        WARNINGF("LXMF: cannot send to %s — recipient identity unknown",
+        // We may have a transport path but not the recipient's public key — a
+        // high-cardinality announce firehose can evict it from the identity
+        // cache, and with the LoRa interface in access-point mode we no longer
+        // flood announces, so keys are learned on demand. Issue a path request:
+        // its response carries the recipient's announce, which re-populates the
+        // public key, so a resend a few seconds later succeeds.
+        // (Seamless auto-retry/queue is a follow-up; for now the caller resends.)
+        RNS::Transport::request_path(dest_hash);
+        WARNINGF("LXMF: identity for %s unknown — issued path request, asking caller to retry",
                  dest_hash.toHex().c_str());
-        return fail("Recipient is unknown — wait for an announce from that address, or trigger one on the recipient. (We have no public key for that destination yet.)");
+        return fail("Fetching recipient's key (sent a path request) — resend in a few seconds.");
       }
 
       RNS::Destination remote_dest(

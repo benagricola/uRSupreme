@@ -148,10 +148,11 @@
       Discovery::Config::Entry e;
       const bool have = Discovery::Config::get(LORA_IFACE_NAME, &e);
       doc["name"] = LORA_IFACE_NAME;
-      // Effective mode: the configured value, or the GATEWAY default when
-      // unset (mode_default flags which one the SPA is showing).
+      // Effective mode: the configured value, or the ACCESS_POINT default
+      // when unset (mode_default flags which one the SPA is showing). AP is
+      // the default so a LoRa bridge doesn't firehose backbone announces.
       const uint8_t eff = (have && e.mode) ? e.mode
-                                           : RNS::Type::Interface::MODE_GATEWAY;
+                                           : RNS::Type::Interface::MODE_ACCESS_POINT;
       doc["mode"]         = Discovery::Config::mode_to_str(eff);
       doc["mode_default"] = !(have && e.mode);
       doc["discoverable"] = have && e.discoverable;

@@ -1260,15 +1260,18 @@ void setup() {
       // Per-interface mode + IFAC come from /reticulum/interfaces.json
       // (Discovery::Config, keyed by the interface name). The filesystem
       // is mounted well before this, so get() auto-loads. Absent entry =>
-      // default GATEWAY, no IFAC — the right default for a LoRa node that
-      // bridges a backbone (propagates announces + discovers paths for
-      // the segment behind it). Settable at runtime via the SPA/API; a
-      // reboot applies the change.
+      // default ACCESS_POINT, no IFAC. AP is the right default for a LoRa
+      // node bridging a busy backbone: GATEWAY would rebroadcast every
+      // backbone announce over the duty-cycle-limited LoRa link and
+      // starve user traffic (the radio TX stalls under that firehose).
+      // AP is announce-silent but still answers path requests, so the
+      // LoRa segment pulls only the paths it needs. Settable at runtime
+      // via the SPA/API; a reboot applies the change.
       {
         Discovery::Config::Entry lora_cfg;
         Discovery::Config::get("LoRaInterface", &lora_cfg);
         Discovery::Config::apply_mode_ifac(lora_interface, lora_cfg,
-                                           RNS::Type::Interface::MODE_GATEWAY);
+                                           RNS::Type::Interface::MODE_ACCESS_POINT);
       }
       RNS::Transport::register_interface(lora_interface);
       // Seed the interface bitrate from the value the radio computed at boot

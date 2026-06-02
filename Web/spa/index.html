@@ -299,7 +299,14 @@
                 x-html="identicon(c.peer, 44)"></span>
           <div class="middle">
             <div class="name" x-text="nameFor(c.peer)"></div>
-            <div class="last" x-text="convSubText(c)"></div>
+            <div class="last">
+              <template x-if="activeTransferFor(c.peer)">
+                <span x-text="convSubText(c)"></span>
+              </template>
+              <template x-if="!activeTransferFor(c.peer)">
+                <span><span x-text="c.last_in === false ? '↑ ' : '↓ '"></span><template x-if="c.last_body"><span x-text="c.last_body"></span></template><template x-if="!c.last_body && c.last_attachments && c.last_attachments.length"><svg class="attach-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span x-text="convAttachmentLabel(c.last_attachments)"></span></template></span>
+              </template>
+            </div>
             <template x-if="announceSeenString($store.s.announces[c.peer])">
               <div :class="'seen' + (isPeerOnline(c.peer) ? ' online' : '')"
                    x-text="announceSeenString($store.s.announces[c.peer])"></div>
@@ -2744,15 +2751,28 @@ function activeTransferFor(peer) {
   return outgoing || incoming;
 }
 
-// Compose the .last subtext for a conv row.
+// Type word for the contact-list preview of a captionless attachment message
+// (image / audio / file with no text body). The icon itself is rendered as an
+// inline SVG in the conv-row markup — no emoji.
+function convAttachmentLabel(atts) {
+  if (!Array.isArray(atts) || atts.length === 0) return '';
+  if (atts.length > 1) return atts.length + ' attachments';
+  const t = atts[0].tag;
+  if (t === FIELD_IMAGE) return 'Image';
+  if (t === FIELD_AUDIO) return 'Audio';
+  return 'Attachment';
+}
+
+// Live-transfer subtext for a conv row: direction arrow + bytes + percent.
+// The idle preview (direction arrow + body, or attachment icon + label) is
+// rendered declaratively in the conv-row markup so the peer-controlled body
+// stays x-text-escaped and the attachment indicator can be a real icon.
 function convSubText(c) {
   const xfer = activeTransferFor(c.peer);
-  if (xfer) {
-    const arrow = xfer.incoming ? '↓ ' : '↑ ';
-    const pct   = xfer.bytes_total ? Math.floor(100 * xfer.bytes_done / xfer.bytes_total) : 0;
-    return arrow + formatBytes(xfer.bytes_done) + ' / ' + formatBytes(xfer.bytes_total) + ' (' + pct + '%)';
-  }
-  return (c.last_in === false ? '↑ ' : '') + (c.last_body || '');
+  if (!xfer) return '';
+  const arrow = xfer.incoming ? '↓ ' : '↑ ';
+  const pct   = xfer.bytes_total ? Math.floor(100 * xfer.bytes_done / xfer.bytes_total) : 0;
+  return arrow + formatBytes(xfer.bytes_done) + ' / ' + formatBytes(xfer.bytes_total) + ' (' + pct + '%)';
 }
 
 // Percentage helper — caps at [2, 100] so a fresh-start 0% bar still
@@ -3019,7 +3039,7 @@ function upsertMessage(m) {
   if (!peer) return;
   let c = state.conversations[peer];
   if (!c) {
-    c = { peer, msgs: [], last_ts: 0, last_boot_epoch: 0, last_received_ms: 0, last_body: '', last_in: false };
+    c = { peer, msgs: [], last_ts: 0, last_boot_epoch: 0, last_received_ms: 0, last_body: '', last_in: false, last_attachments: [] };
     state.conversations[peer] = c;
   }
   // Dedup by seq + direction (inbox and outbox have independent seq
@@ -3064,6 +3084,7 @@ function upsertMessage(m) {
   c.last_received_ms = last.received_ms || 0;
   c.last_body        = last.body || '';
   c.last_in          = last.in;
+  c.last_attachments = Array.isArray(last.attachments) ? last.attachments : [];
 }
 
 // Announces / Paths / Contacts are all rendered declaratively by Alpine
@@ -3408,6 +3429,156 @@ async function stageNonImageAttachment(file) {
   await stagePendingAttachment({
     tag, bytes, filename: file.name, mime: file.type || 'application/octet-stream',
   });
+}
+
+// Full-screen image viewer.
+//
+// Three interaction zones with distinct behaviours:
+//   - Image, when fit-to-viewport AND natural size > viewport:
+//       cursor zoom-in, click → switches to 1:1, recentred.
+//   - Image, when zoomed 1:1: cursor zoom-out, click → back to fit.
+//     While zoomed: mouse-drag pans the overflowing image (touch
+//     scroll already pans natively via overflow:auto).
+//   - Image, when natural already fits: cursor default, click is
+//     a no-op (the user can't zoom into something already at 1:1).
+//   - Backdrop (anywhere inside the modal that ISN'T the image
+//     itself, the close button, or the save button): click closes.
+//   - Close X (top right, always above the image) + Escape: close.
+//
+// Conditional zoom (only when there's more detail to see than the
+// fit-to-viewport pass shows) rather than click-anywhere-closes, so
+// desktop users can inspect detail without leaving the modal.
+function openImageModal(url, meta) {
+  const modal = $('modal-image');
+  const img   = $('mi-img');
+  const wrap  = $('mi-wrap');
+  const save  = $('mi-save');
+  const close = $('mi-close');
+  // Reset to fit-mode on each open.
+  img.src = url;
+  img.style.maxWidth  = '100vw';
+  img.style.maxHeight = '100dvh';
+  img.style.width  = '';
+  img.style.height = '';
+  img.style.cursor = 'default';      // overridden on load if zoom is available
+  // Save-as filename: prefer sender display_name, fall back to hash.
+  const dl = (meta && meta.display_name) || (meta && meta.filename) || 'image';
+  save.setAttribute('download', dl);
+  save.href = url;
+  state.modals.image = true;
+
+  let zoomed = false;          // true: image rendered at natural 1:1
+  let zoomAvailable = false;   // set on load; image natural > viewport
+  let drag = null;             // {startX, startY, startSL, startST} while pan-dragging
+
+  const computeZoomAvailable = () => {
+    // Compare the image's natural pixels to the wrap's viewport.
+    // wrap is overflow:auto so its clientWidth/Height is the
+    // visible area after any scrollbar reservation.
+    return img.naturalWidth  > wrap.clientWidth
+        || img.naturalHeight > wrap.clientHeight;
+  };
+  const applyFit = () => {
+    zoomed = false;
+    img.style.maxWidth  = '100vw';
+    img.style.maxHeight = '100dvh';
+    img.style.width  = '';
+    img.style.height = '';
+    img.style.cursor = zoomAvailable ? 'zoom-in' : 'default';
+  };
+  const applyZoom = () => {
+    zoomed = true;
+    img.style.maxWidth  = 'none';
+    img.style.maxHeight = 'none';
+    img.style.width  = img.naturalWidth + 'px';
+    img.style.height = img.naturalHeight + 'px';
+    img.style.cursor = 'zoom-out';
+    // Recentre the scroll viewport on the image's geometric centre.
+    // After style change the browser lays out synchronously; scrollTo
+    // operates on the new bounds.
+    requestAnimationFrame(() => {
+      wrap.scrollLeft = (img.naturalWidth  - wrap.clientWidth)  / 2;
+      wrap.scrollTop  = (img.naturalHeight - wrap.clientHeight) / 2;
+    });
+  };
+  const onImgLoad = () => {
+    zoomAvailable = computeZoomAvailable();
+    img.style.cursor = zoomAvailable ? 'zoom-in' : 'default';
+  };
+  if (img.complete && img.naturalWidth > 0) {
+    onImgLoad();
+  } else {
+    img.addEventListener('load', onImgLoad, { once: true });
+  }
+
+  const onImgClick = (e) => {
+    e.stopPropagation();         // don't bubble to onBackdrop and close
+    if (drag) return;            // a drag just completed — ignore click
+    if (!zoomAvailable) return;  // image already fits naturally, no zoom
+    if (zoomed) applyFit(); else applyZoom();
+  };
+
+  // Mouse drag-to-pan while zoomed. Cursor flips to grabbing for
+  // visual feedback. Touch pan is already free via overflow:auto.
+  const onMouseDown = (e) => {
+    if (!zoomed) return;
+    if (e.button !== 0) return;  // only primary button
+    drag = {
+      startX: e.clientX, startY: e.clientY,
+      startSL: wrap.scrollLeft, startST: wrap.scrollTop,
+      moved: false,
+    };
+    img.style.cursor = 'grabbing';
+    e.preventDefault();
+  };
+  const onMouseMove = (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    wrap.scrollLeft = drag.startSL - dx;
+    wrap.scrollTop  = drag.startST - dy;
+  };
+  const onMouseUp = () => {
+    if (!drag) return;
+    const wasMoved = drag.moved;
+    drag = null;
+    img.style.cursor = zoomed ? 'zoom-out' : 'zoom-in';
+    // If the user actually dragged (vs a click that registered tiny
+    // movement), suppress the immediate click handler.
+    if (wasMoved) {
+      img.addEventListener('click', swallowOnce, { once: true, capture: true });
+    }
+  };
+  const swallowOnce = (e) => { e.stopPropagation(); e.preventDefault(); };
+
+  const onBackdrop = (e) => {
+    // Backdrop = anywhere inside the modal that isn't the image, the
+    // close button, or the save button.
+    if (e.target === img) return;
+    if (close.contains(e.target)) return;
+    if (save.contains(e.target))  return;
+    cleanup();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') cleanup(); };
+  const cleanup = () => {
+    state.modals.image = false;
+    img.removeEventListener('click', onImgClick);
+    img.removeEventListener('mousedown', onMouseDown);
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup',   onMouseUp);
+    modal.removeEventListener('click', onBackdrop);
+    close.removeEventListener('click', cleanup);
+    document.removeEventListener('keydown', onKey);
+    img.src = '';   // release reference; cached blob URL stays in state.attachmentBlobs
+  };
+  img.addEventListener('click', onImgClick);
+  img.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup',   onMouseUp);
+  modal.addEventListener('click', onBackdrop);
+  close.addEventListener('click', cleanup);
+  document.addEventListener('keydown', onKey);
 }
 
 async function openImageResizePicker(file) {

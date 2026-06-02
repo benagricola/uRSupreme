@@ -129,6 +129,15 @@
       // True iff TX is currently being blocked by the airtime lock —
       // useful for "why isn't my message going out" diagnostics.
       stats["airtime_locked"]       = (bool)airtime_lock;
+      // LoRa egress pressure (#88 diagnostics). queue_* is the hardware TX
+      // ring; tx_hold_bytes is the flow-control overflow held in PSRAM when
+      // the ring is full (1fbadee); lora_tx_dropped counts packets dropped
+      // because even the hold queue was full. A handshake/data packet
+      // backing up here while announces churn is the starvation signature.
+      stats["tx_ring_height"]       = (uint32_t)queue_height;
+      stats["tx_ring_bytes"]        = (uint32_t)queued_bytes;
+      stats["tx_hold_bytes"]        = (uint32_t)tx_hold_bytes;
+      stats["tx_dropped_ring_full"] = (uint32_t)lora_tx_dropped;
       // WiFi state. Lets the SPA show the current mode (STA / softAP)
       // in the connection popover, and decide whether to expose the
       // "switch to softAP" button — that button has no point when

@@ -99,6 +99,7 @@ uint32_t ble_in_burst_bytes = 0;
 uint32_t ble_in_last_byte_ms = 0;
 #endif
 
+#include <deque>
 volatile uint8_t queue_height = 0;
 volatile uint16_t queued_bytes = 0;
 volatile uint16_t queue_cursor = 0;
@@ -139,6 +140,21 @@ void update_csma_parameters();
 #endif
 
 #ifdef HAS_RNS
+// TX flow control (upstream RNodeInterface.process_outgoing / packet_queue
+// parity). When the modem ring is full — duty-cycle airtime lock holding it,
+// or a Resource dumping parts faster than a slow link drains — HOLD frames in
+// this PSRAM-backed queue and meter them into the ring as it frees, instead of
+// dropping them. Silent drops were failing multi-hop link/Resource delivery:
+// the LINKREQUEST / LRPROOF / Resource parts (~355 B) hit a full ring and
+// vanished, so the link never reached ACTIVE. Bounded so a genuinely stuck
+// radio can't exhaust memory — only a full hold queue forces a last-resort drop.
+std::deque<RNS::Bytes> tx_hold_queue;
+volatile uint32_t tx_hold_bytes = 0;
+#define TX_HOLD_MAX_BYTES (64u * 1024u)
+bool lora_ring_has_space(size_t len);
+void lora_ring_enqueue(const RNS::Bytes& data);
+void drain_tx_hold_queue();
+
 // CBA LoRa interface
 class LoRaInterface : public RNS::InterfaceImpl {
 public:
@@ -170,37 +186,37 @@ protected:
     TRACEF("LoRaInterface.send_outgoing: (%u bytes) data: %s", data.size(), data.toHex().c_str());
     try {
       TRACE("LoRaInterface.send_outgoing: adding packet to outgoing queue...");
-      // Atomic enqueue: accept the packet only if it fits whole. The old
-      // per-byte guard could write a packet partially when the ring filled
-      // mid-write — the trailing bytes were skipped, the finalize block was
-      // gated off, and current_packet_start was left stale, so the next
-      // packet's length was mis-measured across the orphaned bytes. All or
-      // nothing: bounds-check up front, then write the whole packet.
       const size_t len = data.size();
-      if (len < MIN_L || len > MTU ||
-          fifo16_isfull(&packet_starts) ||
-          queue_height >= CONFIG_QUEUE_MAX_LENGTH ||
-          (uint32_t)queued_bytes + len > CONFIG_QUEUE_SIZE) {
-          lora_tx_dropped++;
-          WARNINGF("LoRa TX queue full: dropped %u-byte packet "
-                   "(queue_height=%u queued_bytes=%u dropped_total=%lu)",
-                   (unsigned)len, (unsigned)queue_height,
-                   (unsigned)queued_bytes, (unsigned long)lora_tx_dropped);
-          InterfaceImpl::handle_outgoing(data);
-          return;
+      if (len < MIN_L || len > MTU) {
+        lora_tx_dropped++;
+        WARNINGF("LoRa TX: dropped malformed %u-byte packet (dropped_total=%lu)",
+                 (unsigned)len, (unsigned long)lora_tx_dropped);
+        return;
       }
-      const uint16_t s = queue_cursor;
-      for (size_t i = 0; i < len; i++) {
-          packet_queue[queue_cursor++] = data.data()[i];
-          if (queue_cursor == CONFIG_QUEUE_SIZE) queue_cursor = 0;
+      // Flow control. Drain any held frames first so ordering is preserved,
+      // then enqueue this frame whole if the ring has room; otherwise HOLD it
+      // (bounded) rather than dropping, so a burst that outruns a duty-cycle-
+      // limited link survives. lora_ring_enqueue is an all-or-nothing write —
+      // the ring is bounds-checked before it, so it never writes a partial
+      // packet (which would leave current_packet_start stale and mis-measure
+      // the next packet's length).
+      drain_tx_hold_queue();
+      bool accepted = false;
+      if (tx_hold_queue.empty() && lora_ring_has_space(len)) {
+        lora_ring_enqueue(data);
+        accepted = true;
+      } else if (tx_hold_bytes + len <= TX_HOLD_MAX_BYTES) {
+        tx_hold_queue.push_back(data);
+        tx_hold_bytes += (uint32_t)len;
+        accepted = true;
+      } else {
+        lora_tx_dropped++;
+        WARNINGF("LoRa TX hold queue full (%u B held): dropped %u-byte packet "
+                 "(dropped_total=%lu)", (unsigned)tx_hold_bytes, (unsigned)len,
+                 (unsigned long)lora_tx_dropped);
       }
-      queued_bytes += (uint16_t)len;
-      queue_height++;
-      fifo16_push(&packet_starts, s);
-      fifo16_push(&packet_lengths, (uint16_t)len);
-      current_packet_start = queue_cursor;
-      // Perform post-send housekeeping
-      InterfaceImpl::handle_outgoing(data);
+      // Post-send housekeeping (tx byte accounting) — once per accepted frame.
+      if (accepted) InterfaceImpl::handle_outgoing(data);
     }
     catch (const std::bad_alloc&) {
       ERROR("LoRaInterface::send_outgoing: bad_alloc - out of memory");
@@ -1737,6 +1753,43 @@ void update_radio_lock() {
 
 bool queue_full() { return (queue_height >= CONFIG_QUEUE_MAX_LENGTH || queued_bytes >= CONFIG_QUEUE_SIZE); }
 
+#ifdef HAS_RNS
+// TX flow-control helpers (see the tx_hold_queue declaration above the
+// LoRaInterface class). lora_ring_enqueue is all-or-nothing — the caller
+// bounds-checks via lora_ring_has_space first, so it never writes a partial
+// packet into the ring.
+bool lora_ring_has_space(size_t len) {
+  return !(fifo16_isfull(&packet_starts)
+        || queue_height >= CONFIG_QUEUE_MAX_LENGTH
+        || (uint32_t)queued_bytes + len > CONFIG_QUEUE_SIZE);
+}
+void lora_ring_enqueue(const RNS::Bytes& data) {
+  const size_t len = data.size();
+  const uint16_t s = queue_cursor;
+  for (size_t i = 0; i < len; i++) {
+    packet_queue[queue_cursor++] = data.data()[i];
+    if (queue_cursor == CONFIG_QUEUE_SIZE) queue_cursor = 0;
+  }
+  queued_bytes += (uint16_t)len;
+  queue_height++;
+  fifo16_push(&packet_starts, s);
+  fifo16_push(&packet_lengths, (uint16_t)len);
+  current_packet_start = queue_cursor;
+}
+// Meter held frames into the modem ring as it frees. Called from
+// send_outgoing and once per main-loop tick so held frames drain even when
+// no new sends arrive.
+void drain_tx_hold_queue() {
+  while (!tx_hold_queue.empty()) {
+    const RNS::Bytes& front = tx_hold_queue.front();
+    if (!lora_ring_has_space(front.size())) break;
+    lora_ring_enqueue(front);
+    tx_hold_bytes -= (uint32_t)front.size();
+    tx_hold_queue.pop_front();
+  }
+}
+#endif
+
 volatile bool queue_flushing = false;
 void flush_queue(void) {
   if (!queue_flushing) {
@@ -2920,6 +2973,11 @@ void loop() {
     catch (std::exception& e) {
       ERRORF("RNS loop failed: %s", e.what());
     }
+    // Flow-control drain: meter any held outbound frames into the modem ring
+    // as it frees. Inside the rns_lock guard so it's serialised with sends
+    // issued from the web task; held frames thus drain every tick, not only
+    // when a new send arrives.
+    drain_tx_hold_queue();
   }
   // After a long reticulum.loop() (e.g. mid-Resource assembly that
   // ran SHA + decrypt + flash writes), reset the task watchdog so we

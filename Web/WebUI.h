@@ -95,6 +95,7 @@ extern bool     radio_online;
 extern uint32_t stat_rx;          // total packets received since boot
 extern uint32_t stat_tx;          // total packets transmitted since boot
 extern volatile uint32_t lora_tx_dropped;  // LoRa packets dropped: TX ring full
+extern volatile uint32_t tx_hold_bytes;    // LoRa TX flow-control: bytes held (not dropped)
 extern int      last_rssi;        // RSSI of the last received packet (dBm)
 extern uint8_t  last_snr_raw;     // SNR of the last received packet (raw scale)
 extern int      noise_floor;      // measured noise floor (dBm)

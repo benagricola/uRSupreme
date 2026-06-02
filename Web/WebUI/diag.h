@@ -54,6 +54,11 @@
       // couldn't keep up — e.g. a duty-cycle airtime lock holding the queue).
       // Non-zero + climbing means user/announce TX is being silently lost.
       doc["lora_tx_dropped"]   = (uint32_t)lora_tx_dropped;
+      // Bytes currently held in the TX flow-control queue (frames waiting for
+      // ring space rather than being dropped). Climbs during a burst / airtime
+      // lock and drains back to 0 as the radio catches up; a held frame that
+      // would have been a drop in the old code.
+      doc["lora_tx_held"]      = (uint32_t)tx_hold_bytes;
       // Announce egress health. `drained` climbing over time proves queued
       // re-broadcasts are reaching the wire (the headline transport-port fix);
       // `queued`/`queued_max` are the live per-interface egress backlog (sitting

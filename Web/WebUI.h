@@ -794,11 +794,9 @@ namespace Web {
                 HTTP_GET, handle_attachment_get);
       server.on("/api/storage/migrate_flash_to_sd",
                 HTTP_POST, handle_migrate_flash_to_sd);
-      // Paths
-      // `uri()` forces an exact match. Without it the plain-string form
-      // is Type::BackwardCompatible, which is a prefix — and that would
-      // make /api/paths swallow /api/paths/estimate.
-      server.on(uri("/api/paths"),          HTTP_GET,  handle_paths_list);
+      // Paths — per-destination lookup + transmit-ETA estimate.
+      // `uri()` forces an exact match on /estimate. Without it the
+      // plain-string form is Type::BackwardCompatible, which is a prefix.
       on_json_post("/api/paths/lookup",  handle_path_lookup);
       server.on(uri("/api/paths/estimate"), HTTP_GET,  handle_path_estimate);
       // WiFi config — gated by bearer token OR identity_code in body.

@@ -5,34 +5,6 @@
 // remain implicit-inline because they sit inside a class body via
 // the surrounding #include directive.
 
-    static void handle_paths_list(AsyncWebServerRequest* req) {
-      RnsLockGuard _g;
-      if (require_auth(req).empty()) return;
-      // We read from AnnounceLog::paths() rather than Transport's path
-      // table: the live table is the microStore-backed (flash) _new_path_table,
-      // which is private and has no public iteration API, and walking it per
-      // request would decode every entry from flash. Our path log is fed by an
-      // AnnounceHandler registered with nullptr aspect_filter, so it
-      // sees every announce regardless of aspect.
-      const auto& ring = LXMF::AnnounceLog::paths();
-      Common::PsramJsonDocument doc;
-      JsonArray arr = doc["paths"].to<JsonArray>();
-      uint32_t now = millis();
-      for (auto it = ring.rbegin(); it != ring.rend(); ++it) {
-        JsonObject obj = arr.add<JsonObject>();
-        obj["dest"]   = it->destination.toHex();
-        obj["age_ms"] = (uint32_t)(now - it->received_ms);
-        if (!it->display_name.empty()) obj["display_name"] = it->display_name;
-        // aspect: lxmf.delivery / lxmf.propagation / nomadnetwork.node /
-        // empty (= transport identity or unrecognised application).
-        obj["aspect"] = it->aspect.empty() ? "transport" : it->aspect;
-        // Live hop count from Transport.
-        obj["hops"]   = (int)RNS::Transport::hops_to(it->destination);
-      }
-      doc["count"] = (uint32_t)ring.size();
-      send_json(req, 200, doc);
-    }
-
     static void handle_path_lookup(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);

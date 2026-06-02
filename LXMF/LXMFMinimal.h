@@ -677,19 +677,31 @@ namespace LXMF {
       // LXMF_LINK_PACKET_MAX) stay in PSRAM since they go out as a
       // single packet on link-established and the file round-trip
       // would dwarf the in-RAM cost.
-      if (wire.size() > LXMF_LINK_PACKET_MAX) {
-        ps.wire_path = _spill_wire_to_disk(wire, link_hash);
+      // DIRECT delivery hands the bytes straight to LXMF's
+      // unpack_from_bytes — delivery_packet() for an in-link packet,
+      // delivery_resource_concluded() for a resource — and neither prepends
+      // the destination hash the way the opportunistic packet path does
+      // (RNS LXMRouter.py:1829 prepends only for non-LINK packets; :1833 and
+      // :1884 pass the data raw). So the full LXMF blob,
+      //   destination_hash || source_hash || signature || payload,
+      // must be on the wire here, unlike the dest-less opportunistic form
+      // above (where the receiver re-derives the dest from the packet).
+      RNS::Bytes direct_wire;
+      direct_wire.append(dest_hash.data(), HASH_LEN);
+      direct_wire.append(wire);
+      if (direct_wire.size() > LXMF_LINK_PACKET_MAX) {
+        ps.wire_path = _spill_wire_to_disk(direct_wire, link_hash);
         if (ps.wire_path.empty()) {
           // Fall back to keeping the wire in PSRAM.
           WARNING("LXMF: wire spill failed; keeping in PSRAM");
-          ps.wire = wire;
+          ps.wire = direct_wire;
         } else {
-          ps.total_bytes = (uint32_t)wire.size();
+          ps.total_bytes = (uint32_t)direct_wire.size();
           DEBUGF("LXMF: spilled %u-byte wire to %s",
-                 (unsigned)wire.size(), ps.wire_path.c_str());
+                 (unsigned)direct_wire.size(), ps.wire_path.c_str());
         }
       } else {
-        ps.wire = wire;
+        ps.wire = direct_wire;
       }
       ps.link        = link;
       ps.started_ms  = (uint64_t)millis();
@@ -1327,7 +1339,7 @@ namespace LXMF {
       if (it == reg.end() || it->second == nullptr) return;
       NOTICEF("LXMF: inbound in-link PACKET on %s (%u bytes)",
               our_dest_hash.toHex().c_str(), (unsigned)plaintext.size());
-      it->second->_deliver_lxmf_payload(plaintext, packet.get_hash());
+      it->second->_deliver_lxmf_payload(plaintext, packet.get_hash(), /*has_dest_prefix=*/true);
     }
 
     static void _static_inbound_resource_concluded(const RNS::Resource& res) {
@@ -1359,19 +1371,37 @@ namespace LXMF {
       const RNS::Bytes& plaintext = res.plaintext();
       NOTICEF("LXMF: inbound RESOURCE COMPLETE on %s (%u bytes)",
               our_dest_hash.toHex().c_str(), (unsigned)plaintext.size());
-      it->second->_deliver_lxmf_payload(plaintext, res.hash());
+      it->second->_deliver_lxmf_payload(plaintext, res.hash(), /*has_dest_prefix=*/true);
     }
 
     // Common parse + signature-verify + delivery path used by all three
     // inbound modes (OPPORTUNISTIC Packet, in-link Packet, Resource).
     void _deliver_lxmf_payload(const RNS::Bytes& wire,
-                               const RNS::Bytes& packet_or_resource_hash) {
-      if (wire.size() < HEADER_LEN + 5) {
+                               const RNS::Bytes& packet_or_resource_hash,
+                               bool has_dest_prefix = false) {
+      const uint8_t* raw = wire.data();
+      size_t raw_len = wire.size();
+
+      // DIRECT delivery (in-link packet / resource) carries the full LXMF
+      // blob: dest_hash || src_hash || signature || payload — RNS hands it
+      // straight to unpack_from_bytes (LXMRouter.py:1833 for in-link packets,
+      // :1884 for resources). The opportunistic packet path omits the dest
+      // hash (it is the packet's destination, prepended by the receiver at
+      // LXMRouter.py:1829). Skip the dest here so the layout below is the
+      // common src_hash || signature || payload for all three inbound modes.
+      if (has_dest_prefix) {
+        if (raw_len < HASH_LEN) {
+          WARNING("LXMF: incoming DIRECT payload too short for dest hash");
+          return;
+        }
+        raw     += HASH_LEN;
+        raw_len -= HASH_LEN;
+      }
+
+      if (raw_len < HEADER_LEN + 5) {
         WARNING("LXMF: incoming payload too short for LXMF header");
         return;
       }
-      const uint8_t* raw = wire.data();
-      size_t raw_len = wire.size();
 
       RNS::Bytes source_hash(raw, HASH_LEN);
       RNS::Bytes signature(raw + HASH_LEN, SIG_LEN);

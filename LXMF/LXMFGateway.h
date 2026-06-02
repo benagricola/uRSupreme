@@ -321,20 +321,23 @@ namespace LXMF {
         if (out_err) *out_err = "No such identity is logged in on this device.";
         return false;
       }
-      // Auto-retry on an unknown recipient key. In AP mode the LoRa
-      // interface no longer floods announces, so a recipient's public key
-      // is learned on demand via a path request — the first message to a
-      // new contact would otherwise fail until the user resends. Queue it
-      // and resend automatically once the key arrives (tick_pending_
-      // identity_sends). Attachment-free only: the staged attachment
-      // buffers can't be safely held across the retry window.
+      // Auto-retry when there's no route to the recipient yet — either no
+      // transport PATH to them, or their public key isn't cached. Upstream
+      // LXMF requests the path whenever has_path() is false
+      // (LXMRouter.py:1675), not just on an identity-cache miss: under load
+      // the path table evicts the active contact while the key stays cached,
+      // so gating on the key alone silently built a pathless packet that
+      // Transport then dropped. A path request covers both — its response
+      // announce re-populates the key too. Queue + auto-resend once a route
+      // exists (tick_pending_identity_sends). Attachment-free only: the staged
+      // attachment buffers can't be safely held across the retry window.
       if ((attachments == nullptr || attachments->empty()) &&
-          !RNS::Identity::recall(dest_hash)) {
+          (!RNS::Transport::has_path(dest_hash) || !RNS::Identity::recall(dest_hash))) {
         RNS::Transport::request_path(dest_hash);
         if (queue_pending_identity_send(iden_id, dest_hash, title, content)) {
-          if (out_err) *out_err = "Fetching the recipient's key. The message will send automatically when it arrives.";
+          if (out_err) *out_err = "Finding a route to the recipient. The message will send automatically once it's known.";
         } else if (out_err) {
-          *out_err = "Recipient's key is not known yet and the auto-send queue is full. Please resend in a moment.";
+          *out_err = "No route to the recipient yet and the auto-send queue is full. Please resend in a moment.";
         }
         return false;
       }
@@ -395,15 +398,16 @@ namespace LXMF {
       return true;
     }
 
-    // Called from loop(): when a queued send's recipient key has arrived,
-    // send it for real (which appends the outbox record + broadcasts it,
-    // so the bubble appears). Give up after PENDING_ID_MAX_ATTEMPTS.
+    // Called from loop(): when a route to the recipient exists (a transport
+    // path AND the recipient's key), send it for real (which appends the
+    // outbox record + broadcasts it, so the bubble appears). Give up after
+    // PENDING_ID_MAX_ATTEMPTS.
     static void tick_pending_identity_sends() {
       auto& q = pending_identity_sends();
       const uint64_t now = (uint64_t)millis();
       for (auto it = q.begin(); it != q.end(); ) {
         if (now < it->next_at_ms) { ++it; continue; }
-        if (RNS::Identity::recall(it->dest)) {
+        if (RNS::Transport::has_path(it->dest) && RNS::Identity::recall(it->dest)) {
           MessageRecord rec;
           const char* err = nullptr;
           if (send(it->iden_id, it->dest, it->title, it->content, nullptr, rec, &err)) {

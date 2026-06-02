@@ -390,18 +390,22 @@ namespace LXMF {
       }
 
       RNS::Identity remote_identity = RNS::Identity::recall(dest_hash);
-      if (!remote_identity) {
-        // We may have a transport path but not the recipient's public key — a
-        // high-cardinality announce firehose can evict it from the identity
-        // cache, and with the LoRa interface in access-point mode we no longer
-        // flood announces, so keys are learned on demand. Issue a path request:
-        // its response carries the recipient's announce, which re-populates the
-        // public key, so a resend a few seconds later succeeds.
-        // (Seamless auto-retry/queue is a follow-up; for now the caller resends.)
+      const bool have_path = RNS::Transport::has_path(dest_hash);
+      if (!remote_identity || !have_path) {
+        // No route to the recipient yet: either no transport PATH or no cached
+        // public key. Upstream LXMF requests the path whenever has_path() is
+        // false (LXMRouter.py:1675), regardless of the key cache — under load
+        // the path table evicts an active contact while its key stays cached,
+        // and building a pathless packet just gets it dropped. The path
+        // response re-populates the key too, so one request covers both misses.
+        // Issue it and ask the caller to resend once a route exists. (The
+        // gateway's auto-retry queue handles resends for attachment-free
+        // messages; attachment sends are caller-resend for now, since the
+        // staged buffer can't be held across the retry window.)
         RNS::Transport::request_path(dest_hash);
-        WARNINGF("LXMF: identity for %s unknown — issued path request, asking caller to retry",
-                 dest_hash.toHex().c_str());
-        return fail("Fetching recipient's key (sent a path request) — resend in a few seconds.");
+        WARNINGF("LXMF: no route to %s yet (path=%d key=%d) — issued path request",
+                 dest_hash.toHex().c_str(), (int)have_path, (int)(bool)remote_identity);
+        return fail("Finding a route to the recipient (sent a path request) — resend in a few seconds.");
       }
 
       RNS::Destination remote_dest(

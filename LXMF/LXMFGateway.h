@@ -675,6 +675,18 @@ namespace LXMF {
               Web::publish_lxmf_progress(
                   p->id, /*peer=*/RNS::Bytes{}, link_hash, /*incoming=*/false,
                   /*bytes_done=*/0, /*bytes_total=*/0, /*finished=*/true);
+              // OLED: if an outbound "Send N%" marquee is currently showing (a
+              // Resource send just concluded), supersede it with a brief
+              // terminal so the strip reverts to the signal bars. Gated on the
+              // live "Send " marquee so a small opportunistic send — which never
+              // showed progress — doesn't post a spurious terminal. Mirrors the
+              // inbound receive-complete terminal.
+              char cur[Common::Status::MAX_MESSAGE_LEN];
+              if (Common::Status::latest(cur, sizeof(cur)) &&
+                  strncmp(cur, "Send ", 5) == 0) {
+                Common::Status::update(status == OutboxStatus::Failed
+                                       ? "Send failed" : "Send complete", 2500);
+              }
             }
           });
       // Resource progress: fire SSE events so the SPA can render an
@@ -689,29 +701,27 @@ namespace LXMF {
             Web::publish_lxmf_progress(p->id, peer_hash, link_hash,
                                        incoming, bytes_done, bytes_total,
                                        /*finished=*/false);
-            // OLED marquee: incoming only. Outbound progress is shown
-            // by the SPA on the bubble; the device-side user isn't
-            // typically watching their own send. Use update() (not
-            // say()) so the ring head slot is reused for each chunk
-            // instead of stacking N messages per transfer. 5 s TTL
-            // means the marquee auto-clears if the transfer aborts
-            // mid-flight rather than getting stuck on the last %.
-            if (incoming && bytes_total > 0) {
+            // OLED marquee: surface transfer progress in BOTH directions so a
+            // user looking at the device (not the SPA) sees a transfer is in
+            // flight and how far through. update() (not say()) reuses the ring
+            // head slot per chunk instead of stacking N messages. Sticky
+            // (ttl=0): a Resource can stall between parts longer than any fixed
+            // TTL on an airtime-limited link, and the marquee must not lapse
+            // back to the signal bars mid-transfer — the complete/terminal
+            // supersedes it. Only Resource transfers fire progress, so a small
+            // opportunistic message shows no marquee (nothing to track).
+            if (bytes_total > 0) {
               const uint32_t pct = (uint32_t)(((uint64_t)bytes_done * 100)
                                               / bytes_total);
+              const char* dir = incoming ? "Recv" : "Send";
               char buf[Common::Status::MAX_MESSAGE_LEN];
               if (bytes_total < 1024) {
-                snprintf(buf, sizeof(buf), "Recv %uB %u%%",
-                         (unsigned)bytes_total, (unsigned)pct);
+                snprintf(buf, sizeof(buf), "%s %uB %u%%",
+                         dir, (unsigned)bytes_total, (unsigned)pct);
               } else {
-                snprintf(buf, sizeof(buf), "Recv %uK %u%%",
-                         (unsigned)(bytes_total / 1024), (unsigned)pct);
+                snprintf(buf, sizeof(buf), "%s %uK %u%%",
+                         dir, (unsigned)(bytes_total / 1024), (unsigned)pct);
               }
-              // Sticky (ttl=0): a Resource can stall between parts for longer
-              // than any fixed TTL on an airtime-limited link, and the marquee
-              // must not lapse back to the signal bars mid-transfer. The
-              // receive-complete terminal below supersedes it; the Resource
-              // always concludes (complete/fail/timeout), so it never sticks.
               Common::Status::update(buf, 0);
             }
           });

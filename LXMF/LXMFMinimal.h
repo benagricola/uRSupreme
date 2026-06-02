@@ -1611,8 +1611,14 @@ namespace LXMF {
       if (out_title) *out_title = title;
 
       // Element 2: content. Same trust-boundary truncation as title.
+      // Empty content is valid and must NOT be rejected: an attachment-only
+      // message (image/audio/file with no caption) carries its whole payload
+      // in the fields dict below. Rejecting empty content here dropped every
+      // captionless image — the Resource transferred and proofed back, so the
+      // sender saw "delivered", but the receiver discarded it at parse and it
+      // never reached the inbox. read_bin_or_str consumes the (empty) element
+      // either way, so field parsing below stays in sync.
       std::string content = Common::MsgPack::read_bin_or_str(data, len, off);
-      if (content.empty()) return false;
       if (content.size() > LXMF_MAX_BODY_BYTES) {
         WARNINGF("LXMF: peer body %u B exceeds cap %u, truncating",
                  (unsigned)content.size(), (unsigned)LXMF_MAX_BODY_BYTES);

@@ -251,6 +251,28 @@ namespace Web {
           Web::WS::publish_radio_telemetry(*s);
         }
       }
+      // Network telemetry — same 1 Hz cadence. Sum tx/rx bytes across the
+      // non-LoRa interfaces (rmap TCP client, TCP server, UDP) under the
+      // recursive rns_lock so the interface table isn't iterated while
+      // reticulum.loop mutates it. Only advance/tick when the lock is
+      // acquired, so a missed window doesn't corrupt the rate baseline.
+      if (now - _last_net_tlm >= Telemetry::Network::SAMPLE_PERIOD_MS) {
+        uint64_t tx_total = 0, rx_total = 0;
+        if (acquire_rns_lock(50)) {
+          for (const auto& kv : RNS::Transport::get_interfaces()) {
+            if (kv.second.name() == "LoRaInterface") continue;
+            tx_total += (uint64_t)kv.second.txb();
+            rx_total += (uint64_t)kv.second.rxb();
+          }
+          release_rns_lock();
+          _last_net_tlm = now;
+          const Telemetry::Network::Sample* ns =
+              Telemetry::Network::tick(now, tx_total, rx_total);
+          if (ns && Web::WS::any_subscribers()) {
+            Web::WS::publish_network_telemetry(*ns);
+          }
+        }
+      }
 
       // Skip all WS-publish work when nobody's listening — WebUI::loop
       // runs at ~50 Hz on the main task (shared with reticulum.loop and
@@ -793,6 +815,7 @@ namespace Web {
       // string matcher does prefix matching, so /api/radio would
       // otherwise swallow the more-specific /api/radio/telemetry.
       server.on("/api/radio/telemetry", HTTP_GET, handle_radio_telemetry);
+      server.on("/api/network/telemetry", HTTP_GET, handle_network_telemetry);
       server.on("/api/radio",           HTTP_GET,  handle_radio_get);
       on_json_post("/api/radio",         handle_radio_set);
       on_json_post("/api/radio/reset",   handle_radio_reset);
@@ -873,6 +896,7 @@ namespace Web {
     static inline uint32_t _last_sensor_drain = 0;
     static inline uint32_t _last_system_push  = 0;
     static inline uint32_t _last_radio_tlm    = 0;
+    static inline uint32_t _last_net_tlm      = 0;
   };
 
   // Free function the LXMF gateway calls to publish a Resource-transfer

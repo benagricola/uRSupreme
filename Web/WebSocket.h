@@ -38,6 +38,7 @@
 #include "../LXMF/LXMFTypes.h"
 #include "../LXMF/AnnounceLog.h"
 #include "../Telemetry/Radio.h"
+#include "../Telemetry/Network.h"
 
 namespace LXMF { struct MessageRecord; }
 
@@ -414,6 +415,16 @@ namespace WS {
     // honest counterpart to tx_packets. Climbs when the radio can't keep
     // up (e.g. duty-cycle airtime lock holding the queue).
     doc["tx_dropped"] = (uint32_t)lora_tx_dropped;
+    broadcast(doc);
+  }
+
+  // Network (WiFi/transport) telemetry — aggregate tx/rx byte rate across the
+  // non-LoRa interfaces. Counterpart to the radio frame; carries no extra meta
+  // beyond the sample itself.
+  inline void publish_network_telemetry(const Telemetry::Network::Sample& s) {
+    Common::PsramJsonDocument doc;
+    doc["type"] = "network_telemetry";
+    Telemetry::Network::encode(s, doc.as<JsonObject>());
     broadcast(doc);
   }
 

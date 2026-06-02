@@ -52,6 +52,20 @@
       send_json(req, 200, doc);
     }
 
+    // Network (WiFi/transport) telemetry history — aggregate tx/rx byte rate
+    // across the non-LoRa interfaces. Same shape as the radio history so the
+    // SPA can reuse its chart for backbone traffic.
+    static void handle_network_telemetry(AsyncWebServerRequest* req) {
+      if (require_auth(req).empty()) return;
+      Common::PsramJsonDocument doc;
+      doc["period_ms"] = Telemetry::Network::sample_period_ms();
+      doc["capacity"]  = Telemetry::Network::history_capacity();
+      doc["size"]      = Telemetry::Network::history_size();
+      JsonArray arr = doc["samples"].to<JsonArray>();
+      Telemetry::Network::fill_history(arr);
+      send_json(req, 200, doc);
+    }
+
     static void handle_radio_set(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
       if (!require_physical_auth(req, body)) return;

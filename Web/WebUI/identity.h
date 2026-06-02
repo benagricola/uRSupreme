@@ -214,13 +214,19 @@
 
       JsonObject transport = doc["transport"].to<JsonObject>();
       transport["enabled"]      = RNS::Reticulum::transport_enabled();
+      // Link-request accounting (diagnostic). On an intermediate hop like the
+      // LoRa-bridge SX, linkreqs_rx minus linkreqs_fwd is the number of link
+      // requests that arrived (e.g. over rmap) but were not relayed onward
+      // (e.g. onto LoRa) — distinguishing "we dropped it" from "it never
+      // reached us". On a destination node, linkreqs_rx == linkreqs_local.
+      transport["linkreqs_rx"]      = RNS::Transport::linkreqs_rx();
+      transport["linkreqs_fwd"]     = RNS::Transport::linkreqs_fwd();
+      transport["linkreqs_local"]   = RNS::Transport::linkreqs_local();
+      transport["packets_received"] = RNS::Transport::packets_received();
       // Serial/diagnostic toggles surfaced so the SPA can render the
       // current state on its Connectivity tab without an extra round
       // trip.
       doc["kiss_serial_output"] = kiss_serial_output;
-      // TODO microReticulum doesn't yet expose live path/packet counters
-      // through a stable static getter. Add an accessor on the local
-      // clone branch when we want to surface them in the SPA.
       send_json(req, 200, doc);
     }
 

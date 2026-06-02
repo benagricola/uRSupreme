@@ -707,7 +707,12 @@ namespace LXMF {
                 snprintf(buf, sizeof(buf), "Recv %uK %u%%",
                          (unsigned)(bytes_total / 1024), (unsigned)pct);
               }
-              Common::Status::update(buf, 5000);
+              // Sticky (ttl=0): a Resource can stall between parts for longer
+              // than any fixed TTL on an airtime-limited link, and the marquee
+              // must not lapse back to the signal bars mid-transfer. The
+              // receive-complete terminal below supersedes it; the Resource
+              // always concludes (complete/fail/timeout), so it never sticks.
+              Common::Status::update(buf, 0);
             }
           });
       // Inbound receive-complete: symmetric counterpart to the outbox
@@ -720,12 +725,16 @@ namespace LXMF {
       // is only known post-decrypt); the SPA keys the clear off the
       // link hash that earlier message_progress events also carried.
       a.lxmf.set_receive_complete_callback(
-          [p](const RNS::Bytes& link_hash, uint32_t bytes_total, bool /*ok*/) {
+          [p](const RNS::Bytes& link_hash, uint32_t bytes_total, bool ok) {
             if (!p->active) return;
             Web::publish_lxmf_progress(
                 p->id, /*peer=*/RNS::Bytes{}, link_hash, /*incoming=*/true,
                 /*bytes_done=*/bytes_total, /*bytes_total=*/bytes_total,
                 /*finished=*/true);
+            // Supersede the sticky "Recv N%" marquee with a brief terminal so
+            // the OLED strip reverts to the signal bars promptly instead of
+            // holding the last percentage forever.
+            Common::Status::update(ok ? "Recv complete" : "Recv failed", 2500);
           });
       // Attachment persistence — when an incoming LXMF message carries
       // FIELD_FILE_ATTACHMENTS / FIELD_IMAGE / FIELD_AUDIO blobs, write

@@ -815,10 +815,13 @@ bool stat_area_intialised = false;
 // the start and a wrap-around when the tail clears the left edge.
 // Reset to position 0 whenever the message text changes (FNV-1a hash
 // over the bytes — cheap and good enough for "did the string change").
-static void draw_status_marquee(int px, int py, int width, int height) {
+// Returns true if a live status message was drawn (so the caller knows the
+// strip is the marquee's this frame and must NOT also draw the signal bars),
+// false if there was nothing to show.
+static bool draw_status_marquee(int px, int py, int width, int height) {
   char buf[Common::Status::MAX_MESSAGE_LEN];
-  if (!Common::Status::latest(buf, sizeof(buf))) return;
-  if (buf[0] == '\0') return;
+  if (!Common::Status::latest(buf, sizeof(buf))) return false;
+  if (buf[0] == '\0') return false;
 
   // Hash for change detection — FNV-1a 32-bit. Any change in the
   // message text resets the scroll position and re-introduces the
@@ -882,6 +885,7 @@ static void draw_status_marquee(int px, int py, int width, int height) {
 
   // Restore the default font so callers don't see Picopixel leak out.
   stat_area.setFont(SMALL_FONT);
+  return true;
 }
 
 void draw_stat_area() {
@@ -895,15 +899,21 @@ void draw_stat_area() {
     draw_bt_icon(3, 30);
     draw_lora_icon(45, 8);
     draw_mw_icon(45, 30);
-    draw_battery_bars(4, 58);
-    draw_quality_bars(28, 56);
-    draw_signal_bars(44, 56);
     if (radio_online) {
       draw_waterfall(27, 4);
     }
-    // Marquee — drawn LAST so it overlays the indicator strip when a
-    // status message is present.
-    draw_status_marquee(0, 56, 64, 8);
+    // Bottom strip (rows 56-63): the battery/quality/signal indicators and the
+    // status marquee share this band but are mutually exclusive. Each bar
+    // widget clears only its own narrow rect, so a marquee that stops drawing
+    // would leave stale text pixels in the gaps between the bars — and the bars
+    // would show through a live marquee. Render exactly one: the marquee if a
+    // status message is live, otherwise clear the whole strip and draw the bars.
+    if (!draw_status_marquee(0, 56, 64, 8)) {
+      stat_area.fillRect(0, 56, 64, 8, SSD1306_BLACK);
+      draw_battery_bars(4, 58);
+      draw_quality_bars(28, 56);
+      draw_signal_bars(44, 56);
+    }
   }
 }
 

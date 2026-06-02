@@ -302,6 +302,19 @@ namespace WS {
     broadcast(doc, identity_id);
   }
 
+  // Same event, keyed by outbox seq instead of a packet/link hash — for a
+  // queued send that has no packet hash yet (the "finding route" give-up).
+  // The SPA matches the bubble by seq.
+  inline void publish_outbox_status_seq(const LXMF::IdentityId& identity_id,
+                                        uint32_t seq,
+                                        const char* status_name) {
+    Common::PsramJsonDocument doc;
+    doc["type"]   = "outbox_status";
+    doc["seq"]    = seq;
+    doc["status"] = status_name;
+    broadcast(doc, identity_id);
+  }
+
   // Announce / path events. These are global (every connected client
   // gets them) so the SPA's contacts list and path table stay live.
   // is_lxmf=true → "announce_seen" (lxmf.delivery aspect, populates

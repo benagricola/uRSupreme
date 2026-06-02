@@ -750,12 +750,19 @@
       }
       LXMF::MessageRecord rec;
       const char* err = nullptr;
+      bool queued = false;
       if (!LXMF::LXMFGateway::send(requested, to, title, content,
                                    attachments.empty() ? nullptr : &attachments,
-                                   rec, &err)) {
-        send_error_with_message(req, 503, "send_failed",
-                                err ? err : "Send failed for an unknown reason.");
-        return;
+                                   rec, &err, &queued)) {
+        if (!queued) {
+          send_error_with_message(req, 503, "send_failed",
+                                  err ? err : "Send failed for an unknown reason.");
+          return;
+        }
+        // Accepted into the auto-send queue (no route yet). `rec` is the
+        // optimistic "finding route" record — fall through to the 202 builder
+        // so the SPA shows a live bubble keyed by rec.seq that the eventual
+        // auto-send (same seq) or the give-up outbox_status event resolves.
       }
       // The 202 response returns the full server-authoritative shape
       // of the just-created outbox record so the SPA's optimistic

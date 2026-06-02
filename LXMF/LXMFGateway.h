@@ -47,6 +47,12 @@ namespace Web {
     void publish_outbox_status(const LXMF::IdentityId& identity_id,
                                const RNS::Bytes& link_hash,
                                const char* status_name);
+    // Status update keyed by outbox seq rather than packet hash — used for
+    // queued sends that have no packet hash yet (e.g. the "finding route"
+    // give-up). The SPA matches the bubble by seq.
+    void publish_outbox_status_seq(const LXMF::IdentityId& identity_id,
+                                   uint32_t seq,
+                                   const char* status_name);
   }
 }
 
@@ -315,7 +321,17 @@ namespace LXMF {
                      const std::string& content,
                      const std::vector<LXMFMinimal::OutgoingAttachment>* attachments,
                      MessageRecord& out_rec,
-                     const char** out_err = nullptr) {
+                     const char** out_err = nullptr,
+                     // Set true when the send was accepted into the auto-send
+                     // queue instead of sent now (no route yet). The caller
+                     // (handle_send) reports that as an accepted/queued
+                     // response, not a failure, and out_rec carries an
+                     // optimistic "finding route" record keyed by the reserved
+                     // seq. The auto-send tick passes use_seq so the real
+                     // record reuses that seq and the SPA bubble merges.
+                     bool* out_queued = nullptr,
+                     uint32_t use_seq = 0) {
+      if (out_queued) *out_queued = false;
       LXMFIdentity* a = identity_by_id_mut(iden_id);
       if (!a) {
         if (out_err) *out_err = "No such identity is logged in on this device.";
@@ -329,22 +345,62 @@ namespace LXMF {
       // so gating on the key alone silently built a pathless packet that
       // Transport then dropped. A path request covers both — its response
       // announce re-populates the key too. Queue + auto-resend once a route
-      // exists (tick_pending_identity_sends). Attachment-free only: the staged
-      // attachment buffers can't be safely held across the retry window.
-      if ((attachments == nullptr || attachments->empty()) &&
-          (!RNS::Transport::has_path(dest_hash) || !RNS::Identity::recall(dest_hash))) {
+      // exists (tick_pending_identity_sends).
+      //
+      // Attachment sends queue too, but on a bounded window: the queue takes
+      // ownership of the staged attachment buffers (we return here, before
+      // send_message's StagingReleaser would free them) and releases them the
+      // instant the window expires. The window is exactly PATH_REQUEST_TIMEOUT
+      // — the path request fires here, once, on this first attempt, so its
+      // timeout and the staging deadline start together and expire together.
+      if (!RNS::Transport::has_path(dest_hash) || !RNS::Identity::recall(dest_hash)) {
         RNS::Transport::request_path(dest_hash);
-        if (queue_pending_identity_send(iden_id, dest_hash, title, content)) {
+        const uint32_t seq = queue_pending_identity_send(a, iden_id, dest_hash, title, content, attachments);
+        if (seq != 0) {
+          // Accepted, not yet sent. Hand back an optimistic record — the
+          // reserved seq, a "finding route" status, and the attachment
+          // metadata — so the caller shows a live bubble that the eventual
+          // auto-send (same seq, via use_seq) or the give-up event resolves.
+          out_rec = MessageRecord{};
+          out_rec.seq          = seq;
+          out_rec.peer_hash    = dest_hash;
+          out_rec.title        = title;
+          out_rec.content      = content;
+          out_rec.body_size    = (uint32_t)content.size();
+          out_rec.incoming     = false;
+          out_rec.signature_ok = true;
+          out_rec.status       = OutboxStatus::FindingRoute;
+          out_rec.boot_epoch   = Web::BootCounter::current();
+          out_rec.received_ms  = (uint32_t)millis();
+          if (attachments) {
+            for (const auto& at : *attachments) {
+              AttachmentMeta m;
+              m.tag      = at.tag;
+              m.size     = (uint32_t)at.byte_count();
+              m.filename = at.filename;
+              m.mime     = at.mime;
+              out_rec.attachments.push_back(std::move(m));
+            }
+          }
+          if (out_queued) *out_queued = true;
           if (out_err) *out_err = "Finding a route to the recipient. The message will send automatically once it's known.";
-        } else if (out_err) {
-          *out_err = "No route to the recipient yet and the auto-send queue is full. Please resend in a moment.";
+          return false;
         }
-        return false;
+        // Queue full. Attachment-free sends can't recover, so report it;
+        // attachment sends fall through to send_message, which frees the
+        // staging on its own no-route failure rather than leaking it.
+        if (attachments == nullptr || attachments->empty()) {
+          if (out_err) *out_err = "No route to the recipient yet and the auto-send queue is full. Please resend in a moment.";
+          return false;
+        }
       }
       if (!a->lxmf.send_message(dest_hash, title, content, attachments, out_rec, out_err)) {
         return false;
       }
       if (a->outbox) {
+        // When this is the queue's auto-send, reuse the seq the optimistic
+        // bubble already has so the SPA merges rather than duplicating.
+        if (use_seq != 0) out_rec.seq = use_seq;
         a->outbox->append(out_rec);
         // Broadcast the new outbound message so every connected client
         // (not just the one that issued the send, and including API-only
@@ -354,48 +410,90 @@ namespace LXMF {
       return true;
     }
 
-    // Auto-retry queue for sends whose recipient key wasn't known yet
-    // (see send()). Each entry is re-attempted once the key arrives via
-    // the path request, then dropped. Bounded + short-lived; the message
-    // text/dest are copied (large bodies land in PSRAM via the heap
-    // threshold). Attachment-free by construction.
+    // Auto-retry queue for sends with no route to the recipient yet (see
+    // send()). Each entry is re-attempted once a route arrives via the path
+    // request, then dropped. Bounded + short-lived. Text bodies and (for
+    // attachment sends) the staged-buffer references are copied in; the entry
+    // carries the reserved outbox seq so the optimistic bubble and the real
+    // record share an identity.
     struct PendingIdentitySend {
       IdentityId  iden_id;
       RNS::Bytes  dest;
       std::string title;
       std::string content;
+      // Owned staged attachments (staging_id references). Empty for text
+      // sends. When set, the queue is responsible for releasing the staging
+      // buffers — either send_message frees them on a successful auto-send,
+      // or the give-up path frees them when the window expires.
+      std::vector<LXMFMinimal::OutgoingAttachment> attachments;
+      uint32_t    outbox_seq  = 0;   // reserved seq the eventual record reuses
       uint8_t     attempts    = 0;
       uint64_t    next_at_ms  = 0;
+      uint64_t    deadline_ms = 0;   // hard give-up time (attachment entries)
     };
     static constexpr uint8_t  PENDING_ID_MAX          = 8;
     static constexpr uint8_t  PENDING_ID_MAX_ATTEMPTS = 6;
     static constexpr uint32_t PENDING_ID_BACKOFF_MS   = 4000;
+    // Attachment entries pin PSRAM/SD staging, so they use a tight deadline
+    // rather than the text path's lenient attempt count. The deadline is the
+    // path-request timeout itself, with no padding: the path request fires
+    // once, at the instant we queue (this first send attempt), so it can
+    // resolve right up to PATH_REQUEST_TIMEOUT later and not a moment after —
+    // past that the request has given up and there's no point holding the
+    // staging. We deliberately do NOT re-issue the request while queued, which
+    // would reset its timeout and de-sync it from this deadline.
+    static constexpr uint32_t PENDING_ATTACH_WINDOW_MS  =
+        (uint32_t)RNS::Type::Transport::PATH_REQUEST_TIMEOUT * 1000;
+    static constexpr uint32_t PENDING_ATTACH_RECHECK_MS = 2000;
     static std::vector<PendingIdentitySend>& pending_identity_sends() {
       static std::vector<PendingIdentitySend> v;
       return v;
     }
 
-    static bool queue_pending_identity_send(const IdentityId& iden,
-                                            const RNS::Bytes& dest,
-                                            const std::string& title,
-                                            const std::string& content) {
+    // Returns the outbox seq reserved for this queued send, or 0 if it could
+    // not be queued (queue full, or the identity has no outbox to reserve a
+    // seq from). The seq lets the optimistic "finding route" bubble and the
+    // eventual real record share an identity (the SPA dedups on seq).
+    static uint32_t queue_pending_identity_send(
+        LXMFIdentity* a,
+        const IdentityId& iden,
+        const RNS::Bytes& dest,
+        const std::string& title,
+        const std::string& content,
+        const std::vector<LXMFMinimal::OutgoingAttachment>* attachments = nullptr) {
       auto& q = pending_identity_sends();
-      // Coalesce an identical re-queue (user mashing send) — refresh its
-      // schedule instead of stacking duplicates.
-      for (auto& p : q) {
-        if (p.iden_id == iden && p.dest == dest &&
-            p.title == title && p.content == content) {
-          p.attempts = 0;
-          p.next_at_ms = (uint64_t)millis() + PENDING_ID_BACKOFF_MS;
-          return true;
+      const bool has_atts = (attachments != nullptr && !attachments->empty());
+      const uint64_t now = (uint64_t)millis();
+      // Coalesce an identical re-queue (user mashing send) — but only for
+      // attachment-free entries. Two attachment sends carry distinct staging
+      // buffers even with identical text, so they must stay separate; merging
+      // them would orphan one set of staging ids. Reuse the coalesced entry's
+      // seq so the caller's bubble still matches.
+      if (!has_atts) {
+        for (auto& p : q) {
+          if (p.attachments.empty() && p.iden_id == iden && p.dest == dest &&
+              p.title == title && p.content == content) {
+            p.attempts = 0;
+            p.next_at_ms = now + PENDING_ID_BACKOFF_MS;
+            return p.outbox_seq;
+          }
         }
       }
-      if (q.size() >= PENDING_ID_MAX) return false;
+      if (q.size() >= PENDING_ID_MAX) return 0;
+      if (!a || !a->outbox) return 0;
       PendingIdentitySend p;
       p.iden_id = iden; p.dest = dest; p.title = title; p.content = content;
-      p.next_at_ms = (uint64_t)millis() + PENDING_ID_BACKOFF_MS;
+      p.outbox_seq = a->outbox->reserve_seq();
+      if (has_atts) {
+        p.attachments = *attachments;        // take ownership of the staging ids
+        p.next_at_ms  = now + PENDING_ATTACH_RECHECK_MS;
+        p.deadline_ms = now + PENDING_ATTACH_WINDOW_MS;
+      } else {
+        p.next_at_ms  = now + PENDING_ID_BACKOFF_MS;
+      }
+      const uint32_t seq = p.outbox_seq;
       q.push_back(std::move(p));
-      return true;
+      return seq;
     }
 
     // Called from loop(): when a route to the recipient exists (a transport
@@ -406,21 +504,70 @@ namespace LXMF {
       auto& q = pending_identity_sends();
       const uint64_t now = (uint64_t)millis();
       for (auto it = q.begin(); it != q.end(); ) {
+        if (!it->attachments.empty()) {
+          // Attachment entry. Free the staging the instant the path-request
+          // window closes: the deadline is evaluated every tick (a cheap
+          // timestamp compare) so it lands exactly on PATH_REQUEST_TIMEOUT, not
+          // a recheck interval later. The pricier route lookup is throttled to
+          // the recheck cadence (or run once at the deadline, in case the route
+          // resolved in the final moments). No path-request nudge — the single
+          // request fired at queue time is what the deadline is timed against.
+          const bool deadline_passed = (now >= it->deadline_ms);
+          if (!deadline_passed && now < it->next_at_ms) { ++it; continue; }
+          if (RNS::Transport::has_path(it->dest) && RNS::Identity::recall(it->dest)) {
+            MessageRecord rec;
+            const char* err = nullptr;
+            // Route is up. send_message consumes and frees the staging buffers
+            // (StagingReleaser), handing ownership back. The route is present
+            // and the loop is cooperative (no yield before send()'s own
+            // check), so send() can't re-enter the no-route gate and re-queue.
+            if (send(it->iden_id, it->dest, it->title, it->content, &it->attachments,
+                     rec, &err, nullptr, it->outbox_seq)) {
+              NOTICEF("LXMF: auto-sent queued attachment message to %s once a route arrived",
+                      it->dest.toHex().c_str());
+            } else {
+              WARNINGF("LXMF: auto-send of attachment message to %s failed after a route arrived: %s",
+                       it->dest.toHex().c_str(), err ? err : "unknown");
+              Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed");
+            }
+            it = q.erase(it);
+            continue;
+          }
+          if (deadline_passed) {
+            for (auto& a : it->attachments)
+              if (a.staging_id) Storage::OutboundStaging::release(a.staging_id);
+            // Tell the SPA the "finding route" bubble has given up, keyed by
+            // its seq (the message was never sent, so there's no packet hash).
+            Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed");
+            WARNINGF("LXMF: path-request window closed for attachment message to %s — freed staging",
+                     it->dest.toHex().c_str());
+            it = q.erase(it);
+            continue;
+          }
+          it->next_at_ms = now + PENDING_ATTACH_RECHECK_MS;
+          ++it;
+          continue;
+        }
+
+        // Text entry — lenient attempt-count retry with a path-request nudge.
         if (now < it->next_at_ms) { ++it; continue; }
         if (RNS::Transport::has_path(it->dest) && RNS::Identity::recall(it->dest)) {
           MessageRecord rec;
           const char* err = nullptr;
-          if (send(it->iden_id, it->dest, it->title, it->content, nullptr, rec, &err)) {
+          if (send(it->iden_id, it->dest, it->title, it->content, nullptr,
+                   rec, &err, nullptr, it->outbox_seq)) {
             NOTICEF("LXMF: auto-sent queued message to %s once its key arrived",
                     it->dest.toHex().c_str());
           } else {
             WARNINGF("LXMF: auto-send to %s failed after key arrived: %s",
                      it->dest.toHex().c_str(), err ? err : "unknown");
+            Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed");
           }
           it = q.erase(it);
         } else if (++it->attempts >= PENDING_ID_MAX_ATTEMPTS) {
           WARNINGF("LXMF: giving up auto-send to %s — key never arrived after %u tries",
                    it->dest.toHex().c_str(), (unsigned)it->attempts);
+          Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed");
           it = q.erase(it);
         } else {
           RNS::Transport::request_path(it->dest);  // nudge the path request again

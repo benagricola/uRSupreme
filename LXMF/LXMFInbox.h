@@ -375,6 +375,10 @@ namespace LXMF {
     }
 
     uint32_t next_seq() const { return _next_seq; }
+    // Reserve the seq a future append() will carry, without writing a record.
+    // Used by the auto-send queue so an optimistic "finding route" bubble and
+    // the eventual real outbox record share one seq (the SPA dedups on it).
+    uint32_t reserve_seq() { return ++_next_seq; }
     size_t   size()     const { return _ring.size(); }
 
     // Fired for every record about to be evicted (capacity, TTL, or

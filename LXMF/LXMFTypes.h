@@ -59,18 +59,24 @@ namespace LXMF {
 
   // Outbound message status, tracked per send.
   enum class OutboxStatus : uint8_t {
-    Queued    = 0,
-    Sent      = 1,
-    Delivered = 2,
-    Failed    = 3,
+    Queued       = 0,
+    Sent         = 1,
+    Delivered    = 2,
+    Failed       = 3,
+    // Accepted by the device but not yet sent: no route to the recipient,
+    // so a path request is in flight and the send is held in the
+    // attachment/text auto-send queue. Transitions to Sent if a route
+    // arrives within the path-request window, or Failed if it doesn't.
+    FindingRoute = 4,
   };
 
   inline const char* outbox_status_name(OutboxStatus s) {
     switch (s) {
-      case OutboxStatus::Queued:    return "queued";
-      case OutboxStatus::Sent:      return "sent";
-      case OutboxStatus::Delivered: return "delivered";
-      case OutboxStatus::Failed:    return "failed";
+      case OutboxStatus::Queued:       return "queued";
+      case OutboxStatus::Sent:         return "sent";
+      case OutboxStatus::Delivered:    return "delivered";
+      case OutboxStatus::Failed:       return "failed";
+      case OutboxStatus::FindingRoute: return "finding_route";
     }
     return "unknown";
   }

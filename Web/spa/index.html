@@ -2826,7 +2826,7 @@ function bubbleClass(m) {
 function msgMeta(m) {
   const parts = [];
   if (m.ts) parts.push(new Date(m.ts * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }));
-  if (!m.in && m.status) parts.push(m.status);
+  if (!m.in && m.status) parts.push(m.status === 'finding_route' ? 'finding route…' : m.status);
   if (m.in && m.sig_ok === false) parts.push('⚠ bad sig');
   return parts.join(' · ');
 }
@@ -5104,16 +5104,18 @@ function dispatchEvent(ev) {
       openIdCodeModal({ codePresent: true });
     }
   } else if (ev.type === 'outbox_status') {
-    // Lifecycle pill update for an outbound message bubble. The
-    // status pill flips queued → sent → delivered without a re-fetch.
+    // Lifecycle pill update for an outbound message bubble. The status pill
+    // flips finding_route → sent → delivered, or → failed, without a re-fetch.
+    // Most events key on the packet/link hash; a queued send that gave up
+    // before it ever had a packet keys on its outbox seq instead.
     const link = ev.link_hash;
-    if (!link) return;
-    // Find any cached outbound message whose link_hash matches and
-    // flip its status field, then re-render the open thread.
+    const seq  = (typeof ev.seq === 'number') ? ev.seq : undefined;
+    if (!link && seq === undefined) return;
     let touched = false;
     for (const conv of Object.values(state.conversations)) {
       for (const m of conv.msgs) {
-        if (!m.in && m.packet_hash === link) {
+        if (m.in) continue;
+        if ((link && m.packet_hash === link) || (seq !== undefined && m.seq === seq)) {
           m.status = ev.status;
           touched = true;
         }

@@ -573,7 +573,7 @@
      it. Contents refresh on each open from /api/info. -->
 <div id="popover-status" class="popover" x-data="statusPopoverData()"
      x-show="$store.s.popovers.status"
-     x-effect="$store.s.popovers.status && refreshRadioTelemetry()"
+     x-effect="$store.s.popovers.status && (refreshRadioTelemetry(), refreshNetworkTelemetry())"
      x-cloak>
   <div class="popover-section">
     <div class="popover-row">
@@ -600,7 +600,9 @@
     <div class="popover-value" id="status-wifi-ssid" x-text="wifiSsid"></div>
     <div class="popover-subline" id="status-wifi-ip" x-text="wifiIpLine"></div>
     <div class="popover-subline" id="status-wifi-auth" x-html="wifiAuthLine"></div>
-    <button class="secondary w-full mt-2" id="btn-force-softap" 
+    <div class="popover-subline net-rate-line" id="status-net-rate" x-html="networkRateLine"></div>
+    <div class="radio-chart-wrap" id="status-net-chart" x-html="networkChartHTML"></div>
+    <button class="secondary w-full mt-2" id="btn-force-softap"
             x-show="wifiMode === 'sta'"
             title="Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again."
             @click="onClickForceSoftap($event.currentTarget)">Switch to softAP</button>
@@ -1904,6 +1906,7 @@ let state = {
   // Server-side raw is preserved either way; this is purely a render
   // knob the SPA controls.
   radioTlm: { samples: [], cap: 120, seeded: false, periodMs: 1000, cwMax: 4, smoothing: 3 },
+  netTlm:   { samples: [], cap: 120, seeded: false, periodMs: 1000, smoothing: 3 },
   // Live filter typed into #search; conv rows x-show against it.
   searchQuery: '',
 
@@ -3986,6 +3989,14 @@ function statusPopoverData() {
       void this.$store.s.radioTlm.samples.length;
       return radioChartHTMLBuild();
     },
+    get networkChartHTML() {
+      void this.$store.s.netTlm.samples.length;
+      return networkChartHTMLBuild();
+    },
+    get networkRateLine() {
+      void this.$store.s.netTlm.samples.length;
+      return networkRateLineBuild();
+    },
     // -------- wifi --------
     get wifiMode() { return this._w.mode; },
     get wifiPillClass() {
@@ -4027,6 +4038,7 @@ function openStatusPopover() {
   // Re-seed each open is wasteful — the local ring is already correct
   // once seeded — so the guard prevents that.
   refreshRadioTelemetry();
+  refreshNetworkTelemetry();
   // Chart + CSMA line are reactive — Alpine bindings repaint them
   // automatically as $store.s.radioTlm.samples grows from WS pushes.
   state.popovers.status = true;
@@ -4076,6 +4088,94 @@ async function refreshRadioTelemetry() {
     if (typeof j.cw_max_band === 'number') rt.cwMax  = j.cw_max_band;
     rt.seeded = true;
   } catch (_) { /* leave seeded=false so we retry next open */ }
+}
+
+// One-shot seed of the network (WiFi/transport) telemetry ring, same pattern
+// as refreshRadioTelemetry. Re-seeds on reconnect (netTlm.seeded cleared there).
+async function refreshNetworkTelemetry() {
+  const nt = state.netTlm;
+  if (nt.seeded) return;
+  const tok = state.token; if (!tok) return;
+  try {
+    const r = await fetch('/api/network/telemetry',
+                          { headers: { 'Authorization': 'Bearer ' + tok } });
+    if (!r.ok) return;
+    const j = await r.json();
+    nt.samples = Array.isArray(j.samples) ? j.samples : [];
+    if (typeof j.capacity === 'number')  nt.cap      = j.capacity;
+    if (typeof j.period_ms === 'number') nt.periodMs = j.period_ms;
+    nt.seeded = true;
+  } catch (_) { /* retry next open */ }
+}
+
+// Human byte-rate. Sub-1K shows bytes, then KB/s, then MB/s.
+function netFmtRate(b) {
+  if (!(b > 0)) return '0 B/s';
+  if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB/s';
+  if (b >= 1024)    return (b / 1024).toFixed(1) + ' KB/s';
+  return (b | 0) + ' B/s';
+}
+
+// Current tx/rx rate line above the chart (mirrors the radio rate line).
+function networkRateLineBuild() {
+  const nt = state.netTlm;
+  const s = nt.samples[nt.samples.length - 1] || {};
+  return '<span class="swatch swatch-net-tx"></span>tx ' + netFmtRate(s.tx || 0)
+       + '  <span class="swatch swatch-net-rx"></span>rx ' + netFmtRate(s.rx || 0);
+}
+
+// SVG line chart of WiFi/transport tx & rx byte rate. Reuses the radio
+// chart's classes/host sizing; auto-scales the y-axis to a nice round max of
+// the (smoothed) peak so low background traffic stays visible without the
+// lines jittering each second.
+function networkChartHTMLBuild() {
+  const nt = state.netTlm;
+  const n = nt.samples.length;
+  if (n < 2) return '<div class="radio-chart-empty">Awaiting telemetry…</div>';
+  const host = document.getElementById('status-net-chart');
+  const W = Math.max(120, (host && host.clientWidth) || 240);
+  const H = 56, padL = 30, padR = 6, padT = 4, padB = 4;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const dx = plotW / Math.max(1, (nt.cap - 1));
+  const xOf = (i) => padL + (nt.cap - n + i) * dx;
+  const sw = Math.max(1, nt.smoothing | 0);
+  const smooth = (i, key) => {
+    let sum = 0, c = 0;
+    for (let j = Math.max(0, i - sw + 1); j <= i; j++) {
+      const v = nt.samples[j][key];
+      if (typeof v === 'number') { sum += v; c++; }
+    }
+    return c ? sum / c : 0;
+  };
+  let peak = 0;
+  for (let i = 0; i < n; i++) peak = Math.max(peak, smooth(i, 'tx'), smooth(i, 'rx'));
+  // Nice round axis max (1/2/5 × 10^k), floored at 1 KB so an idle link
+  // doesn't render a 0-height axis.
+  const niceMax = (v) => {
+    if (v <= 1024) return 1024;
+    const p = Math.pow(10, Math.floor(Math.log10(v)));
+    const m = v / p;
+    return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+  };
+  const yMax = niceMax(peak);
+  const yOf = (v) => padT + plotH - (Math.max(0, Math.min(yMax, v)) / yMax) * plotH;
+  const path = (key) => {
+    let d = '';
+    for (let i = 0; i < n; i++) {
+      d += (d ? 'L' : 'M') + xOf(i).toFixed(1) + ',' + yOf(smooth(i, key)).toFixed(1) + ' ';
+    }
+    return d;
+  };
+  const fmtShort = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + 'M'
+                        : b >= 1024 ? (b / 1024).toFixed(0) + 'K' : (b | 0) + 'B';
+  return `
+    <svg class="radio-chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <line class="radio-chart-grid" x1="${padL}" x2="${W - padR}" y1="${yOf(yMax / 2)}" y2="${yOf(yMax / 2)}"/>
+      <path class="radio-chart-line net-rx" d="${path('rx')}"/>
+      <path class="radio-chart-line net-tx" d="${path('tx')}"/>
+      <text x="2" y="${padT + 6}"     font-size="8" fill="#888">${fmtShort(yMax)}</text>
+      <text x="2" y="${padT + plotH}" font-size="8" fill="#888">0</text>
+    </svg>`;
 }
 
 // Render the CSMA state line into #status-radio-csma. Carries the
@@ -4816,6 +4916,7 @@ function dispatchEvent(ev) {
     // open re-seeds from /api/radio/telemetry rather than trusting a
     // stale ring that has a gap from the disconnect.
     if (state.radioTlm) state.radioTlm.seeded = false;
+    if (state.netTlm)   state.netTlm.seeded   = false;
     return;
   }
   if (ev.type === 'hello') {
@@ -4897,6 +4998,17 @@ function dispatchEvent(ev) {
       }
       // Chart / CSMA / status text now reactive — the radioTlm push
       // mutation above is observed by the Alpine bindings.
+    }
+    return;
+  }
+  if (ev.type === 'network_telemetry') {
+    // 1 Hz WiFi/transport tx/rx byte-rate push. Append to the netTlm ring;
+    // the chart + rate line are reactive on samples.length.
+    if (typeof ev.ts === 'number') {
+      const nt = state.netTlm;
+      const { type, ...s } = ev;
+      nt.samples.push(s);
+      while (nt.samples.length > nt.cap) nt.samples.shift();
     }
     return;
   }

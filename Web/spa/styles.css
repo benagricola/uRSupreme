@@ -846,6 +846,12 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .radio-chart-line.others { stroke: #ff9933; }  /* aggregate non-self DCD-busy */
 .radio-chart-line.rssi   { stroke: #4caf50; }  /* RSSI dBm — right axis */
 .radio-chart-line.noise  { stroke: #b39ddb; stroke-dasharray: 3 2; stroke-width: 1; }
+.radio-chart-line.net-tx { stroke: #58a6ff; }            /* WiFi/transport TX rate */
+.radio-chart-line.net-rx { stroke: #4caf50; }            /* WiFi/transport RX rate */
+.net-rate-line { margin-top: 8px; }
+.net-rate-line .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; }
+.swatch-net-tx { background: #58a6ff; }
+.swatch-net-rx { background: #4caf50; }
                                               /* noise-floor dBm — right axis */
 .radio-chart-legend {
   margin-top: 4px;

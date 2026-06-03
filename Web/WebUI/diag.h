@@ -168,3 +168,75 @@
       send_json(req, 200, doc);
     }
 #endif
+
+#if defined(URTN_LOOP_DIAG)
+    // GET /api/diag/loop — per-section maxima (microseconds) of the main loop,
+    // to find which step holds the single-threaded loop long enough to starve
+    // LoRa receive. POST zeroes them so a caller can measure a clean window.
+    // Compiled in only for -DURTN_LOOP_DIAG instrumented builds.
+    static void handle_diag_loop(AsyncWebServerRequest* req) {
+      if (require_auth(req).empty()) return;
+      Common::PsramJsonDocument doc;
+      doc["loop"]      = Common::LoopTiming::max_loop_us;
+      doc["reticulum"] = Common::LoopTiming::max_reticulum_us;
+      doc["tcp"]       = Common::LoopTiming::max_tcp_us;
+      doc["wifi"]      = Common::LoopTiming::max_wifi_us;
+      doc["lxmf"]      = Common::LoopTiming::max_lxmf_us;
+      doc["webui"]     = Common::LoopTiming::max_webui_us;
+      // Breakdown of the reticulum section into its housekeeping steps (in
+      // milliseconds; the section maxima above are microseconds). Pins which
+      // step holds the loop when a table-scaling stall shows up: jobs() runs
+      // the periodic persist/clean passes, interfaces is the per-interface
+      // loop + announce-egress/held-announce drains, fs is flash persistence,
+      // and txloop is Transport::loop().
+      JsonObject rs = doc["reticulum_sections_ms"].to<JsonObject>();
+      rs["jobs"]       = RNS::Reticulum::loop_jobs_ms();
+      rs["interfaces"] = RNS::Reticulum::loop_interfaces_ms();
+      rs["fs"]         = RNS::Reticulum::loop_fs_ms();
+      rs["txloop"]     = RNS::Reticulum::loop_txloop_ms();
+      send_json(req, 200, doc);
+    }
+
+    static void handle_diag_loop_reset(AsyncWebServerRequest* req, JsonVariant& /*body*/) {
+      if (require_auth(req).empty()) return;
+      Common::LoopTiming::reset();
+      RNS::Reticulum::reset_loop_timing();
+      Common::PsramJsonDocument doc;
+      doc["status"] = "reset";
+      send_json(req, 200, doc);
+    }
+#endif  // URTN_LOOP_DIAG
+
+    // GET /api/diag/transport — forwarding counters for a transit (bridge) node.
+    // linkreqs_* count link requests received / relayed onward / terminated
+    // here; link_transit_* count link/resource packets relayed between
+    // interfaces (in, forwarded, forwarded-onto-LoRa, dropped on hop mismatch).
+    static void handle_diag_transport(AsyncWebServerRequest* req) {
+      if (require_auth(req).empty()) return;
+      Common::PsramJsonDocument doc;
+      doc["linkreqs_rx"]           = RNS::Transport::linkreqs_rx();
+      doc["linkreqs_fwd"]          = RNS::Transport::linkreqs_fwd();
+      doc["linkreqs_local"]        = RNS::Transport::linkreqs_local();
+      doc["link_transit_in"]       = RNS::Transport::link_transit_in();
+      doc["link_transit_fwd"]      = RNS::Transport::link_transit_fwd();
+      doc["link_transit_fwd_lora"] = RNS::Transport::link_transit_fwd_lora();
+      doc["link_transit_drop"]     = RNS::Transport::link_transit_drop();
+      doc["packets_received"]      = RNS::Transport::packets_received();
+#if defined(URTN_LOOP_DIAG)
+      // Live row counts of the in-memory routing tables. These are the O(n)
+      // inputs to the per-loop housekeeping scans, so a long reticulum loop
+      // section is read against whichever of these has grown large. Only in
+      // -DURTN_LOOP_DIAG instrumented builds.
+      JsonObject tbl = doc["tables"].to<JsonObject>();
+      tbl["path"]                    = (uint32_t)RNS::Transport::path_table_size();
+      tbl["announce"]                = (uint32_t)RNS::Transport::announce_table_size();
+      tbl["reverse"]                 = (uint32_t)RNS::Transport::reverse_table_size();
+      tbl["link"]                    = (uint32_t)RNS::Transport::link_table_size();
+      tbl["held_announces"]          = (uint32_t)RNS::Transport::held_announces_size();
+      tbl["announce_rate"]           = (uint32_t)RNS::Transport::announce_rate_table_size();
+      tbl["path_requests"]           = (uint32_t)RNS::Transport::path_requests_size();
+      tbl["discovery_path_requests"] = (uint32_t)RNS::Transport::discovery_path_requests_size();
+      tbl["tunnels"]                 = (uint32_t)RNS::Transport::tunnels_size();
+#endif  // URTN_LOOP_DIAG
+      send_json(req, 200, doc);
+    }

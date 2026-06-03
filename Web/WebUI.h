@@ -718,6 +718,11 @@ namespace Web {
       // the per-window low-water marker (Common::HeapWatermark).
       server.on("/api/diag/mem",      HTTP_GET,  handle_diag_mem);
       on_json_post("/api/diag/mem",     handle_diag_mem_reset);
+#if defined(URTN_LOOP_DIAG)
+      server.on("/api/diag/loop",       HTTP_GET,  handle_diag_loop);
+      on_json_post("/api/diag/loop",    handle_diag_loop_reset);
+#endif
+      server.on("/api/diag/transport",  HTTP_GET,  handle_diag_transport);
 #if defined(URTN_HEAP_TRACE)
       server.on("/api/diag/heaptrace", HTTP_GET, handle_diag_heaptrace);
 #endif

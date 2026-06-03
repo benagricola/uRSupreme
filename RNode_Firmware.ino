@@ -34,6 +34,7 @@
 #include "LXMF/LXMFGateway.h"
 #include "LXMF/AnnounceLog.h"
 #include "LXMF/RatchetBridge.h"
+#include "Common/LoopTiming.h"
 #include "Web/WebUI.h"
 #include "Sensors/Clock/PCF8563.h"
 #include "Sensors/Position/L76K.h"
@@ -2950,6 +2951,7 @@ static void pump_radio_fifo() {
 }
 
 void loop() {
+  URTN_LT_PERIOD();
 
 #if defined(HAS_LXMF_GATEWAY)
   // Flush any pending BLE-in burst counter after a 50ms idle gap so short
@@ -2982,7 +2984,7 @@ void loop() {
     Web::WebUI::RnsLockGuard guard;
 #endif
     try {
-      reticulum.loop();
+      URTN_LT(Common::LoopTiming::max_reticulum_us, reticulum.loop());
     }
     catch (const std::bad_alloc&) {
       ERROR("RNS loop failed: bad_alloc - out of memory");
@@ -3134,7 +3136,7 @@ void loop() {
   #endif
 
   #if HAS_WIFI
-    if (wifi_initialized) update_wifi();
+    if (wifi_initialized) URTN_LT(Common::LoopTiming::max_wifi_us, update_wifi());
     #if defined(HAS_LXMF_GATEWAY)
       // Sync the bootstrap-mode flag with the WiFi layer. Auto-fallback
       // and the user-driven /api/wifi/softap switch both flip
@@ -3146,19 +3148,19 @@ void loop() {
       }
     #endif
     #if defined(TCP_TRANSPORT)
-      TCPTransport::service();
+      URTN_LT(Common::LoopTiming::max_tcp_us, TCPTransport::service());
     #endif
     #if defined(HAS_LXMF_GATEWAY)
       {
         // LXMFGateway::loop() reads / mutates the gateway state that the
         // WebServer task also touches via its handlers; lock around it.
         Web::WebUI::RnsLockGuard guard;
-        LXMF::LXMFGateway::loop();
+        URTN_LT(Common::LoopTiming::max_lxmf_us, LXMF::LXMFGateway::loop());
       }
       if (wifi_initialized) {
         Web::WebUI::start();        // idempotent — runs once after WiFi STA is up
         Web::WebUI::start_task();   // idempotent — spawns the WebServer FreeRTOS task once
-        Web::WebUI::loop();         // periodic sweep; handleClient() runs in the task
+        URTN_LT(Common::LoopTiming::max_webui_us, Web::WebUI::loop());  // periodic sweep; handleClient() runs in the task
       }
     #endif
   #endif

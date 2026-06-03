@@ -142,6 +142,9 @@ namespace LXMF {
       // loop dropped a frame, etc.) so the map can't grow unbounded.
       LXMFMinimal::tick_retries();
       LXMFMinimal::sweep_orphaned_pending();
+      // Inactivity-expire + evict idle reuse Links (#90 Phase 2), bounding the
+      // direct_links cache. Same shared-static cadence as the retry tick.
+      LXMFMinimal::tick_clean_links();
       // Advance opportunistic (single-packet) sends: proof -> Delivered,
       // timeout -> Failed. Same shared-static cadence as the retry tick.
       LXMFMinimal::tick_opportunistic_receipts();

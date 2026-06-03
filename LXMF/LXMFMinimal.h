@@ -66,6 +66,11 @@ namespace LXMF {
   // Anything larger goes through a Resource transfer over the same Link.
   static constexpr size_t LXMF_OPPORTUNISTIC_MAX   = 295;
   static constexpr size_t LXMF_LINK_PACKET_MAX     = 319;
+  // A cached reuse Link with no payload data (keepalives excluded) for longer
+  // than this is torn down + evicted by tick_clean_links(), bounding the cache
+  // and not keepalive-ing links nobody is using. Upstream LXMRouter
+  // LINK_MAX_INACTIVITY (LXMRouter.py:35), seconds.
+  static constexpr double LINK_MAX_INACTIVITY      = 600.0;
 
   // Per-message body-content cap. Matches the WhatsApp/Telegram
   // convention (4 KiB / ~4096 chars) — comfortably above the
@@ -670,9 +675,37 @@ namespace LXMF {
       // an in-link PACKET (<= 319 B) or a RESOURCE (> 319 B), then teardown.
       // The MessageRecord transitions Queued -> Sent (after PROOF/COMPLETE)
       // -> Delivered via the gateway's status update path.
-      RNS::Link link(remote_dest,
-                     _static_outbound_link_established,
-                     _static_outbound_link_closed);
+      // Reuse an idle ACTIVE cached link to this peer instead of opening a new
+      // one (upstream LXMRouter.process_outbound reuse, LXMRouter.py:2601-2622).
+      // Option (b) "ACTIVE-only" cut: reuse only when the cached link is ACTIVE
+      // AND has no send already in flight on it (no pending entry for its hash),
+      // so two sends can't collide on the hash-keyed pending map. Anything else
+      // (no cache, CLOSED, still establishing, or ACTIVE-but-busy) opens a fresh
+      // link. A fresh link is cached immediately so the next send can reuse it.
+      RNS::Link link{RNS::Type::NONE};
+      bool reuse_active = false;
+      {
+        auto& cache = direct_links();
+        auto cit = cache.find(dest_hash);
+        if (cit != cache.end()) {
+          const auto st = cit->second.status();
+          if (st == RNS::Type::Link::ACTIVE
+              && pending_link_sends().find(cit->second.hash()) == pending_link_sends().end()) {
+            link = cit->second;
+            reuse_active = true;
+          }
+          else if (st == RNS::Type::Link::CLOSED) {
+            cache.erase(cit);  // stale entry — drop it, open fresh below
+          }
+          // else PENDING/HANDSHAKE/STALE, or ACTIVE-but-busy: open a fresh link.
+        }
+        if (!reuse_active) {
+          link = RNS::Link(remote_dest,
+                           _static_outbound_link_established,
+                           _static_outbound_link_closed);
+          cache.insert_or_assign(dest_hash, link);  // cache it (LXMRouter.py:2664)
+        }
+      }
       RNS::Bytes link_hash = link.hash();
       PendingLinkSend ps;
       // Spill large wires to disk so PSRAM is freed for the duration
@@ -719,8 +752,19 @@ namespace LXMF {
       pending_link_sends()[link_hash] = std::move(ps);
       out_rec.status      = OutboxStatus::Queued;
       out_rec.packet_hash = link_hash;  // placeholder; real packet hash once sent
-      NOTICEF("LXMF: opening Link to %s for %u-byte DIRECT send",
-              dest_hash.toHex().c_str(), (unsigned)total);
+      if (reuse_active) {
+        // The cached link is already ACTIVE — its established callback won't fire
+        // again, so dispatch the queued send now rather than waiting for one.
+        ++link_reuses;
+        NOTICEF("LXMF: reusing ACTIVE link to %s for %u-byte DIRECT send",
+                dest_hash.toHex().c_str(), (unsigned)total);
+        _static_outbound_link_established(link);
+      }
+      else {
+        ++link_opens;
+        NOTICEF("LXMF: opening Link to %s for %u-byte DIRECT send",
+                dest_hash.toHex().c_str(), (unsigned)total);
+      }
       return true;
     }
 
@@ -769,6 +813,29 @@ namespace LXMF {
       static std::map<RNS::Bytes, PendingOppSend> p;
       return p;
     }
+
+    // Reuse cache: established Links keyed by peer delivery-dest hash, mirroring
+    // upstream LXMRouter.direct_links (LXMRouter.py:100). A DIRECT send to a peer
+    // that has an idle ACTIVE cached link reuses it instead of opening a new one;
+    // the cache reference is what keeps the link alive after the send's pending
+    // entry is erased (a Link is otherwise destroyed with its PendingLinkSend).
+    // Shared static, same lifetime as the two maps above. NB: never index with
+    // operator[] — that default-constructs RNS::Link(), which crashes deriving
+    // keys from a NONE destination; use find()/insert_or_assign().
+    static std::map<RNS::Bytes, RNS::Link>& direct_links() {
+      static std::map<RNS::Bytes, RNS::Link> p;
+      return p;
+    }
+
+  public:
+    // Reuse diagnostics: DIRECT sends that reused an idle ACTIVE cached link
+    // vs opened a fresh one. A rising link_reuses (with link_opens flat after
+    // the first send to a peer) proves the cache is doing its job. Exposed on
+    // /api/diag/transport.
+    inline static uint32_t link_reuses = 0;
+    inline static uint32_t link_opens  = 0;
+    static size_t direct_links_size() { return direct_links().size(); }
+  private:
 
     // Write the wire bytes to a temp file under the SD-aware resource
     // tmp dir and return the chosen path on success, empty string on
@@ -955,6 +1022,14 @@ namespace LXMF {
         // The link's own state machine will close after timeout.
       }
       else {
+        // Serialize resources on the link: if one is already in flight (only
+        // possible on a reused link), defer this send and retry when it frees,
+        // mirroring upstream's state==SENDING wait (LXMRouter.py:2619). Always
+        // true for a freshly-opened link, so this is a no-op there.
+        if (!link.ready_for_new_resource()) {
+          _schedule_retry_or_fail(it, m, "link busy with another resource");
+          return;
+        }
         // Resource transfer. The Resource constructor encrypts the
         // wire and (for sizes > RAM_BUFFER_THRESHOLD) spills the
         // ciphertext to its own temp file under the resource-tmp dir,
@@ -1002,6 +1077,15 @@ namespace LXMF {
     }
 
     static void _static_outbound_link_closed(RNS::Link& link) {
+      // Evict this link from the reuse cache up front — a closed link must never
+      // be handed to the reuse branch. The cache is keyed by dest hash, not link
+      // hash, so scan by identity (Link operator== compares the impl pointer).
+      {
+        auto& cache = direct_links();
+        for (auto cit = cache.begin(); cit != cache.end(); ++cit) {
+          if (cit->second == link) { cache.erase(cit); break; }
+        }
+      }
       auto& m = pending_link_sends();
       auto it = m.find(link.hash());
       if (it == m.end()) return;
@@ -1177,6 +1261,7 @@ namespace LXMF {
           RNS::Bytes new_link_hash = new_link.hash();
           ps.link       = new_link;
           ps.started_ms = now;
+          direct_links().insert_or_assign(ps.dest_hash, new_link);  // re-cache on retry
           NOTICEF("LXMF: retry — new link %s for outbox record %s (peer %s)",
                   new_link_hash.toHex().c_str(),
                   ps.record_hash.toHex().c_str(),
@@ -1191,6 +1276,35 @@ namespace LXMF {
           }
           _release_wire_file(ps);
         }
+      }
+    }
+
+    // Tear down + evict cached reuse Links that have closed, or have carried no
+    // payload data (keepalives excluded — see no_data_for) for longer than
+    // LINK_MAX_INACTIVITY. Mirrors upstream LXMRouter.clean_links
+    // (LXMRouter.py:913-927): bounds the direct_links cache and stops keeping
+    // links alive that nobody is using. Call from the gateway tick alongside
+    // tick_retries(). A reuse resets the clock implicitly via the send (which
+    // updates the link's _last_data).
+    static void tick_clean_links() {
+      auto& cache = direct_links();
+      std::vector<RNS::Bytes> stale;
+      for (auto& kv : cache) {
+        if (kv.second.status() == RNS::Type::Link::CLOSED
+            || kv.second.no_data_for() > LINK_MAX_INACTIVITY) {
+          stale.push_back(kv.first);
+        }
+      }
+      for (const RNS::Bytes& dest : stale) {
+        auto it = cache.find(dest);
+        if (it == cache.end()) continue;  // already evicted by a teardown's close callback
+        RNS::Link link = it->second;
+        if (link.status() != RNS::Type::Link::CLOSED) {
+          // teardown() -> link_closed() -> _static_outbound_link_closed, which
+          // also evicts this entry; the erase(dest) below is then a no-op.
+          try { link.teardown(); } catch (...) {}
+        }
+        cache.erase(dest);
       }
     }
 

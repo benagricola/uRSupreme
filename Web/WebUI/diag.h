@@ -254,6 +254,12 @@
         q["hops"]         = (uint32_t)RNS::Transport::hops_to(dh);
         q["unresponsive"] = RNS::Transport::path_is_unresponsive(dh);
       }
+      // LXMF DIRECT link reuse (#90). reuses rising while opens stays flat after
+      // the first send to a peer proves the cache is reusing warm links.
+      JsonObject lr = doc["link_reuse"].to<JsonObject>();
+      lr["reuses"] = LXMF::LXMFMinimal::link_reuses;
+      lr["opens"]  = LXMF::LXMFMinimal::link_opens;
+      lr["cached"] = (uint32_t)LXMF::LXMFMinimal::direct_links_size();
 #endif  // URTN_LOOP_DIAG
       send_json(req, 200, doc);
     }

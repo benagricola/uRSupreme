@@ -237,6 +237,18 @@
       tbl["path_requests"]           = (uint32_t)RNS::Transport::path_requests_size();
       tbl["discovery_path_requests"] = (uint32_t)RNS::Transport::discovery_path_requests_size();
       tbl["tunnels"]                 = (uint32_t)RNS::Transport::tunnels_size();
+      tbl["path_states"]             = (uint32_t)RNS::Transport::path_states_size();
+      // Optional per-destination probe (?dest=<hex>): confirm a destination's
+      // path stays at its expected hop count and isn't (wrongly) marked
+      // unresponsive by the path_states producer.
+      if (req->hasParam("dest")) {
+        RNS::Bytes dh; dh.assignHex(req->getParam("dest")->value().c_str());
+        JsonObject q = doc["dest"].to<JsonObject>();
+        q["hash"]         = req->getParam("dest")->value();
+        q["has_path"]     = RNS::Transport::has_path(dh);
+        q["hops"]         = (uint32_t)RNS::Transport::hops_to(dh);
+        q["unresponsive"] = RNS::Transport::path_is_unresponsive(dh);
+      }
 #endif  // URTN_LOOP_DIAG
       send_json(req, 200, doc);
     }

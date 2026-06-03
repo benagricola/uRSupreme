@@ -7,7 +7,7 @@
 // identity. The first such feature is interface-discovery announces
 // (Discovery::Announcer, to land in a later commit) which sign
 // (and optionally encrypt) the discovery payload with this identity;
-// future features (rmap participation beyond the announce, peer
+// future features (backbone participation beyond the announce, peer
 // discovery, etc.) can share it without entangling the user's
 // per-conversation chat identities.
 //
@@ -16,7 +16,7 @@
 // The hash is exposed as a hex string so the SPA can show
 // "Network ID: …" in the Discovery tab and the user has a stable
 // handle to point at if they need to whitelist their device on a
-// downstream consumer like rmap.world.
+// downstream RNS listener.
 //
 // Storage path is under /reticulum/ rather than /lxmf/ because this
 // is a Reticulum-level concern, not an LXMF concern (LXMF sits on

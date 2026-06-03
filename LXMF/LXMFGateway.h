@@ -899,7 +899,7 @@ namespace LXMF {
           });
       // Attachment persistence — when an incoming LXMF message carries
       // FIELD_FILE_ATTACHMENTS / FIELD_IMAGE / FIELD_AUDIO blobs, write
-      // each one to <identity_dir>/attachments/ (#122 routing: SD if a
+      // each one to <identity_dir>/attachments/ (routing: SD if a
       // card is mounted, else LittleFS). On-disk filenames are always
       // "<msg_hash_hex>_<tag>_<idx>.bin". The sender-supplied filename
       // (Sideband convention, populated by the FieldBlob) is propagated

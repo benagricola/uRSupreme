@@ -84,7 +84,7 @@
       // for the SX↔LR bench setup and any other direct-RF pair; for
       // multi-hop links it just under-estimates the ETA, which is a
       // better UX than refusing to show one.
-      // The real fix belongs in microReticulum (#165).
+      // The real fix belongs in microReticulum.
       bool estimate_fallback = false;
       if ((bitrate == 0 || hops == RNS::Type::Transport::PATHFINDER_M)
           && lora_bitrate > 0) {

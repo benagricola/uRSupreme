@@ -83,7 +83,7 @@ namespace Web {
       // and the previous String-grow-by-doubling pattern allocated up
       // to 4 KiB transient (final 2 KiB + intermediate 2 KiB during the
       // last realloc) on the default heap — exactly the size range the
-      // ESP-IDF WiFi driver needs for its esf_buf TX envelopes (#173).
+      // ESP-IDF WiFi driver needs for its esf_buf TX envelopes.
       // measureJson + one-shot alloc removes the realloc churn.
       const size_t n = measureJson(doc);
       if (n == 0) {

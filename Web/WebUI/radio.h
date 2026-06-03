@@ -167,7 +167,7 @@
     // Setting a field to 0 disables that limit (which is illegal in
     // regulated bands — caller's responsibility). Values are NOT persisted
     // across reboots yet; the firmware default in Config.h applies on next
-    // boot. (See task #57 for EEPROM persistence.)
+    // boot. (EEPROM persistence is a future addition.)
     static void handle_radio_airtime(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
       if (!require_physical_auth(req, body)) return;

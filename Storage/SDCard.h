@@ -11,7 +11,7 @@
 // — no errors, just present=false. We don't currently hot-detect a
 // card inserted later; the user reboots after inserting a card.
 //
-// Responsibilities for now (slice 1 of #122):
+// Responsibilities for now (first slice):
 //   * Mount the card if present, expose total/used/free byte counts.
 //   * Leave the bus alone if no card is present so it stays cheap to
 //     query state via /api/system_status.
@@ -55,7 +55,7 @@ inline bool take_eject_edge() {
 }
 
 // Idempotent shared-bus init. The SD card and the QMI8658 IMU both
-// live on the HSPI bus on this hardware (#120/#122). Whichever module
+// live on the HSPI bus on this hardware. Whichever module
 // runs first creates the bus + drives IMU_CS HIGH to keep the IMU
 // from squatting MISO. The other reuses it. Returns the SPIClass on
 // success, nullptr on boards that don't have the slot.

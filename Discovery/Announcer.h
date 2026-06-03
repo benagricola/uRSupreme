@@ -55,7 +55,7 @@ namespace Announcer {
 // Upstream calls the LoRa interface type "RNodeInterface" — that's
 // what InterfaceAnnounceHandler whitelists (DISCOVERABLE_INTERFACE_TYPES
 // in RNS/Discovery.py). Match it so cross-implementation listeners
-// (rmap.world's, other RNS nodes) accept our LoRa announces.
+// (downstream RNS listeners, other RNS nodes) accept our LoRa announces.
 inline constexpr const char* TYPE_LORA       = "RNodeInterface";
 inline constexpr const char* TYPE_TCP_CLIENT = "TCPClientInterface";
 
@@ -107,7 +107,7 @@ namespace _detail {
     // Announcement label: prefer the user-supplied advertised_name
     // (from the Discovery tab), fall back to the raw interface name
     // when empty. The interface name is the technical identifier
-    // ("LoRaInterface") which isn't a great label on rmap.world.
+    // ("LoRaInterface") which isn't a great label on a downstream RNS listener.
     const std::string user_name = State::current().advertised_name;
     const std::string nm = sanitise_name(!user_name.empty()
         ? user_name

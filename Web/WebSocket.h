@@ -87,7 +87,7 @@ namespace WS {
   // `scope`. Pass an empty IdentityId to broadcast to all authed
   // clients (e.g. global sensor / time / announce events).
   //
-  // Heap-fragmentation note (#173): the previous form did
+  // Heap-fragmentation note: the previous form did
   //   String s; serializeJson(doc, s); for (...) srv.text(id, s);
   // which churned the default heap twice per broadcast — once for the
   // Arduino String (resizing via repeated realloc) and once per client

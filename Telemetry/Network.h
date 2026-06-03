@@ -2,10 +2,10 @@
 //
 // The radio graph (Telemetry::Radio) shows what's happening on-air; this is
 // its counterpart for the IP side — the aggregate tx/rx byte rate across the
-// non-LoRa interfaces (rmap TCP client, TCP server, UDP). It makes the
+// non-LoRa interfaces (backbone TCP client, TCP server, UDP). It makes the
 // otherwise-invisible backbone traffic visible while a test runs: whether a
-// forwarded path request is actually leaving over rmap, how hard the firehose
-// is hitting us, whether a transfer is moving bytes at all.
+// forwarded path request is actually leaving over the backbone, how hard the
+// sustained traffic is hitting us, whether a transfer is moving bytes at all.
 //
 // Two consumers, identical mechanism to the radio telemetry:
 //   * `GET /api/network/telemetry` — returns the ring (oldest→newest).
@@ -15,7 +15,7 @@
 // This header stays free of RNS includes (like Telemetry::Radio): the caller
 // sums the interface txb()/rxb() counters and passes the cumulative totals to
 // tick(); we keep the previous totals and emit per-second deltas (= B/s, since
-// the period is 1 s). Deltas are uint32 — rmap can push tens of KB/s, well
+// the period is 1 s). Deltas are uint32 — the backbone client can push tens of KB/s, well
 // past the uint16 the radio packet-count deltas use.
 
 #pragma once

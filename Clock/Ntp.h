@@ -93,7 +93,7 @@ inline void pump() {
   _detail::last_status_ref() = status;
 
   // Periodic re-sync. interval_s = 0 → "at boot" only: never repoll
-  // (matches the SPA's interval dropdown semantics, #119).
+  // (matches the SPA's interval dropdown semantics).
   if (cfg.interval_s > 0 && _detail::last_adopt_ms_ref() != 0) {
     const uint32_t elapsed = millis() - _detail::last_adopt_ms_ref();
     if (elapsed >= cfg.interval_s * 1000UL) {

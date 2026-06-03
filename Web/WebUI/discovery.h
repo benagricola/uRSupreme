@@ -150,7 +150,7 @@
       doc["name"] = LORA_IFACE_NAME;
       // Effective mode: the configured value, or the ACCESS_POINT default
       // when unset (mode_default flags which one the SPA is showing). AP is
-      // the default so a LoRa bridge doesn't firehose backbone announces.
+      // the default so a LoRa bridge doesn't flood backbone announces.
       const uint8_t eff = (have && e.mode) ? e.mode
                                            : RNS::Type::Interface::MODE_ACCESS_POINT;
       doc["mode"]         = Discovery::Config::mode_to_str(eff);

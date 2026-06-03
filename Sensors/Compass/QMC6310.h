@@ -2,7 +2,7 @@
 //
 // Lives on the T-Beam Supreme's user/sensor I2C bus (Wire, SDA=17,
 // SCL=18) at 0x1C (QMC6310U variant) or 0x3C (QMC6310N). Shares the
-// bus with BME280 (#120 stage 2) and the OLED. Each device has its
+// bus with BME280 and the OLED. Each device has its
 // own address so coexistence is automatic.
 //
 // We use Lewis He's SensorLib wrapper (lewisxhe/SensorLib) — the

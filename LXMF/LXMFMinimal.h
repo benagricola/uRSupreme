@@ -200,7 +200,7 @@ namespace LXMF {
     static constexpr uint64_t OPP_RECEIPT_MAX_MS = 5ULL * 60ULL * 1000ULL; // 5 min
 
     // Outbox-retry tuning. Both static for now — wire to per-identity
-    // settings later (task #113). Backoff is 30s × attempt index, so:
+    // settings later. Backoff is 30s × attempt index, so:
     //   attempt 1: send fails -> wait 30s -> retry 1
     //   attempt 2: retry 1 fails -> wait 60s -> retry 2
     //   attempt 3: retry 2 fails -> wait 90s -> retry 3
@@ -326,7 +326,7 @@ namespace LXMF {
     // Send an LXMF message to a remote destination hash. Returns false if
     // the recipient identity isn't yet known (no announce seen) or pack/sign
     // failed. Status reporting on delivery is left to the caller via the
-    // returned MessageRecord — Phase 1 just sets status=Sent after send().
+    // returned MessageRecord — for now just sets status=Sent after send().
     // Caller-owned attachment blob. `tag` is one of the FIELD_* values
     // (0x05 file / 0x06 image / 0x07 audio); `data` is the raw payload.
     // Wire encoding follows the Sideband convention:
@@ -340,7 +340,7 @@ namespace LXMF {
       //   * staging_id != 0: bytes live in OutboundStaging (PSRAM or
       //     SD-backed). Read via Storage::OutboundStaging::read() during
       //     encoding. This is the only path the SPA exercises today
-      //     (#130 wholesale switch).
+      //     (the staging-upload path).
       //   * data non-empty: bytes inlined here. Kept for code paths
       //     that don't use the staging upload (test fixtures, etc).
       uint32_t             staging_id = 0;
@@ -725,7 +725,7 @@ namespace LXMF {
     }
 
     // LXMF timestamps are Unix-epoch seconds as float64. Defer to the
-    // shared TimeManager (Web/TimeManager.h, #111) which arbitrates
+    // shared TimeManager (Web/TimeManager.h) which arbitrates
     // across all time sources — GPS, NTP, Browser, RNS peer, RTC.
     // Falls back to a compile-time-epoch + millis() guess until the
     // manager is calibrated, so outbound messages don't carry ts=0.
@@ -869,7 +869,7 @@ namespace LXMF {
     }
 
     // ------------------------------------------------------------------
-    // DIRECT-mode (Link + optional Resource) wiring (plan step 10)
+    // DIRECT-mode (Link + optional Resource) wiring
     //
     // OUTBOUND flow:
     //  send_message > 295 B
@@ -1704,7 +1704,7 @@ namespace LXMF {
             //        FIELD_IMAGE             = [ext_str, bytes]
             //        FIELD_AUDIO             = [mode_int, bytes]
             //        FIELD_FILE_ATTACHMENTS  = [[name_str, bytes], ...]
-            //   2. Bare-bytes legacy (what this firmware sent before #115).
+            //   2. Bare-bytes legacy (what this firmware sent previously).
             // Detect by peeking the value tag — array means Sideband.
             const size_t value_start = off;
             if (!Common::MsgPack::skip_element(data, len, off)) return true;

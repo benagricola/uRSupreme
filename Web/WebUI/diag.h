@@ -62,7 +62,7 @@
       // Announce egress health. `drained` climbing over time proves queued
       // re-broadcasts are reaching the wire (the headline transport-port fix);
       // `queued`/`queued_max` are the live per-interface egress backlog (sitting
-      // near MAX_QUEUED_ANNOUNCES under a firehose is expected rate-limiting,
+      // near MAX_QUEUED_ANNOUNCES under heavy traffic is expected rate-limiting,
       // *not* a fault, as long as `drained` keeps rising).
       uint32_t aq_total = 0, aq_max = 0, aq_ifaces = 0, br_max = 0;
       for (auto& kv : RNS::Transport::get_interfaces()) {
@@ -85,7 +85,7 @@
       // now hold at its cap instead of growing toward tens of thousands).
       ae["path_requests"] = (uint32_t)RNS::Transport::path_requests_size();
       // Inbound safety drops (malformed/misflagged packets rejected before
-      // parsing). `ifac` should stay ~0 on the open rmap network; a climbing
+      // parsing). `ifac` should stay ~0 on the open backbone network; a climbing
       // value would mean legitimate traffic is being dropped by the IFAC-flag
       // guard, so it is worth watching during a soak.
       JsonObject idr = doc["inbound_drops"].to<JsonObject>();

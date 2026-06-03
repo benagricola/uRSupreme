@@ -28,7 +28,7 @@ namespace LXMF {
   // ram_capacity entries, most recent kept). Sequence numbers continue from
   // the highest seen on disk so SSE clients can resume after a reboot.
   //
-  // No rotation in Phase 1: at ~256 B/message the JSONL grows to ~64 KB
+  // No rotation for now: at ~256 B/message the JSONL grows to ~64 KB
   // after ~250 messages, which is well within the LittleFS partition.
   // Rotation can be added later if needed.
   class LXMFInbox {

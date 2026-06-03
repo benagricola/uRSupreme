@@ -16,7 +16,7 @@
 // Schema:
 //   {
 //     "LoRaInterface": { "type": "lora",       "discoverable": false },
-//     "rmap":          { "type": "tcp_client", "host": "rmap.world",
+//     "backbone":      { "type": "tcp_client", "host": "tcp.example.net",
 //                        "port": 4242,         "discoverable": true  },
 //     "udp0":          { "type": "udp",        "port": 4242,
 //                        "enabled": false,     "discoverable": false }

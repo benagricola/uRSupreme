@@ -5,8 +5,8 @@
 // Reticulum InterfaceAnnouncer.get_interface_announce_data() in
 // reticulum/RNS/Discovery.py is the reference implementation; the
 // tag values + ordering + framing here match it byte-for-byte (so
-// any standard listener — rmap.world's, or another RNS node running
-// InterfaceAnnounceHandler — can parse what we emit).
+// any standard listener — a downstream RNS listener, or another RNS node
+// running InterfaceAnnounceHandler — can parse what we emit).
 //
 // Frame shape:
 //

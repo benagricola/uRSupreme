@@ -254,7 +254,7 @@ namespace Web {
         }
       }
       // Network telemetry — same 1 Hz cadence. Sum tx/rx bytes across the
-      // non-LoRa interfaces (rmap TCP client, TCP server, UDP) under the
+      // non-LoRa interfaces (backbone TCP client, TCP server, UDP) under the
       // recursive rns_lock so the interface table isn't iterated while
       // reticulum.loop mutates it. Only advance/tick when the lock is
       // acquired, so a missed window doesn't corrupt the rate baseline.
@@ -368,8 +368,8 @@ namespace Web {
     // controlled-reboot path (WiFi save, radio save, radio reset,
     // factory reset). Without this, _known_destinations and the path
     // store only get flushed once per hour by Reticulum::jobs(), so
-    // any announces learned since the last flush are lost on reboot
-    // (issue #59). The web_task already holds the rns_lock around
+    // any announces learned since the last flush are lost on reboot.
+    // The web_task already holds the rns_lock around
     // handler execution, so persist_data() runs under the lock too.
     static void persist_and_restart(uint32_t flush_ms = 500) {
       reticulum.persist_data();

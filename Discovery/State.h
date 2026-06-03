@@ -6,7 +6,7 @@
 //                          (default 360 min, matches upstream)
 //   default_stamp_cost:    stamp PoW difficulty in leading zero bits.
 //                          Default 14 matches the upstream listener's
-//                          required_value, so rmap.world and other RNS
+//                          required_value, so downstream RNS listeners and other RNS
 //                          nodes following the reference impl accept
 //                          our announces out of the box. Set to 0 to
 //                          disable the PoW entirely (worker emits a
@@ -39,7 +39,7 @@ inline constexpr uint32_t DEFAULT_STAMP_COST       = 14;    // upstream listener
 
 // Cap on the user-set advertisement label. The on-air announce
 // app_data carries this as the interface's `name` field. Sideband-
-// shape consumers (rmap.world, other RNS nodes) treat it as a
+// shape consumers (downstream RNS listeners, other RNS nodes) treat it as a
 // human-readable label, so anything in the 32-64 char range is
 // reasonable; 64 covers most "MyNode in the garden shed" use.
 inline constexpr size_t MAX_ADVERTISED_NAME_BYTES = 64;

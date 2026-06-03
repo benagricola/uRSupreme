@@ -194,6 +194,10 @@
       rs["interfaces"] = RNS::Reticulum::loop_interfaces_ms();
       rs["fs"]         = RNS::Reticulum::loop_fs_ms();
       rs["txloop"]     = RNS::Reticulum::loop_txloop_ms();
+      // Largest backbone TCP backlog seen at a service() entry since reset —
+      // confirms bursts are landing (the freeze condition) and that the per-call
+      // drain budget is keeping the loop bounded despite them.
+      doc["tcp_max_burst_bytes"] = TCPClientInterface::max_burst_bytes;
       send_json(req, 200, doc);
     }
 
@@ -201,6 +205,7 @@
       if (require_auth(req).empty()) return;
       Common::LoopTiming::reset();
       RNS::Reticulum::reset_loop_timing();
+      TCPClientInterface::max_burst_bytes = 0;
       Common::PsramJsonDocument doc;
       doc["status"] = "reset";
       send_json(req, 200, doc);

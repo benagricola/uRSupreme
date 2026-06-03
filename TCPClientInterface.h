@@ -19,6 +19,17 @@ public:
   static constexpr unsigned long DEFAULT_RECONNECT_MS = 5000;
   static constexpr uint16_t      DEFAULT_HW_MTU       = 1064;
   static constexpr unsigned long CONNECT_TIMEOUT_MS   = 5000;
+  // Cap on wall-clock spent draining buffered TCP per service() call. A large
+  // backbone announce burst otherwise runs Transport::inbound (Ed25519 verify +
+  // path-store work) for every buffered frame in a single loop pass, holding the
+  // single-threaded loop for seconds and starving LoRa RX queue servicing. Unread
+  // bytes stay socket-buffered and drain over the following iterations, so TCP
+  // throughput is preserved while the loop keeps cycling fast enough to service
+  // the radio. Tunable via -DTCP_SERVICE_BUDGET_MS.
+#ifndef TCP_SERVICE_BUDGET_MS
+#define TCP_SERVICE_BUDGET_MS 50
+#endif
+  static constexpr unsigned long SERVICE_BUDGET_MS = TCP_SERVICE_BUDGET_MS;
 
   // Optional hook the firmware wires to drain the LoRa radio's RX FIFO
   // between TCP frames. A burst of backbone traffic in the service() drain below
@@ -28,6 +39,11 @@ public:
   // read. Pumping the FIFO (read-only; pushes to modem_packet_queue, no
   // Transport work) between frames keeps it drained. No-op by default.
   inline static void (*rx_pump)() = nullptr;
+
+  // Diagnostic: largest TCP backlog (bytes buffered) seen at a service() entry.
+  // A big value confirms backbone bursts are landing — the condition that, when
+  // drained unbounded, froze the loop. Read/reset via /api/diag/loop.
+  inline static uint32_t max_burst_bytes = 0;
 
   TCPClientInterface(const char* name,
                      const char* host,
@@ -81,6 +97,8 @@ public:
           break;
         }
         int avail = _client.available();
+        if ((uint32_t)avail > max_burst_bytes) max_burst_bytes = (uint32_t)avail;
+        const unsigned long svc_start = millis();
         while (avail-- > 0) {
           int b = _client.read();
           if (b < 0) break;
@@ -94,6 +112,9 @@ public:
             }
             if (rx_pump) rx_pump();   // service LoRa RX between frames
           });
+          // Bound per-iteration TCP work so a backbone burst can't hold the loop
+          // for seconds; the rest stays socket-buffered for the next iteration.
+          if ((millis() - svc_start) >= SERVICE_BUDGET_MS) break;
         }
         break;
       }

@@ -129,7 +129,7 @@
       // True iff TX is currently being blocked by the airtime lock —
       // useful for "why isn't my message going out" diagnostics.
       stats["airtime_locked"]       = (bool)airtime_lock;
-      // LoRa egress pressure (#88 diagnostics). queue_* is the hardware TX
+      // LoRa egress pressure diagnostics. queue_* is the hardware TX
       // ring; tx_hold_bytes is the flow-control overflow held in PSRAM when
       // the ring is full (1fbadee); lora_tx_dropped counts packets dropped
       // because even the hold queue was full. A handshake/data packet
@@ -216,12 +216,22 @@
       transport["enabled"]      = RNS::Reticulum::transport_enabled();
       // Link-request accounting (diagnostic). On an intermediate hop like the
       // LoRa-bridge SX, linkreqs_rx minus linkreqs_fwd is the number of link
-      // requests that arrived (e.g. over rmap) but were not relayed onward
+      // requests that arrived (e.g. over the backbone) but were not relayed onward
       // (e.g. onto LoRa) — distinguishing "we dropped it" from "it never
       // reached us". On a destination node, linkreqs_rx == linkreqs_local.
       transport["linkreqs_rx"]      = RNS::Transport::linkreqs_rx();
       transport["linkreqs_fwd"]     = RNS::Transport::linkreqs_fwd();
       transport["linkreqs_local"]   = RNS::Transport::linkreqs_local();
+      // Link/resource transit forwarding. On the LoRa-bridge SX,
+      // link_transit_in is link/resource packets recognised as transit;
+      // link_transit_fwd_lora is the subset relayed onto the LoRa leg toward
+      // the LR. fwd_lora short of what the sender advertised (with in steady)
+      // means the SX dropped the forward; fwd_lora matching it while the LR
+      // still misses the packet points at the next hop's reception instead.
+      transport["link_transit_in"]       = RNS::Transport::link_transit_in();
+      transport["link_transit_fwd"]      = RNS::Transport::link_transit_fwd();
+      transport["link_transit_fwd_lora"] = RNS::Transport::link_transit_fwd_lora();
+      transport["link_transit_drop"]     = RNS::Transport::link_transit_drop();
       transport["packets_received"] = RNS::Transport::packets_received();
       // Serial/diagnostic toggles surfaced so the SPA can render the
       // current state on its Connectivity tab without an extra round

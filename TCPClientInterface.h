@@ -20,6 +20,15 @@ public:
   static constexpr uint16_t      DEFAULT_HW_MTU       = 1064;
   static constexpr unsigned long CONNECT_TIMEOUT_MS   = 5000;
 
+  // Optional hook the firmware wires to drain the LoRa radio's RX FIFO
+  // between TCP frames. A burst of backbone traffic in the service() drain below
+  // runs Transport::inbound per frame and can hold the single-threaded main
+  // loop for 100+ ms; the SX126x has a single RX buffer, so a LoRa packet that
+  // arrives in that window is overwritten before the loop's once-per-iteration
+  // read. Pumping the FIFO (read-only; pushes to modem_packet_queue, no
+  // Transport work) between frames keeps it drained. No-op by default.
+  inline static void (*rx_pump)() = nullptr;
+
   TCPClientInterface(const char* name,
                      const char* host,
                      uint16_t port,
@@ -83,6 +92,7 @@ public:
             } catch (std::exception& e) {
               ERRORF("TCPClientInterface::service: %s", e.what());
             }
+            if (rx_pump) rx_pump();   // service LoRa RX between frames
           });
         }
         break;

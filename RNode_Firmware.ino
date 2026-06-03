@@ -551,6 +551,11 @@ static void* psram_or_internal(size_t n) {
 #endif
 }
 
+// Drains the LoRa RX FIFO into modem_packet_queue without touching
+// Transport. Wired as TCPClientInterface::rx_pump so the backbone TCP drain can
+// service LoRa RX between frames; defined near loop() where LoRa is in scope.
+static void pump_radio_fifo();
+
 void setup() {
 #if defined(URTN_HEAP_TRACE)
   // Begin tracking internal-SRAM allocation sites as early as possible (PSRAM
@@ -622,8 +627,8 @@ void setup() {
   // to 256 so the 256..4095 B band of generic allocations routes to PSRAM,
   // leaving scarce internal SRAM for the forced-internal DMA buffers that WiFi
   // (esf_buf) and the radio require. 256 is required, not just preferred: under
-  // sustained transport-instance announce re-broadcast plus the rmap.world
-  // firehose carried over LoRa, the tighter LR1121 board exhausts internal SRAM
+  // sustained transport-instance announce re-broadcast plus the backbone
+  // heavy traffic carried over LoRa, the tighter LR1121 board exhausts internal SRAM
   // and the WiFi DMA pool fails to allocate a PM null-frame (esf_buf_alloc ->
   // WiFi loses the AP -> reboot). At 512 the LR held only a ~2K internal floor
   // under load spikes and crash-looped; 256 holds a >40K floor. The SX1262
@@ -1279,7 +1284,7 @@ void setup() {
       // default ACCESS_POINT, no IFAC. AP is the right default for a LoRa
       // node bridging a busy backbone: GATEWAY would rebroadcast every
       // backbone announce over the duty-cycle-limited LoRa link and
-      // starve user traffic (the radio TX stalls under that firehose).
+      // starve user traffic (the radio TX stalls under that heavy traffic).
       // AP is announce-silent but still answers path requests, so the
       // LoRa segment pulls only the paths it needs. Settable at runtime
       // via the SPA/API; a reboot applies the change.
@@ -1318,6 +1323,10 @@ void setup() {
       // below also use the same loaded map.
       Discovery::Config::load();
       TCPTransport::setup();
+      // Keep LoRa RX serviced while the backbone TCP drain runs, so a burst
+      // of backbone traffic can't overwrite the radio's single RX buffer
+      // before the once-per-loop read.
+      TCPClientInterface::rx_pump = pump_radio_fifo;
 #endif
 
       HEAD("Creating Reticulum instance...", RNS::LOG_TRACE);
@@ -2932,6 +2941,14 @@ void tx_queue_handler() {
 
 void work_while_waiting() { loop(); }
 
+// Read-only LoRa RX FIFO drain: pulls a pending packet off the SX126x's
+// single RX buffer into modem_packet_queue. Does no Transport work, so it is
+// safe to call from inside the backbone TCP drain (via TCPClientInterface::rx_pump)
+// to keep the radio serviced while the main loop is busy with backbone traffic.
+static void pump_radio_fifo() {
+  if (radio_online && LoRa) LoRa->handleDio0IfPending();
+}
+
 void loop() {
 
 #if defined(HAS_LXMF_GATEWAY)
@@ -3030,7 +3047,7 @@ void loop() {
     #if MCU_VARIANT == MCU_ESP32
       LoRa->handleDio0IfPending();
       modem_packet_t *modem_packet = NULL;
-      if(modem_packet_queue && xQueueReceive(modem_packet_queue, &modem_packet, 0) == pdTRUE && modem_packet) {
+      while(modem_packet_queue && xQueueReceive(modem_packet_queue, &modem_packet, 0) == pdTRUE && modem_packet) {  // drain all queued, not one
         host_write_len = modem_packet->len;
         last_rssi      = modem_packet->rssi;
         last_snr_raw   = modem_packet->snr_raw;
@@ -3050,7 +3067,7 @@ void loop() {
     #elif MCU_VARIANT == MCU_NRF52
       LoRa->handleDio0IfPending();
       modem_packet_t *modem_packet = NULL;
-      if(modem_packet_queue && xQueueReceive(modem_packet_queue, &modem_packet, 0) == pdTRUE && modem_packet) {
+      while(modem_packet_queue && xQueueReceive(modem_packet_queue, &modem_packet, 0) == pdTRUE && modem_packet) {  // drain all queued, not one
         memcpy(&pbuf, modem_packet->data, modem_packet->len);
         host_write_len = modem_packet->len;
         free(modem_packet);

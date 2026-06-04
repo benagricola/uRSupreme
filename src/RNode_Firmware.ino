@@ -69,6 +69,7 @@ SPIClass SDSPI(HSPI);
   #include <esp_heap_caps.h>
   #include <esp_debug_helpers.h>  // esp_backtrace_print() in on_heap_alloc_failed
   #include <esp_timer.h>          // periodic heap-watermark sampler
+  #include <esp_mac.h>            // esp_read_mac()/ESP_MAC_BT (no longer transitively pulled in under IDF 5.x)
   #include "Common/HeapWatermark.h"
 #endif
 

@@ -101,3 +101,16 @@ CONFIG_HEAP_TASK_TRACKING=y
 # calls heap_caps_register_failed_alloc_callback() from setup(); under
 # IDF 5.x this symbol gates whether the hook fires.
 CONFIG_HEAP_USE_HOOKS=y
+
+# ---------------------------------------------------------------------------
+# LittleFS (joltwallet managed component) — disable its runtime asserts.
+# The project's global build_flags carry -DLFS_NO_ASSERT (for microStore's
+# littlefs). In the arduino-as-component build that flag is a global compile
+# define, so it also reaches the managed joltwallet littlefs: it compiles out
+# the lfs_mlist_isopen() *definition* (lfs.c gates it on #ifndef LFS_NO_ASSERT),
+# while joltwallet's LFS_ASSERT macro is gated independently on
+# CONFIG_LITTLEFS_ASSERTS (lfs_config.h). With asserts left on, the macro still
+# calls the now-undefined function -> "implicit declaration of lfs_mlist_isopen".
+# Turning asserts off here makes LFS_ASSERT a no-op, matching the removed
+# definition (and our intent: littlefs asserts off everywhere).
+# CONFIG_LITTLEFS_ASSERTS is not set

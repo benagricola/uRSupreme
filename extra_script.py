@@ -6,7 +6,7 @@ import shutil
 
 def embed_spa(env):
     """
-    Generate Web/SPAEmbedded.h from Web/spa/{index.html, styles.css,
+    Generate src/Web/SPAEmbedded.h from src/Web/spa/{index.html, styles.css,
     alpine.min.js} on every build. The source files are the source of
     truth; the .h file is checked in to keep PR diffs reviewable but is
     overwritten if any source asset is newer.
@@ -18,10 +18,11 @@ def embed_spa(env):
     across firmware ships without paying for a fetch on every reload.
     """
     project_dir = env.subst("$PROJECT_DIR")
-    src = os.path.join(project_dir, "Web", "spa", "index.html")
-    css = os.path.join(project_dir, "Web", "spa", "styles.css")
-    alpine = os.path.join(project_dir, "Web", "spa", "alpine.min.js")
-    dst = os.path.join(project_dir, "Web", "SPAEmbedded.h")
+    web_dir = os.path.join(project_dir, "src", "Web")
+    src = os.path.join(web_dir, "spa", "index.html")
+    css = os.path.join(web_dir, "spa", "styles.css")
+    alpine = os.path.join(web_dir, "spa", "alpine.min.js")
+    dst = os.path.join(web_dir, "SPAEmbedded.h")
     if not os.path.exists(src):
         return
     src_mtime = os.path.getmtime(src)
@@ -44,7 +45,7 @@ def embed_spa(env):
     gz = gzip.compress(html, compresslevel=9)
     body = ", ".join("0x{:02x}".format(b) for b in gz)
     header = (
-        "// Auto-generated from Web/spa/{index.html, styles.css, alpine.min.js}\n"
+        "// Auto-generated from src/Web/spa/{index.html, styles.css, alpine.min.js}\n"
         "// — do not edit by hand.\n"
         "#pragma once\n"
         "#include <pgmspace.h>\n"
@@ -348,6 +349,17 @@ def regenerate_sdkconfig_defaults(env):
                 return
     with open(target, "wb") as f:
         f.write(new)
+    # IDF generates the effective sdkconfig (sdkconfig.<env>) from these
+    # defaults ONCE, then preserves it across builds — changing a default for
+    # an already-set symbol does NOT flip it. So whenever the defaults change
+    # (an edit to sdkconfig.overrides or a new arduino reference), drop the
+    # stale effective sdkconfig to force a clean regeneration; otherwise the
+    # override edit silently fails to take effect.
+    effective = os.path.join(project_dir, "sdkconfig.%s" % env.subst("$PIOENV"))
+    if os.path.exists(effective):
+        os.remove(effective)
+        print(f"*** Removed stale {os.path.basename(effective)} "
+              f"so the new sdkconfig.overrides re-apply")
     print(f"*** Regenerated sdkconfig.defaults "
           f"({len(ref_bytes)} B arduino ref + {len(override_bytes)} B overrides)")
 

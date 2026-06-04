@@ -26,4 +26,12 @@ tools/kiss-test/interfaces/
 tools/kiss-test/storage/
 tools/kiss-test/lxmf-storage/
 .claude/
-sdkconfig.defaults
+
+# arduino-as-component (ESP-IDF) build artifacts. sdkconfig.defaults and the
+# per-env effective sdkconfig.<env> are regenerated from sdkconfig.overrides
+# (the tracked source) on every build; managed_components/ + dependencies.lock
+# are pulled by the IDF component manager.
+sdkconfig.*
+!sdkconfig.overrides
+dependencies.lock
+managed_components/

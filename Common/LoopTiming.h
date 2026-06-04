@@ -20,11 +20,16 @@ namespace LoopTiming {
   inline uint32_t max_wifi_us      = 0;   // update_wifi()
   inline uint32_t max_lxmf_us      = 0;   // LXMFGateway::loop()
   inline uint32_t max_webui_us     = 0;   // WebUI::loop()
+  inline uint32_t max_txq_us       = 0;   // tx_queue_handler() — LoRa TX drain
+  inline uint32_t max_modem_us     = 0;   // check_modem_status()
+  inline uint32_t max_prune_us     = 0;   // LXMFGateway::prune_all()
+  inline uint32_t max_serial_us    = 0;   // buffer_serial()
 
   inline void note(uint32_t& slot, uint32_t us) { if (us > slot) slot = us; }
 
   inline void reset() {
     max_loop_us = max_reticulum_us = max_tcp_us = max_wifi_us = max_lxmf_us = max_webui_us = 0;
+    max_txq_us = max_modem_us = max_prune_us = max_serial_us = 0;
   }
 #endif
 

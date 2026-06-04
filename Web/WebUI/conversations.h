@@ -150,6 +150,12 @@
     // Sticky error string for the final-handler response when the
     // chunk path bailed.
     static const char*& _current_upload_error() { static const char* v = nullptr; return v; }
+    // Diagnostic: how many chunk-callbacks the multipart parser fired for
+    // this upload, and the smallest non-final chunk. A tiny chunk size ×
+    // many calls is the signature of the slow-upload path (see #93). Reset
+    // at index==0, reported in the final-handler response.
+    static uint32_t& _current_upload_chunks()   { static uint32_t v = 0; return v; }
+    static uint32_t& _current_upload_min_chunk() { static uint32_t v = 0; return v; }
 
     // Per-chunk multipart-upload handler. AsyncWebServer invokes this
     // repeatedly during the upload: index==0 marks the first chunk
@@ -165,6 +171,8 @@
       if (index == 0) {
         staging_id = 0;
         err        = nullptr;
+        _current_upload_chunks()    = 0;
+        _current_upload_min_chunk() = 0xFFFFFFFFu;
         // Total size is the X-Total-Length header — query args are
         // not reliable during multipart parsing. strtoull lets us
         // reject >4 GiB values before narrowing to size_t.
@@ -207,6 +215,10 @@
         staging_id = id;
       }
       if (staging_id == 0) return;  // error already set
+      if (len > 0) {
+        _current_upload_chunks()++;
+        if (!final && len < _current_upload_min_chunk()) _current_upload_min_chunk() = (uint32_t)len;
+      }
       if (len > 0 && !Storage::OutboundStaging::append(staging_id, data, len)) {
         // append() refuses any write that would push past the
         // allocated size; treat as a hard fault.
@@ -268,6 +280,10 @@
       doc["total_bytes"] = (uint32_t)Storage::OutboundStaging::total_bytes(id);
       doc["backend"]     = Storage::OutboundStaging::backend_name(
                               Storage::OutboundStaging::backend_of(id));
+      // Multipart-parser chunking diagnostic (see #93).
+      doc["chunks"]      = _current_upload_chunks();
+      doc["min_chunk"]   = (_current_upload_min_chunk() == 0xFFFFFFFFu)
+                              ? 0 : _current_upload_min_chunk();
       send_json(req, 200, doc);
     }
 

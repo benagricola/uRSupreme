@@ -3040,7 +3040,7 @@ void loop() {
     const uint32_t now_ms = millis();
     if (now_ms - last_prune_ms >= 60UL * 1000UL) {
       last_prune_ms = now_ms;
-      LXMF::LXMFGateway::prune_all();
+      URTN_LT(Common::LoopTiming::max_prune_us, LXMF::LXMFGateway::prune_all());
     }
   }
 #endif
@@ -3090,9 +3090,9 @@ void loop() {
 
     #endif
 
-    tx_queue_handler();
-    check_modem_status();
-  
+    URTN_LT(Common::LoopTiming::max_txq_us, tx_queue_handler());
+    URTN_LT(Common::LoopTiming::max_modem_us, check_modem_status());
+
   } else {
     if (hw_ready) {
       if (console_active) {
@@ -3110,7 +3110,7 @@ void loop() {
   }
 
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
-      buffer_serial();
+      URTN_LT(Common::LoopTiming::max_serial_us, buffer_serial());
       if (!fifo_isempty(&serialFIFO)) serial_poll();
   #else
     if (!fifo_isempty_locked(&serialFIFO)) serial_poll();

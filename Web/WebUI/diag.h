@@ -183,6 +183,10 @@
       doc["wifi"]      = Common::LoopTiming::max_wifi_us;
       doc["lxmf"]      = Common::LoopTiming::max_lxmf_us;
       doc["webui"]     = Common::LoopTiming::max_webui_us;
+      doc["txq"]       = Common::LoopTiming::max_txq_us;
+      doc["modem"]     = Common::LoopTiming::max_modem_us;
+      doc["prune"]     = Common::LoopTiming::max_prune_us;
+      doc["serial"]    = Common::LoopTiming::max_serial_us;
       // Breakdown of the reticulum section into its housekeeping steps (in
       // milliseconds; the section maxima above are microseconds). Pins which
       // step holds the loop when a table-scaling stall shows up: jobs() runs

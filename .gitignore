@@ -26,3 +26,4 @@ tools/kiss-test/interfaces/
 tools/kiss-test/storage/
 tools/kiss-test/lxmf-storage/
 .claude/
+sdkconfig.defaults

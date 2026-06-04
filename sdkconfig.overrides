@@ -1,0 +1,103 @@
+# Project-specific IDF kconfig overrides for arduino-as-component builds
+# of the T-Beam Supreme variants. Concatenated AFTER arduino-esp32's
+# reference sdkconfig by extra_script.py:regenerate_sdkconfig_defaults
+# (later values win in IDF's defaults processing).
+#
+# Symbol names are IDF v5.x (verified against framework-espidf 5.5.1
+# bundled with pioarduino 55.03.32).
+#
+# Only list overrides — anything not here inherits arduino-esp32's
+# reference value (which already enables BT/NimBLE, Wi-Fi, correct
+# flash settings, partition table choice, etc.).
+
+# ---------------------------------------------------------------------------
+# PSRAM: T-Beam Supreme has 8 MB QUAD PSRAM @ 80 MHz (qio_qspi per the
+# board JSON; NOT octal). The arduino reference may default to a
+# different mode/speed for the generic esp32s3 board — override here.
+# ---------------------------------------------------------------------------
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+# Switch off any octal flag if arduino-esp32 default set one for esp32s3.
+# CONFIG_SPIRAM_MODE_OCT is not set
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_BOOT_INIT=y
+# CONFIG_SPIRAM_IGNORE_NOTFOUND is not set
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# Below 1 KiB → internal RAM (avoids PSRAM access latency for tiny allocs).
+# At/above 1 KiB → PSRAM preferred (avoids fragmenting internal RAM with
+# large transients like JSON buffers, framebuffers, lwIP pbufs).
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024
+
+# Reserve 48 KiB of internal-only heap for DMA-only allocations that
+# PSRAM cannot satisfy (esp-aes, SPI/I2S DMA descriptors, certain Wi-Fi
+# paths). Higher than the IDF default because this firmware runs
+# concurrent Web + LoRa + WebSocket + a 768 KiB PSRAM-resident
+# Reticulum path table.
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=49152
+
+# THE KEY KNOB for the SRAM-exhaustion fix: attempt Wi-Fi / lwIP buffer
+# allocations from PSRAM first. Without this, esf_buf and pbuf land in
+# internal RAM and starve the rest of the firmware under web load.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# Move .bss segments to PSRAM at boot. Frees internal RAM that
+# net80211, wpa_supplicant, and lwIP would otherwise consume.
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+
+# Execute code + read .rodata from PSRAM, so flash writes (LittleFS,
+# Reticulum path table persistence) don't stall ISRs that touch PSRAM.
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+
+# ---------------------------------------------------------------------------
+# Wi-Fi buffer sizing (IDF 5.x: CONFIG_ESP_WIFI_*).
+# With PSRAM enabled + SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y, dynamic buffers
+# preferentially land in PSRAM. Bias towards fewer static buffers and
+# more dynamic (PSRAM-eligible) buffers.
+# ---------------------------------------------------------------------------
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=32
+# CONFIG_ESP_WIFI_AMSDU_TX_ENABLED is not set
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=32
+
+# ---------------------------------------------------------------------------
+# lwIP windowing — smaller windows reduce in-flight bytes, which reduces
+# the peak number of pbufs lwIP needs to hold simultaneously. Trades a
+# small amount of single-stream throughput for a much smaller SRAM peak
+# during WebSocket / HTTP transfers.
+# ---------------------------------------------------------------------------
+CONFIG_LWIP_TCP_MSS=1436
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=5744
+CONFIG_LWIP_TCP_WND_DEFAULT=5744
+CONFIG_LWIP_MAX_SOCKETS=7
+CONFIG_LWIP_MAX_ACTIVE_TCP=8
+
+# ---------------------------------------------------------------------------
+# Bluetooth: arduino-esp32 v3.x defaults to NimBLE for new code, but our
+# BLESerial.cpp uses the Bluedroid API (esp_bt_main.h, esp_bt_defs.h,
+# ESP_BLE_SEC_ENCRYPT_MITM, ESP_GATT_PERM_*, BLECharacteristicCallbacks
+# with BLEServerCallbacks, etc.). Switch the BT stack to Bluedroid so
+# those headers + constants are available.
+#
+# arduino-esp32's BLE library (libraries/BLE/) supports both stacks
+# behind a common header set, so the BLEDevice / BLEServer / BLE2902
+# class names still resolve. The `BLE2902` deprecation warning is
+# expected — NimBLE creates 2902 descriptors implicitly, but the class
+# still works under Bluedroid (and we're on Bluedroid here anyway).
+# ---------------------------------------------------------------------------
+# CONFIG_BT_NIMBLE_ENABLED is not set
+CONFIG_BT_BLUEDROID_ENABLED=y
+
+# ---------------------------------------------------------------------------
+# Heap diagnostics
+# ---------------------------------------------------------------------------
+# Per-task allocation accounting (heap_caps_dump_per_task, etc.). Small
+# RAM cost (~16 B per allocation), worth it during the migration shakeout.
+CONFIG_HEAP_TASK_TRACKING=y
+
+# Enable the heap hooks API (alloc-failed callback). RNode_Firmware.ino
+# calls heap_caps_register_failed_alloc_callback() from setup(); under
+# IDF 5.x this symbol gates whether the hook fires.
+CONFIG_HEAP_USE_HOOKS=y

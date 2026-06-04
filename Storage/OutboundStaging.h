@@ -68,6 +68,16 @@ struct Buffer {
   uint8_t*   psram_ptr   = nullptr;
   // SD or Flash backend (path semantics differ; underlying FS doesn't)
   String     disk_path;
+  // Held write handle, kept open for the whole upload so each chunk is
+  // a bare write() rather than an open()+append()+close() round-trip.
+  // Re-opening the file per chunk forces a FAT/dir-entry flush to the
+  // card on every ~2 KB the async server hands us, which collapsed an
+  // 8 MB upload to tens of KB/s despite a fast WiFi link. Exactly one
+  // of these is live at a time, matching `backend`; both are closed at
+  // finalize_write() / release() / gc(). (File is shared-ptr-backed,
+  // so copying the Buffer into the static vector keeps the handle open.)
+  File             sd_file;     // Backend::Sd
+  microStore::File flash_file;  // Backend::Flash
 };
 
 namespace _detail {
@@ -77,6 +87,18 @@ namespace _detail {
   inline Buffer* find(uint32_t id) {
     for (auto& b : buffers()) if (b.id == id) return &b;
     return nullptr;
+  }
+
+  // Close whichever disk write handle a buffer holds open. Idempotent —
+  // safe to call from finalize_write() and again from release()/gc().
+  inline void close_write_handle(Buffer& b) {
+    if (b.backend == Backend::Sd && b.sd_file) {
+      b.sd_file.close();
+      b.sd_file = File();
+    } else if (b.backend == Backend::Flash && b.flash_file) {
+      b.flash_file.close();
+      b.flash_file.clear();
+    }
   }
 
   // Drop stale buffers. Two cases:
@@ -95,6 +117,7 @@ namespace _detail {
       const bool stale      = incomplete ? (age > STAGING_TIMEOUT_MS)
                                          : (age > 5 * STAGING_TIMEOUT_MS);
       if (stale) {
+        close_write_handle(*it);  // release the fd before removing the file
         if (it->backend == Backend::Psram && it->psram_ptr) {
           heap_caps_free(it->psram_ptr);
         } else if (it->backend == Backend::Sd && !it->disk_path.isEmpty()) {
@@ -223,9 +246,23 @@ inline uint32_t allocate(size_t total_bytes) {
     if (!SD.exists("/lxmf")) SD.mkdir("/lxmf");
     if (!SD.exists("/lxmf/staging")) SD.mkdir("/lxmf/staging");
     if (SD.exists(b.disk_path)) SD.remove(b.disk_path);
+    // Open once; append() writes into this handle and finalize_write()
+    // closes it. FILE_WRITE truncates (file was just removed) then
+    // appends on each sequential write.
+    b.sd_file = SD.open(b.disk_path, FILE_WRITE);
+    if (!b.sd_file) {
+      ERRORF("OutboundStaging: SD open of %s failed", b.disk_path.c_str());
+      Storage::SDCard::verify_or_disable();
+      return 0;
+    }
   } else {  // Flash
     b.disk_path = String("/lxmf/staging/") + b.id + ".bin";
     if (filesystem.exists(b.disk_path.c_str())) filesystem.remove(b.disk_path.c_str());
+    b.flash_file = filesystem.open(b.disk_path.c_str(), microStore::File::ModeAppend, true);
+    if (!b.flash_file) {
+      ERRORF("OutboundStaging: flash open of %s failed", b.disk_path.c_str());
+      return 0;
+    }
   }
   _detail::buffers().push_back(b);
   NOTICEF("OutboundStaging: allocated id=%u backend=%s size=%u",
@@ -247,17 +284,12 @@ inline bool append(uint32_t id, const uint8_t* data, size_t len) {
     if (!b->psram_ptr) return false;
     memcpy(b->psram_ptr + b->written, data, len);
   } else if (b->backend == Backend::Sd) {
-    File f = SD.open(b->disk_path, FILE_APPEND);
-    if (!f) { Storage::SDCard::verify_or_disable(); return false; }
-    size_t w = f.write(data, len);
-    f.close();
+    if (!b->sd_file) { Storage::SDCard::verify_or_disable(); return false; }
+    const size_t w = b->sd_file.write(data, len);
     if (w != len) { Storage::SDCard::verify_or_disable(); return false; }
   } else {  // Flash
-    microStore::File f = filesystem.open(b->disk_path.c_str(),
-                                         microStore::File::ModeAppend, true);
-    if (!f) return false;
-    const size_t w = f.write(data, len);
-    f.close();
+    if (!b->flash_file) return false;
+    const size_t w = b->flash_file.write(data, len);
     if (w != len) return false;
   }
   b->written += len;
@@ -267,6 +299,14 @@ inline bool append(uint32_t id, const uint8_t* data, size_t len) {
 inline bool complete(uint32_t id) {
   Buffer* b = _detail::find(id);
   return b && b->written == b->total_bytes;
+}
+
+// Flush + close the disk write handle once the upload's final chunk has
+// landed. Must run before read() (used by /send) opens the file for
+// reading, so the read sees all bytes. No-op for PSRAM (no handle).
+inline void finalize_write(uint32_t id) {
+  Buffer* b = _detail::find(id);
+  if (b) _detail::close_write_handle(*b);
 }
 
 inline size_t total_bytes(uint32_t id) {
@@ -314,6 +354,7 @@ inline void release(uint32_t id) {
   auto& v = _detail::buffers();
   for (auto it = v.begin(); it != v.end(); ++it) {
     if (it->id != id) continue;
+    _detail::close_write_handle(*it);  // release the fd before removing the file
     if (it->backend == Backend::Psram && it->psram_ptr) {
       heap_caps_free(it->psram_ptr);
     } else if (it->backend == Backend::Sd && !it->disk_path.isEmpty()) {

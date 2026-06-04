@@ -216,6 +216,9 @@
         return;
       }
       if (final) {
+        // Flush + close the held disk write handle before the validation
+        // read path (/send) opens the file for reading.
+        Storage::OutboundStaging::finalize_write(staging_id);
         if (!Storage::OutboundStaging::complete(staging_id)) {
           err = "Upload ended before all bytes were received.";
           Storage::OutboundStaging::release(staging_id);

@@ -2403,7 +2403,25 @@ class UReticulumHTTPTransport extends Transport {
     }
     const tok = this.tokenGetter();
     if (tok && !opts.unauthed) headers['Authorization'] = 'Bearer ' + tok;
-    const r = await fetch(path, Object.assign({}, opts, { headers }));
+    // Abort a request that stalls past `timeout` ms (default 30 s). The
+    // SRAM-tight device can leave a request hanging; without this the socket
+    // stays half-open and any awaiting caller never recovers. Slow-by-design
+    // calls (large uploads) pass a larger opts.timeout; 0 disables it.
+    const timeout = (opts.timeout === undefined) ? 30000 : opts.timeout;
+    const fetchOpts = Object.assign({}, opts, { headers });
+    delete fetchOpts.timeout;
+    let timer = null;
+    if (timeout > 0 && typeof AbortController !== 'undefined' && !fetchOpts.signal) {
+      const ctrl = new AbortController();
+      fetchOpts.signal = ctrl.signal;
+      timer = setTimeout(() => ctrl.abort(new Error('request timed out')), timeout);
+    }
+    let r;
+    try {
+      r = await fetch(path, fetchOpts);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     const txt = await r.text();
     let body; try { body = txt ? JSON.parse(txt) : {}; } catch { body = { _raw: txt }; }
     if (!r.ok) {
@@ -3416,10 +3434,12 @@ function onClickMic() {
 async function onChangeAttachFile(ev) {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;
-  // Refresh the device's attachment cap on demand before the size check — it
-  // changes only on SD insert/eject, and this is the cheapest point to be
-  // current. Best-effort: on failure attachMaxBytes() uses the last known value.
-  try { await refreshStorageCaps(); } catch (e) { /* keep last known cap */ }
+  // Refresh the cap in the background (it changes only on SD insert/eject) —
+  // never block the attach on it. On the SRAM-tight device an HTTP request can
+  // stall for seconds, and awaiting it here froze the composer outright. This
+  // attach validates against the last-known cap (loaded at boot by
+  // populateStorageConfig); the refresh updates it for the next attach.
+  refreshStorageCaps().catch(() => {});
   if (file.type.startsWith('image/')) {
     await openImageResizePicker(file);
   } else {
@@ -4085,8 +4105,11 @@ function openStatusPopover() {
 async function onClickStatusBtn() {
   if (state.popovers.status) { state.popovers.status = false; return; }
   state.popovers.system = false; stopSystemTicker();
-  await refreshStatus();
+  // Open immediately with the cached snapshot, then refresh in the background.
+  // Awaiting the fetch first meant a stalled HTTP request (common on the
+  // SRAM-tight device) left the popover unopenable.
   openStatusPopover();
+  refreshStatus().catch(() => {});
 }
 
 // ============================== RADIO TELEMETRY ==============================

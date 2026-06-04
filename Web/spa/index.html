@@ -3873,8 +3873,18 @@ async function refreshStatus() {
     state.radioStatus.title = 'Status unknown: ' + (e.message || e);
   }
   // System snapshot (storage / outbound_caps / battery / sensors) is
-  // now WS-pushed. Read straight from the cache populated by the
-  // `hello` + `system_update` frames in dispatchEvent.
+  // WS-pushed; re-derive the values the rest of the UI reads from it.
+  applySystemDerived();
+}
+
+// Project state.system (the WS-pushed snapshot) into the flat fields
+// the UI reads: the composer's attachment cap (outboundCaps) and the
+// SD-present flag. Called from the `hello` + `system_update` WS frames
+// AND the 60 s refreshStatus poll, so the composer reflects the
+// device's real staging cap from WS frame zero rather than lagging up
+// to a minute behind on the poll (which left attachMaxBytes on its
+// 64 KB fallback until the first poll synced it).
+function applySystemDerived() {
   const sys = state.system || {};
   state.lastSystemStatus = sys;
   const wasPresent = state.sdPresent;
@@ -4952,6 +4962,8 @@ function dispatchEvent(ev) {
       rtc:           ev.rtc           || {},
     };
     // Battery icon binds reactively to state.system.battery.
+    // Sync the composer's staging cap + SD flag from frame zero.
+    applySystemDerived();
     return;
   }
   if (ev.type === 'system_update') {
@@ -4965,6 +4977,7 @@ function dispatchEvent(ev) {
       outbound_caps: p.outbound_caps || {},
       rtc:           p.rtc           || {},
     };
+    applySystemDerived();
     // Repaint open popovers + the topbar battery icon in place.
     // The element ID is `popover-system` (set by the HTML); the
     // earlier `sys-popover` lookup was a typo, making this branch a

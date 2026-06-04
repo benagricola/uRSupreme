@@ -364,6 +364,76 @@ def regenerate_sdkconfig_defaults(env):
           f"({len(ref_bytes)} B arduino ref + {len(override_bytes)} B overrides)")
 
 
+def ensure_idf_component_manager(env):
+    """Make the arduino-as-component (espidf) build reproducible on a clean
+    checkout / CI / another machine.
+
+    PlatformIO bundles Python 3.14 for the ESP-IDF virtualenv, but its
+    install_python_deps() pins `pydantic~=2.11.10`, whose pydantic-core has no
+    cp314 wheel — pip falls back to a Rust source build that fails (PyO3 caps at
+    3.13). The install dies, the IDF venv is left with only pip, and the espidf
+    build then fails at config with "No module named 'idf_component_manager'".
+
+    We set the venv up here, in the pre: script (runs before the espidf builder
+    reads the venv), letting pip resolve a NEWER pydantic that ships a cp314
+    wheel, then write PlatformIO's own venv marker so ensure_python_venv_available()
+    treats our venv as current and does NOT recreate it + rerun the broken
+    install. No-op for non-espidf envs and when the module is already present.
+    """
+    import subprocess, json, re
+    frameworks = env.subst("$PIOFRAMEWORK").split()
+    if "espidf" not in frameworks:
+        return
+    packages_dir = env.subst("$PROJECT_PACKAGES_DIR")
+    if not packages_dir or not os.path.isdir(packages_dir):
+        packages_dir = os.path.expanduser("~/.platformio/packages")
+    vcmake = os.path.join(packages_dir, "framework-espidf", "tools", "cmake", "version.cmake")
+    if not os.path.isfile(vcmake):
+        return
+    try:
+        with open(vcmake, encoding="utf8") as fp:
+            parts = dict(re.findall(r"set\(IDF_VERSION_(MAJOR|MINOR|PATCH) (\d+)\)", fp.read()))
+        if not all(k in parts for k in ("MAJOR", "MINOR", "PATCH")):
+            return
+        idf_ver = "%s.%s.%s" % (parts["MAJOR"], parts["MINOR"], parts["PATCH"])
+        venv_dir = os.path.join(env.subst("$PROJECT_CORE_DIR"), "penv", ".espidf-" + idf_ver)
+        py = os.path.join(venv_dir, "bin", "python")
+
+        def has_module():
+            return os.path.isfile(py) and subprocess.call(
+                [py, "-c", "import idf_component_manager"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+
+        if has_module():
+            return
+        print("*** IDF venv: installing idf_component_manager — PlatformIO's "
+              "pydantic pin won't build on its bundled Python 3.14 ...")
+        if not os.path.isfile(py):
+            subprocess.check_call([env.subst("$PYTHONEXE"), "-m", "venv", "--clear", venv_dir])
+        # Force wheels for the Rust-built packages so pip picks a pydantic-core /
+        # cryptography with a cp314 wheel instead of failing a from-source build.
+        # idf-component-manager pulls a recent pydantic (cp314 wheel) transitively.
+        subprocess.check_call([py, "-m", "pip", "install", "-q", "-U",
+            "--only-binary=pydantic-core,cryptography",
+            "idf-component-manager~=2.0.1", "esp-idf-kconfig~=2.5.0", "cryptography"])
+        if not has_module():
+            print("*** IDF venv: idf_component_manager still missing; the espidf "
+                  "builder will retry its own install")
+            return
+        # PlatformIO's venv marker. "1.0.0" mirrors espidf.py's IDF_ENV_VERSION;
+        # if pioarduino bumps it our marker is rejected, PlatformIO recreates the
+        # venv, and the original install failure resurfaces loudly (not silently)
+        # — bump this string to match when that happens.
+        pyver = subprocess.check_output([py, "-c",
+            "import sys;print('{0}.{1}.{2}-{3}.{4}'.format(*list(sys.version_info)))"],
+            text=True).strip()
+        with open(os.path.join(venv_dir, "pio-idf-venv.json"), "w", encoding="utf8") as fp:
+            json.dump({"version": "1.0.0", "python_version": pyver}, fp, indent=2)
+        print("*** IDF venv ready: idf_component_manager (IDF %s, Python %s)" % (idf_ver, pyver))
+    except Exception as e:
+        print("*** IDF venv setup skipped (%s); the espidf builder will try its own" % e)
+
+
 compute_firmware_version(env)
 
 print("*** Running custom script...")
@@ -376,6 +446,10 @@ embed_spa(env)
 # arduino reference + sdkconfig.overrides before the espidf builder reads it.
 # No-op on the official-platform envs.
 regenerate_sdkconfig_defaults(env)
+# arduino-as-component envs: ensure the IDF venv has idf_component_manager
+# before the espidf builder runs (PlatformIO's pydantic pin won't build on its
+# bundled Python 3.14). No-op on the official-platform envs.
+ensure_idf_component_manager(env)
 platform = env.GetProjectOption("platform")
 print("Platform:", platform)
 targets = env.GetProjectOption("targets", [])

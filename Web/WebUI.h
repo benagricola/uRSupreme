@@ -856,6 +856,11 @@ namespace Web {
       // requires identity-code physical presence (enforced in the handler).
       server.on("/api/transport/lora/config",       HTTP_GET, handle_lora_config_get);
       on_json_post("/api/transport/lora/config",               handle_lora_config_set);
+      // UDP interface config: mode + IFAC (+ discoverable), same shape as
+      // /lora/config. Lets the WiFi-UDP segment be made private without
+      // hand-editing the interfaces.json file.
+      server.on("/api/transport/udp/config",        HTTP_GET, handle_udp_config_get);
+      on_json_post("/api/transport/udp/config",                handle_udp_config_set);
     }
 
 

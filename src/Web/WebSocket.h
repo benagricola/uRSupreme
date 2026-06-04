@@ -31,6 +31,7 @@
 #include "../Common/PsramAllocator.h"
 #include <vector>
 #include <string>
+#include <cstring>      // strlen / memcpy for text_psram()
 #include <stdint.h>
 #include <esp_heap_caps.h>
 #include <memory>
@@ -168,6 +169,22 @@ namespace WS {
     return AsyncWebSocketSharedBuffer(
       reinterpret_cast<std::vector<uint8_t>*>(guts),
       std::move(deleter));
+  }
+
+  // Send a small literal text frame to one client through a PSRAM-backed
+  // buffer. No WS outbound payload should ever be allocated from internal
+  // SRAM: the ESP-IDF WiFi driver needs that region for esf_buf TX
+  // descriptors, and app-side alloc/free churn there fragments it until the
+  // MAC layer can't grab a 1.6 KB buffer. Same allocation path as
+  // broadcast() and the hello frame.
+  inline void text_psram(AsyncWebSocketClient* client, const char* s) {
+    if (!client || !s) return;
+    const size_t n = strlen(s);
+    if (n == 0) return;
+    AsyncWebSocketSharedBuffer buf = make_psram_ws_buffer(n);
+    if (!buf) return;  // PSRAM exhausted (unlikely); drop the control frame
+    memcpy(buf->data(), s, n);
+    client->text(buf);
   }
 
   inline void broadcast(const JsonDocument& doc, const LXMF::IdentityId& scope = {}) {
@@ -448,12 +465,16 @@ namespace WS {
     broadcast(doc);
   }
 
-  // Pending-auth map: handshake runs BEFORE the WS client object
-  // exists, so we stash the validated IdentityId keyed by the TCP
-  // remote port and look it up in WS_EVT_CONNECT (same connection,
-  // so the port is stable).
+  // Pending-auth map: the handshake runs BEFORE the WS client object exists,
+  // so we stash the validated IdentityId and look it up in WS_EVT_CONNECT.
+  // Key by the AsyncClient POINTER, not the TCP remote port: the WS upgrade
+  // reuses (steals) the handshake request's AsyncClient, so request->client()
+  // in on_handshake is the very same object as client->client() in
+  // WS_EVT_CONNECT. The pointer is unique per live connection; remotePort() is
+  // not — it returns 0 under some load and is reused across rapid reconnects,
+  // which mis-bound or silently dropped the auth.
   struct PendingAuth {
-    uint16_t         remote_port;
+    AsyncClient*     client;
     LXMF::IdentityId identity_id;
     uint32_t         created_ms;
   };
@@ -476,13 +497,18 @@ namespace WS {
     if (tok_iden.empty()) return false;
     if (id.length() > 0 && tok_iden != std::string(id.c_str())) return false;
     PendingAuth pa;
-    pa.remote_port = request->client() ? request->client()->remotePort() : 0;
+    pa.client      = request->client();
     pa.identity_id = tok_iden;
     pa.created_ms  = millis();
-    // GC entries older than 30s (handshake-to-CONNECT lag should be ms).
     auto& v = pending_auths();
+    // Drop any stale entry for this same AsyncClient pointer (so a freed +
+    // reallocated pointer can't match a leftover binding) and GC entries older
+    // than 30s (handshake-to-CONNECT lag should be ms).
     v.erase(std::remove_if(v.begin(), v.end(),
-                           [](const PendingAuth& p){ return millis() - p.created_ms > 30000; }),
+                           [&](const PendingAuth& p){
+                             return p.client == pa.client ||
+                                    millis() - p.created_ms > 30000;
+                           }),
             v.end());
     v.push_back(pa);
     return true;
@@ -496,12 +522,12 @@ namespace WS {
       ClientState st;
       st.client_id = client->id();
       st.authed    = false;
-      // Look up the pending auth by TCP remote port — same socket the
-      // handshake just ran on.
-      const uint16_t rport = client->client() ? client->client()->remotePort() : 0;
+      // Look up the pending auth by the AsyncClient pointer — the same object
+      // the handshake stashed (the upgrade steals and reuses it).
+      AsyncClient* ac = client->client();
       auto& v = pending_auths();
       for (auto it = v.begin(); it != v.end(); ++it) {
-        if (it->remote_port == rport) {
+        if (ac && it->client == ac) {
           st.authed      = true;
           st.identity_id = it->identity_id;
           v.erase(it);
@@ -510,7 +536,7 @@ namespace WS {
       }
       clients().push_back(st);
       if (!st.authed) {
-        client->text("{\"type\":\"error\",\"error\":\"auth_required\"}");
+        text_psram(client, "{\"type\":\"error\",\"error\":\"auth_required\"}");
         client->close(1008, "auth");
         return;
       }
@@ -526,22 +552,23 @@ namespace WS {
       if (hello_extras()) {
         hello_extras()(hello.as<JsonObject>());
       }
-      // Same SharedBuffer pattern as broadcast() — see comment there.
-      // Hello frames are the largest periodic WS message (~2 KiB JSON
-      // from hello_extras), and fire on every client connect, so they
-      // belong on the same allocation path as the periodic broadcasts.
+      // PSRAM-backed buffer — same allocation path as broadcast(). The hello
+      // is the largest WS frame (~1.8 KiB JSON from hello_extras) and fires on
+      // every client connect. Allocating it from the default heap (internal
+      // SRAM) failed intermittently once region-1 SRAM fragmented under WiFi +
+      // LoRa load: std::make_shared<std::vector<uint8_t>>(n) threw bad_alloc
+      // and the hello was silently dropped, so a freshly-connected SPA never
+      // received outbound_caps and pinned its composer to the 64 KiB fallback
+      // cap. PSRAM (8 MB) doesn't fragment under that pressure.
       const size_t n = measureJson(hello);
       if (n > 0) {
-        AsyncWebSocketSharedBuffer buf;
-        try {
-          buf = std::make_shared<std::vector<uint8_t>>(n);
+        AsyncWebSocketSharedBuffer buf = make_psram_ws_buffer(n);
+        if (buf) {
           serializeJson(hello, buf->data(), n);
           client->text(buf);
         }
-        catch (const std::bad_alloc&) {
-          // Fragmented default heap; client will reconnect on its own
-          // policy. Better than crashing on the hello path.
-        }
+        // else: PSRAM exhausted (unlikely); the client reconnects on its own
+        // policy. Better than crashing on the hello path.
       }
     }
     else if (type == WS_EVT_DISCONNECT) {
@@ -557,7 +584,7 @@ namespace WS {
       if (len == 0 || !data) return;
       std::string s((const char*)data, len);
       if (s.find("\"ping\"") != std::string::npos) {
-        client->text("{\"type\":\"pong\"}");
+        text_psram(client, "{\"type\":\"pong\"}");
       }
     }
   }

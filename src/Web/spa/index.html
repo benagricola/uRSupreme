@@ -3238,9 +3238,15 @@ const FIELD_IMAGE            = 0x06;
 const FIELD_AUDIO            = 0x07;
 const ATTACH_FALLBACK_BYTES  = 64 * 1024;
 function attachMaxBytes() {
-  const c = state.outboundCaps;
-  return (c && Number.isFinite(c.max_bytes) && c.max_bytes > 0)
-       ? c.max_bytes : ATTACH_FALLBACK_BYTES;
+  // The attachment cap is a device property (it changes only on SD
+  // insert/eject), sourced over plain HTTP from /api/storage/config and
+  // refreshed on demand when the composer adds an attachment. It is NOT taken
+  // from the WebSocket: a stateful channel that can drop frames under a
+  // connection burst is the wrong place for a hard limit. ATTACH_FALLBACK_BYTES
+  // applies only before the first storage-config fetch has resolved.
+  const sc = state._storageConfig;
+  return (sc && Number.isFinite(sc.effective_max_send_bytes) && sc.effective_max_send_bytes > 0)
+       ? sc.effective_max_send_bytes : ATTACH_FALLBACK_BYTES;
 }
 function attachBackendLabel() {
   const c = state.outboundCaps;
@@ -3410,6 +3416,10 @@ function onClickMic() {
 async function onChangeAttachFile(ev) {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;
+  // Refresh the device's attachment cap on demand before the size check — it
+  // changes only on SD insert/eject, and this is the cheapest point to be
+  // current. Best-effort: on failure attachMaxBytes() uses the last known value.
+  try { await refreshStorageCaps(); } catch (e) { /* keep last known cap */ }
   if (file.type.startsWith('image/')) {
     await openImageResizePicker(file);
   } else {
@@ -6757,11 +6767,18 @@ function _renderStorageLabels() {
   state.ui.storageMaxSendLabel = `${_fmtBytes(state.forms.storage.maxSend)} (device caps at ${_fmtBytes(cfg.effective_max_send_bytes)})`;
   state.ui.storageMaxRecvLabel = `${_fmtBytes(state.forms.storage.maxRecv)} (device caps at ${_fmtBytes(cfg.effective_max_recv_bytes)})`;
 }
+// Single source of truth for the device's storage limits, fetched over plain
+// HTTP. state._storageConfig feeds attachMaxBytes() (the composer's hard cap),
+// so callers refresh it on demand — e.g. just before validating an attachment —
+// rather than depending on a WS push that can be dropped under load.
+async function refreshStorageCaps() {
+  state._storageConfig = await state.transport._req('/api/storage/config');
+  return state._storageConfig;
+}
 async function populateStorageConfig() {
   state.ui.storageStatus = '';
   try {
-    const cfg = await state.transport._req('/api/storage/config');
-    state._storageConfig = cfg;
+    const cfg = await refreshStorageCaps();
     state.ui.storageMaxSendMax = Math.max(cfg.effective_max_send_bytes || 0, 65536);
     state.ui.storageMaxRecvMax = Math.max(cfg.effective_max_recv_bytes || 0, 65536);
     state.forms.storage.maxSend = Math.min(cfg.user_max_send_bytes    || 0, state.ui.storageMaxSendMax);

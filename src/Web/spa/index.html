@@ -697,7 +697,19 @@
     <div class="popover-value" id="sys-gps-pos" x-text="gpsPosText"></div>
     <div class="popover-subline" id="sys-gps-speed" x-show="gpsHaveFix" x-text="gpsFixTimeText"></div>
     <div class="popover-subline" id="sys-gps-age" x-text="$store.s.ui.sysGpsAge"></div>
-    <div class="popover-config" data-role="config" x-show="sectionOpen.gps" x-cloak></div>
+    <div class="popover-config" data-role="config" x-show="sectionOpen.gps" x-cloak>
+      <label>
+        <input type="checkbox" :checked="$store.s.gpsSource.enabled"
+               @change="onGpsConfigChange($event.target)">
+        <span>Enabled</span>
+      </label>
+      <select :value="String($store.s.gpsSource.interval_s)"
+              @change="onGpsConfigChange($event.target)">
+        <template x-for="p in GPS_INTERVALS" :key="p.value">
+          <option :value="String(p.value)" x-text="p.label"></option>
+        </template>
+      </select>
+    </div>
   </div>
   <div class="popover-section" id="sys-section-env" data-sensor="environment"
        :class="{ 'is-open': sectionOpen.environment }"
@@ -1629,25 +1641,6 @@
             </template>
           </div>
         </div>
-        <div class="card mt-14" >
-          <strong>Known paths</strong>
-          <div class="muted mt-1" >Every announce we've seen, not just LXMF endpoints — Reticulum transport relays, propagation nodes, etc.</div>
-          <div class="mt-2" id="paths-card" x-data x-cloak>
-            <template x-if="Object.keys($store.s.paths).length === 0">
-              <div class="muted">No paths known yet.</div>
-            </template>
-            <template x-for="a in Object.values($store.s.paths).sort((x,y) => y.received_ms - x.received_ms)" :key="a.dest">
-              <div class="list-row">
-                <div>
-                  <span x-html="identicon(a.dest, 20)"></span>
-                  <strong x-text="a.display_name || nameFor(a.dest)"></strong>
-                </div>
-                <div class="muted mono" x-text="a.dest"></div>
-                <div class="muted" x-text="'aspect=' + (a.aspect || 'transport/unknown')"></div>
-              </div>
-            </template>
-          </div>
-        </div>
       </div>
 
       <!-- ============== Danger tab ============== -->
@@ -1813,6 +1806,9 @@ let state = {
   // Time-source rows in priority order. Each: { key, label, desc,
   // enabled, interval_s, hasInterval, expanded }.
   timeSources: [],
+  // GPS time-source config (enable + duty-cycle interval_s), loaded from
+  // /api/time/sources when the system popover opens; bound by the GPS row.
+  gpsSource: { enabled: true, interval_s: 0, priority: 99 },
   // Singleton info-tooltip state. null = closed. { html, x, y } open.
   infoTip: null,
   // Image-resize picker state. Populated by openImageResizePicker; the
@@ -4731,6 +4727,9 @@ async function openSystemPopover() {
   state.popovers.status = false;
   state.popovers.system = true;
   startSystemTicker();
+  // GPS enable/duty-cycle lives in /api/time/sources, not the WS snapshot —
+  // load it so the GPS section's config row reflects the real schedule.
+  loadGpsSource();
   setTimeout(() => {
     const dismiss = (ev) => {
       if (popoverDismissibleClick(ev, 'popover-system', 'btn-system')) {
@@ -4842,8 +4841,9 @@ function onClickPowerBtn() {
 // Each sensor section (Environment / Compass / Motion) has a click-
 // to-expand row revealing an enable checkbox + interval dropdown.
 // Save fires immediately on change — small enough payload that the
-// user expects instant feedback. GPS is read-only here; its
-// settings live in the Time tab's source list.
+// user expects instant feedback. GPS has its own enable + duty-cycle
+// row (onGpsConfigChange) wired to /api/time/sources, since it's a time
+// source (Clock::Manager) rather than a /api/sensors/config sensor.
 const SENSOR_INTERVALS = [
   { value: 10,    label: 'Every 10 sec' },
   { value: 60,    label: 'Every minute' },
@@ -4870,6 +4870,58 @@ function sensorIntervalSnap(secs) {
 function sensorIntervalCurrent(key) {
   const s = state.system && state.system.sensors && state.system.sensors[key];
   return String(sensorIntervalSnap(Math.round(((s && s.interval_ms) || 60000) / 1000)));
+}
+
+// GPS duty-cycle presets. GPS isn't a /api/sensors/config sensor — it's a time
+// source (Clock::Manager). Its interval_s drives the L76K power schedule:
+//   0 .. <300s  -> chip stays powered (continuous)
+//   >= 300s     -> pulsed: power on, hunt for a fix, report, power off, sleep
+// So "Pulse every N" lets the GPS sleep between fixes (the power-saving intent);
+// "Always on" keeps it streaming.
+const GPS_INTERVALS = [
+  { value: 0,    label: 'Always on' },
+  { value: 300,  label: 'Pulse every 5 min' },
+  { value: 900,  label: 'Pulse every 15 min' },
+  { value: 1800, label: 'Pulse every 30 min' },
+  { value: 3600, label: 'Pulse every hour' },
+];
+function gpsIntervalSnap(secs) {
+  const n = Number(secs) || 0;
+  for (const p of GPS_INTERVALS) if (p.value === n) return p.value;
+  if (n < 300) return 0;   // below the firmware's pulse threshold = "always on"
+  let best = 300, bestDist = Infinity;
+  for (const p of GPS_INTERVALS) {
+    if (p.value === 0) continue;
+    const d = Math.abs(Math.log(Math.max(n, 1)) - Math.log(p.value));
+    if (d < bestDist) { best = p.value; bestDist = d; }
+  }
+  return best;
+}
+// GPS enable + duty-cycle live in /api/time/sources (gps.{enabled,interval_s}),
+// not /api/sensors/config. Loaded into state.gpsSource when the system popover
+// opens; the GPS sensor row binds to it.
+async function loadGpsSource() {
+  try {
+    const t = await state.transport._req('/api/time/sources');
+    const g = (t.sources && t.sources.gps) || {};
+    state.gpsSource = {
+      enabled:    g.enabled !== false,
+      interval_s: gpsIntervalSnap(g.interval_s),
+      priority:   (g.priority != null) ? g.priority : 99,
+    };
+  } catch (_) { /* keep defaults */ }
+}
+async function onGpsConfigChange(sourceEl) {
+  if (sourceEl.type === 'checkbox') state.gpsSource.enabled = sourceEl.checked;
+  else state.gpsSource.interval_s = Math.max(0, parseInt(sourceEl.value, 10) || 0);
+  const g = state.gpsSource;
+  try {
+    await state.transport._req('/api/time/sources', { method: 'POST',
+      body: { sources: { gps: { enabled: !!g.enabled, priority: g.priority, interval_s: g.interval_s } } } });
+    toast('GPS schedule updated', 'success');
+  } catch (e) {
+    toast('GPS update failed: ' + (e.message || e), 'error');
+  }
 }
 
 // @change handler shared by the checkbox + select inputs in each

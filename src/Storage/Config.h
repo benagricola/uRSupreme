@@ -33,6 +33,7 @@
 
 #include "OutboundStaging.h"
 #include "SDCard.h"
+#include "FreeSpace.h"
 
 extern microStore::FileSystem filesystem;
 
@@ -123,8 +124,8 @@ inline size_t backing_max_receive() {
     const size_t free_b  = (total > used) ? (size_t)(total - used) : 0;
     return (free_b > RECEIVE_SAFETY_MARGIN) ? (free_b - RECEIVE_SAFETY_MARGIN) : 0;
   }
-  const size_t flash_free = (size_t)filesystem.storageAvailable();
-  return (flash_free > RECEIVE_SAFETY_MARGIN) ? (flash_free - RECEIVE_SAFETY_MARGIN) : 0;
+  const size_t flash_avail = Storage::flash_free();
+  return (flash_avail > RECEIVE_SAFETY_MARGIN) ? (flash_avail - RECEIVE_SAFETY_MARGIN) : 0;
 }
 
 inline size_t effective_max_send() {

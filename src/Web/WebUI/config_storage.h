@@ -53,8 +53,15 @@
     // alongside the effective (clamped-to-backing-store) values the
     // SPA should bind its sliders' upper bound to.
     static void handle_storage_config_get(AsyncWebServerRequest* req) {
-      RnsLockGuard _g;
+      // No RnsLockGuard: this reads only Storage state (caps + SD presence) and
+      // the cached flash free-space, none of which touch Reticulum. This is the
+      // one place the free-space block scan is allowed to run (off the rns_lock,
+      // on the web task) — refresh the cache here so every rns_lock-holding
+      // reader downstream (receive cap, /api/info storage block) gets a warm,
+      // non-blocking Storage::flash_free(). The esp_littlefs semaphore makes the
+      // scan FS-safe without an external lock.
       if (require_auth(req).empty()) return;
+      Storage::flash_free_refresh();
       const auto& cfg = Storage::Config::current();
       Common::PsramJsonDocument doc;
       doc["user_max_send_bytes"]      = (uint32_t)std::min<size_t>(cfg.user_max_send_bytes,    0xFFFFFFFFu);

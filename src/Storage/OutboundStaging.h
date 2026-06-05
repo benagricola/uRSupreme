@@ -36,6 +36,7 @@
 #include <SD.h>
 #include <microStore/FileSystem.h>
 #include "SDCard.h"
+#include "FreeSpace.h"
 
 extern microStore::FileSystem filesystem;
 
@@ -164,7 +165,7 @@ inline Caps current_caps() {
   c.sd_present = Storage::SDCard::present();
   c.psram_free = (size_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
   {
-    const size_t avail = (size_t)filesystem.storageAvailable();
+    const size_t avail = Storage::flash_free();
     c.flash_free = avail;
   }
   if (c.sd_present) {

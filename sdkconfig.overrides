@@ -47,6 +47,10 @@ CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 
 # Execute code + read .rodata from PSRAM, so flash writes (LittleFS,
 # Reticulum path table persistence) don't stall ISRs that touch PSRAM.
+# (Verified NOT the cause of the ~8.25s /api/storage/config stall: toggling
+# these off left the latency unchanged. That stall was LittleFS.usedBytes()
+# running lfs_fs_size() — a full-partition block scan, called twice per
+# request — now cached in Storage/FreeSpace.h.)
 CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 CONFIG_SPIRAM_RODATA=y
 

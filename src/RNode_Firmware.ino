@@ -40,6 +40,7 @@
 #include "Sensors/Position/L76K.h"
 #include "Clock/Ntp.h"
 #include "Storage/SDCard.h"
+#include "Storage/FreeSpace.h"
 #include <ResourceBuffer.h>  // for RNS::set_resource_tmp_path_resolver
 #include <Cryptography/Token.h>  // for RNS::Cryptography::Token::init_shared_scratch
 #include "Sensors/Environment/BME280.h"
@@ -1228,8 +1229,12 @@ void setup() {
       filesystem.rmdir("/cache");
     }
 
-    // If filesystem is essentially full then clear all path store files
-    if (filesystem.storageAvailable() < 1024) {
+    // If filesystem is essentially full then clear all path store files.
+    // This is also the first (and only boot-time) free-space scan, so it warms
+    // the cache before WiFi/web/RNS tasks come up — after this every other
+    // reader uses the non-blocking Storage::flash_free(), never scanning under
+    // the rns_lock.
+    if (Storage::flash_free_refresh() < 1024) {
       WARNING("FileSystem is full, clearing space...");
       // CBA Delete the path store index file to force a rebuild
       filesystem.remove("/path_store_index.dat");
@@ -1242,6 +1247,12 @@ void setup() {
       filesystem.remove("/path_store_5.dat");
       filesystem.remove("/path_store_6.dat");
       filesystem.remove("/path_store_7.dat");
+      // The purge just freed space; rescan now (still in setup, off the
+      // rns_lock, no LoRa yet) so the cache reflects the freed space instead of
+      // the pre-purge "full" reading every flash_free() reader would otherwise
+      // see until the first SPA visit.
+      Storage::invalidate_flash_free();
+      Storage::flash_free_refresh();
     }
 
     TRACE("Registering filesystem...");

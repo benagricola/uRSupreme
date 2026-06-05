@@ -83,7 +83,7 @@
       {
         JsonObject st = root["storage"].to<JsonObject>();
         const size_t total = filesystem.storageSize();
-        const size_t avail = filesystem.storageAvailable();
+        const size_t avail = Storage::flash_free();
         JsonObject fl = st["flash"].to<JsonObject>();
         fl["total_bytes"] = (uint32_t)total;
         fl["free_bytes"]  = (uint32_t)avail;

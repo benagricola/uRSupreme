@@ -41,7 +41,7 @@ button, input, textarea, select {
 }
 button { background: var(--accent-2); border-color: var(--accent-3); cursor: pointer; }
 button:hover { background: var(--accent-3); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
+button:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
 button.is-busy::before {
   content: '';
   display: inline-block;
@@ -53,7 +53,10 @@ button.is-busy::before {
   margin-right: 8px;
   vertical-align: -2px;
 }
-button.is-busy { opacity: 1; cursor: progress; }
+/* Busy (in-flight) buttons read as disabled: dimmed, no hover highlight (the
+   :disabled binding adds pointer-events:none above). Icon buttons keep full
+   opacity below so their swapped-in spinner stays crisp. */
+button.is-busy { opacity: 0.55; cursor: progress; }
 @keyframes btn-spin { to { transform: rotate(360deg); } }
 
 /* Centred spinner for icon buttons (e.g. send). The .is-busy::before glyph

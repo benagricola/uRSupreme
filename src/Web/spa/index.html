@@ -538,7 +538,7 @@
           <template x-for="(a, idx) in $store.s.pendingAttachments" :key="idx + ':' + a.filename">
             <div class="attach-chip">
               <span x-text="a.tag === FIELD_IMAGE ? '🖼' : a.tag === FIELD_AUDIO ? '🎙' : '📎'"></span>
-              <span class="label" x-text="a.filename + ' · ' + formatBytes(a.bytes.length)"></span>
+              <span class="label" x-text="a.filename + ' · ' + (a.bytes ? formatBytes(a.bytes.length) : '…')"></span>
               <template x-if="attachEtaText(a)">
                 <span class="eta" x-text="attachEtaText(a)"></span>
               </template>
@@ -560,9 +560,14 @@
              :class="{ 'text-danger': $store.s.ui.composeCounterDanger }"
              x-text="$store.s.ui.composeCounter" x-cloak></div>
       </div>
-      <button class="icon bg-accent-2 border-color-accent text-default" id="btn-send" title="Send"  @click="sendMessage()">
+      <button class="icon bg-accent-2 border-color-accent text-default" id="btn-send" title="Send"
+              :class="{ 'is-busy': sendBtnBusy() }"
+              :disabled="sendBtnBusy()"
+              @click="sendMessage()">
+        <!-- spinner while an attachment is preparing or the send is in flight -->
+        <span class="icon-spinner" x-show="sendBtnBusy()" x-cloak></span>
         <!-- arrow up -->
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+        <svg x-show="!sendBtnBusy()" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
       </button>
     </footer>
   </section>
@@ -880,9 +885,11 @@
         </div>
       </template>
     </div>
+    <div class="muted text-xs mb-10" x-show="$store.s.imageResize.preparing" x-cloak>Preparing previews…</div>
     <div class="row">
       <button class="secondary" id="ir-cancel" @click="imageResizeCancel()">Cancel</button>
-      <button id="ir-attach" @click="imageResizeAttach($event.currentTarget)">Attach</button>
+      <button id="ir-attach" :disabled="!$store.s.imageResize.chosen"
+              @click="imageResizeAttach($event.currentTarget)">Attach</button>
     </div>
   </div>
 </div>
@@ -1815,6 +1822,7 @@ let state = {
   imageResize: {
     sourceLine: '', cap: 0, thumbBox: 200, prepared: [],
     chosen: null, etaByKey: {}, _resolve: null, _file: null,
+    preparing: false,
   },
   // Scanned WiFi networks for the bootstrap + add-wifi-modal dropdowns.
   // null while a scan is in flight; an array (possibly empty) once done.
@@ -3133,10 +3141,22 @@ async function selectConversation(peer) {
   }
 }
 
+// True while the send button should show a spinner + reject clicks: either a
+// send is in flight, or a pending attachment is still being prepared (bytes
+// read / image encoded) and isn't ready to go yet.
+function sendBtnBusy() {
+  return !!state.busyButtons['btn-send']
+      || (state.pendingAttachments || []).some(a => a.processing);
+}
+
 async function sendMessage() {
   const text = (state.forms.compose.text || '').trim();
   if (!state.openPeer) return;
   if (!text && state.pendingAttachments.length === 0) return;
+  // Re-entry / not-ready guard: the button is :disabled while busy, but guard
+  // here too (Enter-to-send bypasses the disabled attribute) so we never
+  // double-send or send an attachment whose bytes aren't prepared yet.
+  if (sendBtnBusy()) return;
   state.busyButtons['btn-send'] = true;
   try {
     // Upload each pending attachment's bytes ahead of the JSON /send
@@ -3457,10 +3477,11 @@ async function stageNonImageAttachment(file) {
           + formatBytes(cap) + ' per attachment.', 'error', 6000);
     return;
   }
-  const bytes = await blobToBytes(file);
   const tag = file.type.startsWith('audio/') ? FIELD_AUDIO : FIELD_FILE_ATTACHMENTS;
+  // Stage the chip instantly; read the file bytes in the background.
   await stagePendingAttachment({
-    tag, bytes, filename: file.name, mime: file.type || 'application/octet-stream',
+    tag, bytesPromise: blobToBytes(file),
+    filename: file.name, mime: file.type || 'application/octet-stream',
   });
 }
 
@@ -3620,42 +3641,52 @@ async function openImageResizePicker(file) {
   const sourceLine = file.name + ' · ' + formatBytes(file.size)
         + (backendLabel ? ('  ·  staging: ' + backendLabel + ' (' + formatBytes(cap) + ')') : '');
 
-  // Compute candidate sizes up-front. "Resize" here means downscaling
-  // the image's pixel dimensions (which proportionally shrinks the
-  // encoded JPEG); "original" sends the user's file bytes as-is.
+  // Open the modal immediately in a "preparing" state, then encode the size
+  // variants in the background. "Resize" here means downscaling the image's
+  // pixel dimensions (which proportionally shrinks the encoded JPEG);
+  // "original" sends the user's file bytes as-is. Each client-side re-encode
+  // takes a beat on a phone, so doing all three up-front froze the picker until
+  // they finished — now each variant appears as it's ready.
+  Object.assign(state.imageResize, {
+    sourceLine, cap, thumbBox: 200, prepared: [], chosen: null,
+    etaByKey: {}, _file: file, preparing: true,
+  });
+  state.modals.imageResize = true;
+
   const candidates = [
     { key: 'small',    label: 'Small',    maxDim: 320 },
     { key: 'medium',   label: 'Medium',   maxDim: 800 },
     { key: 'original', label: 'Original', maxDim: 0   },
   ];
-  const prepared = [];
   for (const c of candidates) {
+    // Bail if the user closed the picker (or started a different attach) while
+    // we were encoding — revoke any URLs created for this aborted run.
+    if (!state.modals.imageResize || state.imageResize._file !== file) {
+      for (const p of state.imageResize.prepared) URL.revokeObjectURL(p.objectUrl);
+      return;
+    }
     const blob = c.key === 'original' ? file : await resizeImage(file, c.maxDim);
     const dims = await blobImageDimensions(blob);
-    prepared.push({ ...c, blob, size: blob.size, dims,
-                    objectUrl: URL.createObjectURL(blob) });
+    const variant = { ...c, blob, size: blob.size, dims,
+                      objectUrl: URL.createObjectURL(blob) };
+    state.imageResize.prepared.push(variant);
+    // Show every thumbnail at the small variant's natural dimensions (capped at
+    // 200 px) so the options compare at the same on-screen scale.
+    if (c.key === 'small') {
+      state.imageResize.thumbBox = Math.min(200, Math.max(dims.w, dims.h));
+    }
+    // Default selection: largest prepared-so-far that still fits the cap.
+    const fit = [...state.imageResize.prepared].reverse().find(p => p.size <= cap);
+    state.imageResize.chosen = fit || state.imageResize.prepared[0];
   }
-  // Display every thumbnail at the small variant's natural dimensions
-  // so the three options can be compared at the same on-screen scale.
-  // Cap the side length at 200 px so the modal stays compact.
-  const smallVariant = prepared.find(p => p.key === 'small') || prepared[0];
-  const thumbBox = Math.min(200, Math.max(smallVariant.dims.w, smallVariant.dims.h));
-
-  // Default selection: largest candidate that still fits the cap.
-  const chosen = [...prepared].reverse().find(p => p.size <= cap) || prepared[0];
-
-  Object.assign(state.imageResize, {
-    sourceLine, cap, thumbBox, prepared, chosen,
-    etaByKey: {}, _file: file,
-  });
-  state.modals.imageResize = true;
+  state.imageResize.preparing = false;
 
   // Fetch per-variant ETAs in the background; the template observes
   // etaByKey via x-text and shows them as they arrive.
   (async () => {
     const peer = state.openPeer;
     if (!peer) return;
-    for (const p of prepared) {
+    for (const p of state.imageResize.prepared) {
       if (p.size > cap) continue;
       try {
         const r = await state.transport.pathEstimate(peer, p.size + 120);
@@ -3698,6 +3729,7 @@ function imageResizeCancel() {
   state.imageResize.prepared = [];
   state.imageResize.chosen = null;
   state.imageResize._file = null;
+  state.imageResize.preparing = false;
   state.modals.imageResize = false;
 }
 
@@ -3707,16 +3739,17 @@ async function imageResizeAttach(_btn) {
   const c = ir.chosen;
   if (!c) return;
   const file = ir._file;
-  const bytes = await blobToBytes(c.blob);
+  const blob = c.blob;
   const filename = (file.name || 'image').replace(/\.[^.]+$/, '')
                   + (c.key === 'original' ? '' : '_' + c.key)
                   + '.jpg';
-  // Close (revokes object URLs) BEFORE staging so the modal disappears
-  // promptly — stagePendingAttachment may be slow on large uploads.
+  const mime = c.key === 'original' ? (file.type || 'image/jpeg') : 'image/jpeg';
+  // Close (revokes the thumbnail object URLs) BEFORE staging so the modal
+  // disappears promptly; the chosen blob is still readable. Read its bytes in
+  // the background so the tray chip appears instantly.
   imageResizeCancel();
   await stagePendingAttachment({
-    tag: FIELD_IMAGE, bytes, filename,
-    mime: c.key === 'original' ? (file.type || 'image/jpeg') : 'image/jpeg',
+    tag: FIELD_IMAGE, bytesPromise: blobToBytes(blob), filename, mime,
   });
 }
 
@@ -3737,23 +3770,46 @@ async function stagePendingAttachment(att) {
   if (att.mime && att.mime.length > maxMime) {
     att.mime = att.mime.slice(0, maxMime);
   }
-  // Estimate ETA against the current peer so the tray chip shows it
-  // before send. Failures are silent — tray still renders.
-  let eta_ms = null, kind = null;
-  if (state.openPeer) {
+  // Show the chip the instant the user attaches. For callers that pass an async
+  // `bytesPromise`, the bytes resolve in the background; the path-ETA estimate
+  // (an HTTP round-trip to the SRAM-tight device) always runs in the background.
+  // `processing` keeps the send button spinning + disabled until the bytes land.
+  // Keep all caller fields (tag, ext, audio_mode, …) but never store the
+  // transient bytesPromise on the chip.
+  const { bytesPromise, bytes, ...rest } = att;
+  const arr = state.pendingAttachments;
+  arr.push({
+    ...rest,
+    bytes: bytes || null,
+    eta_ms: null, kind: null,
+    processing: !bytes,
+  });
+  const entry = arr[arr.length - 1];   // reactive proxy
+  (async () => {
     try {
-      const r = await state.transport.pathEstimate(state.openPeer, att.bytes.length + 120);
-      eta_ms = r.eta_ms;
-      kind   = r.kind;
-    } catch (_) {}
-  }
-  state.pendingAttachments.push({ ...att, eta_ms, kind });
-  renderAttachTray();
+      if (!entry.bytes && bytesPromise) entry.bytes = await bytesPromise;
+    } catch (e) {
+      toast('Attachment failed: ' + (e.message || e), 'error');
+      const i = state.pendingAttachments.indexOf(entry);
+      if (i >= 0) state.pendingAttachments.splice(i, 1);
+      return;
+    } finally {
+      entry.processing = false;
+    }
+    if (state.openPeer && entry.bytes) {
+      try {
+        const r = await state.transport.pathEstimate(state.openPeer, entry.bytes.length + 120);
+        entry.eta_ms = r.eta_ms;
+        entry.kind   = r.kind;
+      } catch (_) {}
+    }
+  })();
 }
 
 // Composed ETA / upload-progress / "no route" string for an attachment
 // chip. Called from the x-text on each chip's .eta span.
 function attachEtaText(a) {
+  if (a.processing) return 'preparing…';
   if (a.uploading) {
     const denom = a.uploaded_total || a.bytes.length;
     const pct = denom > 0

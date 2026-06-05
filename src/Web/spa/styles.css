@@ -55,6 +55,18 @@ button.is-busy::before {
 }
 button.is-busy { opacity: 1; cursor: progress; }
 @keyframes btn-spin { to { transform: rotate(360deg); } }
+
+/* Centred spinner for icon buttons (e.g. send). The .is-busy::before glyph
+   above prepends a spinner + margin, which doesn't fit a 44px icon button —
+   here we swap the icon's SVG for this spinner instead, and keep the button at
+   full opacity + progress cursor so it reads as "working", not "disabled". */
+.icon-spinner {
+  width: 18px; height: 18px;
+  border: 2.5px solid currentColor; border-top-color: transparent;
+  border-radius: 50%; animation: btn-spin 0.7s linear infinite;
+}
+button.icon.is-busy::before { content: none; }
+button.icon.is-busy:disabled { opacity: 1; cursor: progress; }
 button.secondary { background: var(--bg-elev-2); border-color: var(--border); }
 button.secondary:hover { background: var(--bg-hover); }
 button.ghost { background: transparent; border-color: transparent; padding: 6px 8px; }

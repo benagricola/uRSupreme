@@ -67,14 +67,22 @@ CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=32
 CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=32
 
 # ---------------------------------------------------------------------------
-# lwIP windowing — smaller windows reduce in-flight bytes, which reduces
-# the peak number of pbufs lwIP needs to hold simultaneously. Trades a
-# small amount of single-stream throughput for a much smaller SRAM peak
-# during WebSocket / HTTP transfers.
+# lwIP windowing. The receive window (TCP_WND) gates UPLOAD throughput:
+# throughput ~= TCP_WND / RTT. With BT enabled, WiFi+BT coexistence forces
+# WiFi modem-sleep and pushes the RTT to ~1s+, so the old 4*MSS (5744) window
+# capped attachment uploads at ~4 KB/s (#93). The window was kept small to
+# limit the internal-SRAM pbuf peak — but lwIP buffers are now PSRAM-backed
+# (SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y), so raise it to 30*MSS (~43 KB) for
+# throughput without the SRAM cost (43080 < 65535, so no window-scaling
+# needed). RECVMBOX is bumped from the default 6 so the socket layer can queue
+# the larger window's packets instead of backpressuring to ~6*MSS.
+# TCP_SND_BUF (the send/download path) stays small for now — addressed
+# separately if downloads need it.
 # ---------------------------------------------------------------------------
 CONFIG_LWIP_TCP_MSS=1436
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=5744
-CONFIG_LWIP_TCP_WND_DEFAULT=5744
+CONFIG_LWIP_TCP_WND_DEFAULT=43080
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
 
 # Socket count — keep the arduino-esp32 reference value of 16 (NOT a lowered
 # 7/8). A browser opens up to ~6 concurrent TCP connections to load the SPA,

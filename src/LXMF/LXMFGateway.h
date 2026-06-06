@@ -432,22 +432,24 @@ namespace LXMF {
       uint32_t    outbox_seq  = 0;   // reserved seq the eventual record reuses
       uint8_t     attempts    = 0;
       uint64_t    next_at_ms  = 0;
-      uint64_t    deadline_ms = 0;   // hard give-up time (attachment entries)
+      uint64_t    next_request_ms = 0;  // next path-request nudge (attachment entries)
     };
     static constexpr uint8_t  PENDING_ID_MAX          = 8;
     static constexpr uint8_t  PENDING_ID_MAX_ATTEMPTS = 6;
     static constexpr uint32_t PENDING_ID_BACKOFF_MS   = 4000;
-    // Attachment entries pin PSRAM/SD staging, so they use a tight deadline
-    // rather than the text path's lenient attempt count. The deadline is the
-    // path-request timeout itself, with no padding: the path request fires
-    // once, at the instant we queue (this first send attempt), so it can
-    // resolve right up to PATH_REQUEST_TIMEOUT later and not a moment after —
-    // past that the request has given up and there's no point holding the
-    // staging. We deliberately do NOT re-issue the request while queued, which
-    // would reset its timeout and de-sync it from this deadline.
-    static constexpr uint32_t PENDING_ATTACH_WINDOW_MS  =
-        (uint32_t)RNS::Type::Transport::PATH_REQUEST_TIMEOUT * 1000;
-    static constexpr uint32_t PENDING_ATTACH_RECHECK_MS = 2000;
+    // Attachment entries re-attempt route resolution like upstream LXMF's
+    // DIRECT path rather than giving up after a single PATH_REQUEST_TIMEOUT:
+    // a multi-hop LoRa cold resolution routinely needs more than one 15s
+    // window (the path request → response → identity recall round-trips over a
+    // slow, duty-cycled link). Mirror LXMRouter's MAX_DELIVERY_ATTEMPTS,
+    // re-requesting the path at PATH_REQUEST_WAIT cadence. The cheap
+    // has_path/recall poll runs every RECHECK_MS; the path-request nudge is
+    // throttled to REQUEST_MS. Staging is flash-spilled (not SRAM-pinned) and
+    // is released on the final give-up. (Was a single request + hard 15s
+    // deadline with no re-issue, which dropped any resolution slower than 15s.)
+    static constexpr uint8_t  PENDING_ATTACH_MAX_ATTEMPTS = 5;     // upstream MAX_DELIVERY_ATTEMPTS
+    static constexpr uint32_t PENDING_ATTACH_REQUEST_MS   = 7000;  // upstream PATH_REQUEST_WAIT (7s)
+    static constexpr uint32_t PENDING_ATTACH_RECHECK_MS   = 2000;
     static std::vector<PendingIdentitySend>& pending_identity_sends() {
       static std::vector<PendingIdentitySend> v;
       return v;
@@ -488,9 +490,9 @@ namespace LXMF {
       p.iden_id = iden; p.dest = dest; p.title = title; p.content = content;
       p.outbox_seq = a->outbox->reserve_seq();
       if (has_atts) {
-        p.attachments = *attachments;        // take ownership of the staging ids
-        p.next_at_ms  = now + PENDING_ATTACH_RECHECK_MS;
-        p.deadline_ms = now + PENDING_ATTACH_WINDOW_MS;
+        p.attachments     = *attachments;    // take ownership of the staging ids
+        p.next_at_ms      = now + PENDING_ATTACH_RECHECK_MS;
+        p.next_request_ms = now + PENDING_ATTACH_REQUEST_MS;  // first nudge after the initial request
       } else {
         p.next_at_ms  = now + PENDING_ID_BACKOFF_MS;
       }
@@ -508,15 +510,14 @@ namespace LXMF {
       const uint64_t now = (uint64_t)millis();
       for (auto it = q.begin(); it != q.end(); ) {
         if (!it->attachments.empty()) {
-          // Attachment entry. Free the staging the instant the path-request
-          // window closes: the deadline is evaluated every tick (a cheap
-          // timestamp compare) so it lands exactly on PATH_REQUEST_TIMEOUT, not
-          // a recheck interval later. The pricier route lookup is throttled to
-          // the recheck cadence (or run once at the deadline, in case the route
-          // resolved in the final moments). No path-request nudge — the single
-          // request fired at queue time is what the deadline is timed against.
-          const bool deadline_passed = (now >= it->deadline_ms);
-          if (!deadline_passed && now < it->next_at_ms) { ++it; continue; }
+          // Attachment entry. Re-request the path up to
+          // PENDING_ATTACH_MAX_ATTEMPTS at PATH_REQUEST_WAIT cadence (mirrors
+          // upstream LXMF DIRECT retry) instead of a single 15s give-up — a
+          // multi-hop LoRa cold resolution often needs more than one window.
+          // The cheap has_path/recall poll runs every recheck; the
+          // path-request nudge is throttled to REQUEST_MS. Staging
+          // (flash-spilled) is freed only on the final give-up.
+          if (now < it->next_at_ms) { ++it; continue; }
           if (RNS::Transport::has_path(it->dest) && RNS::Identity::recall(it->dest)) {
             MessageRecord rec;
             const char* err = nullptr;
@@ -536,16 +537,20 @@ namespace LXMF {
             it = q.erase(it);
             continue;
           }
-          if (deadline_passed) {
-            for (auto& a : it->attachments)
-              if (a.staging_id) Storage::OutboundStaging::release(a.staging_id);
-            // Tell the SPA the "finding route" bubble has given up, keyed by
-            // its seq (the message was never sent, so there's no packet hash).
-            Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed");
-            WARNINGF("LXMF: path-request window closed for attachment message to %s — freed staging",
-                     it->dest.toHex().c_str());
-            it = q.erase(it);
-            continue;
+          if (now >= it->next_request_ms) {
+            if (++it->attempts >= PENDING_ATTACH_MAX_ATTEMPTS) {
+              for (auto& a : it->attachments)
+                if (a.staging_id) Storage::OutboundStaging::release(a.staging_id);
+              // Tell the SPA the "finding route" bubble has given up, keyed by
+              // its seq (the message was never sent, so there's no packet hash).
+              Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed");
+              WARNINGF("LXMF: route never resolved for attachment message to %s after %u path requests — freed staging",
+                       it->dest.toHex().c_str(), (unsigned)it->attempts);
+              it = q.erase(it);
+              continue;
+            }
+            RNS::Transport::request_path(it->dest);  // nudge the path request again
+            it->next_request_ms = now + PENDING_ATTACH_REQUEST_MS;
           }
           it->next_at_ms = now + PENDING_ATTACH_RECHECK_MS;
           ++it;

@@ -441,13 +441,22 @@ namespace LXMF {
     // DIRECT path rather than giving up after a single PATH_REQUEST_TIMEOUT:
     // a multi-hop LoRa cold resolution routinely needs more than one 15s
     // window (the path request → response → identity recall round-trips over a
-    // slow, duty-cycled link). Mirror LXMRouter's MAX_DELIVERY_ATTEMPTS,
-    // re-requesting the path at PATH_REQUEST_WAIT cadence. The cheap
-    // has_path/recall poll runs every RECHECK_MS; the path-request nudge is
-    // throttled to REQUEST_MS. Staging is flash-spilled (not SRAM-pinned) and
-    // is released on the final give-up. (Was a single request + hard 15s
-    // deadline with no re-issue, which dropped any resolution slower than 15s.)
-    static constexpr uint8_t  PENDING_ATTACH_MAX_ATTEMPTS = 5;     // upstream MAX_DELIVERY_ATTEMPTS
+    // slow, duty-cycled link). Re-request the path at PATH_REQUEST_WAIT cadence
+    // (7s, upstream's constant). The cheap has_path/recall poll runs every
+    // RECHECK_MS; the path-request nudge is throttled to REQUEST_MS. Staging is
+    // flash-spilled (not SRAM-pinned) and is released on the final give-up.
+    // (Was a single request + hard 15s deadline with no re-issue, which dropped
+    // any resolution slower than 15s.)
+    //
+    // MAX_ATTEMPTS deliberately exceeds upstream's MAX_DELIVERY_ATTEMPTS (5):
+    // uR collapses upstream's separate pathless + delivery retry phases into
+    // one has_path-gated send(), so it needs more path-request cycles to cover
+    // the same wall-clock. On-rig, cold forward resolution while the bridge
+    // services the rmap firehose was measured at 5–37s (residual under-load
+    // LoRa packet loss, #88); 5 attempts (~35s) only just covered the worst
+    // case. 8 (~56s) gives ~1.5x headroom over that without holding staging or
+    // the "finding route" UI too long on a genuinely unreachable destination.
+    static constexpr uint8_t  PENDING_ATTACH_MAX_ATTEMPTS = 8;     // ~56s window (> upstream's 5; see above)
     static constexpr uint32_t PENDING_ATTACH_REQUEST_MS   = 7000;  // upstream PATH_REQUEST_WAIT (7s)
     static constexpr uint32_t PENDING_ATTACH_RECHECK_MS   = 2000;
     static std::vector<PendingIdentitySend>& pending_identity_sends() {

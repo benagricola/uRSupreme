@@ -2451,29 +2451,31 @@ class UReticulumHTTPTransport extends Transport {
       body: { display_name: displayName, password, password_confirm: password, identity_code: code },
       unauthed: true });
   }
+  // The identity is taken from the bearer token server-side, so these
+  // session-scoped endpoints carry no {id} in the path. The identityId
+  // arg is retained for call-site clarity (and the WS subscribe path,
+  // which still passes identity_id) but no longer appears in the URL.
   async deleteIdentity(identityId) {
-    return this._req('/api/identities/' + encodeURIComponent(identityId) + '/delete', { method: 'POST' });
+    return this._req('/api/identity/delete', { method: 'POST' });
   }
   async getIdentity(identityId) {
-    return this._req('/api/identities/' + encodeURIComponent(identityId));
+    return this._req('/api/identity');
   }
   async getState(identityId) {
-    return this._req('/api/identities/' + encodeURIComponent(identityId) + '/state');
+    return this._req('/api/state');
   }
   async send(identityId, destHex, title, content, attachments) {
     // Wire format (post-#130): attachments reference pre-uploaded staging
     // buffers by id. Bytes must have been pushed to /outbound/upload first.
     const body = { to: destHex, title: title || '', content };
     if (attachments && attachments.length) body.attachments = attachments;
-    return this._req('/api/identities/' + encodeURIComponent(identityId) + '/send',
-      { method: 'POST', body });
+    return this._req('/api/send', { method: 'POST', body });
   }
   // Upload bytes for a single attachment. Resolves to { staging_id, total_bytes, backend }.
   // Uses XHR (not fetch) so we can surface upload progress to the SPA tray.
   async uploadAttachment(identityId, bytes, filename, mime, onProgress) {
     const total = bytes.length;
-    const url = '/api/identities/' + encodeURIComponent(identityId)
-              + '/attachment/upload';
+    const url = '/api/attachment/upload';
     const tok = this.tokenGetter();
     const form = new FormData();
     form.append('file', new Blob([bytes], { type: mime || 'application/octet-stream' }), filename || 'blob.bin');
@@ -2506,29 +2508,25 @@ class UReticulumHTTPTransport extends Transport {
     });
   }
   async announceNow(identityId) {
-    return this._req('/api/identities/' + encodeURIComponent(identityId) + '/announce', { method: 'POST' });
+    return this._req('/api/announce', { method: 'POST' });
   }
   async retryOutbox(identityId, seq) {
-    return this._req('/api/identities/' + encodeURIComponent(identityId)
-                   + '/outbox/' + encodeURIComponent(String(seq)) + '/retry',
+    return this._req('/api/outbox/' + encodeURIComponent(String(seq)) + '/retry',
                      { method: 'POST' });
   }
   async lookupPath(destHex) {
     return this._req('/api/paths/lookup', { method: 'POST', body: { to: destHex } });
   }
   async clearConversation(identityId, peerHex) {
-    return this._req('/api/identities/' + encodeURIComponent(identityId)
-                   + '/conversations/' + encodeURIComponent(peerHex),
+    return this._req('/api/conversations/' + encodeURIComponent(peerHex),
                      { method: 'DELETE' });
   }
   async getConversationConfig(identityId, peerHex) {
-    return this._req('/api/identities/' + encodeURIComponent(identityId)
-                   + '/conversations/' + encodeURIComponent(peerHex) + '/config',
+    return this._req('/api/conversations/' + encodeURIComponent(peerHex) + '/config',
                      { method: 'GET' });
   }
   async setConversationConfig(identityId, peerHex, body) {
-    return this._req('/api/identities/' + encodeURIComponent(identityId)
-                   + '/conversations/' + encodeURIComponent(peerHex) + '/config',
+    return this._req('/api/conversations/' + encodeURIComponent(peerHex) + '/config',
                      { method: 'POST', body });
   }
   subscribe(identityId, onEvent) {
@@ -2606,7 +2604,7 @@ class UReticulumHTTPTransport extends Transport {
     return this._req('/api/system/transport', { method: 'POST', body: { enabled: !!enabled } });
   }
   async setIdentitySettings(identityId, settings) {
-    return this._req('/api/identities/' + encodeURIComponent(identityId) + '/settings',
+    return this._req('/api/identity/settings',
       { method: 'POST', body: settings });
   }
   async resetRadio(code) { return this._req('/api/radio/reset', { method: 'POST', body: { identity_code: code } }); }
@@ -2622,8 +2620,7 @@ class UReticulumHTTPTransport extends Transport {
   }
   async fetchAttachment(identityId, filename) {
     const tok = this.tokenGetter();
-    const url = '/api/identities/' + encodeURIComponent(identityId)
-              + '/attachment/download/' + encodeURIComponent(filename);
+    const url = '/api/attachment/download/' + encodeURIComponent(filename);
     const r = await fetch(url, { headers: tok ? { 'Authorization': 'Bearer ' + tok } : {} });
     if (!r.ok) {
       let body = {}; try { body = await r.json(); } catch { /* opaque */ }

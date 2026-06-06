@@ -731,11 +731,15 @@ namespace Web {
       server.on("/api/auth/logout",   HTTP_POST, handle_logout);
       // Identities
       on_json_post("/api/identities",  handle_create_identity);
-      server.on(uri("/api/identities/{}"), HTTP_GET,    handle_get_identity);
-      server.on(uri("/api/identities/{}"), HTTP_DELETE, handle_delete_identity);
-      server.on(uri("/api/identities/{}/delete"), HTTP_POST, handle_delete_identity);
-      server.on(uri("/api/identities/{}/announce"), HTTP_POST, handle_announce);
-      on_json_post("/api/identities/{}/settings", handle_identity_settings);
+      // Session-scoped identity endpoints. The identity is taken from the
+      // bearer token (require_auth), so these carry no {id} in the path — the
+      // old /api/identities/{id}/* form was redundant (the handler rejected
+      // any id != the token's identity anyway).
+      server.on("/api/identity",        HTTP_GET,    handle_get_identity);
+      server.on("/api/identity",        HTTP_DELETE, handle_delete_identity);
+      server.on("/api/identity/delete", HTTP_POST,   handle_delete_identity);
+      server.on("/api/announce",        HTTP_POST,   handle_announce);
+      on_json_post("/api/identity/settings", handle_identity_settings);
       // Announces (recent LXMF endpoint announces seen by the device)
       server.on("/api/announces",     HTTP_GET, handle_announces);
       // System — full wipe, gated by identity_code (physical presence).
@@ -770,32 +774,32 @@ namespace Web {
       // that the /send path consumes by id. The body is multipart/
       // form-data with one file field; the X-Total-Length header tells
       // us how much to allocate up front.
-      server.on(uri("/api/identities/{}/attachment/upload"),
+      server.on("/api/attachment/upload",
                 HTTP_POST,
                 handle_outbound_upload_final,
                 handle_outbound_upload_chunk);
-      server.on(uri("/api/identities/{}/inbox"),    HTTP_GET,  handle_inbox);
-      server.on(uri("/api/identities/{}/outbox"),   HTTP_GET,  handle_outbox);
+      server.on("/api/inbox",    HTTP_GET,  handle_inbox);
+      server.on("/api/outbox",   HTTP_GET,  handle_outbox);
       // /send takes the user's whole message body inline (text + emoji
       // + paste markdown). 16 KiB is plenty for chat but trips up on
       // realistic long-form content (e.g. logs pasted into a message).
       // 512 KiB safely fits in PSRAM and still leaves attachments to
       // ride the dedicated multipart staging-upload path for anything
       // bigger.
-      on_json_post("/api/identities/{}/send", handle_send,
+      on_json_post("/api/send", handle_send,
                    /*max_content_length=*/512 * 1024);
-      // POST /api/identities/{id}/outbox/{seq}/retry — manually re-queue
-      // a Failed outbox entry. Resets the auto-retry budget.
-      server.on(uri("/api/identities/{}/outbox/{}/retry"),
+      // POST /api/outbox/{seq}/retry — manually re-queue a Failed outbox
+      // entry. Resets the auto-retry budget.
+      server.on(uri("/api/outbox/{}/retry"),
                 HTTP_POST, handle_outbox_retry);
-      server.on(uri("/api/identities/{}/state"),    HTTP_GET,  handle_state);
-      server.on(uri("/api/identities/{}/conversations/{}"),
+      server.on("/api/state",    HTTP_GET,  handle_state);
+      server.on(uri("/api/conversations/{}"),
                 HTTP_DELETE, handle_clear_conversation);
-      server.on(uri("/api/identities/{}/conversations/{}/config"),
+      server.on(uri("/api/conversations/{}/config"),
                 HTTP_GET, handle_conversation_config_get);
-      on_json_post("/api/identities/{}/conversations/{}/config",
+      on_json_post("/api/conversations/{}/config",
                    handle_conversation_config_post);
-      server.on(uri("/api/identities/{}/attachment/download/{}"),
+      server.on(uri("/api/attachment/download/{}"),
                 HTTP_GET, handle_attachment_get);
       server.on("/api/storage/migrate_flash_to_sd",
                 HTTP_POST, handle_migrate_flash_to_sd);

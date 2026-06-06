@@ -30,8 +30,7 @@
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      const std::string& requested = caller;  // session identity (bearer token); no {id} in path
       if (!LXMF::LXMFGateway::announce(requested)) {
         send_error(req, 404, "unknown_identity");
         return;

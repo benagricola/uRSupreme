@@ -13,8 +13,7 @@
       // SSE handler so deltas resume cleanly without duplicating events.
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      const std::string& requested = caller;  // session identity (bearer token); no {id} in path
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a) { send_error(req, 404, "unknown_identity"); return; }
 

@@ -322,8 +322,7 @@
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      const std::string& requested = caller;  // session identity (bearer token); no {id} in path
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a) { send_error(req, 404, "unknown_identity"); return; }
       Common::PsramJsonDocument doc;
@@ -350,8 +349,7 @@
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      const std::string& requested = caller;  // session identity (bearer token); no {id} in path
       AuthTokens::revoke_for_identity(requested);
       if (!LXMF::LXMFGateway::delete_identity(requested)) {
         send_error(req, 404, "unknown_identity");
@@ -368,8 +366,7 @@
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      const std::string& requested = caller;  // session identity (bearer token); no {id} in path
       // Per-identity settings. POST accepts any combination of fields;
       // GET-like behaviour returns the current state at the end.
       if (body["announce_interval_ms"].is<JsonVariant>()) {

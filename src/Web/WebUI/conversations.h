@@ -9,9 +9,8 @@
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
-      std::string peer_hex = std::string(req->pathArg(1).c_str());
+      const std::string& requested = caller;  // session identity (bearer token); no {id} in path
+      std::string peer_hex = std::string(req->pathArg(0).c_str());
       RNS::Bytes peer = hex_to_bytes(peer_hex, LXMF::HASH_LEN);
       if (peer.size() != LXMF::HASH_LEN) {
         char msg[120];
@@ -45,9 +44,8 @@
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
-      std::string peer_hex = std::string(req->pathArg(1).c_str());
+      const std::string& requested = caller;  // session identity (bearer token); no {id} in path
+      std::string peer_hex = std::string(req->pathArg(0).c_str());
       RNS::Bytes peer = hex_to_bytes(peer_hex, LXMF::HASH_LEN);
       if (peer.size() != LXMF::HASH_LEN) {
         send_error_with_message(req, 400, "invalid_peer_hash",
@@ -94,9 +92,8 @@
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
-      std::string peer_hex = std::string(req->pathArg(1).c_str());
+      const std::string& requested = caller;  // session identity (bearer token); no {id} in path
+      std::string peer_hex = std::string(req->pathArg(0).c_str());
       RNS::Bytes peer = hex_to_bytes(peer_hex, LXMF::HASH_LEN);
       if (peer.size() != LXMF::HASH_LEN) {
         send_error_with_message(req, 400, "invalid_peer_hash",
@@ -253,15 +250,6 @@
         _current_upload_error()      = nullptr;
         return;
       }
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) {
-        uint32_t id = _current_upload_staging_id();
-        if (id) Storage::OutboundStaging::release(id);
-        _current_upload_staging_id() = 0;
-        _current_upload_error()      = nullptr;
-        send_error(req, 403, "forbidden");
-        return;
-      }
       const char* err = _current_upload_error();
       const uint32_t id = _current_upload_staging_id();
       _current_upload_staging_id() = 0;
@@ -301,17 +289,14 @@
       // owned the lock continuously, the HTTP handler queued behind
       // it on `SD.open() + sd_f.size()`, and AsyncTCP backed up to
       // the point of being unrecoverable without a reboot.
-      std::string requested;
       std::string fname;
       std::string identity_dir;
       {
         RnsLockGuard _g;
         LXMF::IdentityId caller = require_auth(req);
         if (caller.empty()) return;
-        requested = std::string(req->pathArg(0).c_str());
-        if (caller != requested) { send_error(req, 403, "forbidden"); return; }
-        fname = std::string(req->pathArg(1).c_str());
-        const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
+        fname = std::string(req->pathArg(0).c_str());  // {file} is now pathArg(0) (no {id})
+        const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(caller);
         if (!a) { send_error(req, 404, "unknown_identity"); return; }
         identity_dir = a->dir();
       }
@@ -521,8 +506,7 @@
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      const std::string& requested = caller;  // session identity (bearer token); no {id} in path
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a || !a->inbox) { send_error(req, 404, "unknown_identity"); return; }
       uint32_t since = (uint32_t)req->arg("since").toInt();
@@ -551,8 +535,7 @@
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      const std::string& requested = caller;  // session identity (bearer token); no {id} in path
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a || !a->outbox) { send_error(req, 404, "unknown_identity"); return; }
       uint32_t since = (uint32_t)req->arg("since").toInt();
@@ -583,11 +566,10 @@
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      const std::string& requested = caller;  // session identity (bearer token); no {id} in path
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a || !a->outbox) { send_error(req, 404, "unknown_identity"); return; }
-      const uint32_t seq = (uint32_t)atoi(req->pathArg(1).c_str());
+      const uint32_t seq = (uint32_t)atoi(req->pathArg(0).c_str());
       // Direct seq lookup into the deque — no copy, no window guess.
       const LXMF::MessageRecord* rec = a->outbox->find_by_seq(seq);
       if (!rec) {
@@ -640,8 +622,7 @@
       }
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
-      std::string requested = std::string(req->pathArg(0).c_str());
-      if (caller != requested) { send_error(req, 403, "forbidden"); return; }
+      const std::string& requested = caller;  // session identity (bearer token); no {id} in path
       std::string to_hex  = (const char*)(body["to"]      | "");
       std::string title   = (const char*)(body["title"]   | "");
       // The SPA sends `content`; legacy / external clients may still send

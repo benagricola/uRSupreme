@@ -259,8 +259,23 @@
         pstat["removes"]            = ps.removes;
         pstat["compacts"]           = ps.compacts;
         pstat["bytes_written"]      = (uint32_t)ps.bytes_written;
-        pstat["live_recs"]          = ps.live_recs;
+        pstat["live_recs"]          = ps.live_recs;     // front (PSRAM) record count
+        pstat["persist_recs"]       = ps.persist_recs;  // durable (flash) record count
         pstat["dead_since_compact"] = ps.dead_since_compact;
+        pstat["put_fails"]          = ps.put_fails;
+        pstat["pending"]            = ps.pending;
+
+        auto ks = RNS::Identity::known_dest_stats();
+        JsonObject kstat = doc["known_dest_store"].to<JsonObject>();
+        kstat["puts"]               = ks.puts;
+        kstat["removes"]            = ks.removes;
+        kstat["compacts"]           = ks.compacts;
+        kstat["bytes_written"]      = (uint32_t)ks.bytes_written;
+        kstat["live_recs"]          = ks.live_recs;     // front (PSRAM) record count
+        kstat["persist_recs"]       = ks.persist_recs;  // durable (flash) record count
+        kstat["dead_since_compact"] = ks.dead_since_compact;
+        kstat["put_fails"]          = ks.put_fails;
+        kstat["pending"]            = ks.pending;
       }
 #if defined(URTN_LOOP_DIAG)
       // Live row counts of the in-memory routing tables. These are the O(n)

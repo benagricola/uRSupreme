@@ -216,6 +216,24 @@
     }
 #endif  // URTN_LOOP_DIAG
 
+    // POST /api/diag/persist — force a known-destinations persist now and report
+    // how long the write took (ms). Diagnostics only: measures the full-blob
+    // persist cost on demand (the #95 main-loop stall) without waiting for the
+    // hourly job. After the #95 store migration this drops to ~0 (no full blob).
+    static void handle_diag_persist(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      RNS::Identity::mark_known_destinations_dirty();
+      const uint32_t t0 = millis();
+      const bool ok = RNS::Identity::save_known_destinations();
+      const uint32_t ms = millis() - t0;
+      Common::PsramJsonDocument doc;
+      doc["persist_ms"]         = ms;
+      doc["ok"]                 = ok;
+      doc["known_destinations"] = (uint32_t)RNS::Identity::known_destinations_count();
+      send_json(req, 200, doc);
+    }
+
     // GET /api/diag/transport — forwarding counters for a transit (bridge) node.
     // linkreqs_* count link requests received / relayed onward / terminated
     // here; link_transit_* count link/resource packets relayed between
@@ -231,6 +249,19 @@
       doc["link_transit_fwd_lora"] = RNS::Transport::link_transit_fwd_lora();
       doc["link_transit_drop"]     = RNS::Transport::link_transit_drop();
       doc["packets_received"]      = RNS::Transport::packets_received();
+      // Path-store (microStore) write/compaction counters since boot. Sample
+      // the delta over a window to get puts/sec + compactions/window — the
+      // write-rate reference for the known-destinations store migration (#95).
+      {
+        auto ps = RNS::Transport::path_store_stats();
+        JsonObject pstat = doc["path_store"].to<JsonObject>();
+        pstat["puts"]               = ps.puts;
+        pstat["removes"]            = ps.removes;
+        pstat["compacts"]           = ps.compacts;
+        pstat["bytes_written"]      = (uint32_t)ps.bytes_written;
+        pstat["live_recs"]          = ps.live_recs;
+        pstat["dead_since_compact"] = ps.dead_since_compact;
+      }
 #if defined(URTN_LOOP_DIAG)
       // Live row counts of the in-memory routing tables. These are the O(n)
       // inputs to the per-loop housekeeping scans, so a long reticulum loop

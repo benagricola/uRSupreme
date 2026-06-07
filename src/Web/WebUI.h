@@ -723,6 +723,7 @@ namespace Web {
       on_json_post("/api/diag/loop",    handle_diag_loop_reset);
 #endif
       server.on("/api/diag/transport",  HTTP_GET,  handle_diag_transport);
+      server.on("/api/diag/persist",    HTTP_POST, handle_diag_persist);
 #if defined(URTN_HEAP_TRACE)
       server.on("/api/diag/heaptrace", HTTP_GET, handle_diag_heaptrace);
 #endif

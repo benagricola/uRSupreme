@@ -375,6 +375,11 @@ namespace LXMF {
           out_rec.status       = OutboxStatus::FindingRoute;
           out_rec.boot_epoch   = Web::BootCounter::current();
           out_rec.received_ms  = (uint32_t)millis();
+          // LXMF wall-clock ts, same source a dispatched send uses. Without it
+          // the optimistic record carries ts=0, which sorts it to the very top
+          // of the thread (msgCmp orders by ts first) — out of view below the
+          // auto-scrolled bottom, so the bubble looks like it never appeared.
+          out_rec.ts           = a->lxmf.get_timestamp();
           if (attachments) {
             for (const auto& at : *attachments) {
               AttachmentMeta m;

@@ -265,7 +265,7 @@ namespace LXMF {
         for (const auto& rec : box->ring()) {
           for (const auto& att : rec.attachments) {
             if (att.filename.empty()) continue;
-            const std::string full = a->dir() + "/attachments/" + att.filename;
+            const std::string full = a->dir() + "/attachments/" + att.filename.c_str();
             if (att.backend == "sd") {
               if (Storage::SDCard::present() && Storage::SDCard::exists(full.c_str())) {
                 SD.remove(full.c_str());
@@ -782,7 +782,7 @@ namespace LXMF {
       auto on_remove = [adir, p = &a](const MessageRecord& rec) {
         for (const auto& att : rec.attachments) {
           if (att.filename.empty()) continue;
-          const std::string full = adir + "/attachments/" + att.filename;
+          const std::string full = adir + "/attachments/" + att.filename.c_str();
           if (att.backend == "sd") {
             if (Storage::SDCard::present() && Storage::SDCard::exists(full.c_str())) {
               SD.remove(full.c_str());
@@ -924,8 +924,8 @@ namespace LXMF {
       // download-prompt label.
       a.lxmf.set_attachment_persist_callback(
           [p](const RNS::Bytes& msg_hash,
-              const std::vector<LXMFMinimal::FieldBlob>& fields) -> std::vector<AttachmentMeta> {
-            std::vector<AttachmentMeta> out;
+              const std::vector<LXMFMinimal::FieldBlob>& fields) -> LXMF::PsVector<AttachmentMeta> {
+            LXMF::PsVector<AttachmentMeta> out;
             if (!p->active) return out;
             const bool use_sd = Storage::SDCard::present();
             const std::string att_dir = p->dir() + "/attachments";
@@ -996,8 +996,8 @@ namespace LXMF {
       a.lxmf.set_outbound_persist_callback(
           [p](const RNS::Bytes& msg_hash,
               const std::vector<LXMFMinimal::OutgoingAttachment>& outgoing)
-              -> std::vector<AttachmentMeta> {
-            std::vector<AttachmentMeta> out;
+              -> LXMF::PsVector<AttachmentMeta> {
+            LXMF::PsVector<AttachmentMeta> out;
             if (!p->active || !p->persist_outbound_attachments) return out;
             const bool use_sd = Storage::SDCard::present();
             const std::string att_dir = p->dir() + "/attachments";

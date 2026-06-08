@@ -460,7 +460,7 @@
     }
 
     static void emit_messages_array(JsonArray arr,
-                                    const std::deque<LXMF::MessageRecord>& ring,
+                                    const LXMF::MessageRing& ring,
                                     const MessageFilter& include) {
       for (const auto& m : ring) {
         if (!include(m)) continue;

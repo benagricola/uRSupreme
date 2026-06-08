@@ -3,6 +3,7 @@
 #include <Bytes.h>
 #include <string>
 #include <vector>
+#include <deque>
 #include <stdint.h>
 #include <string.h>
 
@@ -24,6 +25,19 @@ namespace LXMF {
 
   // Identity identifier — the first 16 hex chars of an Identity's hexhash.
   using IdentityId = std::string;
+
+  // Stored message text + attachment metadata live in PSRAM, not the scarce
+  // internal SRAM heap. With the default allocator a std::string under
+  // HEAP_EXTMEM_THRESHOLD (256 B) lands in internal — and an inbox of records
+  // does that for every title/filename/mime, tens of KB that grow with the ring.
+  // ContainerAllocator routes them to PSRAM regardless of size, matching
+  // RNS::Bytes (already PSRAM-backed). These are the in-memory storage types;
+  // the wire/JSON/API boundary still speaks std::string (PsString exposes the
+  // same .c_str()/.data()/.size() interface, so ArduinoJson serialises it
+  // directly and reads convert via .c_str()).
+  template<typename T> using PsAlloc  = RNS::Utilities::Memory::ContainerAllocator<T>;
+  using PsString = std::basic_string<char, std::char_traits<char>, PsAlloc<char>>;
+  template<typename T> using PsVector = std::vector<T, PsAlloc<T>>;
 
   // Per-peer retention policy. Two shapes:
   //   Time:  keep messages newer than `value` seconds. value=0 invalid.
@@ -97,14 +111,14 @@ namespace LXMF {
   struct AttachmentMeta {
     uint8_t     tag;
     uint32_t    size;
-    std::string filename;       // on-disk stem (attacker-safe)
-    std::string display_name;   // sender-supplied label (display-only)
-    std::string mime;
+    PsString    filename;       // on-disk stem (attacker-safe)
+    PsString    display_name;   // sender-supplied label (display-only)
+    PsString    mime;
     // Where the bytes actually live. "flash" (default) = LittleFS via
     // the microStore filesystem; "sd" = T-Beam Supreme's microSD slot
     // via the Arduino SD library. The download endpoint dispatches
     // on this value.
-    std::string backend;
+    PsString    backend;
   };
 
   // A received or sent message, in normalized form for inbox/outbox storage.
@@ -126,14 +140,19 @@ namespace LXMF {
     uint32_t      boot_epoch  = 0;       // Web::BootCounter value at append time. Combined with received_ms forms (boot_epoch, received_ms) — a tuple monotonic across reboots.
     uint32_t      received_ms = 0;       // millis() at the moment this record was appended to its inbox/outbox. Monotonic only within boot_epoch.
     RNS::Bytes    peer_hash;             // Remote LXMF address (16 bytes). For incoming: source. For outgoing: destination.
-    std::string   title;                 // LXMF title field (often empty).
-    std::string   content;               // Plaintext message content, always inline. Bounded at LXMF_MAX_BODY_BYTES (4 KiB) by the send path.
+    PsString      title;                 // LXMF title field (often empty).
+    PsString      content;               // Plaintext message content, always inline. Bounded at LXMF_MAX_BODY_BYTES (4 KiB) by the send path.
     uint32_t      body_size   = 0;       // Total body size in bytes (== content.size()). Kept as a separate field for wire-shape stability with the SPA's body_size === content.length check, and so per-record size queries don't have to count the std::string each time.
     bool          incoming    = false;   // True for received, false for sent.
     bool          signature_ok = false;  // For incoming: did the Ed25519 signature verify against a known identity? For outgoing: always true.
     OutboxStatus  status      = OutboxStatus::Delivered;  // Only meaningful for outgoing messages; Delivered for incoming.
     RNS::Bytes    packet_hash;           // RNS packet hash, used to correlate delivery receipts.
-    std::vector<AttachmentMeta> attachments;  // Empty for messages without LXMF fields.
+    PsVector<AttachmentMeta> attachments;  // Empty for messages without LXMF fields.
   };
+
+  // The inbox/outbox ring lives in PSRAM too — the record structs (and thus the
+  // PsString control blocks + small SSO buffers they carry) sit in the deque's
+  // own blocks, so PSRAM-back the deque to keep them off internal SRAM.
+  using MessageRing = std::deque<MessageRecord, PsAlloc<MessageRecord>>;
 
 }

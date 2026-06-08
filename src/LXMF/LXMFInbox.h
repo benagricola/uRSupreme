@@ -328,8 +328,8 @@ namespace LXMF {
       size_t changed = 0;
       for (auto& rec : _ring) {
         for (auto& att : rec.attachments) {
-          if (att.backend == from) {
-            att.backend = to;
+          if (att.backend == from.c_str()) {
+            att.backend = to.c_str();
             ++changed;
           }
         }
@@ -362,7 +362,7 @@ namespace LXMF {
     // up to ~200 MessageRecords (each with std::string title +
     // attachments vector) on the default heap, ~10-20 KiB transient
     // per request on an ESP32 with constrained internal SRAM.
-    const std::deque<MessageRecord>& ring() const { return _ring; }
+    const MessageRing& ring() const { return _ring; }
 
     // Direct seq lookup — returns nullptr if not in the ring. Used by
     // the outbox-retry endpoint to find one record by seq without
@@ -505,7 +505,7 @@ namespace LXMF {
     Retention                  _default_retention;
     std::unordered_map<std::string, Retention> _peer_retention;
     uint32_t                   _next_seq;
-    std::deque<MessageRecord>  _ring;
+    MessageRing                _ring;
     std::function<void(const MessageRecord&)> _on_remove;
   };
 

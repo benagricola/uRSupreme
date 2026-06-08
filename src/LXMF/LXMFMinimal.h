@@ -612,7 +612,7 @@ namespace LXMF {
       // we sent. With persistence off, we fall back to metadata-only
       // entries: tag + size + display_name + mime, no filename.
       if (attachments) {
-        std::vector<AttachmentMeta> persisted;
+        PsVector<AttachmentMeta> persisted;
         if (_persist_outbound_fn) {
           persisted = _persist_outbound_fn(message_hash, *attachments);
         }
@@ -1675,7 +1675,7 @@ namespace LXMF {
     // owning identity's storage dir without LXMFMinimal needing to
     // know the disk layout. The lambda receives (msg_hash, fields)
     // and returns the persisted [{tag, size, filename}] metadata.
-    using AttachmentPersistFn = std::function<std::vector<AttachmentMeta>(
+    using AttachmentPersistFn = std::function<PsVector<AttachmentMeta>(
         const RNS::Bytes& /*msg_hash*/,
         const std::vector<FieldBlob>& /*fields*/)>;
     void set_attachment_persist_callback(AttachmentPersistFn cb) {
@@ -1687,7 +1687,7 @@ namespace LXMF {
     // dir so the SPA can render the same inline preview in the
     // sender's own chat bubble. The returned vector mirrors the input
     // order; entries with non-empty filename get rendered inline.
-    using OutboundPersistFn = std::function<std::vector<AttachmentMeta>(
+    using OutboundPersistFn = std::function<PsVector<AttachmentMeta>(
         const RNS::Bytes& /*msg_hash*/,
         const std::vector<OutgoingAttachment>& /*outgoing*/)>;
     void set_outbound_persist_callback(OutboundPersistFn cb) {
@@ -1695,7 +1695,7 @@ namespace LXMF {
     }
     void _persist_attachments(const RNS::Bytes& msg_hash,
                               const std::vector<FieldBlob>& fields,
-                              std::vector<AttachmentMeta>& out) {
+                              PsVector<AttachmentMeta>& out) {
       if (fields.empty()) return;
       // Cap inbound attachment count at the trust boundary. A peer
       // could send arbitrarily many fields; we truncate before any

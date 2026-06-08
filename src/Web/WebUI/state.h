@@ -55,7 +55,7 @@
       // Iterate the deques directly + take the trailing 64-record
       // window. Tail slice rather than a vector copy of the entire
       // ring — the conversations endpoint fires on every page load.
-      auto take_tail = [](const std::deque<LXMF::MessageRecord>& ring,
+      auto take_tail = [](const LXMF::MessageRing& ring,
                            const std::function<void(const LXMF::MessageRecord&)>& fn) {
         constexpr size_t W = 64;
         const size_t skip = (ring.size() > W) ? (ring.size() - W) : 0;

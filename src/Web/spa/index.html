@@ -2902,7 +2902,12 @@ function attachmentLabel(a) {
 //   'click-to-download'   — generic-file chip (no inline preview)
 //   'static'              — info-only chip (no on-disk blob exists)
 function attachmentMode(a) {
-  const hasBlob = /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename || '');
+  // A persisted on-disk blob (hash filename we can fetch back), OR a
+  // locally-cached preview blob — an optimistic just-sent image previews
+  // from the bytes we still hold, before the device has persisted it under
+  // a hash filename.
+  const hasBlob = /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename || '')
+    || (!!a.filename && a.filename in state.attachmentBlobs);
   if (hasBlob && a.backend === 'sd' && state.sdPresent === false) return 'sd_unreachable';
   if (hasBlob && (a.tag === 6 || a.tag === 7)) {
     const cached = a.filename in state.attachmentBlobs;
@@ -3112,7 +3117,17 @@ function upsertMessage(m) {
     if (m.packet_hash && !existing.packet_hash) {
       existing.packet_hash = m.packet_hash;
     }
-    if (Array.isArray(m.attachments) && m.attachments.length > (existing.attachments || []).length) {
+    // Adopt the incoming attachments when they're more complete than what
+    // the bubble already carries: either more of them, or the authoritative
+    // persisted (hash-filename) versions replacing an optimistic record's
+    // user-filename placeholders. Without the latter, an optimistically-sent
+    // image keeps its un-fetchable "image.jpg" name and won't preview from
+    // the device until a full page reload pulls the persisted record.
+    const looksPersisted = arr => Array.isArray(arr) && arr.length > 0
+      && arr.every(x => /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(x.filename || ''));
+    if (Array.isArray(m.attachments) && m.attachments.length > 0
+        && (m.attachments.length > (existing.attachments || []).length
+            || (looksPersisted(m.attachments) && !looksPersisted(existing.attachments)))) {
       existing.attachments = m.attachments;
     }
     if (dirty) c.msgs.sort(msgCmp);
@@ -3226,6 +3241,20 @@ async function sendMessage() {
       : state.pendingAttachments.map(a => ({
           tag: a.tag, size: a.bytes.length, filename: a.filename, mime: a.mime,
         }));
+    // Pre-cache a local preview blob for image attachments, keyed by the
+    // optimistic record's filename, so the bubble shows the image the moment
+    // it's sent — before the device has persisted it under a hash filename we
+    // could fetch back. attachmentMode() treats a cached blob as previewable.
+    optimisticAttachments.forEach((oa, i) => {
+      const src = state.pendingAttachments[i];
+      if (oa && oa.tag === FIELD_IMAGE && oa.filename && src && src.bytes
+          && !(oa.filename in state.attachmentBlobs)) {
+        try {
+          state.attachmentBlobs[oa.filename] = URL.createObjectURL(
+            new Blob([src.bytes], { type: oa.mime || src.mime || 'application/octet-stream' }));
+        } catch (e) { /* preview is best-effort; fall back to the fetched copy */ }
+      }
+    });
     upsertMessage({
       peer: state.openPeer,
       seq: r.queued_seq,

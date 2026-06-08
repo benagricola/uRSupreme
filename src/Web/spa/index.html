@@ -2865,7 +2865,7 @@ function bubbleClass(m) {
 function msgMeta(m) {
   const parts = [];
   if (m.ts) parts.push(new Date(m.ts * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }));
-  if (!m.in && m.status) parts.push(m.status === 'finding_route' ? 'finding route…' : m.status);
+  if (!m.in && m.status) parts.push(m.status === 'finding_route' ? 'finding route' : m.status);
   if (m.in && m.sig_ok === false) parts.push('⚠ bad sig');
   return parts.join(' · ');
 }

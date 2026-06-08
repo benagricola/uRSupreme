@@ -255,7 +255,7 @@
     </header>
     <div id="conv-list" x-data x-cloak>
       <!-- Empty state: no chats AND no discovered peers. -->
-      <template x-if="convListData().length === 0 && discoveredListData().length === 0 && pendingInboundList().length === 0">
+      <template x-if="convListData().length === 0 && discoveredListData().length === 0 && pendingInboundList().length === 0 && pendingOutboundList().length === 0">
         <div class="empty-state">
           No chats or discovered peers yet. Tap ＋ to start a new conversation, or
           <strong>📣</strong> to announce yourself so others can find you.
@@ -284,6 +284,28 @@
         </div>
       </template>
 
+      <!-- Synthetic "Outgoing" section: outbound attachment transfers in
+           flight, mirroring "Incoming" above so a send is as visible as a
+           receive even when the recipient's row is scrolled out of view.
+           Carries a real data-peer, so the delegated handler opens the
+           recipient's chat on click. -->
+      <template x-if="pendingOutboundList().length > 0">
+        <div class="list-section">Outgoing</div>
+      </template>
+      <template x-for="t in pendingOutboundList()" :key="'out:' + t.peer + ':' + (t.bytes_total || 0)">
+        <div class="conv-row" :data-peer="t.peer">
+          <span class="idc" x-html="identicon(t.peer, 44)"></span>
+          <div class="middle">
+            <div class="name" x-text="'To ' + nameFor(t.peer)"></div>
+            <div class="last" x-text="outgoingSubText(t)"></div>
+            <div class="progress-track">
+              <div class="progress-fill" :style="'width:' + transferPct(t) + '%'"></div>
+            </div>
+          </div>
+          <div class="meta"><div class="when">now</div></div>
+        </div>
+      </template>
+
       <!-- Chats section. Rows are keyed by peer hash so Alpine reuses
            DOM across reactive updates — keeps focus + in-flight
            progress bars stable while a transfer ticks. -->
@@ -300,10 +322,10 @@
           <div class="middle">
             <div class="name" x-text="nameFor(c.peer)"></div>
             <div class="last">
-              <template x-if="activeTransferFor(c.peer)">
+              <template x-if="activeInboundTransferFor(c.peer)">
                 <span x-text="convSubText(c)"></span>
               </template>
-              <template x-if="!activeTransferFor(c.peer)">
+              <template x-if="!activeInboundTransferFor(c.peer)">
                 <span><span x-text="c.last_in === false ? '↑ ' : '↓ '"></span><template x-if="c.last_body"><span x-text="c.last_body"></span></template><template x-if="!c.last_body && c.last_attachments && c.last_attachments.length"><svg class="attach-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span x-text="convAttachmentLabel(c.last_attachments)"></span></template></span>
               </template>
             </div>
@@ -311,9 +333,9 @@
               <div :class="'seen' + (isPeerOnline(c.peer) ? ' online' : '')"
                    x-text="announceSeenString($store.s.announces[c.peer])"></div>
             </template>
-            <template x-if="activeTransferFor(c.peer)">
+            <template x-if="activeInboundTransferFor(c.peer)">
               <div class="progress-track">
-                <div class="progress-fill" :style="'width:' + transferPct(activeTransferFor(c.peer)) + '%'"></div>
+                <div class="progress-fill" :style="'width:' + transferPct(activeInboundTransferFor(c.peer)) + '%'"></div>
               </div>
             </template>
           </div>
@@ -2751,6 +2773,16 @@ function pendingInboundList() {
   return Object.values(state.transfers).filter(t => t.incoming && !t.peer);
 }
 
+// Outbound attachment transfers in flight — rendered as an "Outgoing"
+// section at the top of the contact list, mirroring pendingInboundList's
+// "Incoming" so a send is as visible as a receive even when the recipient's
+// row is scrolled out of view. Outbound transfers always have a known peer
+// (unlike undecrypted inbound), so the row shows the recipient.
+function pendingOutboundList() {
+  if (!state.transfers || Object.keys(state.transfers).length === 0) return [];
+  return Object.values(state.transfers).filter(t => !t.incoming && t.peer);
+}
+
 // "last seen N ago" / "online now" — coarsens with age.
 function announceSeenString(rec) {
   if (!rec || !rec.seenAt) return '';
@@ -2793,6 +2825,18 @@ function activeTransferFor(peer) {
   return outgoing || incoming;
 }
 
+// Inbound-only variant, used by the conversation rows: outbound transfers
+// surface in the dedicated "Outgoing" section at the top of the list
+// (mirroring "Incoming"), so the recipient's row shows its normal preview
+// rather than doubling up the same progress bar.
+function activeInboundTransferFor(peer) {
+  if (!state.transfers || Object.keys(state.transfers).length === 0) return null;
+  for (const t of Object.values(state.transfers)) {
+    if (t.peer === peer && t.incoming) return t;
+  }
+  return null;
+}
+
 // Type word for the contact-list preview of a captionless attachment message
 // (image / audio / file with no text body). The icon itself is rendered as an
 // inline SVG in the conv-row markup — no emoji.
@@ -2810,7 +2854,7 @@ function convAttachmentLabel(atts) {
 // rendered declaratively in the conv-row markup so the peer-controlled body
 // stays x-text-escaped and the attachment indicator can be a real icon.
 function convSubText(c) {
-  const xfer = activeTransferFor(c.peer);
+  const xfer = activeInboundTransferFor(c.peer);
   if (!xfer) return '';
   const arrow = xfer.incoming ? '↓ ' : '↑ ';
   const pct   = xfer.bytes_total ? Math.floor(100 * xfer.bytes_done / xfer.bytes_total) : 0;
@@ -2826,6 +2870,11 @@ function transferPct(t) {
 
 // Synthetic-row subtext: "12 KB / 30 KB · 40%"
 function incomingSubText(t) {
+  const pct = t.bytes_total ? Math.floor(100 * t.bytes_done / t.bytes_total) : 0;
+  return formatBytes(t.bytes_done) + ' / ' + formatBytes(t.bytes_total) + ' · ' + pct + '%';
+}
+
+function outgoingSubText(t) {
   const pct = t.bytes_total ? Math.floor(100 * t.bytes_done / t.bytes_total) : 0;
   return formatBytes(t.bytes_done) + ' / ' + formatBytes(t.bytes_total) + ' · ' + pct + '%';
 }

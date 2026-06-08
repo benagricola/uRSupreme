@@ -2590,8 +2590,29 @@ class UReticulumHTTPTransport extends Transport {
       ws.onerror   = () => { /* close fires after */ };
     };
     open();
+    // A backgrounded tab freezes timers (Chrome throttles setTimeout to ~1/min
+    // and fully suspends after a few minutes), so a socket dropped while hidden
+    // leaves the backoff reconnect timer stalled — the "Reconnecting…" toast
+    // then sits there until the throttled timer eventually fires (the ctrl-F5
+    // symptom). When the tab becomes visible/focused or the network returns,
+    // reconnect immediately: detach the stale socket so its late onclose can't
+    // schedule a duplicate, reset the backoff, and open a fresh one now.
+    const kick = () => {
+      if (stopped || document.hidden) return;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if (ws) { ws.onclose = null; ws.onerror = null; try { ws.close(); } catch (e) { /* ignore */ } }
+      reconnectAttempts = 0;
+      open();
+    };
+    document.addEventListener('visibilitychange', kick);
+    window.addEventListener('focus', kick);
+    window.addEventListener('online', kick);
     return () => {
       stopped = true;
+      document.removeEventListener('visibilitychange', kick);
+      window.removeEventListener('focus', kick);
+      window.removeEventListener('online', kick);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (pingTimer)      clearInterval(pingTimer);
       if (ws) ws.close();

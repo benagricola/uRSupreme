@@ -1239,13 +1239,21 @@ namespace LXMF {
 
         RNS::Identity remote_identity = RNS::Identity::recall(ps.dest_hash);
         if (!remote_identity) {
-          WARNINGF("LXMF: retry — cannot recall identity for %s, marking failed",
+          // The recipient's identity isn't cached right now — evicted under
+          // churn, or the peer rebooted and hasn't re-announced yet. Don't
+          // destroy the send: that drops the wire bytes, so a later manual
+          // /retry from the SPA finds nothing and reports "send-state gone"
+          // even though nothing rebooted. Instead request the path to nudge
+          // the announce back, re-insert the entry (keeping its wire under
+          // the same key), and let _schedule_retry_or_fail reschedule it (or
+          // mark it Failed-but-kept once the budget is spent). Either way the
+          // wire survives so the send can still be revived once the peer is
+          // known again.
+          WARNINGF("LXMF: retry — identity for %s not cached; requesting path + rescheduling",
                    ps.dest_hash.toHex().c_str());
-          ps.status = OutboxStatus::Failed;
-          if (ps.owner && ps.owner->_on_outbox_status) {
-            try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
-          }
-          _release_wire_file(ps);
+          RNS::Transport::request_path(ps.dest_hash);
+          auto ins = m.insert({old_key, std::move(ps)});
+          _schedule_retry_or_fail(ins.first, m, "recipient identity not yet known");
           continue;
         }
         try {

@@ -9,7 +9,6 @@
 #include "../Storage/SDCard.h"
 #include "../Storage/OutboundStaging.h"
 #include "../Storage/Streaming.h"
-#include "../Common/Status.h"   // OLED marquee for in-flight RX progress
 #include <SD.h>
 
 #include <memory>
@@ -848,25 +847,19 @@ namespace LXMF {
               Web::publish_lxmf_progress(
                   p->id, /*peer=*/RNS::Bytes{}, link_hash, /*incoming=*/false,
                   /*bytes_done=*/0, /*bytes_total=*/0, /*finished=*/true);
-              // OLED: if an outbound "Send N%" marquee is currently showing (a
-              // Resource send just concluded), supersede it with a brief
-              // terminal so the strip reverts to the signal bars. Gated on the
-              // live "Send " marquee so a small opportunistic send — which never
-              // showed progress — doesn't post a spurious terminal. Mirrors the
-              // inbound receive-complete terminal.
-              char cur[Common::Status::MAX_MESSAGE_LEN];
-              if (Common::Status::latest(cur, sizeof(cur)) &&
-                  strncmp(cur, "Send ", 5) == 0) {
-                Common::Status::update(status == OutboxStatus::Failed
-                                       ? "Send failed" : "Send complete", 2500);
-              }
             }
           });
       // Resource progress: fire SSE events so the SPA can render an
       // in-flight progress bar on the mid-transfer message bubble.
-      // Also surfaces inbound progress on the OLED marquee so a user
-      // looking at the device (not the SPA) knows a transfer is
-      // landing and how far through it is.
+      //
+      // Transfer progress is deliberately NOT surfaced on the OLED
+      // ticker: Common::Status renders a single latest-wins slot, so
+      // two concurrent transfers interleave their percentages into one
+      // line of nonsense ("Recv 19K 42%" flapping to "Send 7K 13%" per
+      // part). The ticker carries only self-contained event messages
+      // until there is a status surface that can key live state per
+      // transfer. The SPA keeps full per-transfer progress via
+      // publish_lxmf_progress.
       a.lxmf.set_progress_callback(
           [p](const RNS::Bytes& peer_hash, const RNS::Bytes& link_hash,
               bool incoming, uint32_t bytes_done, uint32_t bytes_total) {
@@ -874,29 +867,6 @@ namespace LXMF {
             Web::publish_lxmf_progress(p->id, peer_hash, link_hash,
                                        incoming, bytes_done, bytes_total,
                                        /*finished=*/false);
-            // OLED marquee: surface transfer progress in BOTH directions so a
-            // user looking at the device (not the SPA) sees a transfer is in
-            // flight and how far through. update() (not say()) reuses the ring
-            // head slot per chunk instead of stacking N messages. Sticky
-            // (ttl=0): a Resource can stall between parts longer than any fixed
-            // TTL on an airtime-limited link, and the marquee must not lapse
-            // back to the signal bars mid-transfer — the complete/terminal
-            // supersedes it. Only Resource transfers fire progress, so a small
-            // opportunistic message shows no marquee (nothing to track).
-            if (bytes_total > 0) {
-              const uint32_t pct = (uint32_t)(((uint64_t)bytes_done * 100)
-                                              / bytes_total);
-              const char* dir = incoming ? "Recv" : "Send";
-              char buf[Common::Status::MAX_MESSAGE_LEN];
-              if (bytes_total < 1024) {
-                snprintf(buf, sizeof(buf), "%s %uB %u%%",
-                         dir, (unsigned)bytes_total, (unsigned)pct);
-              } else {
-                snprintf(buf, sizeof(buf), "%s %uK %u%%",
-                         dir, (unsigned)(bytes_total / 1024), (unsigned)pct);
-              }
-              Common::Status::update(buf, 0);
-            }
           });
       // Inbound receive-complete: symmetric counterpart to the outbox
       // Sent/Delivered terminal in set_outbox_status_callback above.
@@ -908,16 +878,12 @@ namespace LXMF {
       // is only known post-decrypt); the SPA keys the clear off the
       // link hash that earlier message_progress events also carried.
       a.lxmf.set_receive_complete_callback(
-          [p](const RNS::Bytes& link_hash, uint32_t bytes_total, bool ok) {
+          [p](const RNS::Bytes& link_hash, uint32_t bytes_total, bool /*ok*/) {
             if (!p->active) return;
             Web::publish_lxmf_progress(
                 p->id, /*peer=*/RNS::Bytes{}, link_hash, /*incoming=*/true,
                 /*bytes_done=*/bytes_total, /*bytes_total=*/bytes_total,
                 /*finished=*/true);
-            // Supersede the sticky "Recv N%" marquee with a brief terminal so
-            // the OLED strip reverts to the signal bars promptly instead of
-            // holding the last percentage forever.
-            Common::Status::update(ok ? "Recv complete" : "Recv failed", 2500);
           });
       // Attachment persistence — when an incoming LXMF message carries
       // FIELD_FILE_ATTACHMENTS / FIELD_IMAGE / FIELD_AUDIO blobs, write

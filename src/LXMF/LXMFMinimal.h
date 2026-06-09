@@ -47,6 +47,7 @@
 #include "../Web/BootCounter.h"
 #include "../Clock/Manager.h"
 #include "../Storage/OutboundStaging.h"
+#include "../Discovery/Stamp.h"   // shared PoW engine — LXMF delivery stamps
 #include <esp_heap_caps.h>
 
 namespace LXMF {
@@ -335,6 +336,17 @@ namespace LXMF {
       if (name) _display_name = name;
     }
 
+    // Inbound stamp policy. cost 0 = no stamp required (announce carries
+    // nil); 1-254 = required proof-of-work cost, included in the announce
+    // app_data so senders auto-apply it (upstream LXMRouter.
+    // set_inbound_stamp_cost accepts None or 1-254, LXMRouter.py:360-376).
+    // enforce mirrors upstream's default-off enforce_stamps(): when off,
+    // a missing/invalid stamp is logged and the message delivered anyway.
+    void set_stamp_cost(uint8_t cost) { _stamp_cost = (cost >= 1 && cost <= 254) ? cost : 0; }
+    void set_enforce_stamps(bool on)  { _enforce_stamps = on; }
+    uint8_t stamp_cost() const        { return _stamp_cost; }
+    bool enforce_stamps() const       { return _enforce_stamps; }
+
     void announce() {
       if (!_initialized) return;
       uint8_t buf[128];
@@ -346,14 +358,60 @@ namespace LXMF {
                                       _display_name.length());
       if (n == 0) { ERROR("LXMF: announce pack failed"); return; }
       pos += n;
-      // [1] stamp_cost: nil (we don't run anti-spam stamps)
-      buf[pos++] = 0xC0;
+      // [1] stamp_cost: nil when no stamp is required, else the uint cost
+      // (upstream LXMRouter.get_announce_app_data packs [display_name,
+      // stamp_cost], LXMRouter.py:985-999; peers read it back via
+      // stamp_cost_from_app_data).
+      if (_stamp_cost >= 1) {
+        n = Common::MsgPack::pack_uint8(&buf[pos], sizeof(buf) - pos, _stamp_cost);
+        if (n == 0) { ERROR("LXMF: announce stamp_cost pack failed"); return; }
+        pos += n;
+      } else {
+        buf[pos++] = 0xC0;
+      }
       // [2] supported_functionality: empty fixarray. No SF_COMPRESSION
       // (0x00) included → peers know not to bz2 messages to us.
       buf[pos++] = 0x90;
       RNS::Bytes app_data(buf, pos);
       _destination.announce(app_data);
       NOTICEF("LXMF: announced %s", _destination.hash().toHex().c_str());
+    }
+
+    // Stamp cost the peer's latest lxmf.delivery announce asks senders to
+    // pay. 0 = none required. Mirrors LXMF.stamp_cost_from_app_data
+    // (LXMF.py:141-152): v0.5.0+ announces are a msgpack list whose
+    // element [1] is the cost; valid 1-254, anything else (nil, the
+    // original string-only announce format, out-of-range) = none.
+    //
+    // Reads the app_data the RNS library retained from the peer's latest
+    // announce (Identity::recall_app_data, persisted in the
+    // known-destinations store). Diverges from upstream's separate
+    // outbound_stamp_costs cache + 45-day expiry: the recall store already
+    // holds exactly the latest announce per destination and survives
+    // reboots, so a duplicate in-RAM cost map would only burn RAM. The
+    // practical difference is that a peer silent for >45 days still gets
+    // stamped sends here (upstream would forget the cost) — strictly more
+    // deliverable, never less.
+    static uint8_t peer_stamp_cost(const RNS::Bytes& dest_hash) {
+      const RNS::Bytes app_data = RNS::Identity::recall_app_data(dest_hash);
+      if (app_data.size() < 2) return 0;
+      const uint8_t* d = app_data.data();
+      const size_t len = app_data.size();
+      size_t off = 0;
+      size_t arr_n = 0;
+      if (d[0] >= 0x90 && d[0] <= 0x9F) { arr_n = d[0] & 0x0F; off = 1; }
+      else if (d[0] == 0xDC && len >= 3) { arr_n = ((size_t)d[1] << 8) | d[2]; off = 3; }
+      else return 0;  // original (pre-0.5.0) announce format — no cost field
+      if (arr_n < 2) return 0;
+      if (!Common::MsgPack::skip_element(d, len, off)) return 0;  // [0] display_name
+      if (off >= len) return 0;
+      const uint8_t t = d[off];
+      uint32_t v = 0;
+      if (t <= 0x7F)                     { v = t; }
+      else if (t == 0xCC && off + 1 < len) { v = d[off + 1]; }
+      else if (t == 0xCD && off + 2 < len) { v = ((uint32_t)d[off + 1] << 8) | d[off + 2]; }
+      else return 0;  // nil or a non-int shape — no stamp cost
+      return (v >= 1 && v <= 254) ? (uint8_t)v : 0;
     }
 
     // Send an LXMF message to a remote destination hash. Returns false if
@@ -389,6 +447,20 @@ namespace LXMF {
       }
     };
 
+    // A packed-and-hashed message awaiting dispatch. Produced by
+    // prepare_message(); consumed by send_prepared(). The split exists for
+    // delivery stamps: the stamp PoW binds to message_id = full_hash(dest
+    // || src || packed_payload), so the payload (including its timestamp)
+    // must be frozen BEFORE the multi-second background stamp search, and
+    // the eventual send must reuse these exact bytes. Mirrors upstream's
+    // deferred-stamp flow (LXMRouter.pending_deferred_stamps →
+    // LXMessage.pack(payload_updated=True)).
+    struct PreparedMessage {
+      RNS::Bytes payload;     // msgpack [ts, title, content, fields] — PSRAM-backed
+      RNS::Bytes message_id;  // full_hash(dest || src || payload); the stamp material
+      double     ts = 0.0;
+    };
+
     bool send_message(const RNS::Bytes& dest_hash,
                       const std::string& title,
                       const std::string& content,
@@ -403,10 +475,30 @@ namespace LXMF {
                       const std::vector<OutgoingAttachment>* attachments,
                       MessageRecord& out_rec,
                       const char** out_err = nullptr) {
+      PreparedMessage pm;
+      if (!prepare_message(dest_hash, title, content, attachments, pm, out_rec, out_err)) {
+        return false;
+      }
+      return send_prepared(dest_hash, pm, RNS::Bytes::NONE, out_rec, out_err);
+    }
+
+    // Pack the payload, compute the message id, and fill the outbox record
+    // (including outbound attachment persistence). Does NOT sign or send —
+    // see PreparedMessage. Takes ownership of any staging buffers in
+    // `attachments` (released on every exit path).
+    bool prepare_message(const RNS::Bytes& dest_hash,
+                         const std::string& title,
+                         const std::string& content,
+                         const std::vector<OutgoingAttachment>* attachments,
+                         PreparedMessage& pm,
+                         MessageRecord& out_rec,
+                         const char** out_err = nullptr) {
       auto fail = [&](const char* msg) { if (out_err) *out_err = msg; return false; };
-      // send_message takes ownership of any staging buffers referenced
+      // prepare_message takes ownership of any staging buffers referenced
       // in `attachments` — they get released on every exit path so the
-      // caller doesn't have to track them across success/failure.
+      // caller doesn't have to track them across success/failure. (By the
+      // time we return, the bytes are embedded in pm.payload and, when
+      // outbound persistence is on, copied to disk.)
       struct StagingReleaser {
         const std::vector<OutgoingAttachment>* atts;
         ~StagingReleaser() {
@@ -440,13 +532,6 @@ namespace LXMF {
                  dest_hash.toHex().c_str(), (int)have_path, (int)(bool)remote_identity);
         return fail("Finding a route to the recipient (sent a path request) — resend in a few seconds.");
       }
-
-      RNS::Destination remote_dest(
-        remote_identity,
-        RNS::Type::Destination::OUT,
-        RNS::Type::Destination::SINGLE,
-        "lxmf", "delivery"
-      );
 
       // Build msgpack payload: [timestamp:f64, title:bin, content:bin, fields]
       // Heap-allocate sized to content + title + sum(attachments) + a
@@ -589,48 +674,28 @@ namespace LXMF {
         }
       }
 
-      // Build signed_part = dest_hash || src_hash || payload || sha256(...)
+      // Freeze the payload + message id. The message id (== upstream
+      // message_id == transient hash basis) is full_hash(dest || src ||
+      // packed_payload) over the FOUR-element payload — it is also the
+      // material a delivery stamp binds to, so it must be computed before
+      // any stamp generation. Signing happens later in send_prepared
+      // (upstream signs at pack() time too, after a deferred stamp
+      // resolves — LXMessage.py:352-377).
       const RNS::Bytes& src_hash = _destination.hash();
-      RNS::Bytes hashed_part;
-      hashed_part.append(dest_hash.data(), HASH_LEN);
-      hashed_part.append(src_hash.data(), HASH_LEN);
-      hashed_part.append(mp, mp_pos);
-      RNS::Bytes message_hash = RNS::Identity::full_hash(hashed_part);
-      RNS::Bytes signed_part;
-      signed_part.append(hashed_part);
-      signed_part.append(message_hash);
-
-      RNS::Bytes signature;
-      try {
-        signature = _identity.sign(signed_part);
-      } catch (const std::exception& e) {
-        ERRORF("LXMF: send: signing failed: %s", e.what());
-        return fail("Signing failed — identity may be misconfigured.");
+      {
+        RNS::Bytes hashed_part;
+        hashed_part.append(dest_hash.data(), HASH_LEN);
+        hashed_part.append(src_hash.data(), HASH_LEN);
+        hashed_part.append(mp, mp_pos);
+        pm.message_id = RNS::Identity::full_hash(hashed_part);
       }
-      if (signature.size() != SIG_LEN) {
-        ERRORF("LXMF: send: unexpected signature length %u", (unsigned)signature.size());
-        return fail("Internal error: signature was not the expected length.");
-      }
+      pm.payload = RNS::Bytes(mp, mp_pos);
+      pm.ts      = ts;
 
-      // Build the on-wire LXMF blob: src_hash || sig || payload
-      size_t total = HASH_LEN + SIG_LEN + mp_pos;
+      const size_t total = HASH_LEN + SIG_LEN + mp_pos;
       if (total > 1 * 1024 * 1024) {
         return fail("Message body is too large (> 1 MiB).");
       }
-      // Delivery-method selection uses upstream LXMF's content_size, NOT the full
-      // wire blob: content_size = packed_payload - TIMESTAMP_SIZE(8) -
-      // STRUCT_OVERHEAD(8) (LXMessage.py:385). LXMF_OPPORTUNISTIC_MAX(295) and
-      // LXMF_LINK_PACKET_MAX(319) ARE upstream's ENCRYPTED_PACKET_MAX_CONTENT /
-      // LINK_PACKET_MAX_CONTENT — content ceilings — so they must be compared
-      // against content_size. The old code compared the full blob (total /
-      // direct_wire.size()), so it switched to the Link/Resource path ~96-112 B
-      // of content earlier than an upstream node would (more airtime + round
-      // trips on a duty-cycled link for messages upstream sends as one packet).
-      const size_t content_size = (mp_pos > 16) ? (mp_pos - 16) : 0;
-      RNS::Bytes wire;
-      wire.append(src_hash.data(), HASH_LEN);
-      wire.append(signature.data(), SIG_LEN);
-      wire.append(mp, mp_pos);
 
       out_rec.ts           = ts;
       // (boot_epoch, received_ms) is the monotonic-across-reboots
@@ -652,7 +717,7 @@ namespace LXMF {
       if (attachments) {
         PsVector<AttachmentMeta> persisted;
         if (_persist_outbound_fn) {
-          persisted = _persist_outbound_fn(message_hash, *attachments);
+          persisted = _persist_outbound_fn(pm.message_id, *attachments);
         }
         const bool have_persisted = persisted.size() == attachments->size();
         for (size_t i = 0; i < attachments->size(); ++i) {
@@ -669,6 +734,103 @@ namespace LXMF {
           out_rec.attachments.push_back(m);
         }
       }
+      return true;
+    }
+
+    // Sign + dispatch a prepared message, optionally carrying a delivery
+    // stamp. The hash and signature cover the FOUR-element payload only —
+    // the stamp is covered by NEITHER (LXMessage.pack, LXMessage.py:
+    // 352-377: hashed_part/signed_part are built from msgpack(payload[:4]);
+    // the stamp is appended to the payload afterwards and only the wire
+    // packing includes it). Receivers strip the 5th element and re-derive
+    // the 4-element bytes before verifying.
+    bool send_prepared(const RNS::Bytes& dest_hash,
+                       const PreparedMessage& pm,
+                       const RNS::Bytes& stamp,
+                       MessageRecord& out_rec,
+                       const char** out_err = nullptr) {
+      auto fail = [&](const char* msg) { if (out_err) *out_err = msg; return false; };
+      if (!_initialized) return fail("LXMF gateway not initialised");
+      if (pm.payload.size() == 0) return fail("Internal error: empty prepared payload.");
+
+      RNS::Identity remote_identity = RNS::Identity::recall(dest_hash);
+      if (!remote_identity || !RNS::Transport::has_path(dest_hash)) {
+        // The route can lapse between prepare and dispatch (a stamp search
+        // runs for seconds). Nudge the path back and let the caller decide
+        // how to surface the failure.
+        RNS::Transport::request_path(dest_hash);
+        return fail("The route to the recipient was lost — issued a fresh path request.");
+      }
+      RNS::Destination remote_dest(
+        remote_identity,
+        RNS::Type::Destination::OUT,
+        RNS::Type::Destination::SINGLE,
+        "lxmf", "delivery"
+      );
+
+      // signed_part = dest_hash || src_hash || payload4 || message_hash
+      const RNS::Bytes& src_hash = _destination.hash();
+      RNS::Bytes hashed_part;
+      hashed_part.append(dest_hash.data(), HASH_LEN);
+      hashed_part.append(src_hash.data(), HASH_LEN);
+      hashed_part.append(pm.payload);
+      RNS::Bytes message_hash = RNS::Identity::full_hash(hashed_part);
+      if (stamp.size() > 0 && !(message_hash == pm.message_id)) {
+        // Defensive: a stamp is only as good as the message id it was
+        // generated for; a mismatch means the payload bytes changed (e.g.
+        // a corrupted resume file) and the receiver would reject the stamp.
+        ERROR("LXMF: send_prepared: payload no longer matches the stamped message id");
+        return fail("Internal error: the message changed after its stamp was generated.");
+      }
+      RNS::Bytes signed_part;
+      signed_part.append(hashed_part);
+      signed_part.append(message_hash);
+
+      RNS::Bytes signature;
+      try {
+        signature = _identity.sign(signed_part);
+      } catch (const std::exception& e) {
+        ERRORF("LXMF: send: signing failed: %s", e.what());
+        return fail("Signing failed — identity may be misconfigured.");
+      }
+      if (signature.size() != SIG_LEN) {
+        ERRORF("LXMF: send: unexpected signature length %u", (unsigned)signature.size());
+        return fail("Internal error: signature was not the expected length.");
+      }
+
+      // Wire payload: with a stamp, it rides as the 5th msgpack element —
+      // bump the fixarray(4) header to fixarray(5) and append the bin-8
+      // packed stamp, leaving elements 0-3 byte-identical to what was
+      // hashed and signed. Mirrors umsgpack.packb of upstream's
+      // payload-with-stamp (a 32-byte bytes object packs as C4 20 ...).
+      RNS::Bytes payload_wire;
+      if (stamp.size() > 0) {
+        if (pm.payload.data()[0] != 0x94) {
+          return fail("Internal error: unexpected payload framing for stamped send.");
+        }
+        payload_wire.append((uint8_t)0x95);
+        payload_wire.append(pm.payload.data() + 1, pm.payload.size() - 1);
+        const uint8_t bin_hdr[2] = {0xC4, (uint8_t)stamp.size()};
+        payload_wire.append(bin_hdr, sizeof(bin_hdr));
+        payload_wire.append(stamp);
+      } else {
+        payload_wire = pm.payload;  // shared buffer, no copy
+      }
+
+      // Build the on-wire LXMF blob: src_hash || sig || payload
+      const size_t total = HASH_LEN + SIG_LEN + payload_wire.size();
+      // Delivery-method selection uses upstream LXMF's content_size, NOT the full
+      // wire blob: content_size = packed_payload - TIMESTAMP_SIZE(8) -
+      // STRUCT_OVERHEAD(8) (LXMessage.py:385), where packed_payload includes the
+      // stamp when one is present (upstream re-packs after deferred stamping).
+      // LXMF_OPPORTUNISTIC_MAX(295) and LXMF_LINK_PACKET_MAX(319) ARE upstream's
+      // ENCRYPTED_PACKET_MAX_CONTENT / LINK_PACKET_MAX_CONTENT — content
+      // ceilings — so they must be compared against content_size.
+      const size_t content_size = (payload_wire.size() > 16) ? (payload_wire.size() - 16) : 0;
+      RNS::Bytes wire;
+      wire.append(src_hash.data(), HASH_LEN);
+      wire.append(signature.data(), SIG_LEN);
+      wire.append(payload_wire);
 
       // OPPORTUNISTIC: single packet to the SINGLE destination. Fast path
       // for short messages. send() returns a PacketReceipt; we hold it and
@@ -1548,8 +1710,135 @@ namespace LXMF {
       it->second->_deliver_lxmf_payload(plaintext, res.hash(), /*has_dest_prefix=*/true);
     }
 
-    // Common parse + signature-verify + delivery path used by all three
-    // inbound modes (OPPORTUNISTIC Packet, in-link Packet, Resource).
+    // Locate the optional delivery stamp in a packed payload. Mirrors
+    // LXMessage.unpack_from_bytes (LXMessage.py:743-749): when the
+    // payload array carries a 5th element, that element is the stamp and
+    // the message hash / signature cover msgpack(payload[:4]) — i.e. a
+    // fixarray(4) header plus the original bytes of elements 0-3, never
+    // the stamp. Element encodings are unchanged between the sender's
+    // 4-element hash pack and the 5-element wire pack, so slicing the
+    // original bytes reproduces the sender's hashed_part exactly.
+    //
+    // Outputs: *out_hdr_len = size of the original array header,
+    // *out_core_end = offset just past element 3, *out_stamp = the stamp
+    // bytes (empty when there is no 5th element / it isn't bin or str),
+    // *out_stripped = the payload HAD a 5th element. The hash must be
+    // re-derived over payload[:4] whenever out_stripped is set — even
+    // when the 5th element wasn't a usable stamp — because upstream
+    // strips unpacked_payload[4] by position, not by type.
+    // Returns false on malformed framing.
+    static bool _split_payload_stamp(const uint8_t* payload, size_t len,
+                                     size_t* out_hdr_len, size_t* out_core_end,
+                                     RNS::Bytes* out_stamp, bool* out_stripped) {
+      *out_stamp = RNS::Bytes();
+      *out_stripped = false;
+      if (len < 1) return false;
+      size_t off = 0;
+      size_t arr_len = 0;
+      const uint8_t tag = payload[off++];
+      if ((tag & 0xF0) == 0x90) {
+        arr_len = tag & 0x0F;
+      } else if (tag == 0xDC && off + 1 < len) {
+        arr_len = ((size_t)payload[off] << 8) | payload[off + 1];
+        off += 2;
+      } else {
+        return false;
+      }
+      *out_hdr_len  = off;
+      *out_core_end = len;   // default: whole payload is hash-covered
+      if (arr_len < 5) return true;   // no stamp element
+      *out_stripped = true;
+      // Walk past elements 0-3 to find the hash-covered core boundary.
+      for (int i = 0; i < 4; ++i) {
+        if (!Common::MsgPack::skip_element(payload, len, off)) return false;
+      }
+      *out_core_end = off;
+      // Element 4: the stamp (32-byte bin from upstream; tolerate str).
+      std::string s = Common::MsgPack::read_bin_or_str(payload, len, off);
+      if (!s.empty()) *out_stamp = RNS::Bytes((const uint8_t*)s.data(), s.size());
+      return true;
+    }
+
+  public:
+    // An inbound message parked while the background worker scores its
+    // delivery stamp (the 3000-round workblock expansion is a one-to-few-
+    // second job — see tick_stamp_validations). `wire` is a shared
+    // RNS::Bytes ref (PSRAM, copy-on-write), so the parked entry costs a
+    // refcount, not a payload copy.
+    struct PendingStampValidation {
+      LXMFMinimal* owner = nullptr;
+      RNS::Bytes   wire;
+      RNS::Bytes   packet_hash;
+      bool         has_dest_prefix = false;
+      bool         sig_ok = false;
+      RNS::Bytes   message_hash;
+      RNS::Bytes   stamp;
+      uint8_t      cost = 0;
+      bool         submitted = false;
+    };
+    // Bounded: each parked entry pins its wire bytes in PSRAM until the
+    // single worker gets to it. Past the cap we fall back to the
+    // unvalidated policy (deliver unchecked, or drop under enforcement)
+    // rather than queue without bound.
+    static constexpr size_t PENDING_VALIDATION_MAX = 8;
+    static std::deque<PendingStampValidation, PsAlloc<PendingStampValidation>>& pending_stamp_validations() {
+      static std::deque<PendingStampValidation, PsAlloc<PendingStampValidation>> q;
+      return q;
+    }
+
+    // Advance deferred inbound stamp validation. Called from
+    // LXMFGateway::loop (main loop, rns_lock held) so delivery callbacks
+    // run on the same task as every other delivery. One entry at a time,
+    // FIFO, sharing the single PoW worker with outbound generation.
+    static void tick_stamp_validations() {
+      auto& q = pending_stamp_validations();
+      if (q.empty()) return;
+      auto& f = q.front();
+      if (!f.owner || !f.owner->_initialized) { q.pop_front(); return; }
+      if (!f.submitted) {
+        // Worker may be busy with an outbound generation — retry next tick.
+        f.submitted = Discovery::Stamp::submit_lxmf_value(f.message_hash, f.stamp, f.cost);
+        return;
+      }
+      Discovery::Stamp::JobResult r;
+      if (!Discovery::Stamp::take_result_if(f.message_hash, r)) return;
+      PendingStampValidation e = std::move(q.front());
+      q.pop_front();
+      if (!e.owner || !e.owner->_initialized) return;
+      if (!r.ok) {
+        // Worker couldn't score the stamp (allocation failure). Same
+        // posture as the queue-overflow valve: unchecked delivery unless
+        // enforcement is on.
+        if (e.owner->_enforce_stamps) {
+          NOTICEF("LXMF: dropping message %s — stamp could not be validated and enforcement is on",
+                  e.message_hash.toHex().c_str());
+          return;
+        }
+        e.owner->_complete_delivery(e.wire, e.packet_hash, e.has_dest_prefix,
+                                    e.sig_ok, /*checked=*/false, false, -1);
+        return;
+      }
+      if (!r.valid && e.owner->_enforce_stamps) {
+        // Upstream LXMRouter.lxmf_delivery (LXMRouter.py:1767-1775):
+        // enforcement drops with a NOTICE naming the message; otherwise
+        // log-and-allow.
+        NOTICEF("LXMF: dropping message %s — invalid stamp (required cost %u)",
+                e.message_hash.toHex().c_str(), (unsigned)e.cost);
+        return;
+      }
+      if (!r.valid) {
+        NOTICEF("LXMF: message %s carries an invalid stamp (required cost %u), allowing — stamp enforcement is disabled",
+                e.message_hash.toHex().c_str(), (unsigned)e.cost);
+      }
+      // Mirror upstream's data model: stamp_value is only recorded for a
+      // VALID stamp (validate_stamp leaves it None on failure).
+      e.owner->_complete_delivery(e.wire, e.packet_hash, e.has_dest_prefix,
+                                  e.sig_ok, /*checked=*/true, r.valid,
+                                  r.valid ? (int16_t)r.value : (int16_t)-1);
+    }
+
+    // Common parse + signature-verify + stamp-policy path used by all
+    // three inbound modes (OPPORTUNISTIC Packet, in-link Packet, Resource).
     void _deliver_lxmf_payload(const RNS::Bytes& wire,
                                const RNS::Bytes& packet_or_resource_hash,
                                bool has_dest_prefix = false) {
@@ -1582,29 +1871,50 @@ namespace LXMF {
       const uint8_t* payload = raw + HEADER_LEN;
       size_t payload_len = raw_len - HEADER_LEN;
 
+      // Shape check + clock calibration. Title/content/fields are decoded
+      // again in _complete_delivery — for stamped messages that happens
+      // after an async validation hop, and the fields' raw pointers can't
+      // outlive this stack frame, so the parse runs there for every path.
       double msg_ts = 0;
-      std::string title;
-      std::string content;
-      std::vector<FieldBlob> fields;
-      if (!_parse_lxmf_payload(payload, payload_len, &msg_ts, &title, &content, &fields)) {
+      if (!_parse_lxmf_payload(payload, payload_len, &msg_ts, nullptr, nullptr)) {
         WARNING("LXMF: malformed payload");
         return;
       }
       if (msg_ts > 0) calibrate_time(msg_ts);
 
+      // Strip the optional 5th-element stamp: hash and signature cover
+      // msgpack(payload[:4]) only (LXMessage.unpack_from_bytes,
+      // LXMessage.py:743-755). For unstamped payloads the original bytes
+      // are used as-is; for stamped ones rebuild the 4-element form from
+      // a fixarray(4) header + the untouched bytes of elements 0-3.
+      size_t hdr_len = 0, core_end = payload_len;
+      RNS::Bytes stamp;
+      bool stamp_stripped = false;
+      if (!_split_payload_stamp(payload, payload_len, &hdr_len, &core_end, &stamp, &stamp_stripped)) {
+        WARNING("LXMF: malformed payload framing");
+        return;
+      }
+
       // Message hash (== upstream transient_id): full_hash(dest || src ||
-      // payload). Computed before signature verification so a re-delivered
-      // message is dropped even when the sender's identity isn't cached yet.
+      // packed_payload[:4]). Computed before signature verification so a
+      // re-delivered message is dropped even when the sender's identity
+      // isn't cached yet.
       RNS::Bytes hashed_part;
       hashed_part.append(_destination.hash().data(), HASH_LEN);
       hashed_part.append(source_hash.data(), HASH_LEN);
-      hashed_part.append(payload, payload_len);
+      if (stamp_stripped) {
+        hashed_part.append((uint8_t)0x94);
+        hashed_part.append(payload + hdr_len, core_end - hdr_len);
+      } else {
+        hashed_part.append(payload, payload_len);
+      }
       RNS::Bytes message_hash = RNS::Identity::full_hash(hashed_part);
 
       // Drop a duplicate: the sender's LXMF retry re-sends identical bytes
-      // after a lost return-proof. The resource proof was already sent when
-      // assembly completed (independent of this path), so the sender still
-      // sees delivery and stops retrying — we just avoid a duplicate record.
+      // after a lost return-proof. The proof/ack was already sent on the
+      // transport layer (prove() for packets, resource proof on assembly),
+      // so the sender still sees delivery and stops retrying — we just
+      // avoid a duplicate record.
       if (_seen_delivery(message_hash)) {
         DEBUGF("LXMF: ignoring duplicate message %s from %s",
                message_hash.toHex().c_str(), source_hash.toHex().c_str());
@@ -1624,18 +1934,121 @@ namespace LXMF {
                  source_hash.toHex().c_str());
       }
 
+      NOTICEF("LXMF: incoming from %s (%u bytes, sig %s%s)",
+              source_hash.toHex().c_str(), (unsigned)wire.size(),
+              sig_ok ? "ok" : "BAD",
+              stamp.size() > 0 ? ", stamped" : "");
+
+      // Inbound stamp policy — upstream LXMRouter.lxmf_delivery
+      // (LXMRouter.py:1755-1777): validation runs only when WE have an
+      // inbound stamp cost configured. A missing stamp needs no PoW to
+      // score (validate_stamp returns False before building a workblock),
+      // so only the stamped case defers to the worker. Scoring a stamp
+      // means expanding the 3000-round / 768 KB workblock (one to a few
+      // seconds of HKDF-SHA256) — far beyond the ~50 ms budget of the
+      // RNS-loop-adjacent task this callback runs on, hence the async hop
+      // through pending_stamp_validations + the background worker.
+      if (_stamp_cost >= 1) {
+        if (stamp.size() == 0) {
+          if (_enforce_stamps) {
+            NOTICEF("LXMF: dropping message %s from %s — no stamp (required cost %u)",
+                    message_hash.toHex().c_str(), source_hash.toHex().c_str(),
+                    (unsigned)_stamp_cost);
+            return;
+          }
+          NOTICEF("LXMF: message %s from %s has no stamp (required cost %u), allowing — stamp enforcement is disabled",
+                  message_hash.toHex().c_str(), source_hash.toHex().c_str(),
+                  (unsigned)_stamp_cost);
+          _complete_delivery(wire, packet_or_resource_hash, has_dest_prefix,
+                             sig_ok, /*checked=*/true, /*valid=*/false, -1);
+          return;
+        }
+        auto& q = pending_stamp_validations();
+        if (q.size() >= PENDING_VALIDATION_MAX) {
+          // Overload valve: don't pin unbounded wire bytes behind a
+          // seconds-per-message validator.
+          if (_enforce_stamps) {
+            NOTICEF("LXMF: dropping message %s from %s — stamp validation queue full (required cost %u)",
+                    message_hash.toHex().c_str(), source_hash.toHex().c_str(),
+                    (unsigned)_stamp_cost);
+            return;
+          }
+          WARNINGF("LXMF: stamp validation queue full — delivering %s unchecked",
+                   message_hash.toHex().c_str());
+          _complete_delivery(wire, packet_or_resource_hash, has_dest_prefix,
+                             sig_ok, /*checked=*/false, false, -1);
+          return;
+        }
+        PendingStampValidation pv;
+        pv.owner           = this;
+        pv.wire            = wire;   // shared ref keeps the buffer alive
+        pv.packet_hash     = packet_or_resource_hash;
+        pv.has_dest_prefix = has_dest_prefix;
+        pv.sig_ok          = sig_ok;
+        pv.message_hash    = message_hash;
+        pv.stamp           = stamp;
+        pv.cost            = _stamp_cost;
+        q.push_back(std::move(pv));
+        // Delivery resumes from tick_stamp_validations once scored.
+        return;
+      }
+
+      // No inbound cost configured: any stamp rides along unvalidated,
+      // exactly like upstream (required_stamp_cost == None skips
+      // validate_stamp entirely).
+      _complete_delivery(wire, packet_or_resource_hash, has_dest_prefix,
+                         sig_ok, /*checked=*/false, false, -1);
+    }
+
+    // Tail of the inbound path: decode title/content/fields, persist
+    // attachments, build the MessageRecord and hand it to the delivery
+    // callback. Split from _deliver_lxmf_payload so stamped messages can
+    // resume here after their async validation hop (the parse re-runs
+    // because FieldBlob raw pointers can't be parked across that hop —
+    // CPU-only cost, no extra buffering).
+    void _complete_delivery(const RNS::Bytes& wire,
+                            const RNS::Bytes& packet_or_resource_hash,
+                            bool has_dest_prefix,
+                            bool sig_ok,
+                            bool stamp_checked,
+                            bool stamp_valid,
+                            int16_t stamp_value) {
+      const uint8_t* raw = wire.data();
+      size_t raw_len = wire.size();
+      if (has_dest_prefix) {
+        if (raw_len < HASH_LEN) return;
+        raw     += HASH_LEN;
+        raw_len -= HASH_LEN;
+      }
+      if (raw_len < HEADER_LEN + 5) return;
+      RNS::Bytes source_hash(raw, HASH_LEN);
+      const uint8_t* payload = raw + HEADER_LEN;
+      size_t payload_len = raw_len - HEADER_LEN;
+
+      double msg_ts = 0;
+      std::string title;
+      std::string content;
+      std::vector<FieldBlob> fields;
+      if (!_parse_lxmf_payload(payload, payload_len, &msg_ts, &title, &content, &fields)) {
+        WARNING("LXMF: malformed payload");
+        return;
+      }
+
       if (_on_delivery) {
         MessageRecord rec;
-        rec.ts           = msg_ts;
-        rec.boot_epoch   = Web::BootCounter::current();
-        rec.received_ms  = millis();
-        rec.peer_hash    = source_hash;
-        rec.title        = title;
-        rec.content      = content;
-        rec.incoming     = true;
-        rec.signature_ok = sig_ok;
-        rec.status       = OutboxStatus::Delivered;
-        rec.packet_hash  = packet_or_resource_hash;
+        rec.ts            = msg_ts;
+        rec.boot_epoch    = Web::BootCounter::current();
+        rec.received_ms   = millis();
+        rec.peer_hash     = source_hash;
+        rec.title         = title;
+        rec.content       = content;
+        rec.incoming      = true;
+        rec.signature_ok  = sig_ok;
+        rec.status        = OutboxStatus::Delivered;
+        rec.packet_hash   = packet_or_resource_hash;
+        rec.stamp_checked = stamp_checked;
+        rec.stamp_valid   = stamp_valid;
+        rec.stamp_value   = stamp_value;
         // Persist attachments (FIELD_FILE_ATTACHMENTS / FIELD_IMAGE /
         // FIELD_AUDIO) under the calling identity's attachments dir
         // and annotate the record with metadata.
@@ -1650,88 +2063,15 @@ namespace LXMF {
       }
     }
 
+  private:
     void _on_packet(const RNS::Bytes& data, const RNS::Packet& packet) {
       // Acknowledge delivery to the sender (Reticulum proof).
       const_cast<RNS::Packet&>(packet).prove();
-
-      if (data.size() < HEADER_LEN + 5) {
-        WARNING("LXMF: incoming packet too short for LXMF header");
-        return;
-      }
-      const uint8_t* raw = data.data();
-      size_t raw_len = data.size();
-
-      RNS::Bytes source_hash(raw, HASH_LEN);
-      RNS::Bytes signature(raw + HASH_LEN, SIG_LEN);
-      const uint8_t* payload = raw + HEADER_LEN;
-      size_t payload_len = raw_len - HEADER_LEN;
-
-      double msg_ts = 0;
-      std::string title;
-      std::string content;
-      std::vector<FieldBlob> fields;
-      if (!_parse_lxmf_payload(payload, payload_len, &msg_ts, &title, &content, &fields)) {
-        WARNING("LXMF: malformed payload");
-        return;
-      }
-      if (msg_ts > 0) calibrate_time(msg_ts);
-
-      // Message hash (== upstream transient_id): full_hash(dest || src ||
-      // payload). Computed before signature verification so a re-delivered
-      // message is dropped even when the sender's identity isn't cached yet.
-      RNS::Bytes hashed_part;
-      hashed_part.append(_destination.hash().data(), HASH_LEN);
-      hashed_part.append(source_hash.data(), HASH_LEN);
-      hashed_part.append(payload, payload_len);
-      RNS::Bytes message_hash = RNS::Identity::full_hash(hashed_part);
-
-      // Drop a duplicate: a re-transmitted opportunistic packet (or a sender
-      // retry) re-delivers identical bytes. prove() was already called at
-      // entry, so the sender still sees the ack and stops retrying.
-      if (_seen_delivery(message_hash)) {
-        DEBUGF("LXMF: ignoring duplicate message %s from %s",
-               message_hash.toHex().c_str(), source_hash.toHex().c_str());
-        return;
-      }
-
-      // Reconstruct the signed payload and verify the Ed25519 signature.
-      bool sig_ok = false;
-      RNS::Identity sender = RNS::Identity::recall(source_hash);
-      if (sender) {
-        RNS::Bytes signed_part;
-        signed_part.append(hashed_part);
-        signed_part.append(message_hash);
-        sig_ok = sender.validate(signature, signed_part);
-      } else {
-        WARNINGF("LXMF: sender %s identity not known — signature cannot be verified",
-                 source_hash.toHex().c_str());
-      }
-
-      NOTICEF("LXMF: incoming from %s (%u bytes, sig %s)",
-              source_hash.toHex().c_str(), (unsigned)data.size(),
-              sig_ok ? "ok" : "BAD");
-
-      if (_on_delivery) {
-        MessageRecord rec;
-        rec.ts           = msg_ts;
-        rec.boot_epoch   = Web::BootCounter::current();
-        rec.received_ms  = millis();
-        rec.peer_hash    = source_hash;
-        rec.title        = title;
-        rec.content      = content;
-        rec.incoming     = true;
-        rec.signature_ok = sig_ok;
-        rec.status       = OutboxStatus::Delivered;
-        rec.packet_hash  = packet.get_hash();
-        _persist_attachments(packet.get_hash(), fields, rec.attachments);
-        try {
-          _on_delivery(rec);
-        } catch (const std::bad_alloc&) {
-          ERROR("LXMF: delivery callback bad_alloc");
-        } catch (const std::exception& e) {
-          ERRORF("LXMF: delivery callback exception: %s", e.what());
-        }
-      }
+      // Opportunistic packets carry src_hash || sig || payload — no dest
+      // prefix (the receiver derives it from the packet itself). The rest
+      // of the parse / verify / stamp flow is identical to the DIRECT
+      // modes, so delegate to the common path.
+      _deliver_lxmf_payload(data, packet.get_hash(), /*has_dest_prefix=*/false);
     }
 
   public:
@@ -2036,6 +2376,10 @@ namespace LXMF {
     double            _time_offset;
     bool              _time_calibrated;
     std::string       _display_name;
+    // Inbound stamp policy (see set_stamp_cost / set_enforce_stamps).
+    // 0 = no stamp required; announce carries nil for the cost field.
+    uint8_t           _stamp_cost = 0;
+    bool              _enforce_stamps = false;
     DeliveryCallback  _on_delivery;
     OutboxStatusCallback _on_outbox_status;
     ProgressCallback  _on_progress;

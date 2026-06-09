@@ -82,15 +82,22 @@ namespace LXMF {
     // attachment/text auto-send queue. Transitions to Sent if a route
     // arrives within the path-request window, or Failed if it doesn't.
     FindingRoute = 4,
+    // Accepted and persisted, but the recipient's announce requires a
+    // delivery stamp (proof-of-work) and the background worker is still
+    // searching for one. Transitions to Queued/Sent once the stamp is
+    // found and the message dispatches, or Failed if generation is
+    // aborted. Mirrors upstream LXMRouter.pending_deferred_stamps.
+    GeneratingStamp = 5,
   };
 
   inline const char* outbox_status_name(OutboxStatus s) {
     switch (s) {
-      case OutboxStatus::Queued:       return "queued";
-      case OutboxStatus::Sent:         return "sent";
-      case OutboxStatus::Delivered:    return "delivered";
-      case OutboxStatus::Failed:       return "failed";
-      case OutboxStatus::FindingRoute: return "finding_route";
+      case OutboxStatus::Queued:          return "queued";
+      case OutboxStatus::Sent:            return "sent";
+      case OutboxStatus::Delivered:       return "delivered";
+      case OutboxStatus::Failed:          return "failed";
+      case OutboxStatus::FindingRoute:    return "finding_route";
+      case OutboxStatus::GeneratingStamp: return "generating_stamp";
     }
     return "unknown";
   }
@@ -147,6 +154,16 @@ namespace LXMF {
     bool          signature_ok = false;  // For incoming: did the Ed25519 signature verify against a known identity? For outgoing: always true.
     OutboxStatus  status      = OutboxStatus::Delivered;  // Only meaningful for outgoing messages; Delivered for incoming.
     RNS::Bytes    packet_hash;           // RNS packet hash, used to correlate delivery receipts.
+    // LXMF delivery-stamp state, mirroring upstream LXMessage.stamp_value /
+    // stamp_valid / stamp_checked. checked=false means no stamp policy
+    // applied (no inbound cost configured, or an outbound send to a peer
+    // that requires none) — value/valid are then meaningless. For incoming
+    // messages valid records whether the sender's stamp met OUR announced
+    // cost; for outgoing, the stamp we generated (always valid). value is
+    // the stamp's leading-zero-bit score; -1 when no stamp was present.
+    bool          stamp_checked = false;
+    bool          stamp_valid   = false;
+    int16_t       stamp_value   = -1;
     PsVector<AttachmentMeta> attachments;  // Empty for messages without LXMF fields.
   };
 

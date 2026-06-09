@@ -319,6 +319,22 @@ namespace LXMF {
       return update_status(packet_hash, OutboxStatus::Delivered);
     }
 
+    // Apply an arbitrary mutation to the record with this seq and
+    // persist by rewriting the spool. Used by the stamped-send path to
+    // flip a generating_stamp record into its dispatched form (status,
+    // packet_hash, stamp value) in place — the record was appended
+    // before generation so it survives a reboot, so dispatch must
+    // update rather than append a duplicate.
+    bool mutate_by_seq(uint32_t seq, const std::function<void(MessageRecord&)>& fn) {
+      for (auto& rec : _ring) {
+        if (rec.seq != seq) continue;
+        fn(rec);
+        rewrite_spool();
+        return true;
+      }
+      return false;
+    }
+
     // Walk every record and flip any attachment whose backend matches
     // `from` to `to`. Rewrites the spool if anything changed. Used by
     // the flash→SD migration to keep the SD-unavailable warning logic
@@ -410,6 +426,13 @@ namespace LXMF {
       if (strcmp(status_str, "queued")    == 0) rec.status = OutboxStatus::Queued;
       else if (strcmp(status_str, "sent") == 0) rec.status = OutboxStatus::Sent;
       else if (strcmp(status_str, "failed") == 0) rec.status = OutboxStatus::Failed;
+      else if (strcmp(status_str, "generating_stamp") == 0) rec.status = OutboxStatus::GeneratingStamp;
+      // Delivery-stamp state — present only when a stamp policy applied.
+      if (doc["stamp_ok"].is<bool>()) {
+        rec.stamp_checked = true;
+        rec.stamp_valid   = (bool)doc["stamp_ok"];
+        rec.stamp_value   = (int16_t)(doc["stampv"] | -1);
+      }
       if (doc["pkt"].is<const char*>()) {
         std::string pkt_hex = doc["pkt"] | "";
         rec.packet_hash.assignHex(pkt_hex.c_str());
@@ -443,6 +466,10 @@ namespace LXMF {
       doc["sig"]       = rec.signature_ok;
       doc["status"]    = outbox_status_name(rec.status);
       if (rec.packet_hash.size() > 0) doc["pkt"] = rec.packet_hash.toHex();
+      if (rec.stamp_checked) {
+        doc["stamp_ok"] = rec.stamp_valid;
+        if (rec.stamp_value >= 0) doc["stampv"] = rec.stamp_value;
+      }
       if (!rec.attachments.empty()) {
         JsonArray arr = doc["att"].to<JsonArray>();
         for (const auto& a : rec.attachments) {

@@ -214,6 +214,34 @@ namespace LXMF {
     static constexpr uint8_t  DEFAULT_OUTBOX_RETRIES   = 5;
     static constexpr uint32_t DELIVERY_RETRY_WAIT_MS   = 10 * 1000;
 
+    // --- Incoming dedup (upstream LXMRouter.locally_delivered_transient_ids) ---
+    // A message the sender's LXMF layer retries after a lost return-proof
+    // (DEFAULT_OUTBOX_RETRIES, re-sending the identical wire bytes — see
+    // tick_retries) arrives a second time and would otherwise append a
+    // duplicate inbox record. Suppress re-delivery keyed by the message hash
+    // (full_hash(dest || src || payload), == upstream's transient_id). Upstream
+    // culls this set by a 180-day age window persisted to disk; on the MCU we
+    // keep the most-recent DELIVERED_DEDUP_MAX hashes in a bounded PSRAM FIFO,
+    // which is ample since retries land within seconds-to-minutes. In-RAM only:
+    // a reboot mid-window could let one duplicate through, an acceptable edge
+    // for ephemeral state.
+    static constexpr size_t DELIVERED_DEDUP_MAX = 128;
+    std::deque<RNS::Bytes, PsAlloc<RNS::Bytes>> _delivered_hashes;
+
+    // True if `message_hash` was already delivered (a duplicate to drop);
+    // otherwise records it (FIFO-evicting the oldest past the cap) and returns
+    // false. Mirrors upstream LXMRouter.has_message + the transient-id record.
+    bool _seen_delivery(const RNS::Bytes& message_hash) {
+      for (const auto& h : _delivered_hashes) {
+        if (h == message_hash) return true;
+      }
+      _delivered_hashes.push_back(message_hash);
+      if (_delivered_hashes.size() > DELIVERED_DEDUP_MAX) {
+        _delivered_hashes.pop_front();
+      }
+      return false;
+    }
+
     LXMFMinimal()
       : _identity(RNS::Type::NONE),
         _destination(RNS::Type::NONE),
@@ -1558,17 +1586,31 @@ namespace LXMF {
       }
       if (msg_ts > 0) calibrate_time(msg_ts);
 
+      // Message hash (== upstream transient_id): full_hash(dest || src ||
+      // payload). Computed before signature verification so a re-delivered
+      // message is dropped even when the sender's identity isn't cached yet.
+      RNS::Bytes hashed_part;
+      hashed_part.append(_destination.hash().data(), HASH_LEN);
+      hashed_part.append(source_hash.data(), HASH_LEN);
+      hashed_part.append(payload, payload_len);
+      RNS::Bytes message_hash = RNS::Identity::full_hash(hashed_part);
+
+      // Drop a duplicate: the sender's LXMF retry re-sends identical bytes
+      // after a lost return-proof. The resource proof was already sent when
+      // assembly completed (independent of this path), so the sender still
+      // sees delivery and stops retrying — we just avoid a duplicate record.
+      if (_seen_delivery(message_hash)) {
+        DEBUGF("LXMF: ignoring duplicate message %s from %s",
+               message_hash.toHex().c_str(), source_hash.toHex().c_str());
+        return;
+      }
+
       bool sig_ok = false;
       RNS::Identity sender = RNS::Identity::recall(source_hash);
       if (sender) {
-        RNS::Bytes hashed_part;
-        hashed_part.append(_destination.hash().data(), HASH_LEN);
-        hashed_part.append(source_hash.data(), HASH_LEN);
-        hashed_part.append(payload, payload_len);
-        RNS::Bytes mh = RNS::Identity::full_hash(hashed_part);
         RNS::Bytes signed_part;
         signed_part.append(hashed_part);
-        signed_part.append(mh);
+        signed_part.append(message_hash);
         sig_ok = sender.validate(signature, signed_part);
       }
       else {
@@ -1628,18 +1670,31 @@ namespace LXMF {
       }
       if (msg_ts > 0) calibrate_time(msg_ts);
 
+      // Message hash (== upstream transient_id): full_hash(dest || src ||
+      // payload). Computed before signature verification so a re-delivered
+      // message is dropped even when the sender's identity isn't cached yet.
+      RNS::Bytes hashed_part;
+      hashed_part.append(_destination.hash().data(), HASH_LEN);
+      hashed_part.append(source_hash.data(), HASH_LEN);
+      hashed_part.append(payload, payload_len);
+      RNS::Bytes message_hash = RNS::Identity::full_hash(hashed_part);
+
+      // Drop a duplicate: a re-transmitted opportunistic packet (or a sender
+      // retry) re-delivers identical bytes. prove() was already called at
+      // entry, so the sender still sees the ack and stops retrying.
+      if (_seen_delivery(message_hash)) {
+        DEBUGF("LXMF: ignoring duplicate message %s from %s",
+               message_hash.toHex().c_str(), source_hash.toHex().c_str());
+        return;
+      }
+
       // Reconstruct the signed payload and verify the Ed25519 signature.
       bool sig_ok = false;
       RNS::Identity sender = RNS::Identity::recall(source_hash);
       if (sender) {
-        RNS::Bytes hashed_part;
-        hashed_part.append(_destination.hash().data(), HASH_LEN);
-        hashed_part.append(source_hash.data(), HASH_LEN);
-        hashed_part.append(payload, payload_len);
-        RNS::Bytes mh = RNS::Identity::full_hash(hashed_part);
         RNS::Bytes signed_part;
         signed_part.append(hashed_part);
-        signed_part.append(mh);
+        signed_part.append(message_hash);
         sig_ok = sender.validate(signature, signed_part);
       } else {
         WARNINGF("LXMF: sender %s identity not known — signature cannot be verified",

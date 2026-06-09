@@ -4528,7 +4528,7 @@ function radioChartHTMLBuild() {
 // Storage + clock + sensor snapshot. Source data: /api/system_status,
 // fetched on each open (cheap aggregation, no SSE needed for now). A
 // 1 s ticker keeps the displayed clock live while the popover is open.
-const sysPopover = { ticker: null, clockAnchor: null };
+const sysPopover = { ticker: null };
 
 // Project device millis() forward from the WS-pinned clock anchor.
 // Returns null when the anchor hasn't been set yet (pre-hello). Used
@@ -4537,6 +4537,14 @@ function deviceMillisNow() {
   const a = state.clockAnchor;
   if (!a || typeof a.deviceNowMs !== 'number') return null;
   return a.deviceNowMs + (performance.now() - (a.localPerfMs || 0));
+}
+
+// Wall-clock formatter: date + time with a space between them, not the
+// locale-default "date, time" comma. toLocaleString() inserts the comma; we
+// format the two parts separately so there's never one.
+function fmtWallClock(ms) {
+  const d = new Date(ms);
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
 }
 
 // Format a numeric value + its unit as HTML, with the unit wrapped
@@ -4635,7 +4643,7 @@ function systemPopoverData() {
     get clockPillClass() { return this._a.calibrated ? 'pill ok' : 'pill warn'; },
     get clockPillLabel() { return this._a.calibrated ? 'Calibrated' : 'Uncalibrated'; },
     get clockNowText() {
-      return this._a.deviceUnixMs ? new Date(this._a.deviceUnixMs).toLocaleString() : '—';
+      return this._a.deviceUnixMs ? fmtWallClock(this._a.deviceUnixMs) : '—';
     },
     get clockSourceText() {
       const a = this._a;
@@ -4763,10 +4771,14 @@ function tickSystemClock() {
   if (!state.popovers.system) return;
   // Device clock. Tick both the primary wall-clock display and the
   // "Last calibrated Xs ago" subline so the age advances live.
-  const a = sysPopover.clockAnchor;
-  if (a) {
-    const nowMs = a.deviceUnixMs + (performance.now() - a.localNowMs);
-    state.ui.sysClockNow = new Date(nowMs).toLocaleString();
+  // Project the live wall-clock from the WS-pinned anchor (state.clockAnchor) —
+  // the same source the calibrated-age subline below uses. The old
+  // sysPopover.clockAnchor was orphaned by the WS clock-anchor refactor, which
+  // left this current-time line blank.
+  const a = state.clockAnchor;
+  if (a && a.deviceUnixMs > 0) {
+    const nowMs = a.deviceUnixMs + (performance.now() - (a.localPerfMs || 0));
+    state.ui.sysClockNow = fmtWallClock(nowMs);
   }
   {
     const anchor = state.clockAnchor || {};
@@ -4807,6 +4819,12 @@ function tickSystemClock() {
 
 function startSystemTicker() {
   if (sysPopover.ticker) return;
+  // Populate the clock + "Last calibrated" + per-sensor age lines immediately
+  // so they're visible the instant the popover opens, rather than blank until
+  // the first 1 Hz tick lands ~1 s later. openSystemPopover() sets
+  // state.popovers.system = true before calling us, so tickSystemClock()'s
+  // guard passes.
+  tickSystemClock();
   sysPopover.ticker = setInterval(tickSystemClock, 1000);
 }
 
@@ -6632,7 +6650,7 @@ function tickTimeClock() {
   const a = timeTicker.anchor;
   if (!a) return;
   const nowMs = a.deviceUnixMs + (performance.now() - a.localNowMs);
-  state.ui.tmCurrent = new Date(nowMs).toLocaleString();
+  state.ui.tmCurrent = fmtWallClock(nowMs);
 }
 
 function startTimeTicker() {
@@ -6663,8 +6681,7 @@ function renderTimeStatus(t) {
       deviceUnixMs: Number(t.unix_ms),
       localNowMs:   performance.now(),
     };
-    const d = new Date(Number(t.unix_ms));
-    state.ui.tmCurrent = d.toLocaleString();
+    state.ui.tmCurrent = fmtWallClock(Number(t.unix_ms));
     state.ui.tmSource  = 'from ' + (t.source || 'unknown');
   } else {
     timeTicker.anchor = null;

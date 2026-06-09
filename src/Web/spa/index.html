@@ -1285,7 +1285,7 @@
 
             <hr class="border-color-default mt-14 mb-14">
             <label>Interface mode
-              <button type="button" class="info-icon" data-info="How this interface handles announces and path discovery. <strong>Full</strong>: participates completely — relays announces in both directions and learns paths from them. <strong>Gateway</strong>: like Full, and also actively requests paths to destinations it hasn't heard of, so it can bridge traffic between separate network segments. <strong>Access Point</strong>: announces from other interfaces are not rebroadcast onto this link (so it won't flood peers that only connect through this node), but it still discovers paths for them. <strong>Point-to-Point</strong>: assumes exactly one peer on the link and skips the announce-relaying meant for multi-node segments. <strong>Roaming</strong>: for a node that moves between networks — announce relaying is held back so a moving node doesn't create routing loops. <strong>Boundary</strong>: marks an edge between two segments and won't relay announces learned across the boundary back over it. Mode changes apply after a reboot."></button>
+              <button type="button" class="info-icon" data-info="How this interface relays announces and discovers paths. Applies after a reboot.<br><br><strong>Full</strong> — relays announces both ways and learns paths.<br><strong>Gateway</strong> — Full, plus actively requests unknown paths to bridge separate segments.<br><strong>Access Point</strong> — won't rebroadcast other interfaces' announces here, but still learns paths.<br><strong>Point-to-Point</strong> — one peer only; skips multi-node announce relaying.<br><strong>Roaming</strong> — for a moving node; holds back announce relaying to avoid loops.<br><strong>Boundary</strong> — edge between segments; won't relay across-boundary announces back over it."></button>
             </label>
             <select id="rd-lora-mode" x-model="$store.s.forms.loraCfg.mode">
               <option value="full">Full</option>
@@ -2171,7 +2171,9 @@ function topbarProgressData() {
       const tfs = this.$store.s.transfers || {};
       for (const k of Object.keys(tfs)) {
         const t = tfs[k];
-        if (t.incoming) continue;            // inbound has its own conv-row bar
+        // Aggregate BOTH directions — the strip is the mobile-thread fallback
+        // (gated to the mobile thread view in CSS), where neither the inbound
+        // nor outbound conversation-list row is on screen.
         any = true;
         if (typeof t.bytes_total === 'number' && t.bytes_total > 0) {
           total += t.bytes_total;
@@ -4144,9 +4146,13 @@ function statusPopoverData() {
       const prev = this.$store.s.lastInfoStats;
       const info = this.$store.s.lastInfo || {};
       const s = this._s;
-      if (!prev || !info.uptime_ms || !prev.ts) return '';
+      // Placeholder (not '') so the line reserves its height from the moment the
+      // popover opens and doesn't shift everything down when the first real delta
+      // lands a poll-interval later.
+      const PLACEHOLDER = 'Δ —: — RX · — TX';
+      if (!prev || !info.uptime_ms || !prev.ts) return PLACEHOLDER;
       const dt_s = (info.uptime_ms - prev.uptime_ms) / 1000;
-      if (!(dt_s > 0.5 && dt_s < 600)) return '';
+      if (!(dt_s > 0.5 && dt_s < 600)) return PLACEHOLDER;
       const drx = (s.rx_packets || 0) - (prev.rx || 0);
       const dtx = (s.tx_packets || 0) - (prev.tx || 0);
       return 'Δ ' + dt_s.toFixed(0) + 's: +' + drx + ' RX · +' + dtx + ' TX';
@@ -4778,8 +4784,19 @@ function tickSystemClock() {
   const s = (state.system && state.system.sensors) || {};
   const g = s.gps || {};
   if (g.available) {
-    const warming = typeof g.last_byte_ms !== 'number' || g.last_byte_ms < 0;
-    state.ui.sysGpsAge = ageLine(g.last_byte_ms, g.model || 'GPS', warming);
+    // Report the last *fix*, not the last NMEA byte — the L76K keeps emitting
+    // sentences (and ticking last_byte_ms) while only acquiring, so a "last
+    // read 1s ago" was misleading. last_valid_fix_ms is the device-millis of
+    // the last valid fix (-1/absent = never fixed since boot).
+    const model = g.model || 'GPS';
+    const fixMs = g.last_valid_fix_ms;
+    if (typeof fixMs === 'number' && fixMs > 0) {
+      const now = deviceMillisNow();
+      state.ui.sysGpsAge = now === null ? ''
+        : 'Last fix ' + compactAgo((now - fixMs) / 1000) + ' (' + model + ')';
+    } else {
+      state.ui.sysGpsAge = 'No fix since boot (' + model + ')';
+    }
   }
   const env = s.environment || {};
   if (env.available) {

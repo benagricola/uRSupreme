@@ -1111,7 +1111,13 @@ namespace LXMF {
         const uint32_t total = ps.total_bytes;
         const uint32_t done  = (uint32_t)(frac * (float)total);
         try {
-          ps.owner->_on_progress(ps.dest_hash, kv.first, /*incoming=*/false,
+          // Key progress on record_hash (the stable outbox key), NOT the map
+          // key kv.first. A retry re-keys the map (tick_retries) while
+          // record_hash stays original, and the terminal message_complete
+          // (_static_outbound_resource_concluded) is published under
+          // record_hash. Using kv.first would orphan the progress entry in the
+          // SPA after a retry, so its 100% "Outgoing" row never clears.
+          ps.owner->_on_progress(ps.dest_hash, ps.record_hash, /*incoming=*/false,
                                   done, total);
         } catch (...) {}
         return;

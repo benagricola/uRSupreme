@@ -184,6 +184,13 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   position: absolute; left: 0; right: 0; bottom: -1px; height: 3px;
   pointer-events: none; overflow: hidden;
   background: transparent;
+  /* Fallback indicator only for when the per-conversation progress rows aren't
+     on screen — i.e. the mobile thread view (shown below). Desktop and the
+     mobile list view already show progress in the contact list, so hide it. */
+  display: none;
+}
+@media (max-width: 720px) {
+  #view-app.thread-open #topbar-progress { display: block; }
 }
 #topbar-progress.is-active { background: rgba(255,255,255,0.05); }
 #topbar-progress .bar {
@@ -697,6 +704,10 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   cursor: pointer;
   display: inline-flex;
   flex-shrink: 0;
+  /* Centre on the text line when inline at the end of a <label> (baseline
+     alignment otherwise drops it low). Ignored inside flex toggle-rows, which
+     already centre it. */
+  vertical-align: middle;
 }
 /* The "i" glyph is defined ONCE here as a CSS mask, so every
    <button class="info-icon"> needs no inline SVG — single source, no markup

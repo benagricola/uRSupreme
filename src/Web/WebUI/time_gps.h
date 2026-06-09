@@ -140,6 +140,7 @@
         // so "Last fix 12 s ago" labels tick up live without a refetch.
         // -1 sentinel = "never received."
         o["fix_received_ms"] = f.fix_received_ms == 0 ? -1 : (long)f.fix_received_ms;
+        o["last_valid_fix_ms"] = f.last_valid_fix_ms == 0 ? -1 : (long)f.last_valid_fix_ms;
         o["last_byte_ms"]    = f.last_byte_ms    == 0 ? -1 : (long)f.last_byte_ms;
         o["powered"]      = Sensors::L76K::is_powered();
         switch (Sensors::L76K::pulse_state()) {

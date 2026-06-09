@@ -61,7 +61,8 @@ struct Fix {
   double   speed_knots     = 0.0;
   double   heading_deg     = 0.0;
   double   unix_epoch      = 0.0;    // UTC seconds since 1970
-  uint32_t fix_received_ms = 0;      // millis() when last RMC parsed
+  uint32_t fix_received_ms = 0;      // millis() when last RMC parsed (valid OR not)
+  uint32_t last_valid_fix_ms = 0;    // millis() of the last *valid* fix; 0 = never fixed
   uint32_t last_byte_ms    = 0;      // millis() last time the UART produced anything
 };
 
@@ -249,6 +250,7 @@ namespace _detail {
     f.heading_deg   = fields[7] ? atof(fields[7]) : 0.0;
     f.unix_epoch    = parse_rmc_datetime(fields[0], fields[8]);
     f.fix_received_ms = millis();
+    f.last_valid_fix_ms = millis();   // reached only on a valid fix (invalid RMCs return above)
 
     // Time reporting — respect the user's GPS interval.
     // interval_s = 0  → "at boot" only: report once, never repoll

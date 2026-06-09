@@ -1285,7 +1285,7 @@
 
             <hr class="border-color-default mt-14 mb-14">
             <label>Interface mode
-              <button type="button" class="info-icon" data-info="How this interface relays announces and discovers paths. Applies after a reboot.<br><br><strong>Full</strong> — relays announces both ways and learns paths.<br><strong>Gateway</strong> — Full, plus actively requests unknown paths to bridge separate segments.<br><strong>Access Point</strong> — won't rebroadcast other interfaces' announces here, but still learns paths.<br><strong>Point-to-Point</strong> — one peer only; skips multi-node announce relaying.<br><strong>Roaming</strong> — for a moving node; holds back announce relaying to avoid loops.<br><strong>Boundary</strong> — edge between segments; won't relay across-boundary announces back over it."></button>
+              <button type="button" class="info-icon" data-info="How this interface relays announces and discovers paths. Applies after a reboot.<br><br><strong>Full</strong>: relays announces both ways and learns paths.<br><strong>Gateway</strong>: Full, plus actively requests unknown paths to bridge separate segments.<br><strong>Access Point</strong>: won't rebroadcast other interfaces' announces here, but still learns paths.<br><strong>Point-to-Point</strong>: one peer only; skips multi-node announce relaying.<br><strong>Roaming</strong>: for a moving node; holds back announce relaying to avoid loops.<br><strong>Boundary</strong>: edge between segments; won't relay across-boundary announces back over it."></button>
             </label>
             <select id="rd-lora-mode" x-model="$store.s.forms.loraCfg.mode">
               <option value="full">Full</option>

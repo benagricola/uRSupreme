@@ -95,6 +95,7 @@ extern bool     radio_online;
 extern uint32_t stat_rx;          // total packets received since boot
 extern uint32_t stat_tx;          // total packets transmitted since boot
 extern volatile uint32_t lora_tx_dropped;  // LoRa packets dropped: TX ring full
+extern volatile uint32_t lora_tx_by_type[4]; // LoRa TX count by RNS packet type (0 DATA,1 ANNOUNCE,2 LINKREQUEST,3 PROOF)
 extern volatile uint32_t tx_hold_bytes;    // LoRa TX flow-control: bytes held (not dropped)
 extern volatile uint8_t  queue_height;     // LoRa TX ring: queued packet count
 extern volatile uint16_t queued_bytes;     // LoRa TX ring: queued byte count

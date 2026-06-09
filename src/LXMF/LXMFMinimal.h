@@ -206,13 +206,13 @@ namespace LXMF {
 
     // Outbox-retry tuning. Both static for now — wire to per-identity
     // settings later. Backoff is 30s × attempt index, so:
-    //   attempt 1: send fails -> wait 30s -> retry 1
-    //   attempt 2: retry 1 fails -> wait 60s -> retry 2
-    //   attempt 3: retry 2 fails -> wait 90s -> retry 3
-    // After DEFAULT_OUTBOX_RETRIES exhausts the entry is dropped and
-    // the user must manually retry from the SPA.
-    static constexpr uint8_t  DEFAULT_OUTBOX_RETRIES = 3;
-    static constexpr uint32_t RETRY_BACKOFF_MS_STEP   = 30 * 1000;
+    // A failed Link/Resource send is retried at a flat interval, matching
+    // upstream LXMF (MAX_DELIVERY_ATTEMPTS=5, DELIVERY_RETRY_WAIT=10s). After
+    // DEFAULT_OUTBOX_RETRIES exhausts the entry is dropped and the user must
+    // manually retry from the SPA. (Was 3 attempts at an escalating 30/60/90s
+    // backoff — slower and fewer than upstream.)
+    static constexpr uint8_t  DEFAULT_OUTBOX_RETRIES   = 5;
+    static constexpr uint32_t DELIVERY_RETRY_WAIT_MS   = 10 * 1000;
 
     LXMFMinimal()
       : _identity(RNS::Type::NONE),
@@ -589,6 +589,16 @@ namespace LXMF {
       if (total > 1 * 1024 * 1024) {
         return fail("Message body is too large (> 1 MiB).");
       }
+      // Delivery-method selection uses upstream LXMF's content_size, NOT the full
+      // wire blob: content_size = packed_payload - TIMESTAMP_SIZE(8) -
+      // STRUCT_OVERHEAD(8) (LXMessage.py:385). LXMF_OPPORTUNISTIC_MAX(295) and
+      // LXMF_LINK_PACKET_MAX(319) ARE upstream's ENCRYPTED_PACKET_MAX_CONTENT /
+      // LINK_PACKET_MAX_CONTENT — content ceilings — so they must be compared
+      // against content_size. The old code compared the full blob (total /
+      // direct_wire.size()), so it switched to the Link/Resource path ~96-112 B
+      // of content earlier than an upstream node would (more airtime + round
+      // trips on a duty-cycled link for messages upstream sends as one packet).
+      const size_t content_size = (mp_pos > 16) ? (mp_pos - 16) : 0;
       RNS::Bytes wire;
       wire.append(src_hash.data(), HASH_LEN);
       wire.append(signature.data(), SIG_LEN);
@@ -645,7 +655,7 @@ namespace LXMF {
       // worse than the old always-"sent". The previous code here latched
       // Sent the instant send() returned and never updated it; now Sent
       // is the honest hand-off state and Delivered is a real confirmation.
-      if (total <= LXMF_OPPORTUNISTIC_MAX) {
+      if (content_size <= LXMF_OPPORTUNISTIC_MAX) {
         RNS::Packet packet(remote_dest, wire);
         RNS::PacketReceipt receipt = packet.send();
         out_rec.packet_hash = packet.get_hash();
@@ -726,7 +736,11 @@ namespace LXMF {
       RNS::Bytes direct_wire;
       direct_wire.append(dest_hash.data(), HASH_LEN);
       direct_wire.append(wire);
-      if (direct_wire.size() > LXMF_LINK_PACKET_MAX) {
+      // Resource vs single in-link packet: decide on content_size against the
+      // upstream LINK_PACKET_MAX_CONTENT(319) ceiling, not the full direct_wire
+      // size (which is content + ~112 B of dest/src/sig/framing and so tripped
+      // the Resource path ~112 B of content too early).
+      if (content_size > LXMF_LINK_PACKET_MAX) {
         ps.wire_path = _spill_wire_to_disk(direct_wire, link_hash);
         if (ps.wire_path.empty()) {
           // Fall back to keeping the wire in PSRAM.
@@ -1175,13 +1189,13 @@ namespace LXMF {
       const uint8_t attempts_done = DEFAULT_OUTBOX_RETRIES - ps.retries_left + 1;
       ps.retries_left--;
       ps.retry_pending    = true;
-      ps.next_retry_at_ms = (uint64_t)millis() + (uint64_t)RETRY_BACKOFF_MS_STEP * attempts_done;
+      ps.next_retry_at_ms = (uint64_t)millis() + (uint64_t)DELIVERY_RETRY_WAIT_MS;
       ps.status           = OutboxStatus::Queued;
       ps.resource_hash    = RNS::Bytes{};  // stale; new Link will rebuild Resource
       NOTICEF("LXMF: outbox send to %s failed (%s) — retry %u/%u scheduled in %us",
               ps.dest_hash.toHex().c_str(), reason,
               (unsigned)attempts_done, (unsigned)DEFAULT_OUTBOX_RETRIES,
-              (unsigned)(RETRY_BACKOFF_MS_STEP * attempts_done / 1000));
+              (unsigned)(DELIVERY_RETRY_WAIT_MS / 1000));
     }
 
   public:

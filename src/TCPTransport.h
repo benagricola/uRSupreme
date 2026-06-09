@@ -161,8 +161,17 @@ namespace TCPTransport {
     auto* impl = new TCPClientInterface(name, host, port, reconnect_ms);
     client_impls[slot] = impl;
     client_interfaces[slot] = impl;
-    // Apply mode (default GATEWAY) + optional IFAC via the shared helper
+    // Apply mode (default FULL) + optional IFAC via the shared helper
     // so all interface types resolve mode/IFAC the same way.
+    //
+    // The default matches upstream RNS (TCPInterface defaults to MODE_FULL).
+    // It must NOT be a DISCOVER_PATHS_FOR mode (AP/GATEWAY/ROAMING): a backbone
+    // TCP link in GATEWAY mode makes this node "search for unknown paths" on
+    // behalf of every path request arriving from the backbone, rebroadcasting
+    // them onto ALL interfaces — including a constrained LoRa AP edge, which it
+    // floods to its duty-cycle cap (airtime_locked) and starves local LoRa
+    // links. MODE_FULL still forwards everything and answers for known dests;
+    // it just doesn't proactively re-broadcast the backbone's path discovery.
     {
       Discovery::Config::Entry cfg;
       cfg.mode         = mode;
@@ -170,7 +179,7 @@ namespace TCPTransport {
       cfg.ifac_netkey  = ifac_netkey  ? ifac_netkey  : "";
       cfg.ifac_size    = ifac_size;
       Discovery::Config::apply_mode_ifac(client_interfaces[slot], cfg,
-                                         RNS::Type::Interface::MODE_GATEWAY);
+                                         RNS::Type::Interface::MODE_FULL);
     }
     RNS::Transport::register_interface(client_interfaces[slot]);
     client_count = 0;
@@ -278,7 +287,10 @@ namespace TCPTransport {
       auto* impl = new TCPServerPeer(name, c);
       server_peer_impls[slot] = impl;
       server_peers[slot] = impl;
-      server_peers[slot].mode(RNS::Type::Interface::MODE_GATEWAY);
+      // MODE_FULL, not GATEWAY: see the add_client mode rationale — a
+      // DISCOVER_PATHS_FOR mode here would re-broadcast backbone path requests
+      // onto the LoRa edge and saturate its duty cycle.
+      server_peers[slot].mode(RNS::Type::Interface::MODE_FULL);
       RNS::Transport::register_interface(server_peers[slot]);
       IPAddress ip = c.remoteIP();
       RNS::logf(RNS::LOG_NOTICE, "TCPTransport: accepted peer[%d] from %u.%u.%u.%u",

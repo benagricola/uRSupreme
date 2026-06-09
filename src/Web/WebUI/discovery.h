@@ -238,9 +238,10 @@
       Discovery::Config::Entry e;
       const bool have = Discovery::Config::get(UDP_IFACE_NAME, &e);
       doc["name"] = UDP_IFACE_NAME;
-      // UDP registers with the GATEWAY default (see RNode_Firmware.ino).
+      // UDP registers with the FULL default (see RNode_Firmware.ino) — a
+      // DISCOVER_PATHS_FOR mode here would rebroadcast path requests onto LoRa.
       const uint8_t eff = (have && e.mode) ? e.mode
-                                           : RNS::Type::Interface::MODE_GATEWAY;
+                                           : RNS::Type::Interface::MODE_FULL;
       doc["mode"]         = Discovery::Config::mode_to_str(eff);
       doc["mode_default"] = !(have && e.mode);
       doc["discoverable"] = have && e.discoverable;

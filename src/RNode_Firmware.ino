@@ -112,6 +112,12 @@ volatile uint16_t current_packet_start = 0;
 // queue, or a genuine burst). Exposed via diag so a full queue is visible
 // instead of a silent drop.
 volatile uint32_t lora_tx_dropped = 0;
+// Per-type LoRa TX breakdown (diagnostic): classify every frame accepted for
+// transmit by its RNS packet type (raw[0] & 0x03). Pins what saturates the LoRa
+// duty cycle on the rmap-bridging AP node — announce flood vs path-request flood
+// vs data forwards. Indexed by packet type: 0 DATA, 1 ANNOUNCE, 2 LINKREQUEST,
+// 3 PROOF.
+volatile uint32_t lora_tx_by_type[4] = {0, 0, 0, 0};
 volatile bool serial_buffering = false;
 #if HAS_BLUETOOTH || HAS_BLE == true
   bool bt_init_ran = false;
@@ -219,7 +225,12 @@ protected:
                  (unsigned long)lora_tx_dropped);
       }
       // Post-send housekeeping (tx byte accounting) — once per accepted frame.
-      if (accepted) InterfaceImpl::handle_outgoing(data);
+      if (accepted) {
+#if defined(URTN_LINK_DIAG)
+        lora_tx_by_type[data.data()[0] & 0x03]++;
+#endif
+        InterfaceImpl::handle_outgoing(data);
+      }
     }
     catch (const std::bad_alloc&) {
       ERROR("LoRaInterface::send_outgoing: bad_alloc - out of memory");
@@ -1321,8 +1332,13 @@ void setup() {
       {
         Discovery::Config::Entry udp_cfg;
         Discovery::Config::get("UDPInterface", &udp_cfg);
+        // MODE_FULL, matching upstream RNS (UDPInterface never sets a mode, so
+        // _add_interface defaults it to FULL). A DISCOVER_PATHS_FOR mode here
+        // (GATEWAY) would make this node rebroadcast every path request arriving
+        // over UDP onto all interfaces incl. the LoRa edge — the same duty-cycle
+        // flood that the TCP default caused.
         Discovery::Config::apply_mode_ifac(udp_interface, udp_cfg,
-                                           RNS::Type::Interface::MODE_GATEWAY);
+                                           RNS::Type::Interface::MODE_FULL);
       }
       RNS::Transport::register_interface(udp_interface);
       TRACEF("UDPInterface hash: %s", udp_interface.get_hash().toHex().c_str());

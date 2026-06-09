@@ -226,6 +226,23 @@
       doc["linkreqs_rx"]           = RNS::Transport::linkreqs_rx();
       doc["linkreqs_fwd"]          = RNS::Transport::linkreqs_fwd();
       doc["linkreqs_local"]        = RNS::Transport::linkreqs_local();
+#if defined(URTN_LINK_DIAG)
+      // Link-handshake stage counters — bisect a stuck direct-link establishment.
+      // Only populated in a -DURTN_LINK_DIAG build (counters are no-ops otherwise).
+      doc["links_initiated"]       = RNS::Transport::links_initiated();
+      doc["lrproofs_sent"]         = RNS::Transport::lrproofs_sent();
+      doc["lrproofs_rx"]           = RNS::Transport::lrproofs_rx();
+      doc["links_active"]          = RNS::Transport::links_active();
+      // AP-mode LoRa-saturation diagnostics: what fills the LoRa duty cycle.
+      doc["path_reqs_originated"]  = RNS::Transport::path_reqs_originated();
+      {
+        JsonObject lt = doc["lora_tx_by_type"].to<JsonObject>();
+        lt["data"]        = (uint32_t)lora_tx_by_type[0];
+        lt["announce"]    = (uint32_t)lora_tx_by_type[1];
+        lt["linkrequest"] = (uint32_t)lora_tx_by_type[2];
+        lt["proof"]       = (uint32_t)lora_tx_by_type[3];
+      }
+#endif
       doc["link_transit_in"]       = RNS::Transport::link_transit_in();
       doc["link_transit_fwd"]      = RNS::Transport::link_transit_fwd();
       doc["link_transit_fwd_lora"] = RNS::Transport::link_transit_fwd_lora();

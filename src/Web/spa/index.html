@@ -59,7 +59,8 @@
      real screen (e.g. first-time setup) for a frame before identities
      load. -->
 <div id="view-loading" class="page" x-data x-show="$store.s.view === 'view-loading'" x-cloak>
-  <div class="card">
+  <div class="card loading-card">
+    <span class="icon-spinner" aria-hidden="true"></span>
     <p class="muted">Loading…</p>
   </div>
 </div>
@@ -1060,9 +1061,7 @@
        DOM-order but it's worth being explicit so any future style
        change to .icon doesn't accidentally introduce a new
        stacking context that buries them. -->
-  <button id="mi-close" class="icon absolute top-safe-8 right-8 bg-modal-btn text-white border-white-soft z-10" title="Close" >
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
-  </button>
+  <button id="mi-close" class="icon icon-x absolute top-safe-8 right-8 bg-modal-btn text-white border-white-soft z-10" title="Close"></button>
   <a id="mi-save" download class="icon absolute top-safe-8 right-60 bg-modal-btn text-white border-white-soft inline-flex items-center justify-center no-underline z-10" title="Save" >
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
   </a>
@@ -1157,11 +1156,9 @@
   <div class="modal modal-tall">
     <header class="modal-header">
       <h3 id="settings-title" x-text="$store.s.ui.settingsTitle">Settings</h3>
-      <button class="icon" id="btn-close-settings" title="Close"
+      <button class="icon icon-x" id="btn-close-settings" title="Close"
               x-show="$store.s.ui.showCloseSettings"
-              @click="closeSettingsModal()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
-      </button>
+              @click="closeSettingsModal()"></button>
     </header>
     <div class="tab-bar" id="settings-tabs">
       <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['time','Time'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
@@ -1190,9 +1187,9 @@
               <div class="muted mono mt-1" id="id-address"
                    x-text="$store.s.self ? ($store.s.self.address || $store.s.self.id) : ''"></div>
             </div>
-            <button type="button" class="info-icon" data-info="The display name peers see in your identity announce. Changes take effect on the next announce — press the megaphone after editing to re-broadcast immediately."><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="1.15"/><rect x="7.05" y="6.6" width="1.9" height="5.8" rx="0.95"/></svg></button>
+            <button type="button" class="info-icon" data-info="The display name peers see in your identity announce. Changes take effect on the next announce — press the megaphone after editing to re-broadcast immediately."></button>
           </div>
-          <label class="mt-3">Auto-announce <button type="button" class="info-icon" data-info="How often this identity automatically broadcasts an announce so peers can find and route to it. Manual announces via the megaphone icon work regardless of this setting."><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="1.15"/><rect x="7.05" y="6.6" width="1.9" height="5.8" rx="0.95"/></svg></button></label>
+          <label class="mt-3">Auto-announce <button type="button" class="info-icon" data-info="How often this identity automatically broadcasts an announce so peers can find and route to it. Manual announces via the megaphone icon work regardless of this setting."></button></label>
           <select id="id-announce-interval"
                   x-model="$store.s.forms.identity.announceInterval"
                   @change="onChangeAnnounceInterval()">
@@ -1205,7 +1202,7 @@
                    x-model="$store.s.forms.identity.persistOutbound"
                    @change="onChangePersistOutbound()">
             <span>Keep a copy of attachments I send</span>
-            <button type="button" class="info-icon" @click.stop data-info="Lets the chat history show an inline preview of images and audio you've sent. Off saves storage at the cost of preview."><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="1.15"/><rect x="7.05" y="6.6" width="1.9" height="5.8" rx="0.95"/></svg></button>
+            <button type="button" class="info-icon" @click.stop data-info="Lets the chat history show an inline preview of images and audio you've sent. Off saves storage at the cost of preview."></button>
           </label>
         </div>
       </div>
@@ -1222,7 +1219,7 @@
                   x-show="!!$store.s.ui.cnDotRadio"></span>
             <label class="cn-row-toggle" @click.stop>
               <span>Discoverable</span>
-              <button type="button" class="info-icon" data-info="When on, this interface periodically emits an <code>rnstransport.discovery.interface</code> announce over LoRa. The announce contains this device's identity hash, radio parameters (frequency, bandwidth, SF, coding rate), and approximate location (if GPS has a fix) so other Reticulum nodes hearing it can decide whether they're configured to reach this device, and apps like <a href='https://rmap.world/info.html' target='_blank' rel='noopener'>rmap.world</a> can plot the device on a map."><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="1.15"/><rect x="7.05" y="6.6" width="1.9" height="5.8" rx="0.95"/></svg></button>
+              <button type="button" class="info-icon" data-info="When on, this interface periodically emits an <code>rnstransport.discovery.interface</code> announce over LoRa. The announce contains this device's identity hash, radio parameters (frequency, bandwidth, SF, coding rate), and approximate location (if GPS has a fix) so other Reticulum nodes hearing it can decide whether they're configured to reach this device, and apps like <a href='https://rmap.world/info.html' target='_blank' rel='noopener'>rmap.world</a> can plot the device on a map."></button>
               <span class="switch">
                 <input type="checkbox" id="rd-discoverable"
                        x-model="$store.s.forms.radio.discoverable"
@@ -1232,8 +1229,9 @@
             </label>
           </summary>
           <div class="cn-section-body">
-            <label>Region preset</label>
+            <label>Region preset <button type="button" class="info-icon" data-info="Pick the region preset that matches your local mesh. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other."></button></label>
             <p class="muted mx-0 mt-1 mb-6" id="rd-intro"
+               x-show="$store.s.settingsFirstRun"
                x-html="$store.s.settingsFirstRun
                  ? `Before this device can talk to other LoRa nodes, it needs to know which region to operate in. Pick the preset for your local mesh — both ends of a conversation must use the <em>same</em> region settings, or they won't hear each other.`
                  : `Pick the region preset that matches your local mesh. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.`"></p>
@@ -1258,7 +1256,7 @@
               </div>
               <div class="row mb-2" >
                 <div>
-                  <label>Spreading factor <button type="button" class="info-icon" data-info="SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom, useful for long links."><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="1.15"/><rect x="7.05" y="6.6" width="1.9" height="5.8" rx="0.95"/></svg></button></label>
+                  <label>Spreading factor <button type="button" class="info-icon" data-info="SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom, useful for long links."></button></label>
                   <input id="rd-sf" type="number" min="6" max="12" x-model.number="$store.s.forms.radio.sf">
                 </div>
                 <div>
@@ -1272,11 +1270,11 @@
               </div>
               <div class="row mb-2" >
                 <div>
-                  <label>Airtime cap (% short-term) <button type="button" class="info-icon" data-info="Instantaneous duty-cycle ceiling. <strong>Airtime caps are regulatory limits.</strong> Picking a region preset sets a sane default; 0 disables (only use where allowed)."><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="1.15"/><rect x="7.05" y="6.6" width="1.9" height="5.8" rx="0.95"/></svg></button></label>
+                  <label>Airtime cap (% short-term) <button type="button" class="info-icon" data-info="Instantaneous duty-cycle ceiling. <strong>Airtime caps are regulatory limits.</strong> Picking a region preset sets a sane default; 0 disables (only use where allowed)."></button></label>
                   <input id="rd-airtime" type="number" min="0" max="99" x-model.number="$store.s.forms.radio.airtime">
                 </div>
                 <div>
-                  <label>Airtime cap (% long-term) <button type="button" class="info-icon" data-info="Long-term averaged duty-cycle ceiling. This is the figure regulators care about. 0 disables (only use where allowed)."><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="1.15"/><rect x="7.05" y="6.6" width="1.9" height="5.8" rx="0.95"/></svg></button></label>
+                  <label>Airtime cap (% long-term) <button type="button" class="info-icon" data-info="Long-term averaged duty-cycle ceiling. This is the figure regulators care about. 0 disables (only use where allowed)."></button></label>
                   <input id="rd-airtime-lt" type="number" min="0" max="99" x-model.number="$store.s.forms.radio.airtimeLt">
                 </div>
               </div>
@@ -1287,7 +1285,7 @@
 
             <hr class="border-color-default mt-14 mb-14">
             <label>Interface mode
-              <button type="button" class="info-icon" data-info="How this interface handles announces and path discovery. <strong>Full</strong>: participates completely — relays announces in both directions and learns paths from them. <strong>Gateway</strong>: like Full, and also actively requests paths to destinations it hasn't heard of, so it can bridge traffic between separate network segments. <strong>Access Point</strong>: announces from other interfaces are not rebroadcast onto this link (so it won't flood peers that only connect through this node), but it still discovers paths for them. <strong>Point-to-Point</strong>: assumes exactly one peer on the link and skips the announce-relaying meant for multi-node segments. <strong>Roaming</strong>: for a node that moves between networks — announce relaying is held back so a moving node doesn't create routing loops. <strong>Boundary</strong>: marks an edge between two segments and won't relay announces learned across the boundary back over it. Mode changes apply after a reboot."><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="1.15"/><rect x="7.05" y="6.6" width="1.9" height="5.8" rx="0.95"/></svg></button>
+              <button type="button" class="info-icon" data-info="How this interface handles announces and path discovery. <strong>Full</strong>: participates completely — relays announces in both directions and learns paths from them. <strong>Gateway</strong>: like Full, and also actively requests paths to destinations it hasn't heard of, so it can bridge traffic between separate network segments. <strong>Access Point</strong>: announces from other interfaces are not rebroadcast onto this link (so it won't flood peers that only connect through this node), but it still discovers paths for them. <strong>Point-to-Point</strong>: assumes exactly one peer on the link and skips the announce-relaying meant for multi-node segments. <strong>Roaming</strong>: for a node that moves between networks — announce relaying is held back so a moving node doesn't create routing loops. <strong>Boundary</strong>: marks an edge between two segments and won't relay announces learned across the boundary back over it. Mode changes apply after a reboot."></button>
             </label>
             <select id="rd-lora-mode" x-model="$store.s.forms.loraCfg.mode">
               <option value="full">Full</option>
@@ -1300,7 +1298,7 @@
             <div class="muted mt-1" x-show="$store.s.forms.loraCfg.modeDefault">No mode is stored yet, so the device is using the Gateway default.</div>
 
             <label class="mt-14">IFAC network name
-              <button type="button" class="info-icon" data-info="Interface Access Code (IFAC). When set, this interface only talks to peers that share the same network name and key, and its traffic is hidden from nodes that don't. Leave the name empty to keep the interface open. Changes apply after a reboot."><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="1.15"/><rect x="7.05" y="6.6" width="1.9" height="5.8" rx="0.95"/></svg></button>
+              <button type="button" class="info-icon" data-info="Interface Access Code (IFAC). When set, this interface only talks to peers that share the same network name and key, and its traffic is hidden from nodes that don't. Leave the name empty to keep the interface open. Changes apply after a reboot."></button>
             </label>
             <input id="rd-ifac-netname" type="text" placeholder="(open interface)" maxlength="32"
                    x-model="$store.s.forms.loraCfg.ifacNetname">
@@ -1338,7 +1336,7 @@
 
         <details class="cn-section" data-cn="wifi">
           <summary>WiFi
-            <button type="button" class="info-icon" @click.stop data-info="Networks this device has credentials for. Forgetting one wipes the SSID + password from the device and reboots into softAP for reconfiguration."><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="1.15"/><rect x="7.05" y="6.6" width="1.9" height="5.8" rx="0.95"/></svg></button>
+            <button type="button" class="info-icon" @click.stop data-info="Networks this device has credentials for. Forgetting one wipes the SSID + password from the device and reboots into softAP for reconfiguration."></button>
             <span class="cn-dot" id="cn-dot-wifi"
                   :class="$store.s.ui.cnDotWifi"
                   x-show="!!$store.s.ui.cnDotWifi"></span></summary>
@@ -1367,7 +1365,7 @@
 
         <details class="cn-section" data-cn="tcp" x-show="$store.s.ui.showTcpSection" x-cloak>
           <summary>TCP clients
-            <button type="button" class="info-icon" @click.stop data-info="Outbound TCP links to other Reticulum nodes. Useful for joining a remote network over the internet, or for a wired LAN bridge. Each entry connects on boot and reconnects automatically if dropped."><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="8" cy="4.5" r="1.15"/><rect x="7.05" y="6.6" width="1.9" height="5.8" rx="0.95"/></svg></button>
+            <button type="button" class="info-icon" @click.stop data-info="Outbound TCP links to other Reticulum nodes. Useful for joining a remote network over the internet, or for a wired LAN bridge. Each entry connects on boot and reconnects automatically if dropped."></button>
             <span class="cn-dot" id="cn-dot-tcp"
                   :class="$store.s.ui.cnDotTcp"
                   x-show="!!$store.s.ui.cnDotTcp"></span></summary>
@@ -1417,8 +1415,8 @@
                      x-model="$store.s.forms.diag.kissOut"
                      @change="onChangeKissOut()">
               <span>KISS-frame radio traffic on USB serial</span>
+              <button type="button" class="info-icon" @click.stop data-info="Turn OFF if you're reading the USB serial with <code>pio device monitor</code> or similar — KISS-framed binary bytes are otherwise interleaved with the diagnostic text log. Leave ON if you're using the device as a KISS host for tools like rnsd or MeshChat. Persists across reboots."></button>
             </label>
-            <div class="muted text-xs mt-6" >Turn OFF if you're reading the USB serial with <code>pio device monitor</code> or similar — KISS-framed binary bytes are otherwise interleaved with the diagnostic text log. Leave ON if you're using the device as a KISS host for tools like rnsd or MeshChat. Persists across reboots.</div>
           </div>
         </details>
 
@@ -1428,8 +1426,7 @@
       <div class="tab-panel" data-panel="discovery" :class="{ active: $store.s.settingsTab === 'discovery' }">
         <div class="warn mx-0 mt-0">⚠ Discovery announces this device's interfaces to other nodes that can hear it. Off by default for privacy — only turn it on if you want to be findable.</div>
         <div class="card">
-          <strong>Network identity</strong>
-          <div class="muted mt-1 mb-6" >A device-wide long-lived keypair signs every discovery announce so other nodes can recognise this device across boots.</div>
+          <strong>Network identity <button type="button" class="info-icon" data-info="A device-wide long-lived keypair signs every discovery announce so other nodes can recognise this device across boots."></button></strong>
           <div class="list-row">
             <div>Identity hash</div>
             <div id="disc-identity-hash" class="muted font-mono-inline text-xs"
@@ -1442,22 +1439,20 @@
             <input class="input-inline" type="checkbox" id="disc-enabled"
                    x-model="$store.s.forms.discovery.enabled"
                    @change="onChangeDiscEnabled()">
-            <span>Announce discoverable interfaces</span>
+            <span>Announce discoverable interfaces <button type="button" class="info-icon" @click.stop data-info="When on, each interface marked as discoverable on the Connectivity tab will emit a periodic announce. Enabling requires the identity code on the device's display."></button></span>
           </label>
-          <div class="muted mt-1" >When on, each interface marked as discoverable on the Connectivity tab will emit a periodic announce. Enabling requires the identity code on the device's display.</div>
         </div>
         <div class="card mt-3" >
-          <strong>Advertised name</strong>
+          <strong>Advertised name <button type="button" class="info-icon" data-info="Carried inside every discovery announce. Defaults to the interface name (e.g. <code>LoRaInterface</code>); set a friendlier label here if you want this device to show up as something specific on rmap.world / similar listeners."></button></strong>
           <label class="mt-2">Public label shown to other Reticulum nodes</label>
           <input id="disc-advertised-name" type="text" placeholder="(uses interface name if empty)"
                  x-model="$store.s.forms.discovery.advertisedName"
                  @blur="onBlurDiscName()"
                  @keydown.enter.prevent="$event.target.blur()">
-          <div class="muted mt-1" >Carried inside every discovery announce. Defaults to the interface name (e.g. <code>LoRaInterface</code>); set a friendlier label here if you want this device to show up as something specific on rmap.world / similar listeners.</div>
           <div class="muted mt-1 text-xs" id="disc-name-status" x-text="$store.s.ui.discNameStatus"></div>
         </div>
         <div class="card mt-3" >
-          <strong>Cadence</strong>
+          <strong>Cadence <button type="button" class="info-icon" data-info="How often each discoverable interface re-announces. Lower values mean other nodes find this device sooner but use more airtime."></button></strong>
           <label class="mt-2">Default interval</label>
           <select id="disc-interval"
                   x-model="$store.s.forms.discovery.interval"
@@ -1469,10 +1464,9 @@
             <option value="720">12 hours</option>
             <option value="1440">24 hours</option>
           </select>
-          <div class="muted mt-1" >How often each discoverable interface re-announces. Lower values mean other nodes find this device sooner but use more airtime.</div>
         </div>
         <div class="card mt-3" >
-          <strong>Stamp cost</strong>
+          <strong>Stamp cost <button type="button" class="info-icon" data-info="Strict listeners (rmap.world uses required_value=14 by default) will drop announces below their threshold. Set to 0 to disable PoW entirely."></button></strong>
           <label class="mt-2">PoW difficulty (leading zero bits)</label>
           <select id="disc-stamp-cost"
                   x-model="$store.s.forms.discovery.stampCost"
@@ -1483,7 +1477,6 @@
             <option value="14">14 bits (upstream default)</option>
             <option value="16">16 bits</option>
           </select>
-          <div class="muted mt-6" >Strict listeners (rmap.world uses required_value=14 by default) will drop announces below their threshold. Set to 0 to disable PoW entirely.</div>
         </div>
         <div class="muted mt-2 text-xs" id="disc-status" x-text="$store.s.ui.discStatus"></div>
       </div>
@@ -1501,8 +1494,7 @@
           </div>
         </div>
         <div class="card mt-3" >
-          <strong>Time sources (drag to reorder)</strong>
-          <div class="muted text-xs mt-1 mb-2" >Top of the list = highest priority. Disable a source to skip it entirely. Some sources expose an interval — how often their driver polls.</div>
+          <strong>Time sources (drag to reorder) <button type="button" class="info-icon" data-info="Top of the list = highest priority. Disable a source to skip it entirely. Some sources expose an interval — how often their driver polls."></button></strong>
           <div id="tm-sources" x-data>
             <template x-for="row in $store.s.timeSources" :key="row.key">
               <div class="tm-source-row mb-6 border-elev2 rounded-6 bg-elev user-select-none overflow-hidden" :data-source="row.key" draggable="true"
@@ -1553,16 +1545,14 @@
             <input class="input-inline" type="checkbox" id="pref-enter-sends"
                    x-model="$store.s.forms.prefs.enterSends"
                    @change="savePrefs()">
-            <span>Press <kbd>Enter</kbd> to send (Shift+Enter for newline)</span>
+            <span>Press <kbd>Enter</kbd> to send (Shift+Enter for newline) <button type="button" class="info-icon" @click.stop data-info="When off: Enter inserts a newline, Shift+Enter sends."></button></span>
           </label>
-          <div class="muted mt-1" >When off: Enter inserts a newline, Shift+Enter sends.</div>
           <label class="toggle-row mt-14">
             <input class="input-inline" type="checkbox" id="pref-auto-download-attachments"
                    x-model="$store.s.forms.prefs.autoDownloadAttachments"
                    @change="savePrefs()">
-            <span>Automatically download attachments</span>
+            <span>Automatically download attachments <button type="button" class="info-icon" @click.stop data-info="When off: inbound images and audio show as click-to-load chips."></button></span>
           </label>
-          <div class="muted mt-1" >When off: inbound images and audio show as click-to-load chips.</div>
         </div>
         <div class="card mt-14" >
           <strong>Transport</strong>
@@ -1573,15 +1563,7 @@
           <button class="secondary" disabled title="Only one transport is wired up so far">Switch transport…</button>
         </div>
         <div class="card mt-14" >
-          <strong>Default retention</strong>
-          <div class="muted mt-1 mb-10" >
-            Applied to every chat that's set to "Use identity default"
-            (the inherit mode). Changing this here cascades to all
-            inheriting chats at the next prune. Chats with an explicit
-            per-chat override stay on their own setting until you
-            switch them back to "Use identity default" from the
-            conversation's retention icon.
-          </div>
+          <strong>Default retention <button type="button" class="info-icon" data-info="Applied to every chat that's set to &quot;Use identity default&quot; (the inherit mode). Changing this here cascades to all inheriting chats at the next prune. Chats with an explicit per-chat override stay on their own setting until you switch them back to &quot;Use identity default&quot; from the conversation's retention icon."></button></strong>
           <label>Pick one</label>
           <select id="inbox-default-retention"
                   x-model="$store.s.forms.prefs.inboxDefaultRetention"
@@ -1597,8 +1579,7 @@
           <div class="muted mt-6 text-xs" id="inbox-config-status" x-text="$store.s.ui.inboxConfigStatus"></div>
         </div>
         <div class="card mt-14" >
-          <strong>Transfer limits</strong>
-          <div class="muted mt-1 mb-10" >Maximum outbound message size you can send, and maximum inbound size accepted from peers. The slider's upper bound tracks your device's available storage live — values above your current free space are disabled. Pull / re-insert the SD card to see the range change.</div>
+          <strong>Transfer limits <button type="button" class="info-icon" data-info="Maximum outbound message size you can send, and maximum inbound size accepted from peers. The slider's upper bound tracks your device's available storage live — values above your current free space are disabled. Pull / re-insert the SD card to see the range change."></button></strong>
           <label>Max send</label>
           <input class="mb-1" type="range" id="storage-max-send" min="65536" step="65536"
                  :max="$store.s.ui.storageMaxSendMax"

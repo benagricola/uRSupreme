@@ -191,29 +191,52 @@ namespace LXMF {
     // a delivery proof flips it to DELIVERED, a timeout (or Transport
     // receipt-table cull) to FAILED. record_hash is the outbox key (==
     // the packet hash) so the SPA bubble can be transitioned.
+    //
+    // The retry state machine (tick_opportunistic_receipts) ports upstream
+    // LXMRouter.process_outbound's OPPORTUNISTIC branch (LXMRouter.py:
+    // 2566-2592): up to MAX_DELIVERY_ATTEMPTS re-sends, a path re-request
+    // after MAX_PATHLESS_TRIES pathless tries, a drop_path/rediscover at
+    // try MAX_PATHLESS_TRIES+1, and FAILED once the budget is spent. To
+    // re-send we re-recall the recipient identity and rebuild the
+    // Destination+Packet from the stored `wire` bytes, so encryption and
+    // path resolution re-run each attempt (mirrors lxmessage.send() ->
+    // __as_packet re-creating the packet). The wire is the same
+    // src_hash || sig || payload blob the first send built — small (<=
+    // ~LXMF_OPPORTUNISTIC_MAX + sig/hash overhead), so it stays in the
+    // PSRAM-backed RNS::Bytes, never spilled to disk.
     struct PendingOppSend {
       RNS::PacketReceipt receipt{RNS::Type::NONE};
       RNS::Bytes         record_hash;
-      RNS::Bytes         dest_hash;     // peer destination, for retain-on-delivery
+      RNS::Bytes         dest_hash;     // peer destination, for retain-on-delivery + re-resolve
+      RNS::Bytes         wire;          // src_hash || sig || payload, for re-send
       LXMFMinimal*       owner = nullptr;
       uint64_t           started_ms = 0;
+      // Retry budget, mirroring upstream lxmessage.delivery_attempts /
+      // next_delivery_attempt. delivery_attempts starts at 1 on the first
+      // send; next_attempt_at_ms is the millis() deadline gating the next
+      // state-machine step so a fast loop can't over-send.
+      uint8_t            delivery_attempts = 0;
+      uint64_t           next_attempt_at_ms = 0;
+      OutboxStatus       status = OutboxStatus::Sent;
     };
-    // Defensive backstop: a receipt should resolve (proof or timeout)
-    // within first_hop_timeout + per-hop allowance — tens of seconds even
-    // on a multi-hop LoRa path. If one is still unresolved after this, it
-    // was lost from Transport's receipt table without a terminal status;
-    // fail it so the bubble doesn't hang queued forever.
-    static constexpr uint64_t OPP_RECEIPT_MAX_MS = 5ULL * 60ULL * 1000ULL; // 5 min
-
-    // Outbox-retry tuning. Both static for now — wire to per-identity
-    // settings later. Backoff is 30s × attempt index, so:
-    // A failed Link/Resource send is retried at a flat interval, matching
+    // Outbox-retry tuning. Static for now — wire to per-identity
+    // settings later. A failed send is retried at a flat interval, matching
     // upstream LXMF (MAX_DELIVERY_ATTEMPTS=5, DELIVERY_RETRY_WAIT=10s). After
-    // DEFAULT_OUTBOX_RETRIES exhausts the entry is dropped and the user must
-    // manually retry from the SPA. (Was 3 attempts at an escalating 30/60/90s
-    // backoff — slower and fewer than upstream.)
+    // the budget exhausts the entry stays Failed for manual re-send from the
+    // SPA. (Was 3 attempts at an escalating 30/60/90s backoff — slower and
+    // fewer than upstream.)
     static constexpr uint8_t  DEFAULT_OUTBOX_RETRIES   = 5;
     static constexpr uint32_t DELIVERY_RETRY_WAIT_MS   = 10 * 1000;
+
+    // Opportunistic retry constants, ports of upstream LXMRouter
+    // (LXMRouter.py:30-34). MAX_DELIVERY_ATTEMPTS bounds the re-send count;
+    // MAX_PATHLESS_TRIES is how many attempts pass before a pathless send
+    // triggers a path request; PATH_REQUEST_WAIT_MS is the longer wait after
+    // requesting/rediscovering a path (vs DELIVERY_RETRY_WAIT_MS between plain
+    // re-sends). See tick_opportunistic_receipts for the cadence.
+    static constexpr uint8_t  MAX_DELIVERY_ATTEMPTS    = 5;
+    static constexpr uint8_t  MAX_PATHLESS_TRIES       = 1;
+    static constexpr uint32_t PATH_REQUEST_WAIT_MS     = 7 * 1000;
 
     // --- Incoming dedup (upstream LXMRouter.locally_delivered_transient_ids) ---
     // A message the sender's LXMF layer retries after a lost return-proof
@@ -834,17 +857,21 @@ namespace LXMF {
 
       // OPPORTUNISTIC: single packet to the SINGLE destination. Fast path
       // for short messages. send() returns a PacketReceipt; we hold it and
-      // poll its status (tick_opportunistic_receipts). This mirrors
-      // upstream LXMF (LXMessage.py:467-472): the message goes Sent on
-      // hand-off and is upgraded to Delivered only if the recipient's
-      // delivery proof arrives. Upstream sets NO timeout callback for
-      // opportunistic, so a missing proof does NOT mark the message
-      // failed — best-effort delivery over a lossy link (LoRa) routinely
-      // delivers the packet while the small return proof is lost, and
-      // showing "failed" for a message that actually arrived would be
-      // worse than the old always-"sent". The previous code here latched
-      // Sent the instant send() returned and never updated it; now Sent
-      // is the honest hand-off state and Delivered is a real confirmation.
+      // poll its status (tick_opportunistic_receipts). The message goes
+      // Sent on hand-off and is upgraded to Delivered only if the
+      // recipient's delivery proof arrives (LXMessage.py:467-472). On a
+      // missing proof we run the upstream retry state machine
+      // (LXMRouter.process_outbound's OPPORTUNISTIC branch, LXMRouter.py:
+      // 2566-2592): up to MAX_DELIVERY_ATTEMPTS re-sends, with a path
+      // re-request / drop+rediscover on the early attempts, and FAILED once
+      // the budget is spent. The retry lives in process_outbound, NOT in a
+      // receipt-timeout callback — upstream registers none for opportunistic,
+      // which is why earlier notes here read "upstream never fails
+      // opportunistic". That conflated "no timeout callback" with "no
+      // retry": the re-send + fail logic is in process_outbound. We store
+      // the wire so each retry can rebuild the packet (re-encrypt +
+      // re-resolve path) and seed delivery_attempts=1 / the first retry
+      // deadline here so the very first retry is scheduled correctly.
       if (content_size <= LXMF_OPPORTUNISTIC_MAX) {
         RNS::Packet packet(remote_dest, wire);
         RNS::PacketReceipt receipt = packet.send();
@@ -852,11 +879,15 @@ namespace LXMF {
         if (receipt) {
           out_rec.status = OutboxStatus::Sent;
           PendingOppSend op;
-          op.receipt     = receipt;
-          op.record_hash = out_rec.packet_hash;
-          op.dest_hash   = dest_hash;
-          op.owner       = this;
-          op.started_ms  = (uint64_t)millis();
+          op.receipt            = receipt;
+          op.record_hash        = out_rec.packet_hash;
+          op.dest_hash          = dest_hash;
+          op.wire               = wire;   // small; PSRAM-backed, never spilled to disk
+          op.owner              = this;
+          op.started_ms         = (uint64_t)millis();
+          op.delivery_attempts  = 1;      // this send counts as attempt 1
+          op.next_attempt_at_ms = op.started_ms + DELIVERY_RETRY_WAIT_MS;
+          op.status             = OutboxStatus::Sent;
           pending_opp_sends()[out_rec.packet_hash] = std::move(op);
           NOTICEF("LXMF: sent OPPORTUNISTIC to %s (%u bytes), awaiting proof",
                   dest_hash.toHex().c_str(), (unsigned)total);
@@ -1422,6 +1453,30 @@ namespace LXMF {
       }
     }
 
+    // Announce-triggered re-fire for opportunistic sends. Ports the
+    // OPPORTUNISTIC arm of LXMFDeliveryAnnounceHandler.received_announce
+    // (Handlers.py:23-32): when the recipient announces, pull every pending
+    // opportunistic send to that destination forward so the next tick
+    // re-sends immediately (upstream sets next_delivery_attempt=now and
+    // kicks process_outbound). Only entries still awaiting a proof are
+    // accelerated; a Failed entry waits for an explicit manual retry, and a
+    // delivered one is already erased. This is what lets SX->LR recover the
+    // instant LR's announce arrives. Main loop only.
+    static void accelerate_opp_for(const RNS::Bytes& dest_hash) {
+      auto& m = pending_opp_sends();
+      const uint64_t now = (uint64_t)millis();
+      for (auto& kv : m) {
+        PendingOppSend& op = kv.second;
+        if (op.dest_hash == dest_hash &&
+            op.status != OutboxStatus::Failed &&
+            op.next_attempt_at_ms > now) {
+          op.next_attempt_at_ms = now;
+          NOTICEF("LXMF: announce from %s — accelerating opportunistic re-send",
+                  dest_hash.toHex().c_str());
+        }
+      }
+    }
+
     // Manually re-queue a Failed outbox entry. Called by the WebUI
     // /api/identities/{id}/outbox/{seq}/retry handler after it looks
     // up the MessageRecord's packet_hash (== PendingLinkSend.record_hash).
@@ -1445,6 +1500,27 @@ namespace LXMF {
         NOTICEF("LXMF: manual retry requested for outbox record %s (peer %s)",
                 ps.record_hash.toHex().c_str(),
                 ps.dest_hash.toHex().c_str());
+        return true;
+      }
+      // Opportunistic entries live in a separate map keyed by the same
+      // record (packet) hash. A Failed opportunistic send kept its wire, so
+      // re-arm it: reset the attempt counter and fire the state machine on
+      // the next tick (which will re-send / re-resolve the path).
+      auto& opp = pending_opp_sends();
+      auto oit = opp.find(record_hash);
+      if (oit != opp.end()) {
+        PendingOppSend& op = oit->second;
+        if (op.status != OutboxStatus::Failed) return false;
+        op.delivery_attempts  = 1;     // fresh budget, as on the first send
+        op.status             = OutboxStatus::Sent;
+        op.next_attempt_at_ms = (uint64_t)millis();  // fire on next tick
+        if (op.owner && op.owner->_on_outbox_status) {
+          // Surface the bubble back to Sent (out of Failed) immediately.
+          try { op.owner->_on_outbox_status(op.record_hash, OutboxStatus::Sent); } catch (...) {}
+        }
+        NOTICEF("LXMF: manual retry requested for opportunistic outbox record %s (peer %s)",
+                op.record_hash.toHex().c_str(),
+                op.dest_hash.toHex().c_str());
         return true;
       }
       return false;
@@ -1553,16 +1629,34 @@ namespace LXMF {
       }
     }
 
-    // Poll opportunistic (single-packet) sends for a delivery proof. The
-    // receipt is the same object Transport tracks, so it advances on its
-    // own: a delivery proof flips it to DELIVERED, the periodic receipt
-    // check flips it to FAILED on timeout (or CULLED when the table
-    // overflows). Only DELIVERED is surfaced (Sent -> Delivered); a
-    // timed-out/culled receipt is NOT marked failed — it just stops being
-    // polled and the message stays Sent, mirroring upstream LXMF, which
-    // registers no timeout callback for opportunistic sends (a lost return
-    // proof on a lossy link is not a delivery failure). Shared static map
-    // -> one call covers every identity; called from LXMFGateway::loop.
+    // Poll opportunistic (single-packet) sends and drive the upstream
+    // retry state machine. The receipt is the same object Transport
+    // tracks: a delivery proof flips it to DELIVERED on its own. We
+    // surface DELIVERED (Sent -> Delivered) and, on a missing proof, port
+    // the OPPORTUNISTIC branch of upstream LXMRouter.process_outbound
+    // (LXMRouter.py:2566-2592) instead of leaving the message Sent
+    // forever:
+    //   * delivery_attempts > MAX_DELIVERY_ATTEMPTS(5) -> Failed; keep the
+    //     entry (wire intact) so the SPA can manual-retry, like the link
+    //     path's _schedule_retry_or_fail. Stop auto-retrying.
+    //   * delivery_attempts >= MAX_PATHLESS_TRIES(1) && no path -> request
+    //     the path, wait PATH_REQUEST_WAIT (LXMRouter.py:2568-2573).
+    //   * delivery_attempts == MAX_PATHLESS_TRIES+1(2) && has path -> drop
+    //     the (stale) path via expire_path and re-request to rediscover,
+    //     wait PATH_REQUEST_WAIT (LXMRouter.py:2574-2583; upstream's
+    //     drop_path == this library's Transport::expire_path, which truly
+    //     removes the path-table entry).
+    //   * else -> re-send: re-recall the identity, rebuild the
+    //     Destination+Packet from the stored wire (re-encrypt +
+    //     re-resolve path), install the fresh receipt, wait
+    //     DELIVERY_RETRY_WAIT (LXMRouter.py:2584-2589).
+    // The whole machine is gated on now >= next_attempt_at_ms so this
+    // fast loop can't over-send (upstream is paced by process_outbound's
+    // 4s PROCESSING_INTERVAL; here the gate plays that role). A receipt
+    // that has FAILED/CULLED before the deadline is treated the same as a
+    // still-pending one — the deadline, not the receipt-table state, drives
+    // the next attempt. Shared static map -> one call covers every
+    // identity; called from LXMFGateway::loop.
     static void tick_opportunistic_receipts() {
       auto& m = pending_opp_sends();
       const uint64_t now = (uint64_t)millis();
@@ -1570,6 +1664,7 @@ namespace LXMF {
         PendingOppSend& op = it->second;
         const auto st = op.receipt ? op.receipt.status()
                                    : RNS::Type::PacketReceipt::FAILED;
+
         if (st == RNS::Type::PacketReceipt::DELIVERED) {
           // Proof returned: upgrade Sent -> Delivered.
           if (op.owner && op.owner->_on_outbox_status) {
@@ -1580,16 +1675,98 @@ namespace LXMF {
           // Mirrors upstream LXMRouter.process_outbound (LXMRouter.py:2516).
           RNS::Identity::retain_destination(op.dest_hash);
           it = m.erase(it);
-        } else if (st == RNS::Type::PacketReceipt::FAILED ||
-                   st == RNS::Type::PacketReceipt::CULLED ||
-                   (op.started_ms > 0 && (now - op.started_ms) > OPP_RECEIPT_MAX_MS)) {
-          // No proof within the receipt window (or receipt lost from
-          // tracking). Stop polling; leave the message Sent — opportunistic
-          // delivery is best-effort and unconfirmed, not failed.
-          it = m.erase(it);
-        } else {
-          ++it;
+          continue;
         }
+
+        // Already exhausted and left Failed for manual retry — don't keep
+        // re-running the machine. manual_retry() re-arms it if the user asks.
+        if (op.status == OutboxStatus::Failed) { ++it; continue; }
+
+        // Not yet due: wait for the receipt to deliver or the deadline to
+        // pass (mirrors upstream's next_delivery_attempt gate).
+        if (now < op.next_attempt_at_ms) { ++it; continue; }
+
+        if (op.delivery_attempts > MAX_DELIVERY_ATTEMPTS) {
+          // Budget spent. Mark Failed and keep the entry (wire intact) so
+          // the SPA's manual retry can re-arm it — matches the link path's
+          // _schedule_retry_or_fail (LXMRouter.py:2590-2592 fail_message).
+          op.status = OutboxStatus::Failed;
+          if (op.owner && op.owner->_on_outbox_status) {
+            try { op.owner->_on_outbox_status(op.record_hash, OutboxStatus::Failed); } catch (...) {}
+          }
+          WARNINGF("LXMF: OPPORTUNISTIC delivery to %s failed after %u attempts — manual retry available",
+                   op.dest_hash.toHex().c_str(), (unsigned)MAX_DELIVERY_ATTEMPTS);
+          ++it;
+          continue;
+        }
+
+        const bool path_known = RNS::Transport::has_path(op.dest_hash);
+
+        if (op.delivery_attempts >= MAX_PATHLESS_TRIES && !path_known) {
+          // Still no path after the pathless allowance — request one and
+          // wait the longer path-request window (LXMRouter.py:2568-2573).
+          op.delivery_attempts++;
+          RNS::Transport::request_path(op.dest_hash);
+          op.next_attempt_at_ms = now + PATH_REQUEST_WAIT_MS;
+          NOTICEF("LXMF: OPPORTUNISTIC to %s — requesting path after %u pathless tries",
+                  op.dest_hash.toHex().c_str(), (unsigned)(op.delivery_attempts - 1));
+        }
+        else if (op.delivery_attempts == MAX_PATHLESS_TRIES + 1 && path_known) {
+          // Have a path but still no proof — assume it's stale; drop it and
+          // re-request to rediscover (LXMRouter.py:2574-2583). expire_path
+          // is this library's drop_path equivalent (Transport.cpp:3422).
+          op.delivery_attempts++;
+          RNS::Transport::expire_path(op.dest_hash);
+          RNS::Transport::request_path(op.dest_hash);
+          op.next_attempt_at_ms = now + PATH_REQUEST_WAIT_MS;
+          NOTICEF("LXMF: OPPORTUNISTIC to %s still unproven after %u attempts — rediscovering path",
+                  op.dest_hash.toHex().c_str(), (unsigned)(op.delivery_attempts - 1));
+        }
+        else {
+          // Plain re-send: rebuild the packet from the stored wire so
+          // encryption + path resolution re-run, then install the fresh
+          // receipt (LXMRouter.py:2584-2589 -> lxmessage.send()).
+          op.delivery_attempts++;
+          op.next_attempt_at_ms = now + DELIVERY_RETRY_WAIT_MS;
+          RNS::Identity remote_identity = RNS::Identity::recall(op.dest_hash);
+          if (!remote_identity) {
+            // Recipient identity not cached (evicted, or peer rebooted and
+            // hasn't re-announced). Nudge the path so the announce comes
+            // back; the receipt stays unresolved and the next attempt
+            // retries. Don't drop the entry — the wire must survive.
+            RNS::Transport::request_path(op.dest_hash);
+            WARNINGF("LXMF: OPPORTUNISTIC retry to %s — identity not cached; requested path",
+                     op.dest_hash.toHex().c_str());
+            ++it;
+            continue;
+          }
+          try {
+            RNS::Destination remote_dest(
+              remote_identity,
+              RNS::Type::Destination::OUT,
+              RNS::Type::Destination::SINGLE,
+              "lxmf", "delivery"
+            );
+            RNS::Packet packet(remote_dest, op.wire);
+            RNS::PacketReceipt receipt = packet.send();
+            if (receipt) {
+              op.receipt    = receipt;   // poll the new receipt next ticks
+              op.started_ms = now;
+              NOTICEF("LXMF: OPPORTUNISTIC delivery attempt %u to %s",
+                      (unsigned)op.delivery_attempts, op.dest_hash.toHex().c_str());
+            } else {
+              // No interface accepted it this time; the deadline above will
+              // bring us back for another attempt within the budget.
+              WARNINGF("LXMF: OPPORTUNISTIC re-send to %s — no interface accepted the packet",
+                       op.dest_hash.toHex().c_str());
+            }
+          }
+          catch (const std::exception& e) {
+            ERRORF("LXMF: OPPORTUNISTIC re-send to %s threw: %s",
+                   op.dest_hash.toHex().c_str(), e.what());
+          }
+        }
+        ++it;
       }
     }
 

@@ -581,6 +581,10 @@ namespace LXMF {
       for (uint8_t i = 0; i < n; ++i) {
         RNS::Bytes dest(local[i], 16);
         LXMFMinimal::accelerate_pending_for(dest);
+        // Same announce-driven re-fire for opportunistic sends — ports the
+        // OPPORTUNISTIC arm of Handlers.py received_announce so an SX->LR
+        // send recovers the instant the recipient announces.
+        LXMFMinimal::accelerate_opp_for(dest);
         for (auto& e : pending_identity_sends()) {
           if (e.dest == dest && e.next_at_ms > now) e.next_at_ms = now;
         }

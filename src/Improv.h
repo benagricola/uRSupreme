@@ -114,14 +114,17 @@ namespace _detail {
   // parser would then see a corrupted frame. Writing once locks once.
   inline void write_frame(uint8_t type, const uint8_t* payload, uint8_t len) {
     uint8_t buf[6 + 1 + 1 + 1 + 255 + 1];
-    uint8_t pos = 0;
+    // pos must be wider than uint8_t: a full frame is 9 header bytes +
+    // up to 255 payload + checksum = 265, so an 8-bit offset wraps at
+    // payloads >= 247 and emits a truncated, corrupt frame.
+    size_t pos = 0;
     memcpy(buf + pos, MAGIC_BYTES, 6); pos += 6;
     buf[pos++] = PROTO_VERSION;
     buf[pos++] = type;
     buf[pos++] = len;
     if (len > 0 && payload != nullptr) { memcpy(buf + pos, payload, len); pos += len; }
     uint8_t cs = 0;
-    for (uint8_t i = 0; i < pos; i++) cs += buf[i];
+    for (size_t i = 0; i < pos; i++) cs += buf[i];
     buf[pos++] = cs;
     Serial.write(buf, pos);
   }
@@ -140,20 +143,26 @@ namespace _detail {
   template <size_t N>
   inline void send_rpc_result(uint8_t cmd, const char* (&strings)[N]) {
     uint8_t buf[256];
-    uint8_t pos = 0;
+    size_t pos = 0;
     buf[pos++] = cmd;
-    const uint8_t inner_len_pos = pos++;
-    const uint8_t inner_start = pos;
+    const size_t inner_len_pos = pos++;
+    const size_t inner_start = pos;
     for (size_t i = 0; i < N; i++) {
       const char* s = strings[i];
       if (!s) continue;
-      uint8_t slen = (uint8_t)strnlen(s, 250 - pos);
-      buf[pos++] = slen;
+      // The frame's payload length byte caps the whole RPC result at
+      // 255 bytes: each lp_str needs 1 length byte + its data, so stop
+      // once nothing more fits. The old `250 - pos` arithmetic went
+      // negative (then huge, as size_t) past 250 and let memcpy run off
+      // the end of buf.
+      if (pos >= 254) break;
+      size_t slen = strnlen(s, 254 - pos);
+      buf[pos++] = (uint8_t)slen;
       memcpy(buf + pos, s, slen);
       pos += slen;
     }
     buf[inner_len_pos] = (uint8_t)(pos - inner_start);
-    write_frame(TYPE_RPC_RESULT, buf, pos);
+    write_frame(TYPE_RPC_RESULT, buf, (uint8_t)pos);
   }
 
   inline void send_rpc_result_empty(uint8_t cmd) {

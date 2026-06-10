@@ -1204,6 +1204,19 @@
             <span>Keep a copy of attachments I send</span>
             <button type="button" class="info-icon" @click.stop data-info="Lets the chat history show an inline preview of images and audio you've sent. Off saves storage at the cost of preview."></button>
           </label>
+          <label class="mt-3">Message stamps <button type="button" class="info-icon" data-info="Deters spam by requiring anyone messaging you to first spend some computing effort on a stamp for the message. 0 turns the requirement off; higher values make mass-messaging you more expensive. Senders' apps learn the requirement automatically and do the work before sending — a higher value just means they spend longer on it."></button></label>
+          <input type="number" id="id-stamp-cost" min="0" max="254" step="1"
+                 inputmode="numeric" placeholder="0 = no stamp required"
+                 x-model="$store.s.forms.identity.stampCost"
+                 @change="onChangeStampCost()"
+                 @keydown.enter.prevent="$event.target.blur()">
+          <label class="toggle-row mt-4">
+            <input class="input-inline" type="checkbox" id="id-enforce-stamps"
+                   x-model="$store.s.forms.identity.enforceStamps"
+                   @change="onChangeEnforceStamps()">
+            <span>Discard messages without a valid stamp</span>
+            <button type="button" class="info-icon" @click.stop data-info="When on, messages that arrive without the required stamp are discarded before reaching your inbox. When off, they're still delivered — just marked in the conversation."></button>
+          </label>
         </div>
       </div>
 
@@ -1938,7 +1951,7 @@ let state = {
     compose:         { text: '' },
     idCode:          { input: '' },          // physical-presence modal
     contactRename:   { addr: '', name: '' },
-    identity:        { displayName: '', announceInterval: '', persistOutbound: false },
+    identity:        { displayName: '', announceInterval: '', persistOutbound: false, stampCost: '0', enforceStamps: false },
     wifiAdd:         { ssid: '', psk: '', code: '' },
     tcpAdd:          { name: '', host: '', port: 4242 },
     radio:           { discoverable: false, preset: '__empty',
@@ -2892,12 +2905,24 @@ function bubbleClass(m) {
 }
 
 // Metadata footer of a bubble — wall-clock time, outbound status,
-// optional bad-signature warning. Empty string when nothing to show
-// (the template renders that as no footer).
+// optional stamp verdict, optional bad-signature warning. Empty string
+// when nothing to show (the template renders that as no footer).
 function msgMeta(m) {
   const parts = [];
   if (m.ts) parts.push(new Date(m.ts * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }));
-  if (!m.in && m.status) parts.push(m.status === 'finding_route' ? 'finding route' : m.status);
+  if (!m.in && m.status) {
+    parts.push(m.status === 'generating_stamp' ? 'generating stamp…'
+             : m.status === 'finding_route'    ? 'finding route'
+             : m.status);
+  }
+  // Stamp verdict — present only when a stamp policy applied to this
+  // message (the device omits the field otherwise). stamp_value is the
+  // effort the sender attached; it only exists for a valid stamp.
+  if (m.stamp_ok === true) {
+    parts.push('stamp ✓' + (typeof m.stamp_value === 'number' ? ' ' + m.stamp_value : ''));
+  } else if (m.stamp_ok === false && m.in) {
+    parts.push('⚠ no valid stamp');
+  }
   if (m.in && m.sig_ok === false) parts.push('⚠ bad sig');
   return parts.join(' · ');
 }
@@ -3148,6 +3173,12 @@ function upsertMessage(m) {
     // outbox_status lifecycle pill can match this bubble by hash.
     if (m.packet_hash && !existing.packet_hash) {
       existing.packet_hash = m.packet_hash;
+    }
+    // Adopt a stamp verdict the existing record lacked — e.g. a stamped
+    // send whose authoritative outbox record lands after dispatch.
+    if (typeof m.stamp_ok === 'boolean' && typeof existing.stamp_ok !== 'boolean') {
+      existing.stamp_ok = m.stamp_ok;
+      if (typeof m.stamp_value === 'number') existing.stamp_value = m.stamp_value;
     }
     // Adopt the incoming attachments when they're more complete than what
     // the bubble already carries: either more of them, or the authoritative
@@ -5330,6 +5361,9 @@ function dispatchEvent(ev) {
       received_ms: m.received_ms || 0,
       title: m.title || '', body: m.body || '',
       in: true, sig_ok: !!m.sig_ok, status: 'delivered',
+      // Stamp verdict rides along only when a stamp policy applied.
+      ...(typeof m.stamp_ok === 'boolean' ? { stamp_ok: m.stamp_ok } : {}),
+      ...(typeof m.stamp_value === 'number' ? { stamp_value: m.stamp_value } : {}),
       attachments: m.attachments || [],
     });
     renderConversations();
@@ -5352,6 +5386,8 @@ function dispatchEvent(ev) {
       title: m.title || '', body: m.body || '',
       in: false, sig_ok: true, status: m.status || 'sent',
       packet_hash: m.pkt || '',
+      ...(typeof m.stamp_ok === 'boolean' ? { stamp_ok: m.stamp_ok } : {}),
+      ...(typeof m.stamp_value === 'number' ? { stamp_value: m.stamp_value } : {}),
       attachments: m.attachments || [],
     });
     renderConversations();
@@ -5387,6 +5423,13 @@ function dispatchEvent(ev) {
         if (m.in) continue;
         if ((link && m.packet_hash === link) || (seq !== undefined && m.seq === seq)) {
           m.status = ev.status;
+          // A seq-keyed frame can also carry the packet hash the send
+          // acquired at dispatch (a stamped send spends its generation
+          // phase hashless) — adopt it so the later hash-keyed frames
+          // (sent → delivered) match this bubble.
+          if (seq !== undefined && m.seq === seq && link && !m.packet_hash) {
+            m.packet_hash = link;
+          }
           touched = true;
         }
       }
@@ -6469,6 +6512,8 @@ async function populateIdentityTab() {
         : String(ANNOUNCE_INTERVALS.reduce((a, b) =>
             Math.abs(b.ms - ms) < Math.abs(a.ms - ms) ? b : a).ms),
       persistOutbound: me.persist_outbound_attachments !== false,
+      stampCost: String(me.stamp_cost ?? 0),
+      enforceStamps: !!me.enforce_stamps,
     });
     // Remember the server-side last-saved name so onBlurIdName can no-op
     // if the user blurred without actually editing. Stored on the form
@@ -6959,6 +7004,47 @@ async function onChangePersistOutbound() {
     await state.transport.setIdentitySettings(state.identityId, { persist_outbound_attachments: on });
     if (state.self) state.self.persist_outbound_attachments = on;
   } catch (err) {
+    toast('Could not update setting: ' + (err.message || err), 'error');
+  }
+}
+
+// Settings → Identity → Message stamps. The cost is validated here so a
+// typo gets a toast + restore instead of a server round-trip; the new
+// requirement reaches peers on the next announce.
+async function onChangeStampCost() {
+  const raw  = String(state.forms.identity.stampCost ?? '').trim();
+  const cost = Number(raw);
+  const last = String(state.self && state.self.stamp_cost != null ? state.self.stamp_cost : 0);
+  if (raw === '') {
+    // Cleared field is ambiguous — restore rather than silently saving
+    // "off" (0 spelled out is the explicit way to disable).
+    state.forms.identity.stampCost = last;
+    return;
+  }
+  if (!Number.isInteger(cost) || cost < 0 || cost > 254) {
+    state.forms.identity.stampCost = last;
+    toast('Stamp requirement must be a whole number from 0 (off) to 254', 'error');
+    return;
+  }
+  try {
+    await state.transport.setIdentitySettings(state.identityId, { stamp_cost: cost });
+    if (state.self) state.self.stamp_cost = cost;
+    state.forms.identity.stampCost = String(cost);
+    toast(cost === 0 ? 'Message stamps no longer required'
+                     : 'Stamp requirement updated — senders learn it from your next announce', 'success');
+  } catch (err) {
+    state.forms.identity.stampCost = last;
+    toast('Could not update setting: ' + (err.message || err), 'error');
+  }
+}
+
+async function onChangeEnforceStamps() {
+  const on = !!state.forms.identity.enforceStamps;
+  try {
+    await state.transport.setIdentitySettings(state.identityId, { enforce_stamps: on });
+    if (state.self) state.self.enforce_stamps = on;
+  } catch (err) {
+    state.forms.identity.enforceStamps = !on;
     toast('Could not update setting: ' + (err.message || err), 'error');
   }
 }

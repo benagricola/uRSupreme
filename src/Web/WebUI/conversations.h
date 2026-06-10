@@ -217,9 +217,13 @@
         if (!final && len < _current_upload_min_chunk()) _current_upload_min_chunk() = (uint32_t)len;
       }
       if (len > 0 && !Storage::OutboundStaging::append(staging_id, data, len)) {
-        // append() refuses any write that would push past the
-        // allocated size; treat as a hard fault.
-        err = "Chunk write failed (overrun or backing-store error).";
+        // append() failed (overrun, or the SD card stopped accepting bytes
+        // after retries). The device serial log drops characters under the
+        // upload's concurrent load, so carry the exact figures back in the
+        // response message — the SPA toast is the reliable channel here.
+        static String msg;
+        msg = String("Chunk write failed: ") + Storage::OutboundStaging::fail_detail();
+        err = msg.c_str();
         Storage::OutboundStaging::release(staging_id);
         staging_id = 0;
         return;

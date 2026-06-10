@@ -57,6 +57,13 @@ inline constexpr size_t   FLASH_CAP_BYTES   = 2 * 1024 * 1024;
 // upload and then disconnect; reclaim within a minute.
 inline constexpr uint32_t STAGING_TIMEOUT_MS = 60000;
 
+// SD short-write retry tuning. A card can return a short write while its
+// internal buffer drains during a long sequential transfer; we flush,
+// pause, and retry the remainder. Give up only after this many
+// consecutive no-progress attempts (a genuinely failing card).
+inline constexpr int      SD_WRITE_MAX_STALLS    = 16;
+inline constexpr uint32_t SD_WRITE_STALL_DELAY_MS = 3;
+
 enum class Backend : uint8_t { Psram, Sd, Flash };
 
 struct Buffer {
@@ -279,14 +286,19 @@ inline uint32_t allocate(size_t total_bytes) {
 // The overrun check uses subtraction (not addition) so we can't get
 // fooled by a wrap-around on attacker-supplied `len` — the bound check
 // stays correct for any size_t input.
+// Human-readable detail of the most recent append() failure, surfaced to
+// the SPA in the upload error response (the device serial log is garbled
+// on this hardware, so the toast is the reliable diagnostic channel).
+inline char* fail_detail() { static char buf[192] = {0}; return buf; }
+
 inline bool append(uint32_t id, const uint8_t* data, size_t len) {
   Buffer* b = _detail::find(id);
   if (!b) return false;
   if (b->written > b->total_bytes) return false;                 // invariant
   if (len > b->total_bytes - b->written) {                       // overrun
-    ERRORF("OutboundStaging: overrun id=%u written=%u total=%u len=%u",
-           (unsigned)id, (unsigned)b->written, (unsigned)b->total_bytes,
-           (unsigned)len);
+    snprintf(fail_detail(), 192, "overrun off=%u total=%u len=%u",
+             (unsigned)b->written, (unsigned)b->total_bytes, (unsigned)len);
+    ERRORF("OutboundStaging: %s", fail_detail());
     return false;
   }
   if (b->backend == Backend::Psram) {
@@ -295,15 +307,34 @@ inline bool append(uint32_t id, const uint8_t* data, size_t len) {
   } else if (b->backend == Backend::Sd) {
     if (!b->sd_file) { Storage::SDCard::verify_or_disable(); return false; }
     // Hold the HSPI bus mutex across the write so it can't interleave with
-    // the IMU pump (main loop) on the shared bus — that races a long
-    // upload's SD writes and corrupts them into a short write.
+    // the IMU pump (main loop) on the shared bus.
     Storage::SDCard::BusGuard _bg;
-    const size_t w = b->sd_file.write(data, len);
-    if (w != len) {
-      ERRORF("OutboundStaging: SD short-write id=%u off=%u len=%u wrote=%u",
-             (unsigned)id, (unsigned)b->written, (unsigned)len, (unsigned)w);
-      Storage::SDCard::verify_or_disable();
-      return false;
+    // SD cards return a short write when their internal buffer is briefly
+    // full during a long sequential transfer — a transient, not a hard
+    // fault. Write the chunk in a loop, flushing and pausing to let the
+    // card drain before retrying the remainder; only give up after the
+    // card makes no progress for several attempts.
+    size_t off = 0;
+    int stalls = 0;
+    while (off < len) {
+      const size_t w = b->sd_file.write(data + off, len - off);
+      off += w;
+      if (off >= len) break;
+      if (w > 0) { stalls = 0; continue; }          // progress; keep going
+      if (++stalls > SD_WRITE_MAX_STALLS) {
+        const uint64_t total = Storage::SDCard::total_bytes();
+        const uint64_t used  = Storage::SDCard::used_bytes();
+        snprintf(fail_detail(), 192,
+                 "SD short-write off=%u len=%u wrote=%u free=%llu total=%llu",
+                 (unsigned)(b->written + off), (unsigned)len, (unsigned)off,
+                 (unsigned long long)(total > used ? total - used : 0),
+                 (unsigned long long)total);
+        ERRORF("OutboundStaging: %s", fail_detail());
+        Storage::SDCard::verify_or_disable();
+        return false;
+      }
+      b->sd_file.flush();                            // commit the card's buffer
+      delay(SD_WRITE_STALL_DELAY_MS);                // let it finish internally
     }
   } else {  // Flash
     if (!b->flash_file) return false;

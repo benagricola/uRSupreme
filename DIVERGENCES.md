@@ -1,0 +1,85 @@
+# Upstream divergence ledger
+
+This file lists every place this firmware (or its pinned microReticulum
+fork) deliberately behaves differently from upstream Reticulum / LXMF /
+RNode. Rules (see CLAUDE.md §1):
+
+- Any commit that introduces or removes a divergence updates this file
+  in the same commit.
+- Every entry cites the code and the upstream counterpart, and carries
+  the reason. Entries were last verified against the uR pin in
+  `platformio.ini` (`[libdeps]`) on 2026-06-10; re-verify against the
+  current pin before relying on one.
+
+## Active divergences
+
+### 1. LoRa interface defaults to MODE_ACCESS_POINT
+- Where: `src/RNode_Firmware.ino` (LoRa `apply_mode_ifac` default).
+- Upstream: every interface defaults to `MODE_FULL`.
+- Why: deliberate (#81). The bridge node must answer path discovery for
+  its LoRa edge; AP mode is in `DISCOVER_PATHS_FOR` and also suppresses
+  per-announce egress on the duty-cycled link. Low request volume on
+  the LoRa side keeps the discovery cost acceptable, unlike the TCP
+  `MODE_GATEWAY` default this fork removed in `6aef568`.
+
+### 2. Interface-mode encodings are bit-flags
+- Where: uR `src/Type.h` (`FULL=0x01 ... GATEWAY=0x40`).
+- Upstream: sequential values `0x01..0x06`.
+- Why: lets `DISCOVER_PATHS_FOR` work as a bitmask. Mode is local-only
+  and never serialized onto the wire. Do NOT "fix" these to upstream's
+  values; the bitmask tests depend on the flag encoding.
+
+### 3. Path-request dedup window bounded at 4096 tags
+- Where: uR `src/Transport.cpp` (`RNS_PR_TAGS_MAX 4096`).
+- Upstream: `max_pr_tags = 32000`.
+- Why: RAM bound. Eviction is FIFO-by-recency matching upstream
+  behaviour (the earlier random `std::set` eviction is fixed); only the
+  window size differs.
+- Verify: `git -C ../microReticulum show <pin>:src/Transport.cpp | grep -n RNS_PR_TAGS_MAX`
+
+### 4. Resource proof recovery re-waits instead of re-querying the packet cache
+- Where: uR `src/Resource.cpp` sender watchdog (`AWAITING_PROOF` branch).
+- Upstream: `Resource.py:635-654` lowers the timeout via
+  `PROOF_TIMEOUT_FACTOR` and issues a packet-cache request per retry.
+- Here: same tight `PROOF_TIMEOUT_FACTOR` window and retry budget, but
+  no cache re-query; on exhaustion the transfer fails fast and the LXMF
+  layer re-sends the whole message, which the receiver deduplicates by
+  transient id. Rationale (in-code): a cache re-query is a no-op on a
+  direct 2-node link.
+- Consequence to keep in mind: on a multi-hop Resource transfer a lost
+  proof costs a full message re-send rather than a one-packet recovery.
+
+### 5. Inbound LXMF dedup window is a 128-entry RAM FIFO
+- Where: firmware `src/LXMF/LXMFMinimal.h` (`cd982ff`).
+- Upstream: persisted transient-id store with a 180-day horizon.
+- Why: flash-wear and RAM bounds. A reboot can therefore readmit one
+  duplicate of a message whose retry straddles the reboot.
+
+### 6. Table sizes and cull cadence are MCU-bounded
+- Where: uR transport tables (announce rates, path requests, path
+  states), `tables_cull_interval` 60 s vs upstream 5 s.
+- Why: RAM bounds; culls are batched to keep main-loop cost flat.
+
+### 7. LXMF scope gaps (not yet ported)
+- No propagation-node sync (store-and-forward) and no tickets.
+- Delivery stamps are in flight on `feature/upstream-divergences`.
+- Consequence: a stamp-enforcing peer drops our messages only where
+  stamps are required AND that branch is not yet merged; propagation
+  delivery silently unavailable.
+
+### 8. Announce app_data stays uncompressed
+- Where: firmware announce serialization (3-element app_data list).
+- Why: uR's Resource path cannot bz2-decompress; emitting the
+  uncompressed form keeps every upstream client able to parse our
+  announces. Wire-compatible by design.
+
+## Recently retired (do not reintroduce)
+
+Removed by `6aef568` + the June 2026 uR re-pins, all matching upstream
+now: TCP/UDP interface defaults (`MODE_FULL`), `PATH_REQUEST_MI` 20 s,
+path TTLs (1 week / 1 day / 6 h), LXMF size cutoff compared against
+content size (295/319), LXMF retry cadence (5 attempts / 10 s),
+ingress-control constants and burst-deactivate `ic_held_release`,
+Resource `MAX_RETRIES` 16, and the adaptive Resource sliding window
+(4 → 10 → 75). The history of why each was wrong is in the 2026-06-10
+fork-history audit report.

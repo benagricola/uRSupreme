@@ -3298,36 +3298,39 @@ async function sendMessage() {
   // here too (Enter-to-send bypasses the disabled attribute) so we never
   // double-send or send an attachment whose bytes aren't prepared yet.
   if (sendBtnBusy()) return;
+  // Snapshot the target peer and the staged attachments before any await,
+  // then detach the attachments from the compose tray. This whole function
+  // is async (attachment upload + the /send round-trip can take a second or
+  // two), and the user can switch chats meanwhile. Re-reading
+  // state.openPeer after an await would file the optimistic bubble into the
+  // newly-opened chat (so it wrongly appears in two conversations), and
+  // leaving the staging in the shared state.pendingAttachments would let the
+  // chat switch drop it out from under this send (and toast a false
+  // "dropped from previous chat"). Once you hit send the attachments are no
+  // longer "being composed", so they leave the tray now; everything below
+  // works off these snapshots, not the live state.
+  const peer    = state.openPeer;
+  const pending = state.pendingAttachments;
+  state.pendingAttachments = [];
+  renderAttachTray();
   state.busyButtons['btn-send'] = true;
   try {
-    // Upload each pending attachment's bytes ahead of the JSON /send
-    // call (#130). Skip ones that already carry a staging_id from a
-    // prior partial-send attempt. Upload progress is mirrored back into
-    // the tray chip's `eta` slot via renderAttachTray.
-    for (const a of state.pendingAttachments) {
+    // Upload each pending attachment's bytes ahead of the JSON /send call.
+    // Skip ones that already carry a staging_id from a prior partial-send
+    // attempt.
+    for (const a of pending) {
       if (a.staging_id) continue;
       a.uploading = true;
-      a.uploaded_bytes = 0;
-      a.uploaded_total = 0;
-      renderAttachTray();
       try {
         const r = await state.transport.uploadAttachment(
-          state.identityId, a.bytes, a.filename, a.mime,
-          (loaded, total) => {
-            // total = multipart-encoded body size (slightly larger than
-            // a.bytes.length thanks to the form-data boundary). Storing
-            // both lets renderAttachTray show an honest 0-100 percent.
-            a.uploaded_bytes = loaded;
-            a.uploaded_total = total || a.uploaded_total;
-            renderAttachTray();
-          });
+          state.identityId, a.bytes, a.filename, a.mime);
         a.staging_id     = r.staging_id;
         a.staging_backend = r.backend;
       } finally {
         a.uploading = false;
       }
     }
-    const attachments = state.pendingAttachments.map(a => {
+    const attachments = pending.map(a => {
       const e = { tag: a.tag, staging_id: a.staging_id,
                   filename: a.filename, mime: a.mime };
       if (a.audio_mode !== undefined) e.audio_mode = a.audio_mode;
@@ -3335,12 +3338,12 @@ async function sendMessage() {
       return e;
     });
     // /send returns the full server-authoritative shape of the new
-    // outbox record — seq, status, ts, boot_epoch, received_ms,
+    // outbox record: seq, status, ts, boot_epoch, received_ms,
     // packet_hash, and the persisted attachments (with hash-based
     // filenames). Plug those directly into the optimistic record so
     // it has identifiers matching what the firmware will broadcast
     // via subsequent outbox_status events.
-    const r = await state.transport.send(state.identityId, state.openPeer, '', text, attachments);
+    const r = await state.transport.send(state.identityId, peer, '', text, attachments);
     // Prefer server-side attachments (hash filenames, persisted
     // backend, server-canonical display_name) so the bubble can
     // render an inline preview immediately. Fall back to local
@@ -3351,15 +3354,15 @@ async function sendMessage() {
           tag: a.tag, size: a.size, filename: a.filename,
           display_name: a.display_name, mime: a.mime, backend: a.backend,
         }))
-      : state.pendingAttachments.map(a => ({
+      : pending.map(a => ({
           tag: a.tag, size: a.bytes.length, filename: a.filename, mime: a.mime,
         }));
     // Pre-cache a local preview blob for image attachments, keyed by the
     // optimistic record's filename, so the bubble shows the image the moment
-    // it's sent — before the device has persisted it under a hash filename we
+    // it's sent, before the device has persisted it under a hash filename we
     // could fetch back. attachmentMode() treats a cached blob as previewable.
     optimisticAttachments.forEach((oa, i) => {
-      const src = state.pendingAttachments[i];
+      const src = pending[i];
       if (oa && oa.tag === FIELD_IMAGE && oa.filename && src && src.bytes
           && !(oa.filename in state.attachmentBlobs)) {
         try {
@@ -3369,9 +3372,9 @@ async function sendMessage() {
       }
     });
     upsertMessage({
-      peer: state.openPeer,
+      peer: peer,
       seq: r.queued_seq,
-      // `??` only catches null/undefined — a finding-route record can carry
+      // `??` only catches null/undefined; a finding-route record can carry
       // ts=0, which would sort the bubble to the top of the thread (out of
       // view) instead of the bottom. Treat 0/missing as "now".
       ts: (r.ts && r.ts > 0) ? r.ts : (Date.now() / 1000),
@@ -3385,14 +3388,23 @@ async function sendMessage() {
       packet_hash: r.packet_hash || '',
       attachments: optimisticAttachments,
     });
-    state.forms.compose.text = '';
-    state.ui.composeCounterShown = false;
-    state.pendingAttachments = [];
-    renderAttachTray();
+    // Clear the compose text only if the user is still on the chat we sent
+    // from; if they switched, the new chat owns the compose box now.
+    if (state.openPeer === peer) {
+      state.forms.compose.text = '';
+      state.ui.composeCounterShown = false;
+    }
     renderThread();
     renderConversations();
   } catch (e) {
     toast('Send failed: ' + (e.message || e), 'error');
+    // Re-stage the attachments so the user can retry, unless they've moved
+    // to another chat (don't clobber its compose) or already staged
+    // something new here.
+    if (state.openPeer === peer && state.pendingAttachments.length === 0) {
+      state.pendingAttachments = pending;
+      renderAttachTray();
+    }
   } finally {
     state.busyButtons['btn-send'] = false;
   }

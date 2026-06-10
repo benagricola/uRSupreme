@@ -4828,7 +4828,7 @@ function onClickStorageMigrate(btn) {
     });
     if (!ok) return;
     try {
-      const r = await state.transport._req('/api/system/migrate_flash_to_sd', { method: 'POST', body: {} });
+      const r = await state.transport._req('/api/storage/migrate_flash_to_sd', { method: 'POST', body: {} });
       toast('Moved ' + r.moved + ' / ' + (r.moved + r.skipped + r.failed) + ' attachments to SD', 'ok', 6000);
     } catch (e) { toast('Migration failed: ' + (e.message || e), 'error'); }
   }, { label: 'Moving…' });

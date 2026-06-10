@@ -141,6 +141,32 @@ namespace WS {
                   "std::vector<uint8_t> layout assumption broken");
     static_assert(std::is_standard_layout<VecGuts>::value,
                   "VecGuts must be standard layout for type-punning");
+
+    // Runtime ABI probe, evaluated once: read a real vector through the
+    // VecGuts view and check the pointer triplet lines up with what
+    // data()/size() report. The size static_assert above can't catch a
+    // member reorder or an added field that keeps the struct the same
+    // size; this does, and it turns "libstdc++ changed" from heap
+    // corruption mid-broadcast into a one-line warning at first use
+    // plus a safe fallback. (The probe reads through the same punned
+    // view it is validating — on a layout change the pointers simply
+    // fail to match; nothing is written through the view.)
+    inline bool layout_ok() {
+      static int ok = -1;
+      if (ok < 0) {
+        std::vector<uint8_t> probe;
+        probe.resize(2);
+        const auto* g = reinterpret_cast<const VecGuts*>(&probe);
+        ok = (g->start == probe.data()
+              && g->finish == probe.data() + 2
+              && g->end_of_storage >= g->finish) ? 1 : 0;
+        if (!ok) {
+          WARNING("WS: std::vector layout mismatch — PSRAM WS buffers "
+                  "disabled, falling back to default-heap buffers");
+        }
+      }
+      return ok == 1;
+    }
   }
 
   // Build a PSRAM-backed AsyncWebSocketSharedBuffer of `n` bytes.
@@ -149,6 +175,12 @@ namespace WS {
   // does NOT call ~vector() — which would try std::allocator::
   // deallocate on PSRAM memory and crash.
   inline AsyncWebSocketSharedBuffer make_psram_ws_buffer(size_t n) {
+    if (!_psram_ws::layout_ok()) {
+      // Correct-but-churny fallback, only ever taken if the toolchain's
+      // vector layout changes: a real vector on the default heap. Worse
+      // for internal-SRAM fragmentation, but never corrupts memory.
+      return std::make_shared<std::vector<uint8_t>>(n);
+    }
     auto* data = static_cast<uint8_t*>(
       heap_caps_malloc(n, MALLOC_CAP_SPIRAM));
     if (!data) return {};

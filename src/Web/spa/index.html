@@ -245,6 +245,14 @@
       <div class="bar" :style="indeterminate ? '' : ('width:' + barPct + '%')"></div>
     </div>
   </header>
+  <!-- Caption for #topbar-progress. Same visibility gate (mobile thread
+       view), names what the single aggregate bar is currently moving so
+       concurrent inbound/outbound transfers are legible without the
+       contact list. -->
+  <div id="xfer-caption" x-data="topbarProgressData()"
+       :class="{ 'is-active': active }" x-cloak>
+    <span x-text="transfersCaption()"></span>
+  </div>
   <aside id="pane-list">
     <header id="list-header">
       <input class="flex-1" id="search" placeholder="Search chats and contacts"
@@ -508,6 +516,22 @@
               </span>
             </template>
           </template>
+          <!-- In-flight progress for THIS outbound message — a thin bar on
+               the bubble itself, not a separate bubble. Correlated by
+               packet_hash (== the transfer key the device sends in
+               message_progress). Clears when the transfer entry is deleted
+               on the message's terminal status. Inbound transfers can't
+               appear here: they're unassigned to a conversation until
+               decrypt completes, so they only surface in the contact list. -->
+          <template x-if="!m.in && transferForMsg(m)">
+            <div class="bubble-progress">
+              <div class="bubble-progress-label"
+                   x-text="'↑ Sending ' + transferPct(transferForMsg(m)) + '%'"></div>
+              <div class="progress-track">
+                <div class="progress-fill" :style="'width:' + transferPct(transferForMsg(m)) + '%'"></div>
+              </div>
+            </div>
+          </template>
           <template x-if="msgMeta(m)">
             <div class="bmeta" x-text="msgMeta(m)"></div>
           </template>
@@ -517,17 +541,6 @@
                     x-text="$store.s.busyButtons['retry-' + m.seq] ? 'Retrying…' : 'Retry'"
                     @click="retryFailedMessage(m)"></button>
           </template>
-        </div>
-      </template>
-      <!-- Active transfer placeholder bubble — shows while a Resource
-           send/receive is in progress for the open peer. -->
-      <template x-if="$store.s.openPeer && activeTransferFor($store.s.openPeer)">
-        <div :class="'bubble ' + (activeTransferFor($store.s.openPeer).incoming ? 'in' : 'out')">
-          <div class="opacity-70" 
-        x-text="(activeTransferFor($store.s.openPeer).incoming ? '↓ Receiving ' : '↑ Sending ') + transferPct(activeTransferFor($store.s.openPeer)) + '%'"></div>
-          <div class="mt-1 h-4 bg-white-strong rounded-2 overflow-hidden">
-            <div class="h-full bg-accent-3" :style="'width:' + transferPct(activeTransferFor($store.s.openPeer)) + '%'"></div>
-          </div>
         </div>
       </template>
     </div>
@@ -2862,6 +2875,38 @@ function convSubText(c) {
 function transferPct(t) {
   if (!t || !t.bytes_total) return 0;
   return Math.max(2, Math.min(100, Math.floor(100 * t.bytes_done / t.bytes_total)));
+}
+
+// The in-flight transfer for a specific outbound message bubble, or null.
+// The device keys message_progress on the message's record hash, which is
+// the same value the bubble carries as packet_hash — so the bar binds to
+// exactly the message being sent and vanishes when its entry is cleared.
+function transferForMsg(m) {
+  if (m.in || !m.packet_hash || !state.transfers) return null;
+  return state.transfers[m.packet_hash] || null;
+}
+
+// Caption for the global top-bar progress strip. The strip is a single
+// aggregate bar shown only where the contact list isn't on screen (mobile
+// thread view), so it can't convey direction/identity the way a list row
+// does. This names what it represents — and because several transfers can
+// run at once in both directions under one bar, it lists them (up to two,
+// then "+N more"), plus any labelled background task the bar also folds in.
+function transfersCaption() {
+  const out = [];
+  const tfs = state.transfers ? Object.values(state.transfers) : [];
+  for (const t of tfs) {
+    const dir = t.incoming ? '↓ ' : '↑ ';
+    const who = t.incoming ? 'Incoming attachment' : ('To ' + nameFor(t.peer));
+    const pct = t.bytes_total ? ' ' + Math.floor(100 * t.bytes_done / t.bytes_total) + '%' : '';
+    out.push(dir + who + pct);
+  }
+  for (const b of (state.bgTasks ? Object.values(state.bgTasks) : [])) {
+    out.push(b.label || 'Working…');
+  }
+  if (out.length === 0) return '';
+  if (out.length <= 2) return out.join('  ·  ');
+  return out.slice(0, 2).join('  ·  ') + '  · +' + (out.length - 2) + ' more';
 }
 
 // Synthetic-row subtext: "12 KB / 30 KB · 40%"
@@ -5433,6 +5478,20 @@ function dispatchEvent(ev) {
           touched = true;
         }
       }
+    }
+    // Self-heal the progress UI: once a send reaches a terminal status,
+    // drop any transfer entry still keyed on its hash. message_complete
+    // normally clears it, but if that event is missed (or the device
+    // advanced status without a final progress frame) the entry would
+    // otherwise strand every progress surface — contact-list row, global
+    // bar, and the on-bubble bar — at its last percentage, and a later
+    // send to the same peer would show the stale one. Keyed on `link`
+    // (the packet hash), which equals the transfer key for outbound.
+    if (link && state.transfers && state.transfers[link] &&
+        (ev.status === 'sent' || ev.status === 'delivered' || ev.status === 'failed')) {
+      delete state.transfers[link];
+      renderConversations();
+      renderTopbarProgress();
     }
     if (touched) {
       renderConversations();

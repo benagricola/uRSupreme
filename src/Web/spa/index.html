@@ -7499,10 +7499,17 @@ function waitForDeviceAndReload(message) {
     try {
       const ctl = new AbortController();
       const tmo = setTimeout(() => ctl.abort(), 1500);
+      // Cross-origin candidates (the .local URL) must probe with
+      // mode:'no-cors': the firmware sends no Access-Control-Allow-Origin
+      // header, so a 'cors' fetch rejects even when the device is up. A
+      // no-cors fetch resolves with an opaque response whenever the host
+      // answers at all, which is exactly the liveness signal we need;
+      // status stays unreadable but a down host still rejects.
+      const cross = c.url.startsWith('http');
       const r = await fetch(c.url, { cache: 'no-store', signal: ctl.signal,
-                                     mode: c.url.startsWith('http') ? 'cors' : 'same-origin' });
+                                     mode: cross ? 'no-cors' : 'same-origin' });
       clearTimeout(tmo);
-      if (r.ok) {
+      if (r.ok || r.type === 'opaque') {
         stopped = true;
         setTimeout(() => { location.href = c.target; }, 400);
       }

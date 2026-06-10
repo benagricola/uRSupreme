@@ -1,0 +1,76 @@
+// Single source of truth for the device's web API surface.
+//
+// Grammar (rigid, machine-consumed — keep one entry per line):
+//   ROUTE(NAME, "/api/path")        always registered
+//   ROUTE_OPT(NAME, "/api/path")    registered only under a build flag
+// `{}` marks a one-segment path parameter.
+//
+// Consumers:
+//   - src/Web/ApiRoutes.h            X-macro include -> ApiRoutes::NAME
+//     constants; all C++ registration goes through these (a typo'd
+//     route is a compile error, not a runtime 404).
+//   - extra_script.py embed_spa()    generates the SPA's `API` table;
+//     the SPA never writes /api path literals.
+//   - tools/check_api_parity.py     bans raw /api literals on both
+//     sides and cross-checks API.* references against this file.
+//   - GET /api/diag/routes          the running device reports what it
+//     actually registered; tools/kiss-test/test_api/test_routes.py
+//     asserts it matches this file.
+
+ROUTE(INFO,                 "/api/info")
+ROUTE(DIAG_MEM,             "/api/diag/mem")
+ROUTE_OPT(DIAG_LOOP,        "/api/diag/loop")
+ROUTE(DIAG_TRANSPORT,       "/api/diag/transport")
+ROUTE_OPT(DIAG_HEAPTRACE,   "/api/diag/heaptrace")
+ROUTE(DIAG_ROUTES,          "/api/diag/routes")
+ROUTE(DIAG_STORAGE,         "/api/diag/storage")
+ROUTE(AUTH_LOGIN,           "/api/auth/login")
+ROUTE(AUTH_LOGOUT,          "/api/auth/logout")
+ROUTE(IDENTITIES,           "/api/identities")
+ROUTE(IDENTITY,             "/api/identity")
+ROUTE(IDENTITY_DELETE,      "/api/identity/delete")
+ROUTE(IDENTITY_SETTINGS,    "/api/identity/settings")
+ROUTE(ANNOUNCE,             "/api/announce")
+ROUTE(ANNOUNCES,            "/api/announces")
+ROUTE(SYSTEM_FACTORY_RESET, "/api/system/factory_reset")
+ROUTE(SYSTEM_TRANSPORT,     "/api/system/transport")
+ROUTE(SYSTEM_KISS,          "/api/system/kiss")
+ROUTE(SYSTEM_REBOOT,        "/api/system/reboot")
+ROUTE(TIME,                 "/api/time")
+ROUTE(TIME_SOURCES,         "/api/time/sources")
+ROUTE(GPS,                  "/api/gps")
+ROUTE(RTC,                  "/api/rtc")
+ROUTE(SENSORS_CONFIG,       "/api/sensors/config")
+ROUTE(INBOX_CONFIG,         "/api/inbox_config")
+ROUTE(STORAGE_CONFIG,       "/api/storage/config")
+ROUTE(STORAGE_MIGRATE,      "/api/storage/migrate_flash_to_sd")
+ROUTE(ATTACHMENT_UPLOAD,    "/api/attachment/upload")
+ROUTE(ATTACHMENT_DOWNLOAD,  "/api/attachment/download/{}")
+ROUTE(INBOX,                "/api/inbox")
+ROUTE(OUTBOX,               "/api/outbox")
+ROUTE(OUTBOX_RETRY,         "/api/outbox/{}/retry")
+ROUTE(SEND,                 "/api/send")
+ROUTE(STATE,                "/api/state")
+ROUTE(CONVERSATION,         "/api/conversations/{}")
+ROUTE(CONVERSATION_CONFIG,  "/api/conversations/{}/config")
+ROUTE(PATHS_LOOKUP,         "/api/paths/lookup")
+ROUTE(PATHS_ESTIMATE,       "/api/paths/estimate")
+ROUTE(WIFI_SCAN,            "/api/wifi/scan")
+ROUTE(WIFI_CONFIGURE,       "/api/wifi/configure")
+ROUTE(WIFI_SOFTAP,          "/api/wifi/softap")
+ROUTE(WIFI_SAVED,           "/api/wifi/saved")
+ROUTE(WIFI_FORGET,          "/api/wifi/forget")
+ROUTE(RADIO,                "/api/radio")
+ROUTE(RADIO_TELEMETRY,      "/api/radio/telemetry")
+ROUTE(RADIO_RESET,          "/api/radio/reset")
+ROUTE(RADIO_AIRTIME,        "/api/radio/airtime")
+ROUTE(NETWORK_TELEMETRY,    "/api/network/telemetry")
+ROUTE(TCP_CLIENTS,          "/api/transport/tcp_clients")
+ROUTE(TCP_CLIENT,           "/api/transport/tcp_clients/{}")
+ROUTE(TCP_CLIENT_PATCH,     "/api/transport/tcp_clients/{}/patch")
+ROUTE(DISCOVERY_STATE,      "/api/discovery/state")
+ROUTE(DISCOVERY_IDENTITY,   "/api/discovery/identity")
+ROUTE(LORA_DISCOVERABLE,    "/api/transport/lora/discoverable")
+ROUTE(LORA_CONFIG,          "/api/transport/lora/config")
+ROUTE(UDP_CONFIG,           "/api/transport/udp/config")
+ROUTE(WS,                   "/api/ws")

@@ -43,6 +43,7 @@ extern char             wr_hostname[10];
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include "../Clock/Manager.h"
+#include "ApiRoutes.h"
 #include "WebSocket.h"
 #include "../Sensors/Position/L76K.h"
 #include "../Sensors/Clock/PCF8563.h"
@@ -696,10 +697,62 @@ namespace Web {
     static void on_json_post(const char* path,
                              void (*fn)(AsyncWebServerRequest*, JsonVariant&),
                              size_t max_content_length = 0) {
+      route_registry().push_back({"POST", path});
       auto* h = new AsyncCallbackJsonWebHandler(uri(path), fn);
       h->setMethod(HTTP_POST);
       if (max_content_length > 0) h->setMaxContentLength((int)max_content_length);
       server.addHandler(h);
+    }
+
+    // ---- Route registration goes through these wrappers so the device
+    // can report what it actually serves (GET /api/diag/routes). The
+    // wrappers preserve the underlying matcher semantics exactly:
+    // on_http keeps the library's prefix matching for plain paths
+    // (registration order still matters; see /api/radio/telemetry),
+    // on_uri keeps the exact/param matcher. Paths come from
+    // ApiRoutes:: constants only (api_routes.def is the single source
+    // of truth; tools/check_api_parity.py bans raw literals).
+    struct RouteRec { const char* method; const char* path; };
+    static std::vector<RouteRec>& route_registry() {
+      static std::vector<RouteRec> v;
+      return v;
+    }
+    static const char* method_name(WebRequestMethodComposite m) {
+      // if-chain, not switch: WebRequestMethodComposite is not an
+      // integer type in this ESPAsyncWebServer version.
+      if (m == HTTP_GET)    return "GET";
+      if (m == HTTP_POST)   return "POST";
+      if (m == HTTP_DELETE) return "DELETE";
+      return "ANY";
+    }
+    static void on_http(WebRequestMethodComposite m, const char* path,
+                        ArRequestHandlerFunction h,
+                        ArUploadHandlerFunction upload = nullptr) {
+      route_registry().push_back({method_name(m), path});
+      if (upload) server.on(path, m, h, upload);
+      else        server.on(path, m, h);
+    }
+    static void on_uri(WebRequestMethodComposite m, const char* path,
+                       ArRequestHandlerFunction h) {
+      route_registry().push_back({method_name(m), path});
+      server.on(uri(path), m, h);
+    }
+
+    // GET /api/diag/routes — every route the running firmware has
+    // registered, for parity checks against api_routes.def (the rig
+    // suite asserts the two match; build-flag-gated ROUTE_OPT entries
+    // may be absent here).
+    static void handle_diag_routes(AsyncWebServerRequest* req) {
+      LXMF::IdentityId caller = require_auth(req);
+      if (caller.empty()) return;
+      Common::PsramJsonDocument doc;
+      JsonArray arr = doc["routes"].to<JsonArray>();
+      for (const auto& r : route_registry()) {
+        JsonObject o = arr.add<JsonObject>();
+        o["m"] = r.method;
+        o["p"] = r.path;
+      }
+      send_json(req, 200, doc);
     }
 
     static void register_routes() {
@@ -710,115 +763,111 @@ namespace Web {
       Web::WS::server().onEvent(Web::WS::on_event);
       Web::WS::server().handleHandshake(Web::WS::on_handshake);
       server.addHandler(&Web::WS::server());
+      route_registry().push_back({"WS", ApiRoutes::WS});
       // SPA — single embedded HTML file, served gzipped at / and /index.html
       server.on("/",              HTTP_GET, handle_spa);
       server.on("/index.html",    HTTP_GET, handle_spa);
       server.on("/styles.css",    HTTP_GET, handle_styles_css);
       server.on("/alpine.min.js", HTTP_GET, handle_alpine_js);
       // Public
-      server.on("/api/info",          HTTP_GET,  handle_info);
+      on_http(HTTP_GET, ApiRoutes::INFO, handle_info);
       // Diagnostics (bearer-gated). GET reads heap headroom; POST resets
       // the per-window low-water marker (Common::HeapWatermark).
-      server.on("/api/diag/mem",      HTTP_GET,  handle_diag_mem);
-      on_json_post("/api/diag/mem",     handle_diag_mem_reset);
-      server.on("/api/diag/storage",  HTTP_GET,  handle_diag_storage);
+      on_http(HTTP_GET, ApiRoutes::DIAG_MEM, handle_diag_mem);
+      on_json_post(ApiRoutes::DIAG_MEM,     handle_diag_mem_reset);
+      on_http(HTTP_GET, ApiRoutes::DIAG_STORAGE, handle_diag_storage);
 #if defined(URTN_LOOP_DIAG)
-      server.on("/api/diag/loop",       HTTP_GET,  handle_diag_loop);
-      on_json_post("/api/diag/loop",    handle_diag_loop_reset);
+      on_http(HTTP_GET, ApiRoutes::DIAG_LOOP, handle_diag_loop);
+      on_json_post(ApiRoutes::DIAG_LOOP,    handle_diag_loop_reset);
 #endif
-      server.on("/api/diag/transport",  HTTP_GET,  handle_diag_transport);
+      on_http(HTTP_GET, ApiRoutes::DIAG_TRANSPORT, handle_diag_transport);
+      on_http(HTTP_GET, ApiRoutes::DIAG_ROUTES, handle_diag_routes);
 #if defined(URTN_HEAP_TRACE)
-      server.on("/api/diag/heaptrace", HTTP_GET, handle_diag_heaptrace);
+      on_http(HTTP_GET, ApiRoutes::DIAG_HEAPTRACE, handle_diag_heaptrace);
 #endif
       // Auth
-      on_json_post("/api/auth/login",   handle_login);
-      server.on("/api/auth/logout",   HTTP_POST, handle_logout);
+      on_json_post(ApiRoutes::AUTH_LOGIN,   handle_login);
+      on_http(HTTP_POST, ApiRoutes::AUTH_LOGOUT, handle_logout);
       // Identities
-      on_json_post("/api/identities",  handle_create_identity);
+      on_json_post(ApiRoutes::IDENTITIES,  handle_create_identity);
       // Session-scoped identity endpoints. The identity is taken from the
       // bearer token (require_auth), so these carry no {id} in the path — the
       // old /api/identities/{id}/* form was redundant (the handler rejected
       // any id != the token's identity anyway).
-      server.on("/api/identity",        HTTP_GET,    handle_get_identity);
-      server.on("/api/identity",        HTTP_DELETE, handle_delete_identity);
-      server.on("/api/identity/delete", HTTP_POST,   handle_delete_identity);
-      server.on("/api/announce",        HTTP_POST,   handle_announce);
-      on_json_post("/api/identity/settings", handle_identity_settings);
+      on_http(HTTP_GET, ApiRoutes::IDENTITY, handle_get_identity);
+      on_http(HTTP_DELETE, ApiRoutes::IDENTITY, handle_delete_identity);
+      on_http(HTTP_POST, ApiRoutes::IDENTITY_DELETE, handle_delete_identity);
+      on_http(HTTP_POST, ApiRoutes::ANNOUNCE, handle_announce);
+      on_json_post(ApiRoutes::IDENTITY_SETTINGS, handle_identity_settings);
       // Announces (recent LXMF endpoint announces seen by the device)
-      server.on("/api/announces",     HTTP_GET, handle_announces);
+      on_http(HTTP_GET, ApiRoutes::ANNOUNCES, handle_announces);
       // System — full wipe, gated by identity_code (physical presence).
       // Only path to recovery if every identity password is forgotten.
-      on_json_post("/api/system/factory_reset", handle_factory_reset);
-      on_json_post("/api/system/transport",     handle_transport_toggle);
-      on_json_post("/api/system/kiss",          handle_kiss_toggle);
-      on_json_post("/api/system/reboot",        handle_reboot);
+      on_json_post(ApiRoutes::SYSTEM_FACTORY_RESET, handle_factory_reset);
+      on_json_post(ApiRoutes::SYSTEM_TRANSPORT,     handle_transport_toggle);
+      on_json_post(ApiRoutes::SYSTEM_KISS,          handle_kiss_toggle);
+      on_json_post(ApiRoutes::SYSTEM_REBOOT,        handle_reboot);
       // Time management. GET returns the current calibrated time +
       // source-priority config; POST /api/time {unix_ms} adopts a
       // browser-supplied time; POST /api/time/sources {sources:{...}}
       // writes the source config. All bearer-auth-gated.
-      server.on("/api/time",                 HTTP_GET,  handle_time_get);
-      on_json_post("/api/time",                 handle_time_set);
-      on_json_post("/api/time/sources",         handle_time_sources_set);
+      on_http(HTTP_GET, ApiRoutes::TIME, handle_time_get);
+      on_json_post(ApiRoutes::TIME,                 handle_time_set);
+      on_json_post(ApiRoutes::TIME_SOURCES,         handle_time_sources_set);
       // GPS fix — last RMC sentence parsed.
-      server.on("/api/gps",                  HTTP_GET,  handle_gps_get);
+      on_http(HTTP_GET, ApiRoutes::GPS, handle_gps_get);
       // RTC diagnostics — raw chip state.
-      server.on("/api/rtc",                  HTTP_GET,  handle_rtc_get);
+      on_http(HTTP_GET, ApiRoutes::RTC, handle_rtc_get);
       // Aggregated device status: storage + clock + sensors.
       // /api/system_status retired — `system_update` WS events carry
       // the same payload, with the initial snapshot in the `hello` frame.
       // Per-sensor enable + polling-interval overrides.
-      on_json_post("/api/sensors/config",       handle_sensors_config_post);
+      on_json_post(ApiRoutes::SENSORS_CONFIG,       handle_sensors_config_post);
       // Global inbox capacity + wall-clock TTL pruning.
-      server.on("/api/inbox_config",         HTTP_GET,  handle_inbox_config_get);
-      on_json_post("/api/inbox_config",         handle_inbox_config_post);
+      on_http(HTTP_GET, ApiRoutes::INBOX_CONFIG, handle_inbox_config_get);
+      on_json_post(ApiRoutes::INBOX_CONFIG,         handle_inbox_config_post);
       // Per-direction transfer caps (max_send / max_receive bytes).
-      server.on("/api/storage/config",       HTTP_GET,  handle_storage_config_get);
-      on_json_post("/api/storage/config",       handle_storage_config_post);
+      on_http(HTTP_GET, ApiRoutes::STORAGE_CONFIG, handle_storage_config_get);
+      on_json_post(ApiRoutes::STORAGE_CONFIG,       handle_storage_config_post);
       // Streaming outbound attachment upload — PSRAM/SD-backed staging
       // that the /send path consumes by id. The body is multipart/
       // form-data with one file field; the X-Total-Length header tells
       // us how much to allocate up front.
-      server.on("/api/attachment/upload",
-                HTTP_POST,
+      on_http(HTTP_POST, ApiRoutes::ATTACHMENT_UPLOAD,
                 handle_outbound_upload_final,
                 handle_outbound_upload_chunk);
-      server.on("/api/inbox",    HTTP_GET,  handle_inbox);
-      server.on("/api/outbox",   HTTP_GET,  handle_outbox);
+      on_http(HTTP_GET, ApiRoutes::INBOX, handle_inbox);
+      on_http(HTTP_GET, ApiRoutes::OUTBOX, handle_outbox);
       // /send takes the user's whole message body inline (text + emoji
       // + paste markdown). 16 KiB is plenty for chat but trips up on
       // realistic long-form content (e.g. logs pasted into a message).
       // 512 KiB safely fits in PSRAM and still leaves attachments to
       // ride the dedicated multipart staging-upload path for anything
       // bigger.
-      on_json_post("/api/send", handle_send,
+      on_json_post(ApiRoutes::SEND, handle_send,
                    /*max_content_length=*/512 * 1024);
       // POST /api/outbox/{seq}/retry — manually re-queue a Failed outbox
       // entry. Resets the auto-retry budget.
-      server.on(uri("/api/outbox/{}/retry"),
-                HTTP_POST, handle_outbox_retry);
-      server.on("/api/state",    HTTP_GET,  handle_state);
-      server.on(uri("/api/conversations/{}"),
-                HTTP_DELETE, handle_clear_conversation);
-      server.on(uri("/api/conversations/{}/config"),
-                HTTP_GET, handle_conversation_config_get);
-      on_json_post("/api/conversations/{}/config",
+      on_uri(HTTP_POST, ApiRoutes::OUTBOX_RETRY, handle_outbox_retry);
+      on_http(HTTP_GET, ApiRoutes::STATE, handle_state);
+      on_uri(HTTP_DELETE, ApiRoutes::CONVERSATION, handle_clear_conversation);
+      on_uri(HTTP_GET, ApiRoutes::CONVERSATION_CONFIG, handle_conversation_config_get);
+      on_json_post(ApiRoutes::CONVERSATION_CONFIG,
                    handle_conversation_config_post);
-      server.on(uri("/api/attachment/download/{}"),
-                HTTP_GET, handle_attachment_get);
-      server.on("/api/storage/migrate_flash_to_sd",
-                HTTP_POST, handle_migrate_flash_to_sd);
+      on_uri(HTTP_GET, ApiRoutes::ATTACHMENT_DOWNLOAD, handle_attachment_get);
+      on_http(HTTP_POST, ApiRoutes::STORAGE_MIGRATE, handle_migrate_flash_to_sd);
       // Paths — per-destination lookup + transmit-ETA estimate.
       // `uri()` forces an exact match on /estimate. Without it the
       // plain-string form is Type::BackwardCompatible, which is a prefix.
-      on_json_post("/api/paths/lookup",  handle_path_lookup);
-      server.on(uri("/api/paths/estimate"), HTTP_GET,  handle_path_estimate);
+      on_json_post(ApiRoutes::PATHS_LOOKUP,  handle_path_lookup);
+      on_uri(HTTP_GET, ApiRoutes::PATHS_ESTIMATE, handle_path_estimate);
       // WiFi config — gated by bearer token OR identity_code in body.
       // Reboots on save.
-      server.on("/api/wifi/scan",     HTTP_GET,  handle_wifi_scan);
-      on_json_post("/api/wifi/configure", handle_wifi_configure);
-      on_json_post("/api/wifi/softap",    handle_wifi_force_softap);
-      server.on("/api/wifi/saved",    HTTP_GET,  handle_wifi_saved_list);
-      on_json_post("/api/wifi/forget",    handle_wifi_forget);
+      on_http(HTTP_GET, ApiRoutes::WIFI_SCAN, handle_wifi_scan);
+      on_json_post(ApiRoutes::WIFI_CONFIGURE, handle_wifi_configure);
+      on_json_post(ApiRoutes::WIFI_SOFTAP,    handle_wifi_force_softap);
+      on_http(HTTP_GET, ApiRoutes::WIFI_SAVED, handle_wifi_saved_list);
+      on_json_post(ApiRoutes::WIFI_FORGET,    handle_wifi_forget);
       // Radio config — read requires bearer auth; write/reset require
       // bearer OR identity_code. Both write paths reboot on success.
       // Telemetry history — auth-gated. Returns the rolling ring of 1Hz
@@ -827,12 +876,12 @@ namespace Web {
       // REGISTERED BEFORE /api/radio because AsyncWebServer's plain
       // string matcher does prefix matching, so /api/radio would
       // otherwise swallow the more-specific /api/radio/telemetry.
-      server.on("/api/radio/telemetry", HTTP_GET, handle_radio_telemetry);
-      server.on("/api/network/telemetry", HTTP_GET, handle_network_telemetry);
-      server.on("/api/radio",           HTTP_GET,  handle_radio_get);
-      on_json_post("/api/radio",         handle_radio_set);
-      on_json_post("/api/radio/reset",   handle_radio_reset);
-      on_json_post("/api/radio/airtime", handle_radio_airtime);
+      on_http(HTTP_GET, ApiRoutes::RADIO_TELEMETRY, handle_radio_telemetry);
+      on_http(HTTP_GET, ApiRoutes::NETWORK_TELEMETRY, handle_network_telemetry);
+      on_http(HTTP_GET, ApiRoutes::RADIO, handle_radio_get);
+      on_json_post(ApiRoutes::RADIO,         handle_radio_set);
+      on_json_post(ApiRoutes::RADIO_RESET,   handle_radio_reset);
+      on_json_post(ApiRoutes::RADIO_AIRTIME, handle_radio_airtime);
       // TCP-client endpoint CRUD. Registered only when the build
       // actually includes the TCP transport — otherwise the routes
       // don't exist at all, and the SPA learns that from the
@@ -841,34 +890,34 @@ namespace Web {
       // identity code only when enabling discovery on the entry.
       // DELETE is bearer-only.
 #if HAS_WIFI && defined(TCP_TRANSPORT)
-      server.on("/api/transport/tcp_clients",    HTTP_GET,    handle_tcp_clients_list);
-      on_json_post("/api/transport/tcp_clients", handle_tcp_clients_add);
-      server.on(uri("/api/transport/tcp_clients/{}"), HTTP_DELETE, handle_tcp_clients_remove);
-      on_json_post("/api/transport/tcp_clients/{}/patch", handle_tcp_clients_patch);
+      on_http(HTTP_GET, ApiRoutes::TCP_CLIENTS, handle_tcp_clients_list);
+      on_json_post(ApiRoutes::TCP_CLIENTS, handle_tcp_clients_add);
+      on_uri(HTTP_DELETE, ApiRoutes::TCP_CLIENT, handle_tcp_clients_remove);
+      on_json_post(ApiRoutes::TCP_CLIENT_PATCH, handle_tcp_clients_patch);
 #endif
       // Discovery master state (toggle, default interval, default stamp
       // cost) + persistent network identity. Enabling the master toggle
       // requires identity-code physical presence; reads + disable are
       // bearer-only.
-      server.on("/api/discovery/state",          HTTP_GET,  handle_discovery_state_get);
-      on_json_post("/api/discovery/state",                  handle_discovery_state_set);
-      server.on("/api/discovery/identity",       HTTP_GET,  handle_discovery_identity_get);
+      on_http(HTTP_GET, ApiRoutes::DISCOVERY_STATE, handle_discovery_state_get);
+      on_json_post(ApiRoutes::DISCOVERY_STATE,                  handle_discovery_state_set);
+      on_http(HTTP_GET, ApiRoutes::DISCOVERY_IDENTITY, handle_discovery_identity_get);
       // Per-built-in-interface discoverable toggle. The LoRa interface
       // is always present on supreme; this endpoint reads/writes its
       // Discovery::Config entry. Enabling requires identity-code; the
       // disable / read paths are bearer-only.
-      server.on("/api/transport/lora/discoverable", HTTP_GET, handle_lora_discoverable_get);
-      on_json_post("/api/transport/lora/discoverable",         handle_lora_discoverable_set);
+      on_http(HTTP_GET, ApiRoutes::LORA_DISCOVERABLE, handle_lora_discoverable_get);
+      on_json_post(ApiRoutes::LORA_DISCOVERABLE,         handle_lora_discoverable_set);
       // Full LoRa interface config: mode + IFAC (+ discoverable). Mode and
       // IFAC apply on reboot. Read is bearer-only; enabling IFAC/discovery
       // requires identity-code physical presence (enforced in the handler).
-      server.on("/api/transport/lora/config",       HTTP_GET, handle_lora_config_get);
-      on_json_post("/api/transport/lora/config",               handle_lora_config_set);
+      on_http(HTTP_GET, ApiRoutes::LORA_CONFIG, handle_lora_config_get);
+      on_json_post(ApiRoutes::LORA_CONFIG,               handle_lora_config_set);
       // UDP interface config: mode + IFAC (+ discoverable), same shape as
       // /lora/config. Lets the WiFi-UDP segment be made private without
       // hand-editing the interfaces.json file.
-      server.on("/api/transport/udp/config",        HTTP_GET, handle_udp_config_get);
-      on_json_post("/api/transport/udp/config",                handle_udp_config_set);
+      on_http(HTTP_GET, ApiRoutes::UDP_CONFIG, handle_udp_config_get);
+      on_json_post(ApiRoutes::UDP_CONFIG,                handle_udp_config_set);
     }
 
 

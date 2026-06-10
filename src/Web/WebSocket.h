@@ -27,6 +27,7 @@
 
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
+#include "ApiRoutes.h"
 #include <ArduinoJson.h>
 #include "../Common/PsramAllocator.h"
 #include <vector>
@@ -47,7 +48,7 @@ namespace Web {
 namespace WS {
 
   inline AsyncWebSocket& server() {
-    static AsyncWebSocket s("/api/ws");
+    static AsyncWebSocket s(ApiRoutes::WS);
     return s;
   }
 

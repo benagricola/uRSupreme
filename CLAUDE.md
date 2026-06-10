@@ -96,6 +96,10 @@ is the source of truth.
   only genuine one-offs stay inline.
 - Put state at the layer that reads it; `Web/` consumes data, it does
   not produce it. Cross-cutting primitives go in `Common/`.
+- New web API routes are declared in `src/Web/api_routes.def` and
+  referenced via `ApiRoutes::` constants (C++) and the generated `API`
+  table (SPA). Never write an `/api` path literal; the parity check
+  fails the build on one.
 - No work-history in code comments: no task IDs, commit references, or
   "phase N" markers. Comments describe current behaviour and why.
 - Python tooling installs into the repo's `.venv` via `uv`, never

@@ -516,24 +516,20 @@
               </span>
             </template>
           </template>
-          <!-- In-flight progress for THIS outbound message — a thin bar on
-               the bubble itself, not a separate bubble. Correlated by
-               packet_hash (== the transfer key the device sends in
-               message_progress). Clears when the transfer entry is deleted
-               on the message's terminal status. Inbound transfers can't
-               appear here: they're unassigned to a conversation until
-               decrypt completes, so they only surface in the contact list. -->
-          <template x-if="!m.in && transferForMsg(m)">
-            <div class="bubble-progress">
-              <div class="bubble-progress-label"
-                   x-text="'↑ Sending ' + transferPct(transferForMsg(m)) + '%'"></div>
-              <div class="progress-track">
-                <div class="progress-fill" :style="'width:' + transferPct(transferForMsg(m)) + '%'"></div>
-              </div>
-            </div>
-          </template>
           <template x-if="msgMeta(m)">
             <div class="bmeta" x-text="msgMeta(m)"></div>
+          </template>
+          <!-- In-flight send: a thin bar directly under the status line,
+               which itself reads "sending N%" (see msgMeta) while a transfer
+               is active. No separate labelled block, so the bubble doesn't
+               grow a line as it sends. Clears when the transfer entry is
+               removed on terminal status. Outbound only: inbound isn't
+               assigned to a conversation until its decrypt completes, so it
+               surfaces in the contact list, not here. -->
+          <template x-if="!m.in && transferForMsg(m)">
+            <div class="progress-track bubble-progress">
+              <div class="progress-fill" :style="'width:' + transferPct(transferForMsg(m)) + '%'"></div>
+            </div>
           </template>
           <template x-if="!m.in && m.status === 'failed'">
             <button class="ghost mt-1 text-xs"
@@ -1217,18 +1213,21 @@
             <span>Keep a copy of attachments I send</span>
             <button type="button" class="info-icon" @click.stop data-info="Lets the chat history show an inline preview of images and audio you've sent. Off saves storage at the cost of preview."></button>
           </label>
-          <label class="mt-3">Message stamps <button type="button" class="info-icon" data-info="Deters spam by requiring anyone messaging you to first spend some computing effort on a stamp for the message. 0 turns the requirement off; higher values make mass-messaging you more expensive. Senders' apps learn the requirement automatically and do the work before sending — a higher value just means they spend longer on it."></button></label>
-          <input type="number" id="id-stamp-cost" min="0" max="254" step="1"
-                 inputmode="numeric" placeholder="0 = no stamp required"
-                 x-model="$store.s.forms.identity.stampCost"
-                 @change="onChangeStampCost()"
-                 @keydown.enter.prevent="$event.target.blur()">
+          <label class="mt-3">Require message stamps <button type="button" class="info-icon" data-info="Deters spam by requiring anyone who messages you to first spend some computing effort on a stamp. Off means no stamp is required. Higher values make mass-messaging you more expensive. Senders' apps learn the requirement from your announce and do the work automatically before sending, so a higher value just means they spend longer on it. This is separate from the discovery stamp on the Connectivity tab, which is work this device attaches to its own discovery announces."></button></label>
+          <select id="id-stamp-cost"
+                  x-model="$store.s.forms.identity.stampCost"
+                  @change="onChangeStampCost()">
+            <option value="0">Off (no stamp required)</option>
+            <option value="8">8 bits (light)</option>
+            <option value="12">12 bits (medium)</option>
+            <option value="16">16 bits (strong)</option>
+          </select>
           <label class="toggle-row mt-4">
             <input class="input-inline" type="checkbox" id="id-enforce-stamps"
                    x-model="$store.s.forms.identity.enforceStamps"
                    @change="onChangeEnforceStamps()">
             <span>Discard messages without a valid stamp</span>
-            <button type="button" class="info-icon" @click.stop data-info="When on, messages that arrive without the required stamp are discarded before reaching your inbox. When off, they're still delivered — just marked in the conversation."></button>
+            <button type="button" class="info-icon" @click.stop data-info="When on, messages that arrive without the required stamp are discarded before reaching your inbox. When off, they are still delivered, just marked in the conversation."></button>
           </label>
         </div>
       </div>
@@ -1492,15 +1491,15 @@
           </select>
         </div>
         <div class="card mt-3" >
-          <strong>Stamp cost <button type="button" class="info-icon" data-info="Strict listeners (rmap.world uses required_value=14 by default) will drop announces below their threshold. Set to 0 to disable PoW entirely."></button></strong>
-          <label class="mt-2">PoW difficulty (leading zero bits)</label>
+          <strong>Discovery stamp <button type="button" class="info-icon" data-info="Attaches proof-of-work to this device's discovery announces. Some discovery listeners require a minimum amount of work before they will list a node, so a higher value satisfies stricter listeners at the cost of more computation here. This is separate from the message stamp on the Identity tab, which is work you require from people who message you. Set to 0 to attach no proof-of-work."></button></strong>
+          <label class="mt-2">Proof-of-work difficulty (leading zero bits)</label>
           <select id="disc-stamp-cost"
                   x-model="$store.s.forms.discovery.stampCost"
                   @change="onChangeDiscStampCost()">
-            <option value="0">0 — no proof-of-work</option>
+            <option value="0">Off (no proof-of-work)</option>
             <option value="8">8 bits</option>
             <option value="12">12 bits</option>
-            <option value="14">14 bits (upstream default)</option>
+            <option value="14">14 bits</option>
             <option value="16">16 bits</option>
           </select>
         </div>
@@ -2956,8 +2955,14 @@ function msgMeta(m) {
   const parts = [];
   if (m.ts) parts.push(new Date(m.ts * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }));
   if (!m.in && m.status) {
-    parts.push(m.status === 'generating_stamp' ? 'generating stamp…'
-             : m.status === 'finding_route'    ? 'finding route'
+    // While a Resource transfer is in flight for this message, the status
+    // word is the live "sending N%" (the thin bar under this line shows the
+    // same) — the raw lifecycle status (queued/sent) would otherwise read
+    // as stale next to an actively-moving bar.
+    const xfer = transferForMsg(m);
+    parts.push(xfer                              ? 'sending ' + transferPct(xfer) + '%'
+             : m.status === 'generating_stamp'   ? 'generating stamp…'
+             : m.status === 'finding_route'      ? 'finding route'
              : m.status);
   }
   // Stamp verdict — present only when a stamp policy applied to this
@@ -7090,7 +7095,7 @@ async function onChangeStampCost() {
     if (state.self) state.self.stamp_cost = cost;
     state.forms.identity.stampCost = String(cost);
     toast(cost === 0 ? 'Message stamps no longer required'
-                     : 'Stamp requirement updated — senders learn it from your next announce', 'success');
+                     : 'Stamp requirement updated. Senders learn it from your next announce.', 'success');
   } catch (err) {
     state.forms.identity.stampCost = last;
     toast('Could not update setting: ' + (err.message || err), 'error');

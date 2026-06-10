@@ -11,6 +11,7 @@
 #include "../Storage/Streaming.h"
 #include <SD.h>
 
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -48,10 +49,14 @@ namespace Web {
                                const char* status_name);
     // Status update keyed by outbox seq rather than packet hash — used for
     // queued sends that have no packet hash yet (e.g. the "finding route"
-    // give-up). The SPA matches the bubble by seq.
+    // give-up, or a deferred-stamp send). The SPA matches the bubble by
+    // seq; link_hash (may be empty) lets it adopt the packet hash a
+    // stamped send acquired at dispatch so later hash-keyed status
+    // frames still find the bubble.
     void publish_outbox_status_seq(const LXMF::IdentityId& identity_id,
                                    uint32_t seq,
-                                   const char* status_name);
+                                   const char* status_name,
+                                   const RNS::Bytes& link_hash);
   }
 }
 
@@ -86,6 +91,12 @@ namespace LXMF {
     // render the image / play the audio inline. When false, the
     // outbox shows a chip-only "attachment (12 KB)" placeholder.
     bool                 persist_outbound_attachments = true;
+    // Inbound stamp policy (anti-spam proof-of-work). stamp_cost 0 =
+    // no stamp required; 1-254 = the cost announced to senders.
+    // enforce_stamps mirrors upstream LXMRouter's default-off
+    // enforce_stamps(): off = validate-and-record but deliver anyway.
+    uint8_t              stamp_cost = 0;
+    bool                 enforce_stamps = false;
     bool                 active = false;
     // Password hash (PBKDF2-HMAC-SHA256) + per-identity salt. Set at
     // identity creation; required for login. Empty if identity is from an
@@ -150,6 +161,12 @@ namespace LXMF {
       // Auto-send messages whose recipient key has now arrived via the
       // path request issued at send time (AP-mode on-demand key learning).
       tick_pending_identity_sends();
+      // Advance deferred delivery-stamp work: inbound messages parked
+      // for validation, and outbound sends waiting on the background
+      // proof-of-work worker. Both queues are FIFO and share the single
+      // Stamp worker task.
+      LXMFMinimal::tick_stamp_validations();
+      tick_pending_stamp_sends();
     }
 
     // Update the auto-announce interval for a single identity and
@@ -168,6 +185,29 @@ namespace LXMF {
       LXMFIdentity* a = identity_by_id_mut(iden_id);
       if (!a) return false;
       a->persist_outbound_attachments = on;
+      write_meta(*a);
+      return true;
+    }
+
+    // Inbound stamp policy. cost 0 disables (announce carries nil);
+    // 1-254 is announced to senders on the next announce (mirrors
+    // upstream LXMRouter.set_inbound_stamp_cost's accepted range).
+    // The caller fires an announce separately if it wants peers to
+    // learn the new cost immediately.
+    static bool set_stamp_cost(const IdentityId& iden_id, uint8_t cost) {
+      LXMFIdentity* a = identity_by_id_mut(iden_id);
+      if (!a) return false;
+      a->stamp_cost = (cost >= 1 && cost <= 254) ? cost : 0;
+      a->lxmf.set_stamp_cost(a->stamp_cost);
+      write_meta(*a);
+      return true;
+    }
+
+    static bool set_enforce_stamps(const IdentityId& iden_id, bool on) {
+      LXMFIdentity* a = identity_by_id_mut(iden_id);
+      if (!a) return false;
+      a->enforce_stamps = on;
+      a->lxmf.set_enforce_stamps(on);
       write_meta(*a);
       return true;
     }
@@ -277,6 +317,20 @@ namespace LXMF {
       };
       unlink_atts(a->inbox.get());
       unlink_atts(a->outbox.get());
+      // Drop any stamped sends still pending for this identity —
+      // aborts in-flight proof-of-work and removes payload sidecars.
+      {
+        auto& q = pending_stamp_sends();
+        for (auto it = q.begin(); it != q.end(); ) {
+          if (it->iden_id == iden_id) {
+            Discovery::Stamp::cancel(it->message_id);
+            remove_pending_stamp_sidecar(it->sidecar);
+            it = q.erase(it);
+          } else {
+            ++it;
+          }
+        }
+      }
       // Best-effort file removal.
       filesystem.remove(a->identity_path().c_str());
       filesystem.remove(a->meta_path().c_str());
@@ -400,6 +454,19 @@ namespace LXMF {
           if (out_err) *out_err = "No route to the recipient yet and the auto-send queue is full. Please resend in a moment.";
           return false;
         }
+      }
+      // Delivery stamps: when the recipient's latest announce carries a
+      // stamp cost, the message is prepared (payload + message id frozen)
+      // and parked while the background worker searches for a stamp —
+      // mirrors upstream LXMRouter.handle_outbound auto-applying the
+      // cached cost and deferring to pending_deferred_stamps. The outbox
+      // record is appended NOW with GeneratingStamp status so it shows in
+      // the UI and survives a reboot; dispatch later mutates it in place.
+      const uint8_t required_cost = LXMFMinimal::peer_stamp_cost(dest_hash);
+      if (required_cost >= 1) {
+        return send_with_stamp(a, iden_id, dest_hash, title, content,
+                               attachments, required_cost, out_rec,
+                               out_err, use_seq);
       }
       if (!a->lxmf.send_message(dest_hash, title, content, attachments, out_rec, out_err)) {
         return false;
@@ -545,7 +612,7 @@ namespace LXMF {
             } else {
               WARNINGF("LXMF: auto-send of attachment message to %s failed after a route arrived: %s",
                        it->dest.toHex().c_str(), err ? err : "unknown");
-              Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed");
+              Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed", RNS::Bytes());
             }
             it = q.erase(it);
             continue;
@@ -556,7 +623,7 @@ namespace LXMF {
                 if (a.staging_id) Storage::OutboundStaging::release(a.staging_id);
               // Tell the SPA the "finding route" bubble has given up, keyed by
               // its seq (the message was never sent, so there's no packet hash).
-              Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed");
+              Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed", RNS::Bytes());
               WARNINGF("LXMF: route never resolved for attachment message to %s after %u path requests — freed staging",
                        it->dest.toHex().c_str(), (unsigned)it->attempts);
               it = q.erase(it);
@@ -582,13 +649,13 @@ namespace LXMF {
           } else {
             WARNINGF("LXMF: auto-send to %s failed after key arrived: %s",
                      it->dest.toHex().c_str(), err ? err : "unknown");
-            Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed");
+            Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed", RNS::Bytes());
           }
           it = q.erase(it);
         } else if (++it->attempts >= PENDING_ID_MAX_ATTEMPTS) {
           WARNINGF("LXMF: giving up auto-send to %s — key never arrived after %u tries",
                    it->dest.toHex().c_str(), (unsigned)it->attempts);
-          Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed");
+          Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed", RNS::Bytes());
           it = q.erase(it);
         } else {
           RNS::Transport::request_path(it->dest);  // nudge the path request again
@@ -596,6 +663,349 @@ namespace LXMF {
           ++it;
         }
       }
+    }
+
+    // ---------------- deferred delivery-stamp sends ----------------
+    // A send whose recipient requires a delivery stamp. The outbox
+    // record (status GeneratingStamp) was appended at send() time; the
+    // frozen payload lives in an on-disk sidecar (SD first, flash
+    // fallback — the same policy as attachment persistence) so the
+    // multi-second proof-of-work holds no payload bytes in RAM and the
+    // send survives a reboot. `payload` is only populated as a RAM
+    // fallback when the sidecar write failed. Mirrors upstream
+    // LXMRouter.pending_deferred_stamps + process_deferred_stamps: one
+    // generation in flight, FIFO, dispatch once the stamp lands.
+    struct PendingStampSend {
+      IdentityId  iden_id;
+      RNS::Bytes  dest;
+      RNS::Bytes  message_id;        // 32-byte stamp material (== message hash)
+      uint32_t    outbox_seq = 0;
+      uint8_t     cost = 0;
+      std::string sidecar;           // on-disk payload copy ("" = RAM fallback)
+      RNS::Bytes  payload;           // only when the sidecar write failed
+      bool        submitted = false; // generation handed to the PoW worker
+      RNS::Bytes  stamp;             // non-empty once generated → dispatch phase
+      uint32_t    stamp_value = 0;
+      uint8_t     dispatch_attempts = 0;
+      uint64_t    next_dispatch_ms  = 0;
+    };
+    static constexpr size_t   PENDING_STAMP_MAX           = 8;
+    static constexpr uint8_t  STAMP_DISPATCH_MAX_ATTEMPTS = 6;
+    static constexpr uint32_t STAMP_DISPATCH_BACKOFF_MS   = 4000;
+    static std::deque<PendingStampSend, PsAlloc<PendingStampSend>>& pending_stamp_sends() {
+      static std::deque<PendingStampSend, PsAlloc<PendingStampSend>> q;
+      return q;
+    }
+
+    // Sidecar layout: "LXSP" | version(1) | dest(16) | cost(1) |
+    // message_id(32) | payload. The message id is stored so a boot-time
+    // resume doesn't have to re-read the whole payload just to derive
+    // the stamp material; send_prepared() re-verifies payload-vs-id
+    // before anything goes on the wire.
+    static constexpr size_t STAMP_SIDECAR_HDR = 4 + 1 + 16 + 1 + 32;
+
+    static std::string pending_stamp_sidecar_path(const LXMFIdentity& a, uint32_t seq) {
+      return a.dir() + "/pending_stamp_" + std::to_string(seq) + ".bin";
+    }
+
+    static bool write_pending_stamp_sidecar(const std::string& path,
+                                            const RNS::Bytes& dest,
+                                            uint8_t cost,
+                                            const RNS::Bytes& message_id,
+                                            const RNS::Bytes& payload) {
+      if (dest.size() != 16 || message_id.size() != 32 || payload.size() == 0) return false;
+      uint8_t hdr[STAMP_SIDECAR_HDR];
+      memcpy(hdr, "LXSP", 4);
+      hdr[4] = 1;
+      memcpy(hdr + 5, dest.data(), 16);
+      hdr[21] = cost;
+      memcpy(hdr + 22, message_id.data(), 32);
+      const size_t total = sizeof(hdr) + payload.size();
+      // Chunked writer: header bytes first, then payload straight from
+      // the (PSRAM-backed) Bytes buffer — no contiguous header+payload
+      // copy is ever materialised.
+      auto reader = [&](uint8_t* dst, size_t off, size_t want) -> size_t {
+        size_t filled = 0;
+        while (filled < want && off + filled < total) {
+          const size_t pos = off + filled;
+          if (pos < sizeof(hdr)) {
+            dst[filled++] = hdr[pos];
+          } else {
+            const size_t poff = pos - sizeof(hdr);
+            const size_t take = std::min(want - filled, payload.size() - poff);
+            memcpy(dst + filled, payload.data() + poff, take);
+            filled += take;
+          }
+        }
+        return filled;
+      };
+      if (Storage::SDCard::present()) {
+        if (Storage::Streaming::write_streamed(path.c_str(), true, total, reader) == total) {
+          return true;
+        }
+        if (SD.exists(path.c_str())) SD.remove(path.c_str());
+        WARNINGF("LXMF: SD sidecar write failed for %s — falling back to flash", path.c_str());
+      }
+      if (Storage::Streaming::write_streamed(path.c_str(), false, total, reader) == total) {
+        return true;
+      }
+      filesystem.remove(path.c_str());
+      return false;
+    }
+
+    // Read a sidecar back. out_payload may be null for a header-only
+    // read (boot resume). The payload lands in a PSRAM-backed Bytes
+    // buffer, filled in 4 KiB chunks.
+    static bool read_pending_stamp_sidecar(const std::string& path,
+                                           RNS::Bytes* out_dest,
+                                           uint8_t*    out_cost,
+                                           RNS::Bytes* out_message_id,
+                                           RNS::Bytes* out_payload) {
+      const bool on_sd = Storage::SDCard::present() && Storage::SDCard::exists(path.c_str());
+      File sd_f;
+      microStore::File fl_f;
+      size_t fsize = 0;
+      if (on_sd) {
+        sd_f = SD.open(path.c_str(), FILE_READ);
+        if (!sd_f) return false;
+        fsize = sd_f.size();
+      } else {
+        if (!filesystem.exists(path.c_str())) return false;
+        fl_f = filesystem.open(path.c_str(), microStore::File::ModeRead);
+        if (!fl_f) return false;
+        fsize = filesystem.size(path.c_str());
+      }
+      auto close_all = [&]() { if (on_sd) sd_f.close(); else fl_f.close(); };
+      auto read_some = [&](uint8_t* dst, size_t want) -> size_t {
+        return on_sd ? (size_t)sd_f.read(dst, want) : (size_t)fl_f.read(dst, want);
+      };
+      uint8_t hdr[STAMP_SIDECAR_HDR];
+      if (fsize <= sizeof(hdr) || read_some(hdr, sizeof(hdr)) != sizeof(hdr)
+          || memcmp(hdr, "LXSP", 4) != 0 || hdr[4] != 1) {
+        close_all();
+        return false;
+      }
+      if (out_dest)       *out_dest       = RNS::Bytes(hdr + 5, 16);
+      if (out_cost)       *out_cost       = hdr[21];
+      if (out_message_id) *out_message_id = RNS::Bytes(hdr + 22, 32);
+      bool ok = true;
+      if (out_payload) {
+        const size_t plen = fsize - sizeof(hdr);
+        uint8_t* dst = out_payload->writable(plen);
+        if (dst == nullptr) {
+          ok = false;
+        } else {
+          size_t off = 0;
+          while (off < plen) {
+            const size_t want = std::min((size_t)4096, plen - off);
+            const size_t got = read_some(dst + off, want);
+            if (got == 0) break;
+            off += got;
+            RNS::Utilities::OS::reset_watchdog();
+          }
+          ok = (off == plen);
+        }
+      }
+      close_all();
+      return ok;
+    }
+
+    static void remove_pending_stamp_sidecar(const std::string& path) {
+      if (path.empty()) return;
+      if (Storage::SDCard::present() && Storage::SDCard::exists(path.c_str())) {
+        SD.remove(path.c_str());
+      }
+      if (filesystem.exists(path.c_str())) filesystem.remove(path.c_str());
+    }
+
+    // Terminal failure of a pending stamped send: flip the outbox record
+    // to Failed, tell the SPA (seq-keyed — the record never had a packet
+    // hash), and drop the payload sidecar.
+    static void fail_pending_stamp(LXMFIdentity& a, const PendingStampSend& f, const char* why) {
+      WARNINGF("LXMF: stamped send to %s (seq %lu) failed: %s",
+               f.dest.toHex().c_str(), (unsigned long)f.outbox_seq,
+               why ? why : "unknown");
+      if (a.outbox) {
+        a.outbox->mutate_by_seq(f.outbox_seq, [](MessageRecord& m) {
+          m.status = OutboxStatus::Failed;
+        });
+      }
+      Web::WS::publish_outbox_status_seq(f.iden_id, f.outbox_seq, "failed", RNS::Bytes());
+      remove_pending_stamp_sidecar(f.sidecar);
+    }
+
+    // Clean cancel for a pending stamped send whose outbox record is
+    // being removed (conversation clear, retention eviction). Aborts
+    // the worker job if it's this entry's, and drops the sidecar. The
+    // record itself is already on its way out, so no status mutation
+    // or WS frame is needed.
+    static void cancel_pending_stamp(const IdentityId& iden_id, uint32_t seq) {
+      auto& q = pending_stamp_sends();
+      for (auto it = q.begin(); it != q.end(); ++it) {
+        if (it->iden_id != iden_id || it->outbox_seq != seq) continue;
+        Discovery::Stamp::cancel(it->message_id);
+        remove_pending_stamp_sidecar(it->sidecar);
+        NOTICEF("LXMF: cancelled stamp generation for outbox seq %lu (record removed)",
+                (unsigned long)seq);
+        q.erase(it);
+        return;
+      }
+    }
+
+    // The stamped variant of send(): freeze the payload, append the
+    // outbox record in GeneratingStamp state, persist the payload
+    // sidecar, and queue the proof-of-work. Dispatch happens from
+    // tick_pending_stamp_sends() once the stamp is found.
+    static bool send_with_stamp(LXMFIdentity* a,
+                                const IdentityId& iden_id,
+                                const RNS::Bytes& dest_hash,
+                                const std::string& title,
+                                const std::string& content,
+                                const std::vector<LXMFMinimal::OutgoingAttachment>* attachments,
+                                uint8_t cost,
+                                MessageRecord& out_rec,
+                                const char** out_err,
+                                uint32_t use_seq) {
+      // Ownership of staged attachment buffers passes to this call (the
+      // same contract as send_message): prepare_message releases them on
+      // every one of its exit paths, so only the two early-outs BEFORE
+      // prepare_message have to release explicitly.
+      auto release_staging = [&]() {
+        if (!attachments) return;
+        for (const auto& at : *attachments) {
+          if (at.staging_id) Storage::OutboundStaging::release(at.staging_id);
+        }
+      };
+      auto& q = pending_stamp_sends();
+      if (q.size() >= PENDING_STAMP_MAX) {
+        release_staging();
+        if (out_err) *out_err = "Too many messages are already waiting on stamp generation. Please resend in a moment.";
+        return false;
+      }
+      if (!a->outbox) {
+        release_staging();
+        if (out_err) *out_err = "This identity has no outbox spool.";
+        return false;
+      }
+      LXMFMinimal::PreparedMessage pm;
+      if (!a->lxmf.prepare_message(dest_hash, title, content, attachments, pm, out_rec, out_err)) {
+        return false;
+      }
+      out_rec.status = OutboxStatus::GeneratingStamp;
+      if (use_seq != 0) out_rec.seq = use_seq;
+      a->outbox->append(out_rec);  // assigns a seq if 0; persists the state
+      PendingStampSend p;
+      p.iden_id    = iden_id;
+      p.dest       = dest_hash;
+      p.message_id = pm.message_id;
+      p.outbox_seq = out_rec.seq;
+      p.cost       = cost;
+      const std::string path = pending_stamp_sidecar_path(*a, out_rec.seq);
+      if (write_pending_stamp_sidecar(path, dest_hash, cost, pm.message_id, pm.payload)) {
+        p.sidecar = path;
+      } else {
+        // Disk full / no backend: hold the payload in PSRAM. The send
+        // still completes, it just won't survive a reboot mid-search.
+        WARNING("LXMF: pending-stamp sidecar write failed — holding payload in PSRAM");
+        p.payload = pm.payload;
+      }
+      q.push_back(std::move(p));
+      NOTICEF("LXMF: send to %s deferred for stamp generation (cost %u, seq %lu)",
+              dest_hash.toHex().c_str(), (unsigned)cost, (unsigned long)out_rec.seq);
+      Web::WS::publish_outbound(iden_id, out_rec);
+      return true;
+    }
+
+    // Called from loop(): advance the front pending stamped send.
+    // Generation phase: hand the job to the shared PoW worker (which
+    // may be busy with a discovery announce or an inbound validation —
+    // bounce and retry next tick) and poll for its result. Dispatch
+    // phase: reload the payload from the sidecar and send it with the
+    // stamp as the 5th payload element. Only the front entry is ever
+    // touched, so the queue is strictly FIFO with one generation in
+    // flight, matching upstream's stamp_gen_lock serialisation.
+    static void tick_pending_stamp_sends() {
+      auto& q = pending_stamp_sends();
+      if (q.empty()) return;
+      auto& f = q.front();
+      LXMFIdentity* a = identity_by_id_mut(f.iden_id);
+      if (!a || !a->outbox) {
+        // Identity deleted while queued. Abort + drop.
+        Discovery::Stamp::cancel(f.message_id);
+        remove_pending_stamp_sidecar(f.sidecar);
+        q.pop_front();
+        return;
+      }
+      const uint64_t now = (uint64_t)millis();
+      if (f.stamp.size() == 0) {
+        if (!f.submitted) {
+          f.submitted = Discovery::Stamp::submit_lxmf_generate(f.message_id, f.cost);
+          return;
+        }
+        Discovery::Stamp::JobResult r;
+        if (!Discovery::Stamp::take_result_if(f.message_id, r)) return;  // still searching
+        if (!r.ok || r.stamp.size() == 0) {
+          fail_pending_stamp(*a, f, "stamp generation was cancelled or could not allocate its workblock");
+          q.pop_front();
+          return;
+        }
+        f.stamp       = r.stamp;
+        f.stamp_value = r.value;
+        // Fall through to dispatch immediately.
+      }
+      if (now < f.next_dispatch_ms) return;
+      LXMFMinimal::PreparedMessage pm;
+      pm.message_id = f.message_id;
+      pm.payload    = f.payload;  // RAM fallback (usually empty)
+      if (pm.payload.size() == 0 && !f.sidecar.empty()) {
+        RNS::Bytes side_mid;
+        if (!read_pending_stamp_sidecar(f.sidecar, nullptr, nullptr, &side_mid, &pm.payload)
+            || !(side_mid == f.message_id)) {
+          fail_pending_stamp(*a, f, "the stored message payload is missing or corrupt");
+          q.pop_front();
+          return;
+        }
+      }
+      if (pm.payload.size() == 0) {
+        fail_pending_stamp(*a, f, "the prepared payload is no longer available");
+        q.pop_front();
+        return;
+      }
+      MessageRecord rec;
+      const char* err = nullptr;
+      if (!a->lxmf.send_prepared(f.dest, pm, f.stamp, rec, &err)) {
+        // Usually a route that lapsed during the multi-second search —
+        // send_prepared has already issued a fresh path request. Back
+        // off and retry; the generated stamp is kept (it's bound to the
+        // message id, not the route).
+        if (++f.dispatch_attempts >= STAMP_DISPATCH_MAX_ATTEMPTS) {
+          fail_pending_stamp(*a, f, err ? err : "dispatch failed");
+          q.pop_front();
+        } else {
+          f.next_dispatch_ms = now + (uint64_t)STAMP_DISPATCH_BACKOFF_MS * f.dispatch_attempts;
+        }
+        return;
+      }
+      // Dispatched. Flip the GeneratingStamp record into its sent form
+      // in place (the record predates the send, so dispatch must update,
+      // not append). stamp_value is recorded on the sender side too —
+      // the SPA shows the work that was attached to the message.
+      const int16_t value = f.stamp_value > 0x7FFF ? (int16_t)0x7FFF : (int16_t)f.stamp_value;
+      a->outbox->mutate_by_seq(f.outbox_seq, [&](MessageRecord& m) {
+        m.status        = rec.status;
+        m.packet_hash   = rec.packet_hash;
+        m.stamp_checked = true;
+        m.stamp_valid   = true;
+        m.stamp_value   = value;
+      });
+      NOTICEF("LXMF: stamped send to %s dispatched (seq %lu, stamp value %u)",
+              f.dest.toHex().c_str(), (unsigned long)f.outbox_seq,
+              (unsigned)f.stamp_value);
+      Web::WS::publish_outbox_status_seq(f.iden_id, f.outbox_seq,
+                                         outbox_status_name(rec.status),
+                                         rec.packet_hash);
+      remove_pending_stamp_sidecar(f.sidecar);
+      q.pop_front();
     }
 
     // Read-only access to identities list.
@@ -684,6 +1094,8 @@ namespace LXMF {
       doc["created_ms"]           = (uint32_t)millis();
       doc["announce_interval_ms"]         = a.announce_interval_ms;
       doc["persist_outbound_attachments"] = a.persist_outbound_attachments;
+      doc["stamp_cost"]                   = a.stamp_cost;
+      doc["enforce_stamps"]               = a.enforce_stamps;
       if (a.password_hash.size() > 0) doc["password_hash"] = a.password_hash.toHex();
       if (a.password_salt.size() > 0) doc["password_salt"] = a.password_salt.toHex();
       String body;
@@ -702,6 +1114,9 @@ namespace LXMF {
       a.display_name         = (const char*)(doc["display_name"] | "LXMF Identity");
       a.announce_interval_ms = (uint32_t)(doc["announce_interval_ms"] | LXMF_DEFAULT_ANNOUNCE_INTERVAL_MS);
       a.persist_outbound_attachments = (bool)(doc["persist_outbound_attachments"] | true);
+      const uint32_t sc = (uint32_t)(doc["stamp_cost"] | 0);
+      a.stamp_cost     = (sc >= 1 && sc <= 254) ? (uint8_t)sc : 0;
+      a.enforce_stamps = (bool)(doc["enforce_stamps"] | false);
       std::string ph = (const char*)(doc["password_hash"] | "");
       std::string ps = (const char*)(doc["password_salt"] | "");
       if (!ph.empty()) a.password_hash.assignHex(ph.c_str());
@@ -784,6 +1199,14 @@ namespace LXMF {
       // the UI even though the bytes were on disk.
 
       auto on_remove = [adir, p = &a](const MessageRecord& rec) {
+        // An outbox record evicted while still waiting on stamp
+        // generation (conversation clear, retention): abort the
+        // proof-of-work job cleanly and drop its payload sidecar.
+        if (!rec.incoming && rec.status == OutboxStatus::GeneratingStamp) {
+          cancel_pending_stamp(p->id, rec.seq);
+          remove_pending_stamp_sidecar(
+              adir + "/pending_stamp_" + std::to_string(rec.seq) + ".bin");
+        }
         for (const auto& att : rec.attachments) {
           if (att.filename.empty()) continue;
           const std::string full = adir + "/attachments/" + att.filename.c_str();
@@ -816,6 +1239,10 @@ namespace LXMF {
       a.outbox->prune_expired();
 
       a.lxmf.init(a.identity, a.display_name.c_str());
+      // Inbound stamp policy from meta.json — must land before the
+      // first announce so peers see the cost in app_data element [1].
+      a.lxmf.set_stamp_cost(a.stamp_cost);
+      a.lxmf.set_enforce_stamps(a.enforce_stamps);
       LXMFIdentity* p = &a;
       a.lxmf.set_delivery_callback([p](const MessageRecord& rec) {
         if (!p->active || !p->inbox) return;
@@ -1029,6 +1456,47 @@ namespace LXMF {
             }
             return out;
           });
+      // Resume sends a reboot interrupted mid-stamp-generation: every
+      // outbox record still in GeneratingStamp has (should have) a
+      // payload sidecar on disk — re-queue the proof-of-work from it.
+      // Records whose sidecar is gone (SD removed, write failed before
+      // the reboot, RAM-fallback entry) flip to Failed so the UI never
+      // shows a perpetual "generating stamp" that can't complete.
+      {
+        std::vector<uint32_t> resume_seqs;
+        for (const auto& rec : a.outbox->ring()) {
+          if (!rec.incoming && rec.status == OutboxStatus::GeneratingStamp) {
+            resume_seqs.push_back(rec.seq);
+          }
+        }
+        for (uint32_t seq : resume_seqs) {
+          const std::string path = pending_stamp_sidecar_path(a, seq);
+          RNS::Bytes dest, mid;
+          uint8_t cost = 0;
+          const bool ok = pending_stamp_sends().size() < PENDING_STAMP_MAX
+              && read_pending_stamp_sidecar(path, &dest, &cost, &mid, nullptr)
+              && cost >= 1;
+          if (!ok) {
+            WARNINGF("LXMF: cannot resume stamped send (outbox seq %lu) — marking failed",
+                     (unsigned long)seq);
+            a.outbox->mutate_by_seq(seq, [](MessageRecord& m) {
+              m.status = OutboxStatus::Failed;
+            });
+            remove_pending_stamp_sidecar(path);
+            continue;
+          }
+          PendingStampSend p2;
+          p2.iden_id    = a.id;
+          p2.dest       = dest;
+          p2.message_id = mid;
+          p2.outbox_seq = seq;
+          p2.cost       = cost;
+          p2.sidecar    = path;
+          pending_stamp_sends().push_back(std::move(p2));
+          NOTICEF("LXMF: resuming stamped send (outbox seq %lu, cost %u) after reboot",
+                  (unsigned long)seq, (unsigned)cost);
+        }
+      }
       a.last_announce_ms = 0;  // announce on first loop tick
     }
 

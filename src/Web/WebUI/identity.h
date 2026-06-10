@@ -331,6 +331,8 @@
       doc["address"]              = a->address_hex();
       doc["announce_interval_ms"]         = a->announce_interval_ms;
       doc["persist_outbound_attachments"] = a->persist_outbound_attachments;
+      doc["stamp_cost"]                   = a->stamp_cost;
+      doc["enforce_stamps"]               = a->enforce_stamps;
       doc["inbox_size"]                   = a->inbox  ? (uint32_t)a->inbox->size()  : 0;
       doc["outbox_size"]                  = a->outbox ? (uint32_t)a->outbox->size() : 0;
       // Time until the next *auto* announce. 0 when auto-announce is
@@ -386,6 +388,29 @@
           return;
         }
       }
+      if (body["stamp_cost"].is<JsonVariant>()) {
+        // 0 (or null) disables. Valid required costs are 1-254 — the
+        // same range upstream's set_inbound_stamp_cost accepts. Reject
+        // out-of-range instead of silently clamping so a typo'd "2540"
+        // doesn't quietly become something else.
+        const int cost = (int)(body["stamp_cost"] | 0);
+        if (cost < 0 || cost > 254) {
+          send_error_with_message(req, 400, "invalid_stamp_cost",
+            "Stamp cost must be 0 (off) or between 1 and 254.");
+          return;
+        }
+        if (!LXMF::LXMFGateway::set_stamp_cost(requested, (uint8_t)cost)) {
+          send_error(req, 404, "unknown_identity");
+          return;
+        }
+      }
+      if (body["enforce_stamps"].is<JsonVariant>()) {
+        const bool on = (bool)body["enforce_stamps"];
+        if (!LXMF::LXMFGateway::set_enforce_stamps(requested, on)) {
+          send_error(req, 404, "unknown_identity");
+          return;
+        }
+      }
       if (body["display_name"].is<JsonVariant>()) {
         // Trim leading/trailing whitespace; reject empty so peers always
         // see a meaningful label. The 96-byte clamp keeps the encoded
@@ -410,6 +435,8 @@
       doc["display_name"]                  = a ? a->display_name : std::string();
       doc["announce_interval_ms"]          = a ? a->announce_interval_ms : 0;
       doc["persist_outbound_attachments"]  = a ? a->persist_outbound_attachments : true;
+      doc["stamp_cost"]                    = a ? a->stamp_cost : 0;
+      doc["enforce_stamps"]                = a ? a->enforce_stamps : false;
       send_json(req, 200, doc);
     }
 

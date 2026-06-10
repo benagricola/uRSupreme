@@ -106,6 +106,12 @@
           mo["in"]          = m.incoming;
           mo["sig_ok"]      = m.signature_ok;
           mo["status"]      = LXMF::outbox_status_name(m.status);
+          // Delivery-stamp verdict — present only when a stamp policy
+          // applied to this message. See emit_messages_array.
+          if (m.stamp_checked) {
+            mo["stamp_ok"] = m.stamp_valid;
+            if (m.stamp_value >= 0) mo["stamp_value"] = m.stamp_value;
+          }
           if (!m.attachments.empty()) {
             JsonArray atts = mo["attachments"].to<JsonArray>();
             for (const auto& a : m.attachments) {

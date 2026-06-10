@@ -481,6 +481,14 @@
         obj["body_size"]   = m.body_size;
         obj["sig_ok"]      = m.signature_ok;
         obj["status"]      = LXMF::outbox_status_name(m.status);
+        // Delivery-stamp verdict — only present when a stamp policy
+        // applied to this message (inbound validation, or an outbound
+        // send that generated a stamp). stamp_value is the recorded
+        // proof-of-work score; absent for a missing/invalid stamp.
+        if (m.stamp_checked) {
+          obj["stamp_ok"] = m.stamp_valid;
+          if (m.stamp_value >= 0) obj["stamp_value"] = m.stamp_value;
+        }
         // Attachments (LXMF fields-dict file/image/audio blobs). The
         // bytes themselves live on disk under
         // /lxmf/identities/<id>/attachments/<filename>; this just

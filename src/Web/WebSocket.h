@@ -237,6 +237,12 @@ namespace WS {
     msg["body"]            = m.content;
     msg["body_size"]       = m.body_size;
     msg["sig_ok"]          = m.signature_ok;
+    // Delivery-stamp verdict — present only when an inbound stamp
+    // policy applied (cost configured on this identity).
+    if (m.stamp_checked) {
+      msg["stamp_ok"] = m.stamp_valid;
+      if (m.stamp_value >= 0) msg["stamp_value"] = m.stamp_value;
+    }
     if (!m.attachments.empty()) {
       JsonArray atts = msg["attachments"].to<JsonArray>();
       for (const auto& a : m.attachments) {
@@ -272,6 +278,10 @@ namespace WS {
     msg["in"]          = false;
     msg["status"]      = LXMF::outbox_status_name(m.status);
     if (m.packet_hash.size() > 0) msg["pkt"] = m.packet_hash.toHex();
+    if (m.stamp_checked) {
+      msg["stamp_ok"] = m.stamp_valid;
+      if (m.stamp_value >= 0) msg["stamp_value"] = m.stamp_value;
+    }
     if (!m.attachments.empty()) {
       JsonArray atts = msg["attachments"].to<JsonArray>();
       for (const auto& a : m.attachments) {
@@ -320,15 +330,20 @@ namespace WS {
   }
 
   // Same event, keyed by outbox seq instead of a packet/link hash — for a
-  // queued send that has no packet hash yet (the "finding route" give-up).
-  // The SPA matches the bubble by seq.
+  // queued send that has no packet hash yet (the "finding route" give-up,
+  // or a deferred-stamp send still generating its proof-of-work). The SPA
+  // matches the bubble by seq. A non-empty link_hash is included so the
+  // bubble can adopt the packet hash a stamped send acquired at dispatch
+  // — later hash-keyed status frames (sent → delivered) then match it.
   inline void publish_outbox_status_seq(const LXMF::IdentityId& identity_id,
                                         uint32_t seq,
-                                        const char* status_name) {
+                                        const char* status_name,
+                                        const RNS::Bytes& link_hash) {
     Common::PsramJsonDocument doc;
     doc["type"]   = "outbox_status";
     doc["seq"]    = seq;
     doc["status"] = status_name;
+    if (link_hash.size() > 0) doc["link_hash"] = link_hash.toHex();
     broadcast(doc, identity_id);
   }
 

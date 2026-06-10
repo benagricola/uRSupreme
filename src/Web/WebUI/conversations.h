@@ -229,9 +229,16 @@
         return;
       }
       if (final) {
-        // Flush + close the held disk write handle before the validation
-        // read path (/send) opens the file for reading.
-        Storage::OutboundStaging::finalize_write(staging_id);
+        // Flush the SD accumulator's tail + close the held write handle
+        // before the validation read path (/send) opens the file.
+        if (!Storage::OutboundStaging::finalize_write(staging_id)) {
+          static String msg;
+          msg = String("Chunk write failed: ") + Storage::OutboundStaging::fail_detail();
+          err = msg.c_str();
+          Storage::OutboundStaging::release(staging_id);
+          staging_id = 0;
+          return;
+        }
         if (!Storage::OutboundStaging::complete(staging_id)) {
           err = "Upload ended before all bytes were received.";
           Storage::OutboundStaging::release(staging_id);

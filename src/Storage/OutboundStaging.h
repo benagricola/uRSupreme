@@ -57,12 +57,22 @@ inline constexpr size_t   FLASH_CAP_BYTES   = 2 * 1024 * 1024;
 // upload and then disconnect; reclaim within a minute.
 inline constexpr uint32_t STAGING_TIMEOUT_MS = 60000;
 
-// SD short-write retry tuning. A card can return a short write while its
-// internal buffer drains during a long sequential transfer; we flush,
-// pause, and retry the remainder. Give up only after this many
-// consecutive no-progress attempts (a genuinely failing card).
-inline constexpr int      SD_WRITE_MAX_STALLS    = 16;
-inline constexpr uint32_t SD_WRITE_STALL_DELAY_MS = 3;
+// SD short-write retry tuning. A card commits bytes up to a sector
+// boundary then can stall for 100s of ms during internal housekeeping
+// before it will accept the next sector — far longer than a few ms. We
+// flush, pause, and retry the remainder; while we block here TCP
+// back-pressure pauses the upload, so the card gets real breathing room.
+// Budget ~1.6 s of retry before declaring a genuinely failing card.
+inline constexpr int      SD_WRITE_MAX_STALLS    = 80;
+inline constexpr uint32_t SD_WRITE_STALL_DELAY_MS = 20;
+
+// The async multipart parser hands an upload over in thousands of tiny,
+// often sub-sector chunks (observed min 1 byte). Writing each straight to
+// SD means thousands of unaligned sub-sector writes, which thrash the card
+// into stalls. Instead accumulate into this PSRAM buffer and flush to SD in
+// large aligned blocks (one ~64 KiB write per 128 chunks), which the card
+// handles cleanly. 64 KiB = 128 sectors; PSRAM-backed, so cheap.
+inline constexpr size_t   SD_WRITE_BUF_BYTES = 64 * 1024;
 
 enum class Backend : uint8_t { Psram, Sd, Flash };
 
@@ -86,6 +96,11 @@ struct Buffer {
   // so copying the Buffer into the static vector keeps the handle open.)
   File             sd_file;     // Backend::Sd
   microStore::File flash_file;  // Backend::Flash
+  // SD backend: PSRAM accumulator so the card sees large aligned writes
+  // instead of the parser's thousands of tiny chunks. Freed at
+  // close_write_handle(). nullptr => fall back to direct per-chunk writes.
+  uint8_t*   sd_wbuf      = nullptr;
+  size_t     sd_wbuf_used = 0;
 };
 
 namespace _detail {
@@ -100,6 +115,7 @@ namespace _detail {
   // Close whichever disk write handle a buffer holds open. Idempotent —
   // safe to call from finalize_write() and again from release()/gc().
   inline void close_write_handle(Buffer& b) {
+    if (b.sd_wbuf) { heap_caps_free(b.sd_wbuf); b.sd_wbuf = nullptr; b.sd_wbuf_used = 0; }
     if (b.backend == Backend::Sd && b.sd_file) {
       Storage::SDCard::BusGuard _bg;   // close() flushes over the shared HSPI bus
       b.sd_file.close();
@@ -266,6 +282,10 @@ inline uint32_t allocate(size_t total_bytes) {
       Storage::SDCard::verify_or_disable();
       return 0;
     }
+    // PSRAM write accumulator (best-effort: if it can't be had, append()
+    // falls back to direct per-chunk writes).
+    b.sd_wbuf = (uint8_t*)heap_caps_malloc(SD_WRITE_BUF_BYTES, MALLOC_CAP_SPIRAM);
+    b.sd_wbuf_used = 0;
   } else {  // Flash
     b.disk_path = String("/lxmf/staging/") + b.id + ".bin";
     if (filesystem.exists(b.disk_path.c_str())) filesystem.remove(b.disk_path.c_str());
@@ -291,6 +311,46 @@ inline uint32_t allocate(size_t total_bytes) {
 // on this hardware, so the toast is the reliable diagnostic channel).
 inline char* fail_detail() { static char buf[192] = {0}; return buf; }
 
+// Write `len` bytes to the buffer's SD handle, retrying a short write
+// (sector-commit stall) with flush + pause. While we block here, TCP
+// back-pressure pauses the upload, giving the card time to recover.
+// Returns false after the stall budget, setting fail_detail(). Caller
+// holds the HSPI BusGuard.
+inline bool _sd_write_all(Buffer& b, const uint8_t* data, size_t len) {
+  size_t off = 0;
+  int stalls = 0;
+  while (off < len) {
+    const size_t w = b.sd_file.write(data + off, len - off);
+    off += w;
+    if (off >= len) return true;
+    if (w > 0) { stalls = 0; continue; }
+    if (++stalls > SD_WRITE_MAX_STALLS) {
+      const uint64_t total = Storage::SDCard::total_bytes();
+      const uint64_t used  = Storage::SDCard::used_bytes();
+      snprintf(fail_detail(), 192,
+               "SD short-write near=%u blk=%u wrote=%u free=%llu total=%llu",
+               (unsigned)b.written, (unsigned)len, (unsigned)off,
+               (unsigned long long)(total > used ? total - used : 0),
+               (unsigned long long)total);
+      ERRORF("OutboundStaging: %s", fail_detail());
+      Storage::SDCard::verify_or_disable();
+      return false;
+    }
+    b.sd_file.flush();
+    delay(SD_WRITE_STALL_DELAY_MS);
+  }
+  return true;
+}
+
+// Flush the PSRAM accumulator to the card as one large aligned write.
+inline bool _flush_sd_wbuf(Buffer& b) {
+  if (b.sd_wbuf_used == 0) return true;
+  Storage::SDCard::BusGuard _bg;
+  if (!_sd_write_all(b, b.sd_wbuf, b.sd_wbuf_used)) return false;
+  b.sd_wbuf_used = 0;
+  return true;
+}
+
 inline bool append(uint32_t id, const uint8_t* data, size_t len) {
   Buffer* b = _detail::find(id);
   if (!b) return false;
@@ -306,35 +366,22 @@ inline bool append(uint32_t id, const uint8_t* data, size_t len) {
     memcpy(b->psram_ptr + b->written, data, len);
   } else if (b->backend == Backend::Sd) {
     if (!b->sd_file) { Storage::SDCard::verify_or_disable(); return false; }
-    // Hold the HSPI bus mutex across the write so it can't interleave with
-    // the IMU pump (main loop) on the shared bus.
-    Storage::SDCard::BusGuard _bg;
-    // SD cards return a short write when their internal buffer is briefly
-    // full during a long sequential transfer — a transient, not a hard
-    // fault. Write the chunk in a loop, flushing and pausing to let the
-    // card drain before retrying the remainder; only give up after the
-    // card makes no progress for several attempts.
-    size_t off = 0;
-    int stalls = 0;
-    while (off < len) {
-      const size_t w = b->sd_file.write(data + off, len - off);
-      off += w;
-      if (off >= len) break;
-      if (w > 0) { stalls = 0; continue; }          // progress; keep going
-      if (++stalls > SD_WRITE_MAX_STALLS) {
-        const uint64_t total = Storage::SDCard::total_bytes();
-        const uint64_t used  = Storage::SDCard::used_bytes();
-        snprintf(fail_detail(), 192,
-                 "SD short-write off=%u len=%u wrote=%u free=%llu total=%llu",
-                 (unsigned)(b->written + off), (unsigned)len, (unsigned)off,
-                 (unsigned long long)(total > used ? total - used : 0),
-                 (unsigned long long)total);
-        ERRORF("OutboundStaging: %s", fail_detail());
-        Storage::SDCard::verify_or_disable();
-        return false;
+    if (b->sd_wbuf) {
+      // Accumulate into the PSRAM buffer; flush to SD only in full aligned
+      // blocks so the card sees ~64 KiB writes, not the parser's thousands
+      // of tiny sub-sector chunks (which thrash it into stalls).
+      size_t off = 0;
+      while (off < len) {
+        const size_t take = std::min(SD_WRITE_BUF_BYTES - b->sd_wbuf_used, len - off);
+        memcpy(b->sd_wbuf + b->sd_wbuf_used, data + off, take);
+        b->sd_wbuf_used += take;
+        off += take;
+        if (b->sd_wbuf_used == SD_WRITE_BUF_BYTES && !_flush_sd_wbuf(*b)) return false;
       }
-      b->sd_file.flush();                            // commit the card's buffer
-      delay(SD_WRITE_STALL_DELAY_MS);                // let it finish internally
+    } else {
+      // No accumulator (PSRAM alloc failed): direct write.
+      Storage::SDCard::BusGuard _bg;
+      if (!_sd_write_all(*b, data, len)) return false;
     }
   } else {  // Flash
     if (!b->flash_file) return false;
@@ -352,10 +399,17 @@ inline bool complete(uint32_t id) {
 
 // Flush + close the disk write handle once the upload's final chunk has
 // landed. Must run before read() (used by /send) opens the file for
-// reading, so the read sees all bytes. No-op for PSRAM (no handle).
-inline void finalize_write(uint32_t id) {
+// reading, so the read sees all bytes. Returns false if the final flush
+// of the SD accumulator to the card failed (the staged file is then
+// incomplete and the caller must reject the upload). No-op for PSRAM.
+inline bool finalize_write(uint32_t id) {
   Buffer* b = _detail::find(id);
-  if (b) _detail::close_write_handle(*b);
+  if (!b) return true;
+  bool ok = true;
+  if (b->backend == Backend::Sd && b->sd_wbuf)
+    ok = _flush_sd_wbuf(*b);          // commit the buffered tail
+  _detail::close_write_handle(*b);    // also frees the accumulator
+  return ok;
 }
 
 inline size_t total_bytes(uint32_t id) {

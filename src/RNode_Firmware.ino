@@ -1195,13 +1195,48 @@ void setup() {
         });
     // Pre-create both candidate directories so OS::create_directory
     // (which only knows microStore filesystem) doesn't have to deal
-    // with the SD-rooted path at allocation time.
+    // with the SD-rooted path at allocation time. Arduino SD.* calls
+    // take card-rooted paths (the ESP32 core mounts the card at VFS
+    // "/sd" and prepends it), so the resolver's "/sd/lxmf_resource_tmp"
+    // is "/lxmf_resource_tmp" to the SD API.
     if (!filesystem.isDirectory("/lxmf_resource_tmp")) {
       filesystem.mkdir("/lxmf_resource_tmp");
     }
     if (Storage::SDCard::present()) {
-      if (!Storage::SDCard::exists("/sd/lxmf_resource_tmp")) {
-        SD.mkdir("/sd/lxmf_resource_tmp");
+      if (!SD.exists("/lxmf_resource_tmp")) {
+        SD.mkdir("/lxmf_resource_tmp");
+      }
+    }
+    // Sweep transfer scratch orphaned by a reboot, a crash mid-transfer,
+    // or a sender that died between split segments (the receiver's
+    // cross-segment store has no in-flight resource to receive the ICL).
+    // Everything under the resource-tmp dirs is per-transfer state —
+    // spilled ciphertext, split-sender input files, cross-segment
+    // receive stores — and no transfer can be in flight this early in
+    // boot, so clear both wholesale. Upstream relies on its periodic
+    // resource-cache cleaner for this; the port has no equivalent task.
+    {
+      uint32_t swept = 0;
+      filesystem.listDirectory("/lxmf_resource_tmp", [&](const char* name) -> void {
+        char rmpath[96];
+        snprintf(rmpath, sizeof(rmpath), "/lxmf_resource_tmp/%s", name);
+        if (filesystem.remove(rmpath)) swept++;
+      });
+      if (Storage::SDCard::present()) {
+        File tmpdir = SD.open("/lxmf_resource_tmp");
+        if (tmpdir && tmpdir.isDirectory()) {
+          File entry;
+          while ((entry = tmpdir.openNextFile())) {
+            char rmpath[160];
+            snprintf(rmpath, sizeof(rmpath), "/lxmf_resource_tmp/%s", entry.name());
+            entry.close();
+            if (SD.remove(rmpath)) swept++;
+          }
+          tmpdir.close();
+        }
+      }
+      if (swept > 0) {
+        NOTICEF("Resource tmp: swept %u orphaned transfer file(s)", (unsigned)swept);
       }
     }
     // Install the receive-cap resolver so microReticulum's
@@ -1444,6 +1479,14 @@ void setup() {
       Storage::Config::load(filesystem);
       LXMF::LXMFGateway::setup();
       LXMF::AnnounceLog::setup();
+      // Accelerate queued/retrying outbound sends when their recipient
+      // announces. AnnounceLog subscribers run on the LoRa RX path, so
+      // the callback only stashes the 16-byte hash (lock-free ring) and
+      // the gateway loop drains it where the pending maps are owned.
+      LXMF::AnnounceLog::on_new_announce(
+        [](const LXMF::AnnounceRecord& rec, bool is_lxmf) {
+          if (is_lxmf) LXMF::LXMFGateway::note_peer_announced(rec.destination);
+        });
       // Wire the microReticulum ratchet patches to our gateway-backed
       // providers. Must run AFTER setup() so identities (and their ratchet
       // rings) are loaded before the first announce / decrypt fires.

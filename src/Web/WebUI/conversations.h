@@ -250,21 +250,25 @@
     // Final handler — runs once after the upload completes (or fails).
     // Reports the staging_id the client should hand to /send.
     static void handle_outbound_upload_final(AsyncWebServerRequest* req) {
-      RnsLockGuard _g;
-      LXMF::IdentityId caller = require_auth(req);
-      if (caller.empty()) {
-        // Auth fail. Drop any staging buffer the chunk path may have
-        // built up — we shouldn't keep bytes for an unauthorized peer.
-        uint32_t id = _current_upload_staging_id();
-        if (id) Storage::OutboundStaging::release(id);
+      const char* err;
+      uint32_t id;
+      {
+        RnsLockGuard _g;
+        LXMF::IdentityId caller = require_auth(req);
+        if (caller.empty()) {
+          // Auth fail. Drop any staging buffer the chunk path may have
+          // built up — we shouldn't keep bytes for an unauthorized peer.
+          uint32_t bad = _current_upload_staging_id();
+          if (bad) Storage::OutboundStaging::release(bad);
+          _current_upload_staging_id() = 0;
+          _current_upload_error()      = nullptr;
+          return;
+        }
+        err = _current_upload_error();
+        id  = _current_upload_staging_id();
         _current_upload_staging_id() = 0;
         _current_upload_error()      = nullptr;
-        return;
       }
-      const char* err = _current_upload_error();
-      const uint32_t id = _current_upload_staging_id();
-      _current_upload_staging_id() = 0;
-      _current_upload_error()      = nullptr;
       if (err) {
         send_error_with_message(req, 400, "upload_failed", err);
         return;
@@ -276,13 +280,25 @@
       }
       Common::PsramJsonDocument doc;
       doc["staging_id"] = id;
-      doc["total_bytes"] = (uint32_t)Storage::OutboundStaging::total_bytes(id);
+      const uint32_t total = (uint32_t)Storage::OutboundStaging::total_bytes(id);
+      doc["total_bytes"] = total;
       doc["backend"]     = Storage::OutboundStaging::backend_name(
                               Storage::OutboundStaging::backend_of(id));
       // Multipart-parser chunking diagnostic (see #93).
       doc["chunks"]      = _current_upload_chunks();
       doc["min_chunk"]   = (_current_upload_min_chunk() == 0xFFFFFFFFu)
                               ? 0 : _current_upload_min_chunk();
+      // Optional end-to-end integrity check. If the client sends the original
+      // file's SHA-256 in X-SHA256, compare it to the hash the writer task
+      // computed AS IT WROTE the bytes (no read-back, no AsyncTCP-task SD I/O).
+      // A match proves the staged file is byte-for-byte the uploaded content.
+      if (req->hasHeader("X-SHA256")) {
+        String want = req->header("X-SHA256");
+        want.toLowerCase();
+        const char* got = Storage::OutboundStaging::sd_digest_hex();
+        doc["sha256"]    = got;
+        doc["sha256_ok"] = (got[0] != 0) && (want == got);
+      }
       send_json(req, 200, doc);
     }
 

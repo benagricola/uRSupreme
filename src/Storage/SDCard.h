@@ -103,6 +103,11 @@ inline SPIClass* ensure_shared_bus() {
 #endif
 }
 
+// Forward decls: begin() populates the free-space cache (both defined below).
+inline void init_space_cache();
+inline uint64_t total_bytes();
+inline uint64_t used_bytes();
+
 // One-shot init. Safe to call when HAS_SD == false at the board level
 // (just no-ops). Returns true if a card was detected and mounted.
 inline bool begin() {
@@ -145,6 +150,7 @@ inline bool begin() {
     return false;
   }
   _detail::present_ref() = true;
+  init_space_cache();   // one-time FAT scan at mount; populates the free-space cache
   const char* ct_name = ct == CARD_MMC  ? "MMC"
                      : ct == CARD_SD   ? "SD"
                      : ct == CARD_SDHC ? "SDHC"
@@ -152,8 +158,8 @@ inline bool begin() {
   _detail::last_status_ref() = "mounted";
   NOTICEF("SDCard: mounted %s, total=%llu bytes used=%llu bytes",
           ct_name,
-          (unsigned long long)SD.totalBytes(),
-          (unsigned long long)SD.usedBytes());
+          (unsigned long long)total_bytes(),    // cached (no extra FAT scan)
+          (unsigned long long)used_bytes());
   return true;
 #else
   _detail::last_status_ref() = "no_slot_on_board";
@@ -215,8 +221,43 @@ inline bool verify_or_disable() {
   return false;
 #endif
 }
-inline uint64_t  total_bytes()  { if (!_detail::present_ref()) return 0; BusGuard _bg; return (uint64_t)SD.totalBytes(); }
-inline uint64_t  used_bytes()   { if (!_detail::present_ref()) return 0; BusGuard _bg; return (uint64_t)SD.usedBytes(); }
+// SD.usedBytes() walks the FAT to count free clusters — slow (observed multi-
+// second on a 64 GB card) AND on the shared HSPI bus. Calling it from
+// current_caps() at every upload's allocate() froze the AsyncTCP task for
+// seconds (measured /api/info spikes to 4 s), which dropped connections.
+// total/used are cached instead: total is constant (cached at mount); used is
+// refreshed off the AsyncTCP task (by the SD writer task after each job, see
+// OutboundStaging::_sdwriter) so the value the upload path reads is bus-free.
+// Approximate is fine — this only gates backend selection and the card has GB
+// of headroom. cached_used starts 0 (optimistic: empty) until first refreshed;
+// a genuinely-full card is still caught by the writer's checked ENOSPC.
+inline uint64_t& _cached_total()    { static uint64_t v = 0; return v; }
+inline uint64_t& _cached_used()     { static uint64_t v = 0; return v; }
+inline uint32_t& _cached_space_ms() { static uint32_t v = 0; return v; }
+
+// Called once at mount (off the hot path / boot, not the AsyncTCP task).
+inline void init_space_cache() {
+  if (!_detail::present_ref()) return;
+  BusGuard _bg;
+  _cached_total()    = (uint64_t)SD.totalBytes();
+  _cached_used()     = (uint64_t)SD.usedBytes();
+  const uint32_t now = millis();
+  _cached_space_ms() = now ? now : 1;
+}
+
+// SLOW (FAT scan) — MUST only run off the AsyncTCP task. Called by the SD
+// writer task after a job; throttled to at most once per 30 s so it doesn't
+// add the scan cost to every upload.
+inline void refresh_used_cache() {
+  if (!_detail::present_ref()) return;
+  const uint32_t now = millis();
+  if (_cached_space_ms() != 0 && (now - _cached_space_ms()) < 30000) return;
+  BusGuard _bg;
+  _cached_used()     = (uint64_t)SD.usedBytes();
+  _cached_space_ms() = now ? now : 1;
+}
+inline uint64_t  total_bytes()  { return _detail::present_ref() ? _cached_total() : 0; }
+inline uint64_t  used_bytes()   { return _detail::present_ref() ? _cached_used()  : 0; }
 inline uint8_t   card_type()    { return _detail::card_type_ref(); }
 
 // ---- File helpers used by the LXMF attachment routing. ----

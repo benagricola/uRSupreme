@@ -37,6 +37,7 @@ extern char             wr_hostname[10];
 #include <Log.h>
 #include <Reticulum.h>
 #include <Transport.h>
+#include <SHA256.h>                     // streaming SHA-256 for optional upload verify
 #include <deque>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -719,6 +720,7 @@ namespace Web {
       // the per-window low-water marker (Common::HeapWatermark).
       server.on("/api/diag/mem",      HTTP_GET,  handle_diag_mem);
       on_json_post("/api/diag/mem",     handle_diag_mem_reset);
+      server.on("/api/diag/storage",  HTTP_GET,  handle_diag_storage);
 #if defined(URTN_LOOP_DIAG)
       server.on("/api/diag/loop",       HTTP_GET,  handle_diag_loop);
       on_json_post("/api/diag/loop",    handle_diag_loop_reset);

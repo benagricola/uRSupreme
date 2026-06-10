@@ -131,6 +131,41 @@
       send_json(req, 200, doc);
     }
 
+    // GET /api/diag/storage — SD card space + attachment-staging writer health.
+    //
+    // The writer counters are the headline reliability metrics for large
+    // uploads (the staging write path runs entirely on the dedicated SD writer
+    // task, off AsyncTCP):
+    //   * sd_bytes_written      — KiB the writer has committed to the card
+    //   * sd_write_errors       — checked POSIX write/fsync failures (target 0;
+    //     nonzero means the card or SPI clock is the bottleneck)
+    //   * sd_ring_timeouts      — upload chunks that gave up waiting for a full
+    //     ring to drain (target 0; nonzero means the card can't keep up with
+    //     the inflow and uploads are being failed cleanly)
+    //   * sd_feed_max_block_ms  — longest the chunk handler ever blocked on a
+    //     full ring = longest the AsyncTCP task was frozen by an SD stall. The
+    //     responsiveness metric; should stay small (tens of ms).
+    //   * sd_feed_slow_blocks   — count of chunk handler blocks over 250 ms.
+    // Space is the cached free-space (SDCard::refresh_used_cache); reported in
+    // KiB so the 64-bit byte counts fit a uint32 (a 64 GB card is ~67 M KiB).
+    static void handle_diag_storage(AsyncWebServerRequest* req) {
+      if (require_auth(req).empty()) return;
+      Common::PsramJsonDocument doc;
+      const uint64_t total = Storage::SDCard::total_bytes();
+      const uint64_t used  = Storage::SDCard::used_bytes();
+      doc["sd_present"]    = Storage::SDCard::present();
+      doc["sd_total_kb"]   = (uint32_t)(total / 1024);
+      doc["sd_used_kb"]    = (uint32_t)(used / 1024);
+      doc["sd_free_kb"]    = (uint32_t)((total > used ? total - used : 0) / 1024);
+      namespace W = Storage::OutboundStaging::_sdwriter;
+      doc["sd_bytes_written"]     = (uint32_t)(W::bytes_written() / 1024);
+      doc["sd_write_errors"]      = (uint32_t)W::write_errors();
+      doc["sd_ring_timeouts"]     = (uint32_t)W::ring_timeouts();
+      doc["sd_feed_max_block_ms"] = (uint32_t)W::feed_max_block_ms();
+      doc["sd_feed_slow_blocks"]  = (uint32_t)W::feed_slow_blocks();
+      send_json(req, 200, doc);
+    }
+
 #if defined(URTN_HEAP_TRACE)
     // GET /api/diag/heaptrace — live allocations aggregated by caller (innermost
     // two return addresses), sorted by bytes, each tagged `where`:internal|psram.

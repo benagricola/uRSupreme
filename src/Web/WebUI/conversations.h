@@ -777,7 +777,7 @@
       if (content.size() > LXMF::LXMF_MAX_BODY_BYTES) {
         char msg[160];
         snprintf(msg, sizeof(msg),
-                 "Message body too long: %u characters, cap is %u.",
+                 "Message body too long: %u bytes, cap is %u.",
                  (unsigned)content.size(),
                  (unsigned)LXMF::LXMF_MAX_BODY_BYTES);
         send_error_with_message(req, 413, "body_too_long", msg);
@@ -786,7 +786,7 @@
       if (title.size() > LXMF::LXMF_MAX_TITLE_BYTES) {
         char msg[160];
         snprintf(msg, sizeof(msg),
-                 "Title too long: %u characters, cap is %u.",
+                 "Title too long: %u bytes, cap is %u.",
                  (unsigned)title.size(),
                  (unsigned)LXMF::LXMF_MAX_TITLE_BYTES);
         send_error_with_message(req, 413, "title_too_long", msg);

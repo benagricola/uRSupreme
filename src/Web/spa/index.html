@@ -3294,6 +3294,18 @@ async function sendMessage() {
   const text = (state.forms.compose.text || '').trim();
   if (!state.openPeer) return;
   if (!text && state.pendingAttachments.length === 0) return;
+  // The textarea's :maxlength counts UTF-16 code units but the device
+  // cap (and the 413 it returns) is UTF-8 bytes, so multibyte text can
+  // pass the input limit and still be over-cap. Check real bytes here
+  // instead of letting the server bounce it after the fact. The toast
+  // stays non-technical: the numbers are bytes, which read as
+  // characters for plain Latin text.
+  const textBytes = new TextEncoder().encode(text).length;
+  if (textBytes > state.ui.composeMaxLength) {
+    toast('Message too long. ' + textBytes + '/' + state.ui.composeMaxLength,
+          'error', 6000);
+    return;
+  }
   // Re-entry / not-ready guard: the button is :disabled while busy, but guard
   // here too (Enter-to-send bypasses the disabled attribute) so we never
   // double-send or send an attachment whose bytes aren't prepared yet.

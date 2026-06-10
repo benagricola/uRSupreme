@@ -1,14 +1,15 @@
 name: Firmware
 
 # Builds the T-Beam Supreme firmware for both LoRa variants. On every push
-# to master and every PR the build job runs as a sanity check. Pushing a
-# `v*` tag additionally publishes a GitHub Release with both .bin files
-# attached and auto-generated release notes drawn from the commits + PRs
-# since the previous tag.
+# to any branch and every PR the build + guardrail jobs run, so a commit
+# that does not build (or an SPA call with no firmware route) can never
+# land silently anywhere. Pushing a `v*` tag additionally publishes a
+# GitHub Release with both .bin files attached and auto-generated release
+# notes drawn from the commits + PRs since the previous tag.
 
 on:
   push:
-    branches: [master]
+    branches: ['**']
     tags:     ['v*']
   pull_request:
     branches: [master]
@@ -22,6 +23,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+
+  guardrails:
+    name: Guardrails (API parity, config, copy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: SPA calls match firmware routes
+        run: python3 tools/check_api_parity.py
+      - name: No absolute paths in platformio.ini; copy rules
+        run: python3 tools/check_copy_and_config.py
 
   build:
     name: Build (${{ matrix.label }})

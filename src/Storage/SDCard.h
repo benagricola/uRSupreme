@@ -261,6 +261,22 @@ inline void refresh_used_cache() {
 }
 inline uint64_t  total_bytes()  { return _detail::present_ref() ? _cached_total() : 0; }
 inline uint64_t  used_bytes()   { return _detail::present_ref() ? _cached_used()  : 0; }
+
+// Negative exists()/open_read() results are routine (path probes for
+// records that were never spilled, attachment misses), and each
+// verify_or_disable() costs an SD-bus hardware query even on a healthy
+// card, so a burst of misses used to pay that query per miss — the
+// same starvation class dfbae86 gated out of the microStore failure
+// callback. Throttle the lazy eject probe to one hardware query per
+// window: a pulled card is still caught by the first probe after the
+// window expires, and immediately by any write failure.
+inline void verify_or_disable_throttled() {
+  static uint32_t last_ms = 0;
+  const uint32_t now = millis();
+  if (last_ms != 0 && (now - last_ms) < 5000) return;
+  last_ms = now;
+  verify_or_disable();
+}
 inline uint8_t   card_type()    { return _detail::card_type_ref(); }
 
 // ---- File helpers used by the LXMF attachment routing. ----
@@ -288,33 +304,31 @@ inline bool ensure_parent_dirs(const char* path) {
 // Write `data` to `path` atomically-ish. Returns bytes written, or
 // Path existence. Returns false uniformly whether the file is
 // genuinely absent or the card has been pulled, so the caller can't
-// tell those cases apart from the bool alone — but on a probe that
-// suggests the card is gone (SD.exists() returns false AND a
-// totalBytes() check fails) we trip verify_or_disable so the
-// presence state catches up. The cost of the extra probe is paid
-// only on the negative path.
+// tell those cases apart from the bool alone — but on a negative
+// result we run the throttled eject probe so the presence state
+// catches up within one throttle window of a pull.
 inline bool exists(const char* path) {
   if (!_detail::present_ref()) return false;
   BusGuard _bg;                        // SD.exists (+ verify_or_disable) on the shared HSPI bus
   const bool found = SD.exists(path);
-  if (!found) verify_or_disable();
+  if (!found) verify_or_disable_throttled();
   return found;
 }
 
 // Open `path` for reading. Caller checks the result truthiness and
 // is responsible for close(). Used by the attachment download
 // endpoint to stream big blobs without loading them into RAM. On
-// open-failure (file not found OR card ejected) we run
-// verify_or_disable so the presence flag flips when the card has
-// genuinely gone — preventing the SPA from showing SD as mounted
-// long after a mid-read eject.
+// open-failure (file not found OR card ejected) we run the throttled
+// eject probe so the presence flag flips when the card has genuinely
+// gone — preventing the SPA from showing SD as mounted long after a
+// mid-read eject.
 inline File open_read(const char* path) {
   if (!_detail::present_ref()) return File();
   BusGuard _bg;                        // SD.open on the shared HSPI bus. NOTE: the
   // returned handle's later reads (download streaming) must also be guarded
   // by the caller with SDCard::BusGuard around each read.
   File f = SD.open(path, FILE_READ);
-  if (!f) verify_or_disable();
+  if (!f) verify_or_disable_throttled();
   return f;
 }
 inline const char* card_type_name() {

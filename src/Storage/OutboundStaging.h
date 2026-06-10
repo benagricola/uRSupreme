@@ -63,13 +63,16 @@ inline constexpr uint32_t STAGING_TIMEOUT_MS = 60000;
 // flush, pause, and retry the remainder; while we block here TCP
 // back-pressure pauses the upload, so the card gets real breathing room.
 // Budget ~1.6 s of retry before declaring a genuinely failing card.
-// The retry releases the HSPI bus during each wait (see _sd_write_all), so
-// it never blocks the rest of the device. ~1.6 s budget recovers a card
-// that briefly stalls a sector-commit; a card that returns 0 for longer
-// than this is genuinely failing the block and won't recover with more
-// waiting (measured), so we fail the upload reasonably promptly instead.
-inline constexpr int      SD_WRITE_MAX_STALLS    = 80;
-inline constexpr uint32_t SD_WRITE_STALL_DELAY_MS = 20;
+// SD write recovery. When the SD driver times out waiting on a transient
+// card-busy it returns a disk error, and FATFS latches that file handle
+// into an error state — every later write() then returns 0 without
+// touching the card, so plain retries can't recover. We instead close and
+// reopen the file (a fresh, un-latched handle, positioned at the committed
+// size) after a short pause for the card to finish its internal op. Each
+// open/write/flush takes the HSPI bus only for that call and releases it
+// across the wait, so a stall never blocks the rest of the device.
+inline constexpr int      SD_WRITE_MAX_REOPENS    = 10;
+inline constexpr uint32_t SD_WRITE_REOPEN_DELAY_MS = 50;
 
 // The async multipart parser hands an upload over in thousands of tiny,
 // often sub-sector chunks (observed min 1 byte). Writing each straight to
@@ -329,32 +332,52 @@ inline char* fail_detail() { static char buf[192] = {0}; return buf; }
 // stalled card can't impair anything else; only this upload waits, and
 // the card gets idle bus time to recover (which it can't if we squat it).
 inline bool _sd_write_all(Buffer& b, const uint8_t* data, size_t len) {
+  // File size before this block: lets us re-derive progress after a reopen
+  // (which positions at the committed size) without trusting append's
+  // accounting, so a lost partial sector can't desync us.
+  size_t base;
+  { Storage::SDCard::BusGuard _bg; base = (size_t)b.sd_file.size(); }
   size_t off = 0;
-  int stalls = 0;
+  int reopens = 0;
   while (off < len) {
     size_t w;
     { Storage::SDCard::BusGuard _bg; w = b.sd_file.write(data + off, len - off); }
     off += w;
     if (off >= len) return true;
-    if (w > 0) { stalls = 0; continue; }
-    if (++stalls > SD_WRITE_MAX_STALLS) {
-      const uint64_t total = Storage::SDCard::total_bytes();
-      const uint64_t used  = Storage::SDCard::used_bytes();
+    if (w > 0) continue;                 // progress; handle not latched yet
+    // Zero progress: the FATFS handle has latched into an error state.
+    if (++reopens > SD_WRITE_MAX_REOPENS) {
+      uint64_t total, used;
+      { Storage::SDCard::BusGuard _bg; total = (uint64_t)SD.totalBytes(); used = (uint64_t)SD.usedBytes(); }
       snprintf(fail_detail(), 192,
-               "SD short-write near=%u blk=%u wrote=%u free=%llu total=%llu",
-               (unsigned)b.written, (unsigned)len, (unsigned)off,
-               (unsigned long long)(total > used ? total - used : 0),
-               (unsigned long long)total);
+               "SD stalled near=%u blk=%u wrote=%u reopens=%d free=%llu",
+               (unsigned)(base + off), (unsigned)len, (unsigned)off, reopens,
+               (unsigned long long)(total > used ? total - used : 0));
       ERRORF("OutboundStaging: %s", fail_detail());
       Storage::SDCard::verify_or_disable();
       return false;
     }
-    // Bus released across the wait: yields (delay == vTaskDelay) so the main
-    // loop / IMU / other web work run while the card settles. No flush() —
-    // the card returned 0 (accepted nothing), so there is nothing new to
-    // commit; the next write() re-attempts the same sector once the card is
-    // ready, and squatting the bus to flush only denies it recovery time.
-    delay(SD_WRITE_STALL_DELAY_MS);
+    delay(SD_WRITE_REOPEN_DELAY_MS);      // bus free; let the card finish, then reopen
+    size_t committed = 0;
+    bool reopened = false;
+    {
+      Storage::SDCard::BusGuard _bg;
+      b.sd_file.close();
+      b.sd_file = SD.open(b.disk_path, FILE_WRITE);  // append: positions at EOF
+      if (b.sd_file) { reopened = true; committed = (size_t)b.sd_file.size(); }
+    }
+    if (!reopened) {
+      Storage::SDCard::verify_or_disable();
+      snprintf(fail_detail(), 192, "SD reopen failed near=%u", (unsigned)(base + off));
+      ERRORF("OutboundStaging: %s", fail_detail());
+      return false;
+    }
+    if (committed < base) {               // committed data shrank: don't risk a corrupt file
+      snprintf(fail_detail(), 192, "SD reopen shrank file: %u < %u", (unsigned)committed, (unsigned)base);
+      ERRORF("OutboundStaging: %s", fail_detail());
+      return false;
+    }
+    off = committed - base;               // resync to what actually reached the card
   }
   return true;
 }

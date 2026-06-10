@@ -63,6 +63,17 @@
         wr_pending.req           = req;
         wr_pending.requested_ms  = millis();
         wr_pending.pending       = true;
+        // The client often drops off the softAP while the request is
+        // parked (the phone's WiFi follows the new network, or the AP
+        // goes down), and ESPAsyncWebServer frees the request object on
+        // disconnect. Un-park it so the drain in Web::WebUI::loop()
+        // never answers a freed request. The phase machine still
+        // completes the STA transition; the AP-grace expiry in
+        // Remote.h covers teardown when nobody is left to answer.
+        // (Narrow residual race: this hook runs on the AsyncTCP task,
+        // the drain on the main loop — same soft-flag convention as the
+        // rest of this state machine.)
+        req->onDisconnect([]() { wr_pending.req = nullptr; });
       } else {
         Common::PsramJsonDocument doc;
         doc["status"]  = "saved";

@@ -1694,6 +1694,14 @@
 </div>
 
 <script>
+// Device API paths, generated at build time from src/Web/api_routes.def
+// (the single source of truth). Param routes are functions taking one
+// argument per path segment: API.CONVERSATION(peer), API.OUTBOX_RETRY(seq).
+// Never write an /api path literal in this file; the parity check fails
+// the build on one.
+const API = {
+  __API_ROUTES__
+};
 'use strict';
 
 // ============================== ALPINE STORES ==============================
@@ -2469,15 +2477,15 @@ class UReticulumHTTPTransport extends Transport {
   }
   async connect() { /* HTTP has no persistent connection */ }
   async disconnect() { /* same */ }
-  async getInfo() { return this._req('/api/info', { unauthed: true }); }
+  async getInfo() { return this._req(API.INFO, { unauthed: true }); }
   async login(identityId, password) {
-    const r = await this._req('/api/auth/login', { method: 'POST', body: { identity_id: identityId, password }, unauthed: true });
+    const r = await this._req(API.AUTH_LOGIN, { method: 'POST', body: { identity_id: identityId, password }, unauthed: true });
     return { token: r.token, identityId: r.identity_id || identityId, expiresIn: r.expires_in_s };
   }
-  async logout() { return this._req('/api/auth/logout', { method: 'POST' }); }
+  async logout() { return this._req(API.AUTH_LOGOUT, { method: 'POST' }); }
   isAuthed() { return !!this.tokenGetter(); }
   async createIdentity(displayName, password, code) {
-    return this._req('/api/identities', { method: 'POST',
+    return this._req(API.IDENTITIES, { method: 'POST',
       body: { display_name: displayName, password, password_confirm: password, identity_code: code },
       unauthed: true });
   }
@@ -2486,26 +2494,26 @@ class UReticulumHTTPTransport extends Transport {
   // arg is retained for call-site clarity (and the WS subscribe path,
   // which still passes identity_id) but no longer appears in the URL.
   async deleteIdentity(identityId) {
-    return this._req('/api/identity/delete', { method: 'POST' });
+    return this._req(API.IDENTITY_DELETE, { method: 'POST' });
   }
   async getIdentity(identityId) {
-    return this._req('/api/identity');
+    return this._req(API.IDENTITY);
   }
   async getState(identityId) {
-    return this._req('/api/state');
+    return this._req(API.STATE);
   }
   async send(identityId, destHex, title, content, attachments) {
     // Wire format (post-#130): attachments reference pre-uploaded staging
     // buffers by id. Bytes must have been pushed to /outbound/upload first.
     const body = { to: destHex, title: title || '', content };
     if (attachments && attachments.length) body.attachments = attachments;
-    return this._req('/api/send', { method: 'POST', body });
+    return this._req(API.SEND, { method: 'POST', body });
   }
   // Upload bytes for a single attachment. Resolves to { staging_id, total_bytes, backend }.
   // Uses XHR (not fetch) so we can surface upload progress to the SPA tray.
   async uploadAttachment(identityId, bytes, filename, mime, onProgress) {
     const total = bytes.length;
-    const url = '/api/attachment/upload';
+    const url = API.ATTACHMENT_UPLOAD;
     const tok = this.tokenGetter();
     const form = new FormData();
     form.append('file', new Blob([bytes], { type: mime || 'application/octet-stream' }), filename || 'blob.bin');
@@ -2538,25 +2546,25 @@ class UReticulumHTTPTransport extends Transport {
     });
   }
   async announceNow(identityId) {
-    return this._req('/api/announce', { method: 'POST' });
+    return this._req(API.ANNOUNCE, { method: 'POST' });
   }
   async retryOutbox(identityId, seq) {
-    return this._req('/api/outbox/' + encodeURIComponent(String(seq)) + '/retry',
+    return this._req(API.OUTBOX_RETRY(String(seq)),
                      { method: 'POST' });
   }
   async lookupPath(destHex) {
-    return this._req('/api/paths/lookup', { method: 'POST', body: { to: destHex } });
+    return this._req(API.PATHS_LOOKUP, { method: 'POST', body: { to: destHex } });
   }
   async clearConversation(identityId, peerHex) {
-    return this._req('/api/conversations/' + encodeURIComponent(peerHex),
+    return this._req(API.CONVERSATION(peerHex),
                      { method: 'DELETE' });
   }
   async getConversationConfig(identityId, peerHex) {
-    return this._req('/api/conversations/' + encodeURIComponent(peerHex) + '/config',
+    return this._req(API.CONVERSATION_CONFIG(peerHex),
                      { method: 'GET' });
   }
   async setConversationConfig(identityId, peerHex, body) {
-    return this._req('/api/conversations/' + encodeURIComponent(peerHex) + '/config',
+    return this._req(API.CONVERSATION_CONFIG(peerHex),
                      { method: 'POST', body });
   }
   subscribe(identityId, onEvent) {
@@ -2573,7 +2581,7 @@ class UReticulumHTTPTransport extends Transport {
     const wsUrl = () => {
       const proto = (location.protocol === 'https:') ? 'wss:' : 'ws:';
       return proto + '//' + location.host
-        + '/api/ws?token=' + encodeURIComponent(this.tokenGetter() || '')
+        + API.WS + '?token=' + encodeURIComponent(this.tokenGetter() || '')
         + '&identity_id=' + encodeURIComponent(identityId);
     };
     const onOpen = () => {
@@ -2648,30 +2656,30 @@ class UReticulumHTTPTransport extends Transport {
       if (ws) ws.close();
     };
   }
-  async getRadio() { return this._req('/api/radio'); }
-  async setRadio(cfg) { return this._req('/api/radio', { method: 'POST', body: cfg }); }
-  async setAirtime(cfg) { return this._req('/api/radio/airtime', { method: 'POST', body: cfg }); }
+  async getRadio() { return this._req(API.RADIO); }
+  async setRadio(cfg) { return this._req(API.RADIO, { method: 'POST', body: cfg }); }
+  async setAirtime(cfg) { return this._req(API.RADIO_AIRTIME, { method: 'POST', body: cfg }); }
   async setTransportEnabled(enabled) {
-    return this._req('/api/system/transport', { method: 'POST', body: { enabled: !!enabled } });
+    return this._req(API.SYSTEM_TRANSPORT, { method: 'POST', body: { enabled: !!enabled } });
   }
   async setIdentitySettings(identityId, settings) {
-    return this._req('/api/identity/settings',
+    return this._req(API.IDENTITY_SETTINGS,
       { method: 'POST', body: settings });
   }
-  async resetRadio(code) { return this._req('/api/radio/reset', { method: 'POST', body: { identity_code: code } }); }
-  async factoryReset(code) { return this._req('/api/system/factory_reset', { method: 'POST', body: { identity_code: code }, unauthed: true }); }
-  async wifiScan() { return this._req('/api/wifi/scan'); }
+  async resetRadio(code) { return this._req(API.RADIO_RESET, { method: 'POST', body: { identity_code: code } }); }
+  async factoryReset(code) { return this._req(API.SYSTEM_FACTORY_RESET, { method: 'POST', body: { identity_code: code }, unauthed: true }); }
+  async wifiScan() { return this._req(API.WIFI_SCAN); }
   async wifiConfigure(ssid, psk, identityCode) {
     // identity_code is required from the bootstrap softAP (no token yet); when
     // called from a logged-in session the bearer token also satisfies the
     // require_physical_auth check on the device.
     const body = { ssid, psk };
     if (identityCode) body.identity_code = identityCode;
-    return this._req('/api/wifi/configure', { method: 'POST', body, unauthed: !!identityCode });
+    return this._req(API.WIFI_CONFIGURE, { method: 'POST', body, unauthed: !!identityCode });
   }
   async fetchAttachment(identityId, filename) {
     const tok = this.tokenGetter();
-    const url = '/api/attachment/download/' + encodeURIComponent(filename);
+    const url = API.ATTACHMENT_DOWNLOAD(filename);
     const r = await fetch(url, { headers: tok ? { 'Authorization': 'Bearer ' + tok } : {} });
     if (!r.ok) {
       let body = {}; try { body = await r.json(); } catch { /* opaque */ }
@@ -2680,14 +2688,14 @@ class UReticulumHTTPTransport extends Transport {
     }
     return { blob: await r.blob(), filename };
   }
-  async wifiSavedList() { return this._req('/api/wifi/saved'); }
+  async wifiSavedList() { return this._req(API.WIFI_SAVED); }
   async wifiForget(ssid, identityCode) {
-    return this._req('/api/wifi/forget', { method: 'POST',
+    return this._req(API.WIFI_FORGET, { method: 'POST',
       body: { ssid: ssid || '', identity_code: identityCode || '' } });
   }
   async pathEstimate(toHex, bytes) {
     const q = '?to=' + encodeURIComponent(toHex) + '&bytes=' + (bytes | 0);
-    return this._req('/api/paths/estimate' + q);
+    return this._req(API.PATHS_ESTIMATE + q);
   }
 }
 
@@ -4363,7 +4371,7 @@ async function refreshRadioTelemetry() {
   if (rt.seeded) return;
   const tok = state.token; if (!tok) return;
   try {
-    const r = await fetch('/api/radio/telemetry',
+    const r = await fetch(API.RADIO_TELEMETRY,
                           { headers: { 'Authorization': 'Bearer ' + tok } });
     if (!r.ok) return;
     const j = await r.json();
@@ -4382,7 +4390,7 @@ async function refreshNetworkTelemetry() {
   if (nt.seeded) return;
   const tok = state.token; if (!tok) return;
   try {
-    const r = await fetch('/api/network/telemetry',
+    const r = await fetch(API.NETWORK_TELEMETRY,
                           { headers: { 'Authorization': 'Bearer ' + tok } });
     if (!r.ok) return;
     const j = await r.json();
@@ -4840,7 +4848,7 @@ function onClickStorageMigrate(btn) {
     });
     if (!ok) return;
     try {
-      const r = await state.transport._req('/api/storage/migrate_flash_to_sd', { method: 'POST', body: {} });
+      const r = await state.transport._req(API.STORAGE_MIGRATE, { method: 'POST', body: {} });
       toast('Moved ' + r.moved + ' / ' + (r.moved + r.skipped + r.failed) + ' attachments to SD', 'ok', 6000);
     } catch (e) { toast('Migration failed: ' + (e.message || e), 'error'); }
   }, { label: 'Moving…' });
@@ -5122,7 +5130,7 @@ function gpsIntervalSnap(secs) {
 // opens; the GPS sensor row binds to it.
 async function loadGpsSource() {
   try {
-    const t = await state.transport._req('/api/time/sources');
+    const t = await state.transport._req(API.TIME_SOURCES);
     const g = (t.sources && t.sources.gps) || {};
     state.gpsSource = {
       enabled:    g.enabled !== false,
@@ -5136,7 +5144,7 @@ async function onGpsConfigChange(sourceEl) {
   else state.gpsSource.interval_s = Math.max(0, parseInt(sourceEl.value, 10) || 0);
   const g = state.gpsSource;
   try {
-    await state.transport._req('/api/time/sources', { method: 'POST',
+    await state.transport._req(API.TIME_SOURCES, { method: 'POST',
       body: { sources: { gps: { enabled: !!g.enabled, priority: g.priority, interval_s: g.interval_s } } } });
     toast('GPS schedule updated', 'success');
   } catch (e) {
@@ -5155,7 +5163,7 @@ async function onSensorConfigChange(key, sourceEl) {
   if (!cb || !sel) return;
   const body = { sensor: key, enabled: cb.checked, interval_s: parseInt(sel.value, 10) };
   try {
-    await state.transport._req('/api/sensors/config', { method: 'POST', body });
+    await state.transport._req(API.SENSORS_CONFIG, { method: 'POST', body });
     if (state.system && state.system.sensors && state.system.sensors[key]) {
       state.system.sensors[key].enabled     = cb.checked;
       state.system.sensors[key].interval_ms = parseInt(sel.value, 10) * 1000;
@@ -5210,7 +5218,7 @@ async function onClickForceSoftap(btn) {
   if (!r) return;
   await withBusy(btn, async () => {
     try {
-      await state.transport._req('/api/wifi/softap', { method: 'POST', body: { identity_code: r.code } });
+      await state.transport._req(API.WIFI_SOFTAP, { method: 'POST', body: { identity_code: r.code } });
       toast('Device switching to softAP. Reconnect to the bootstrap network.', 'info');
       state.popovers.status = false;
     } catch (e) {
@@ -6412,7 +6420,7 @@ async function populateRadioTab() {
     toast('Could not read radio state: ' + (e.message || e), 'error');
   }
   try {
-    const d = await state.transport._req('/api/transport/lora/discoverable');
+    const d = await state.transport._req(API.LORA_DISCOVERABLE);
     state.forms.radio.discoverable = !!d.discoverable;
   } catch { /* leave toggle in last state */ }
   await populateLoraConfig();
@@ -6479,7 +6487,7 @@ function onChangeRdDiscoverable() {
     const body = { discoverable: wantOn };
     if (code) body.identity_code = code;
     try {
-      await state.transport._req('/api/transport/lora/discoverable',
+      await state.transport._req(API.LORA_DISCOVERABLE,
         { method: 'POST', body });
       toast('LoRa interface ' + (wantOn ? 'is now publicly advertised' : 'is no longer advertised'));
     } catch (e) {
@@ -6504,7 +6512,7 @@ function onChangeRdDiscoverable() {
 // blank key on save keeps the stored one.
 async function populateLoraConfig() {
   try {
-    const c = await state.transport._req('/api/transport/lora/config');
+    const c = await state.transport._req(API.LORA_CONFIG);
     const ifac = c.ifac || {};
     Object.assign(state.forms.loraCfg, {
       mode:               c.mode || 'gateway',
@@ -6553,7 +6561,7 @@ function onClickLoraCfgSave(btn) {
     state.ui.cnLoraCfgStatus = '';
     const apply = async (code) => {
       const payload = code ? Object.assign({ identity_code: code }, body) : body;
-      const r = await state.transport._req('/api/transport/lora/config',
+      const r = await state.transport._req(API.LORA_CONFIG,
         { method: 'POST', body: payload });
       const reboot = !!r.reboot_required;
       const msg = reboot
@@ -6671,7 +6679,7 @@ async function populateTcpClientsList() {
   if (!t.tcp_client) return;
   state.tcpClients = null;  // template shows "Loading…"
   try {
-    const r = await state.transport._req('/api/transport/tcp_clients');
+    const r = await state.transport._req(API.TCP_CLIENTS);
     state.tcpClients     = r.clients || [];
     state.tcpClientsCap  = r.capacity   ?? 0;
     state.tcpClientsLive = r.live_count ?? 0;
@@ -6714,7 +6722,7 @@ async function onTcpRemove(client) {
   if (!ok) return;
   try {
     await state.transport._req(
-      '/api/transport/tcp_clients/' + encodeURIComponent(client.name),
+      API.TCP_CLIENT(client.name),
       { method: 'DELETE' });
     populateTcpClientsList();
   } catch (e) {
@@ -6740,7 +6748,7 @@ async function onClickTcpSave(_btn) {
   // announce telling peers "this device is at host:port" would be
   // wrong (peers can't connect that way).
   try {
-    await state.transport._req('/api/transport/tcp_clients', { method: 'POST', body: { name, host, port } });
+    await state.transport._req(API.TCP_CLIENTS, { method: 'POST', body: { name, host, port } });
     state.modals.tcpAdd = false;
     populateTcpClientsList();
     toast('TCP client added');
@@ -6795,7 +6803,7 @@ function stopTimeTicker() {
 
 async function populateTimeTab() {
   try {
-    const t = await state.transport._req('/api/time');
+    const t = await state.transport._req(API.TIME);
     renderTimeStatus(t);
     renderTimeSources(t.sources || {});
     startTimeTicker();
@@ -6907,7 +6915,7 @@ function attachTimeSourceDnD(row) {
 function onClickTmBrowserSync(btn) {
   return withBusy(btn, async () => {
     try {
-      const r = await state.transport._req('/api/time',
+      const r = await state.transport._req(API.TIME,
         { method: 'POST', body: { unix_ms: Date.now() } });
       if (r.adopted) {
         toast('Device clock set from browser', 'success');
@@ -6936,7 +6944,7 @@ function onClickTmSave(btn) {
     body.sources[r.key] = cfg;
   });
   try {
-    const r = await state.transport._req('/api/time/sources',
+    const r = await state.transport._req(API.TIME_SOURCES,
       { method: 'POST', body });
     toast('Time-source config saved', 'success');
     renderTimeStatus(r);
@@ -6953,7 +6961,7 @@ function onClickTmSave(btn) {
 async function onChangeKissOut() {
   const enabled = state.forms.diag.kissOut;
   try {
-    await state.transport._req('/api/system/kiss',
+    await state.transport._req(API.SYSTEM_KISS,
         { method: 'POST', body: { enabled } });
     if (state.lastInfo) state.lastInfo.kiss_serial_output = enabled;
     toast(enabled ? 'KISS serial output ON' : 'KISS serial output OFF', 'success');
@@ -7155,7 +7163,7 @@ function savePrefs() {
 async function populateInboxConfig() {
   state.ui.inboxConfigStatus = '';
   try {
-    const cfg = await state.transport._req('/api/inbox_config');
+    const cfg = await state.transport._req(API.INBOX_CONFIG);
     const r = cfg.default_retention || { kind: 'none', value: 0 };
     const key = r.kind + ':' + (r.value || 0);
     // Default to 'none:0' if the value isn't one of the offered options.
@@ -7174,7 +7182,7 @@ async function onChangeInboxDefaultRetention() {
   const [kind, vStr] = raw.split(':');
   const body = { default_retention: { kind, value: parseInt(vStr, 10) || 0 } };
   try {
-    await state.transport._req('/api/inbox_config', { method: 'POST', body });
+    await state.transport._req(API.INBOX_CONFIG, { method: 'POST', body });
     state.ui.inboxConfigStatus = 'Saved.';
     setTimeout(() => { state.ui.inboxConfigStatus = ''; }, 2000);
   } catch (e) {
@@ -7205,7 +7213,7 @@ function _renderStorageLabels() {
 // so callers refresh it on demand — e.g. just before validating an attachment —
 // rather than depending on a WS push that can be dropped under load.
 async function refreshStorageCaps() {
-  state._storageConfig = await state.transport._req('/api/storage/config');
+  state._storageConfig = await state.transport._req(API.STORAGE_CONFIG);
   return state._storageConfig;
 }
 async function populateStorageConfig() {
@@ -7230,7 +7238,7 @@ async function onChangeStorageSlider() {
     user_max_receive_bytes: Number(state.forms.storage.maxRecv) || 0,
   };
   try {
-    const cfg = await state.transport._req('/api/storage/config', { method: 'POST', body });
+    const cfg = await state.transport._req(API.STORAGE_CONFIG, { method: 'POST', body });
     state._storageConfig = cfg;
     state.ui.storageMaxSendMax = Math.max(cfg.effective_max_send_bytes || 0, 65536);
     state.ui.storageMaxRecvMax = Math.max(cfg.effective_max_recv_bytes || 0, 65536);
@@ -7346,8 +7354,8 @@ async function populateDiscoveryTab() {
   state.ui.discStatus = '';
   try {
     const [s, id] = await Promise.all([
-      state.transport._req('/api/discovery/state'),
-      state.transport._req('/api/discovery/identity'),
+      state.transport._req(API.DISCOVERY_STATE),
+      state.transport._req(API.DISCOVERY_IDENTITY),
     ]);
     Object.assign(state.forms.discovery, {
       enabled:        !!s.enabled,
@@ -7363,7 +7371,7 @@ async function populateDiscoveryTab() {
 }
 async function saveDiscoveryField(body) {
   try {
-    const updated = await state.transport._req('/api/discovery/state', { method: 'POST', body });
+    const updated = await state.transport._req(API.DISCOVERY_STATE, { method: 'POST', body });
     state.ui.discStatus = 'Saved.';
     setTimeout(() => { state.ui.discStatus = ''; }, 2000);
     return updated;
@@ -7404,7 +7412,7 @@ async function onBlurDiscName() {
   const last = state.forms.discovery._lastSavedAdvertisedName || '';
   if (v === last) return;
   try {
-    await state.transport._req('/api/discovery/state',
+    await state.transport._req(API.DISCOVERY_STATE,
       { method: 'POST', body: { advertised_name: v } });
     state.forms.discovery._lastSavedAdvertisedName = v;
     state.ui.discNameStatus = v ? 'Saved.' : 'Cleared. Falls back to interface name.';
@@ -7497,11 +7505,11 @@ function waitForDeviceAndReload(message) {
   // is on a fixed IP or the user is already on the LAN it'll come
   // back on. If we were in softAP and have a hostname, also try
   // http://<host>.local/ in parallel.
-  candidates.push({ url: '/api/info', target: location.href });
+  candidates.push({ url: API.INFO, target: location.href });
   if (wasAp && mdns) {
     const lan = (location.protocol === 'https:' ? 'https' : 'http')
               + '://' + mdns + '.local';
-    candidates.push({ url: lan + '/api/info', target: lan + '/' });
+    candidates.push({ url: lan + API.INFO, target: lan + '/' });
   }
   const startMs = Date.now();
   let attempts  = 0;

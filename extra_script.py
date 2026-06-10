@@ -4,6 +4,34 @@ import hashlib
 import shutil
 
 
+
+def api_routes_js(def_path):
+    """Generate the SPA's `API` table body from api_routes.def (the
+    single source of truth for device API paths). Static paths become
+    string constants; paths with `{}` params become arrow functions
+    (one argument per placeholder, URI-encoded)."""
+    import re
+    entries = []
+    for line in open(def_path):
+        m = re.match(r'\s*ROUTE(?:_OPT)?\(\s*([A-Z0-9_]+)\s*,\s*"([^"]+)"\s*\)', line)
+        if not m:
+            continue
+        name, path = m.groups()
+        if "{}" in path:
+            parts = path.split("{}")
+            args = [chr(ord("a") + i) for i in range(len(parts) - 1)]
+            expr = ""
+            for i, seg in enumerate(parts):
+                if i:
+                    expr += " + encodeURIComponent(" + args[i - 1] + ")"
+                if seg:
+                    expr += (" + " if expr else "") + "'" + seg + "'"
+            entries.append(name + ": (" + ", ".join(args) + ") => " + expr)
+        else:
+            entries.append(name + ": '" + path + "'")
+    return ",\n  ".join(entries)
+
+
 def embed_spa(env):
     """
     Generate src/Web/SPAEmbedded.h from src/Web/spa/{index.html, styles.css,
@@ -30,6 +58,9 @@ def embed_spa(env):
         src_mtime = max(src_mtime, os.path.getmtime(css))
     if os.path.exists(alpine):
         src_mtime = max(src_mtime, os.path.getmtime(alpine))
+    routes_def = os.path.join(web_dir, "api_routes.def")
+    if os.path.exists(routes_def):
+        src_mtime = max(src_mtime, os.path.getmtime(routes_def))
     if os.path.exists(dst) and os.path.getmtime(dst) >= src_mtime:
         return
     import gzip
@@ -42,6 +73,9 @@ def embed_spa(env):
             css_bytes = f.read()
         css_version = hashlib.sha1(css_bytes).hexdigest()[:10]
         html = html.replace(b"__STYLES_VERSION__", css_version.encode())
+    if os.path.exists(routes_def):
+        html = html.replace(b"__API_ROUTES__",
+                            api_routes_js(routes_def).encode())
     gz = gzip.compress(html, compresslevel=9)
     body = ", ".join("0x{:02x}".format(b) for b in gz)
     header = (

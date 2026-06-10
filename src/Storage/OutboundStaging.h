@@ -94,6 +94,7 @@ namespace _detail {
   // safe to call from finalize_write() and again from release()/gc().
   inline void close_write_handle(Buffer& b) {
     if (b.backend == Backend::Sd && b.sd_file) {
+      Storage::SDCard::BusGuard _bg;   // close() flushes over the shared HSPI bus
       b.sd_file.close();
       b.sd_file = File();
     } else if (b.backend == Backend::Flash && b.flash_file) {
@@ -122,7 +123,7 @@ namespace _detail {
         if (it->backend == Backend::Psram && it->psram_ptr) {
           heap_caps_free(it->psram_ptr);
         } else if (it->backend == Backend::Sd && !it->disk_path.isEmpty()) {
-          if (Storage::SDCard::present()) SD.remove(it->disk_path);
+          if (Storage::SDCard::present()) { Storage::SDCard::BusGuard _bg; SD.remove(it->disk_path); }
         } else if (it->backend == Backend::Flash && !it->disk_path.isEmpty()) {
           if (filesystem.exists(it->disk_path.c_str())) filesystem.remove(it->disk_path.c_str());
         }
@@ -244,6 +245,8 @@ inline uint32_t allocate(size_t total_bytes) {
     }
   } else if (b.backend == Backend::Sd) {
     b.disk_path = String("/lxmf/staging/") + b.id + ".bin";
+    Storage::SDCard::BusGuard _bg;     // serialise the mkdir/exists/remove/open
+                                       // against the IMU pump on the shared bus
     if (!SD.exists("/lxmf")) SD.mkdir("/lxmf");
     if (!SD.exists("/lxmf/staging")) SD.mkdir("/lxmf/staging");
     if (SD.exists(b.disk_path)) SD.remove(b.disk_path);
@@ -280,14 +283,28 @@ inline bool append(uint32_t id, const uint8_t* data, size_t len) {
   Buffer* b = _detail::find(id);
   if (!b) return false;
   if (b->written > b->total_bytes) return false;                 // invariant
-  if (len > b->total_bytes - b->written) return false;           // overrun
+  if (len > b->total_bytes - b->written) {                       // overrun
+    ERRORF("OutboundStaging: overrun id=%u written=%u total=%u len=%u",
+           (unsigned)id, (unsigned)b->written, (unsigned)b->total_bytes,
+           (unsigned)len);
+    return false;
+  }
   if (b->backend == Backend::Psram) {
     if (!b->psram_ptr) return false;
     memcpy(b->psram_ptr + b->written, data, len);
   } else if (b->backend == Backend::Sd) {
     if (!b->sd_file) { Storage::SDCard::verify_or_disable(); return false; }
+    // Hold the HSPI bus mutex across the write so it can't interleave with
+    // the IMU pump (main loop) on the shared bus — that races a long
+    // upload's SD writes and corrupts them into a short write.
+    Storage::SDCard::BusGuard _bg;
     const size_t w = b->sd_file.write(data, len);
-    if (w != len) { Storage::SDCard::verify_or_disable(); return false; }
+    if (w != len) {
+      ERRORF("OutboundStaging: SD short-write id=%u off=%u len=%u wrote=%u",
+             (unsigned)id, (unsigned)b->written, (unsigned)len, (unsigned)w);
+      Storage::SDCard::verify_or_disable();
+      return false;
+    }
   } else {  // Flash
     if (!b->flash_file) return false;
     const size_t w = b->flash_file.write(data, len);
@@ -333,6 +350,7 @@ inline size_t read(uint32_t id, size_t offset, size_t len, uint8_t* dst) {
     return avail;
   }
   if (b->backend == Backend::Sd) {
+    Storage::SDCard::BusGuard _bg;     // open/seek/read/close on the shared HSPI bus
     File f = SD.open(b->disk_path, FILE_READ);
     if (!f) { Storage::SDCard::verify_or_disable(); return 0; }
     if (!f.seek(offset)) { f.close(); Storage::SDCard::verify_or_disable(); return 0; }
@@ -359,7 +377,7 @@ inline void release(uint32_t id) {
     if (it->backend == Backend::Psram && it->psram_ptr) {
       heap_caps_free(it->psram_ptr);
     } else if (it->backend == Backend::Sd && !it->disk_path.isEmpty()) {
-      if (Storage::SDCard::present()) SD.remove(it->disk_path);
+      if (Storage::SDCard::present()) { Storage::SDCard::BusGuard _bg; SD.remove(it->disk_path); }
     } else if (it->backend == Backend::Flash && !it->disk_path.isEmpty()) {
       if (filesystem.exists(it->disk_path.c_str())) filesystem.remove(it->disk_path.c_str());
     }

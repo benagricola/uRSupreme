@@ -123,13 +123,19 @@ inline void pump() {
 
   IMUdata acc{};
   IMUdata gyr{};
-  // getDataReady() is cheap; if neither domain has fresh data yet,
-  // skip — we'll catch it on the next poll.
-  if (_detail::sensor().getDataReady()) {
+  float temp_c = 0.0f;
+  {
+    // The IMU shares the HSPI bus with the SD card. Hold the bus mutex
+    // across this poll's SPI reads so they can't interleave with an
+    // attachment-upload SD write running on the AsyncTCP web task, which
+    // would corrupt the SD transfer. See Storage::SDCard::BusGuard.
+    Storage::SDCard::BusGuard _bg;
+    // getDataReady() is cheap; if neither domain has fresh data yet,
+    // skip — we'll catch it on the next poll.
+    if (!_detail::sensor().getDataReady()) return;
     _detail::sensor().getAccelerometer(acc.x, acc.y, acc.z);
     _detail::sensor().getGyroscope(gyr.x, gyr.y, gyr.z);
-  } else {
-    return;
+    temp_c = _detail::sensor().getTemperature_C();
   }
   Reading r;
   r.taken_ms    = now;
@@ -139,7 +145,7 @@ inline void pump() {
   r.gyro_x_dps  = gyr.x;
   r.gyro_y_dps  = gyr.y;
   r.gyro_z_dps  = gyr.z;
-  r.temp_c      = _detail::sensor().getTemperature_C();
+  r.temp_c      = temp_c;
   r.valid       = true;
   // Motion detection — compare gravity-removed magnitude against
   // the previous snapshot's. Skip if there's no previous (first

@@ -437,9 +437,17 @@
             // Refill scratch on demand; one SD/FS hit per 32 KiB
             // instead of per TCP segment.
             if (!st->eof && st->scratch_offset >= st->scratch_valid) {
-              const size_t got = st->on_sd
-                  ? (size_t)st->sd_f.read(st->scratch, st->scratch_size)
-                  : (size_t)st->flash_f.read(st->scratch, st->scratch_size);
+              // The SD read runs on the AsyncTCP task and shares the HSPI
+              // bus with the IMU pump (main loop); hold the bus mutex so a
+              // large download can't be corrupted by an interleaved IMU
+              // read. Flash reads (internal LittleFS) don't touch HSPI.
+              size_t got;
+              if (st->on_sd) {
+                Storage::SDCard::BusGuard _bg;
+                got = (size_t)st->sd_f.read(st->scratch, st->scratch_size);
+              } else {
+                got = (size_t)st->flash_f.read(st->scratch, st->scratch_size);
+              }
               st->scratch_offset = 0;
               st->scratch_valid  = got;
               if (got == 0) st->eof = true;

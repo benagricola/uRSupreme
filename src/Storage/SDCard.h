@@ -25,10 +25,39 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <SD.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include "../Boards.h"
 
 namespace Storage {
 namespace SDCard {
+
+// HSPI bus arbitration. The SD card and the QMI8658 IMU share the HSPI
+// bus on this hardware. SD I/O issued from the AsyncTCP web task
+// (attachment upload / download) would otherwise interleave on the bus
+// with the IMU pump run from the main loop — a long upload spans many
+// pump ticks, so the two drive the bus at once and corrupt the SD write
+// (a short write that surfaces as "Chunk write failed"). Every bus
+// access, SD op or IMU read, holds this recursive mutex for its
+// duration. Recursive so a guarded SD op that calls another guarded
+// helper (e.g. append -> verify_or_disable -> SD.totalBytes) can't
+// self-deadlock. Lives here because SDCard owns the shared SPIClass.
+namespace _detail {
+  inline SemaphoreHandle_t& bus_mtx_ref() {
+    static SemaphoreHandle_t m = xSemaphoreCreateRecursiveMutex();
+    return m;
+  }
+}
+struct BusGuard {
+  bool held = false;
+  BusGuard() {
+    SemaphoreHandle_t m = _detail::bus_mtx_ref();
+    if (m) held = (xSemaphoreTakeRecursive(m, portMAX_DELAY) == pdTRUE);
+  }
+  ~BusGuard() { if (held) xSemaphoreGiveRecursive(_detail::bus_mtx_ref()); }
+  BusGuard(const BusGuard&) = delete;
+  BusGuard& operator=(const BusGuard&) = delete;
+};
 
 namespace _detail {
   inline bool&     present_ref()    { static bool v = false; return v; }
@@ -164,6 +193,7 @@ inline bool      present()      { return _detail::present_ref(); }
 inline bool verify_or_disable() {
 #if defined(BOARD_MODEL) && (BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1)
   if (!_detail::present_ref()) return true;
+  BusGuard _bg;                        // SD.totalBytes() touches the shared HSPI bus
   if (SD.totalBytes() > 0) return false;
   NOTICE("SDCard: ejection detected on write failure — disabling");
   SD.end();
@@ -176,8 +206,8 @@ inline bool verify_or_disable() {
   return false;
 #endif
 }
-inline uint64_t  total_bytes()  { return _detail::present_ref() ? (uint64_t)SD.totalBytes() : 0; }
-inline uint64_t  used_bytes()   { return _detail::present_ref() ? (uint64_t)SD.usedBytes()  : 0; }
+inline uint64_t  total_bytes()  { if (!_detail::present_ref()) return 0; BusGuard _bg; return (uint64_t)SD.totalBytes(); }
+inline uint64_t  used_bytes()   { if (!_detail::present_ref()) return 0; BusGuard _bg; return (uint64_t)SD.usedBytes(); }
 inline uint8_t   card_type()    { return _detail::card_type_ref(); }
 
 // ---- File helpers used by the LXMF attachment routing. ----
@@ -186,6 +216,7 @@ inline uint8_t   card_type()    { return _detail::card_type_ref(); }
 // the root. SD.mkdir is single-level only.
 inline bool ensure_parent_dirs(const char* path) {
   if (!_detail::present_ref()) return false;
+  BusGuard _bg;                        // SD.exists / SD.mkdir on the shared HSPI bus
   String p = path;
   int slash = 0;
   // Walk forward through each "/segment", mkdir-ing the prefix.
@@ -211,6 +242,7 @@ inline bool ensure_parent_dirs(const char* path) {
 // only on the negative path.
 inline bool exists(const char* path) {
   if (!_detail::present_ref()) return false;
+  BusGuard _bg;                        // SD.exists (+ verify_or_disable) on the shared HSPI bus
   const bool found = SD.exists(path);
   if (!found) verify_or_disable();
   return found;
@@ -225,6 +257,9 @@ inline bool exists(const char* path) {
 // long after a mid-read eject.
 inline File open_read(const char* path) {
   if (!_detail::present_ref()) return File();
+  BusGuard _bg;                        // SD.open on the shared HSPI bus. NOTE: the
+  // returned handle's later reads (download streaming) must also be guarded
+  // by the caller with SDCard::BusGuard around each read.
   File f = SD.open(path, FILE_READ);
   if (!f) verify_or_disable();
   return f;

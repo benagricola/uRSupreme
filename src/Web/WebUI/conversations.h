@@ -153,6 +153,16 @@
     // at index==0, reported in the final-handler response.
     static uint32_t& _current_upload_chunks()   { static uint32_t v = 0; return v; }
     static uint32_t& _current_upload_min_chunk() { static uint32_t v = 0; return v; }
+    // Single-uploader guard. The staging pipeline (the shared bookkeeping
+    // statics above + the single SD writer job) supports exactly one upload
+    // at a time: a second concurrent upload used to cross-wire the shared
+    // state, and the SD writer's orphan-reclaim would force-abort the healthy
+    // first transfer. Ownership is the request pointer; a disconnect releases
+    // it (the staging GC reclaims the orphaned buffer separately). Rejected
+    // requests are marked via _tempObject — heap-allocated because the
+    // request destructor free()s a non-null _tempObject — so their remaining
+    // chunk/final callbacks never touch the owner's shared state.
+    static AsyncWebServerRequest*& _upload_owner() { static AsyncWebServerRequest* v = nullptr; return v; }
 
     // Per-chunk multipart-upload handler. AsyncWebServer invokes this
     // repeatedly during the upload: index==0 marks the first chunk
@@ -163,9 +173,18 @@
                                              const String& /*filename*/,
                                              size_t index, uint8_t* data,
                                              size_t len, bool final) {
+      if (req->_tempObject) return;   // rejected duplicate: don't touch shared state
       auto& staging_id = _current_upload_staging_id();
       auto& err        = _current_upload_error();
       if (index == 0) {
+        if (_upload_owner() != nullptr && _upload_owner() != req) {
+          req->_tempObject = malloc(1);   // freed by the request destructor
+          return;
+        }
+        _upload_owner() = req;
+        req->onDisconnect([req]() {
+          if (_upload_owner() == req) _upload_owner() = nullptr;
+        });
         staging_id = 0;
         err        = nullptr;
         _current_upload_chunks()    = 0;
@@ -229,15 +248,14 @@
         return;
       }
       if (final) {
-        // Flush the SD accumulator's tail + close the held write handle
-        // before the validation read path (/send) opens the file.
-        if (!Storage::OutboundStaging::finalize_write(staging_id)) {
-          static String msg;
-          msg = String("Chunk write failed: ") + Storage::OutboundStaging::fail_detail();
-          err = msg.c_str();
-          Storage::OutboundStaging::release(staging_id);
-          staging_id = 0;
-          return;
+        // Flush + close before the validation read path (/send) opens the
+        // file. SD finalize (drain + fsync) takes seconds and runs DEFERRED:
+        // finalize_begin only signals the writer; the final handler pauses
+        // the request and drain_upload_finalize() answers from the main
+        // loop when the writer reports done. Blocking here froze the shared
+        // AsyncTCP task for the whole join and dropped connections.
+        if (Storage::OutboundStaging::finalize_begin(staging_id) == 0) {
+          return;   // deferred: completion + response happen in the drain
         }
         if (!Storage::OutboundStaging::complete(staging_id)) {
           err = "Upload ended before all bytes were received.";
@@ -247,9 +265,102 @@
       }
     }
 
+    // Success response for a completed upload (shared by the immediate
+    // path and the deferred SD-finalize drain below).
+    static void send_upload_success(AsyncWebServerRequest* req, uint32_t id) {
+      Common::PsramJsonDocument doc;
+      doc["staging_id"] = id;
+      doc["total_bytes"] = (uint32_t)Storage::OutboundStaging::total_bytes(id);
+      doc["backend"]     = Storage::OutboundStaging::backend_name(
+                              Storage::OutboundStaging::backend_of(id));
+      // Multipart-parser chunking diagnostic (see #93).
+      doc["chunks"]      = _current_upload_chunks();
+      doc["min_chunk"]   = (_current_upload_min_chunk() == 0xFFFFFFFFu)
+                              ? 0 : _current_upload_min_chunk();
+      // Optional end-to-end integrity check. If the client sends the original
+      // file's SHA-256 in X-SHA256, compare it to the hash the writer task
+      // computed AS IT WROTE the bytes (no read-back, no AsyncTCP-task SD I/O).
+      // A match proves the staged file is byte-for-byte the uploaded content.
+      if (req->hasHeader("X-SHA256")) {
+        String want = req->header("X-SHA256");
+        want.toLowerCase();
+        const char* got = Storage::OutboundStaging::sd_digest_hex();
+        doc["sha256"]    = got;
+        doc["sha256_ok"] = (got[0] != 0) && (want == got);
+      }
+      send_json(req, 200, doc);
+    }
+
+    // Deferred SD finalize: the writer's drain+fsync takes seconds, and a
+    // handler is not allowed to block the AsyncTCP task that long (event
+    // backlog; and a handler that returns unanswered is auto-501'd). So the
+    // final handler PAUSES the request - the lib's request-continuation API:
+    // pause() suppresses the auto-501, disables the client rx-timeout, and
+    // hands back a weak_ptr that expires if the client disconnects - and
+    // drain_upload_finalize() (Web::WebUI::loop()) answers with the real
+    // outcome. Single slot: the single-uploader ownership above guarantees
+    // one finalize in flight at a time.
+    struct PendingFinalize {
+      AsyncWebServerRequestPtr req;   // weak; expires on client disconnect
+      uint32_t id    = 0;             // nonzero = a finalize is in flight
+      uint32_t t0_ms = 0;
+    };
+    static PendingFinalize& _pending_finalize() { static PendingFinalize v; return v; }
+
+    static void drain_upload_finalize() {
+      PendingFinalize& pf = _pending_finalize();
+      if (pf.id == 0) return;
+      const int st = Storage::OutboundStaging::finalize_poll(pf.id);
+      if (st < 0) {
+        // Writer still draining. Past the join budget it is wedged: answer
+        // 500 and release so the pipeline frees up (begin_job's reclaim
+        // handles the writer task itself).
+        if ((millis() - pf.t0_ms) > 30000) {
+          auto r = pf.req.lock(); pf.req.reset();
+          const uint32_t id = pf.id; pf.id = 0;
+          Storage::OutboundStaging::release(id);
+          if (r) send_error_with_message(r.get(), 500, "upload_failed",
+                                         "SD finalize timed out.");
+        }
+        return;
+      }
+      auto r = pf.req.lock(); pf.req.reset();   // empty if the client vanished
+      const uint32_t id = pf.id; pf.id = 0;
+      if (st == 0) {
+        Storage::OutboundStaging::release(id);
+        if (r) {
+          static String msg;
+          msg = String("Chunk write failed: ") + Storage::OutboundStaging::fail_detail();
+          send_error_with_message(r.get(), 400, "upload_failed", msg.c_str());
+        }
+        return;
+      }
+      if (!Storage::OutboundStaging::complete(id)) {
+        Storage::OutboundStaging::release(id);
+        if (r) send_error_with_message(r.get(), 400, "upload_failed",
+                                       "Upload ended before all bytes were received.");
+        return;
+      }
+      if (!r) {
+        // Client vanished while we drained. The staging_id was never
+        // delivered, so nobody can /send it: release rather than leak.
+        Storage::OutboundStaging::release(id);
+        return;
+      }
+      send_upload_success(r.get(), id);
+    }
+
     // Final handler — runs once after the upload completes (or fails).
     // Reports the staging_id the client should hand to /send.
     static void handle_outbound_upload_final(AsyncWebServerRequest* req) {
+      if (req->_tempObject) {
+        // Rejected at first chunk: another upload owned the pipeline. Its
+        // shared state was never touched, so answer without reading it.
+        send_error_with_message(req, 409, "upload_busy",
+          "Another upload is already in progress.");
+        return;
+      }
+      if (_upload_owner() == req) _upload_owner() = nullptr;
       const char* err;
       uint32_t id;
       {
@@ -278,28 +389,14 @@
           "Upload completed but no staging buffer was created.");
         return;
       }
-      Common::PsramJsonDocument doc;
-      doc["staging_id"] = id;
-      const uint32_t total = (uint32_t)Storage::OutboundStaging::total_bytes(id);
-      doc["total_bytes"] = total;
-      doc["backend"]     = Storage::OutboundStaging::backend_name(
-                              Storage::OutboundStaging::backend_of(id));
-      // Multipart-parser chunking diagnostic (see #93).
-      doc["chunks"]      = _current_upload_chunks();
-      doc["min_chunk"]   = (_current_upload_min_chunk() == 0xFFFFFFFFu)
-                              ? 0 : _current_upload_min_chunk();
-      // Optional end-to-end integrity check. If the client sends the original
-      // file's SHA-256 in X-SHA256, compare it to the hash the writer task
-      // computed AS IT WROTE the bytes (no read-back, no AsyncTCP-task SD I/O).
-      // A match proves the staged file is byte-for-byte the uploaded content.
-      if (req->hasHeader("X-SHA256")) {
-        String want = req->header("X-SHA256");
-        want.toLowerCase();
-        const char* got = Storage::OutboundStaging::sd_digest_hex();
-        doc["sha256"]    = got;
-        doc["sha256_ok"] = (got[0] != 0) && (want == got);
+      if (Storage::OutboundStaging::finalize_deferred(id)) {
+        PendingFinalize& pf = _pending_finalize();
+        pf.t0_ms = millis();
+        pf.req   = req->pause();
+        pf.id    = id;   // set last: the drain triggers on id != 0
+        return;
       }
-      send_json(req, 200, doc);
+      send_upload_success(req, id);
     }
 
     static void handle_attachment_get(AsyncWebServerRequest* req) {

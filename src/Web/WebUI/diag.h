@@ -146,6 +146,8 @@
     //     full ring = longest the AsyncTCP task was frozen by an SD stall. The
     //     responsiveness metric; should stay small (tens of ms).
     //   * sd_feed_slow_blocks   — count of chunk handler blocks over 250 ms.
+    //   * sd_finish_max_ms      — worst finalize join (drain+fsync) on the web task
+    //   * sd_writer_stack_free  — writer-task minimum free stack, bytes
     // Space is the cached free-space (SDCard::refresh_used_cache); reported in
     // KiB so the 64-bit byte counts fit a uint32 (a 64 GB card is ~67 M KiB).
     static void handle_diag_storage(AsyncWebServerRequest* req) {
@@ -163,6 +165,8 @@
       doc["sd_ring_timeouts"]     = (uint32_t)W::ring_timeouts();
       doc["sd_feed_max_block_ms"] = (uint32_t)W::feed_max_block_ms();
       doc["sd_feed_slow_blocks"]  = (uint32_t)W::feed_slow_blocks();
+      doc["sd_finish_max_ms"]     = (uint32_t)W::finish_max_ms();
+      doc["sd_writer_stack_free"] = (uint32_t)W::stack_low_water();
       send_json(req, 200, doc);
     }
 

@@ -150,11 +150,19 @@ namespace _sdwriter {
   // AsyncTCP task was frozen by an SD stall). Headline responsiveness metric.
   inline uint32_t& feed_max_block_ms() { static uint32_t v = 0; return v; }
   inline uint32_t& feed_slow_blocks()  { static uint32_t v = 0; return v; }  // count of >250 ms blocks
+  // Worst finalize join (drain + fsync + close) observed, ms. finish() runs on
+  // the AsyncTCP task, so this is the other side of the responsiveness story.
+  inline uint32_t& finish_max_ms()     { static uint32_t v = 0; return v; }
+  // Writer-task minimum free stack (bytes), sampled after each job. The task
+  // runs FATFS-via-VFS + SHA-256; if this trends toward zero, raise the stack.
+  inline uint32_t& stack_low_water()   { static uint32_t v = 0; return v; }
 
   inline void task_fn(void*) {
     State& s = st();
+    // PSRAM only: falling back to a 32 KiB internal-SRAM allocation on this
+    // SRAM-starved device would trade an upload failure for WiFi-MAC
+    // starvation. No scratch -> the job errors out cleanly per-job below.
     uint8_t* scratch = (uint8_t*)heap_caps_malloc(SCRATCH, MALLOC_CAP_SPIRAM);
-    if (!scratch) scratch = (uint8_t*)malloc(SCRATCH);
     for (;;) {
       // Park until a job is queued. `idle` lets begin_job confirm the writer
       // has fully finished the previous job (given done_sig, looped back here)
@@ -247,6 +255,7 @@ namespace _sdwriter {
         s.digest_ready = true;
       }
       { Storage::SDCard::BusGuard _bg; close(fd); }
+      stack_low_water() = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
       s.active = false;
       xSemaphoreGive(s.done_sig);
       // Refresh the SD free-space cache here, off the AsyncTCP task and AFTER
@@ -275,8 +284,16 @@ namespace _sdwriter {
       s.stream = xStreamBufferCreateStatic(want, 1 /*trigger*/, s.store, &s.ctl);
       if (!s.stream) { heap_caps_free(s.store); s.store = nullptr; return false; }
     }
+    // Priority 1 == loopTask, deliberately: SPI-mode SD writes poll the CPU,
+    // and a higher-priority writer would preempt the main loop (which still
+    // services LoRa) in back-to-back slices for the length of an upload — the
+    // #84 starvation class. Equal priority round-robins the core; throughput
+    // is bounded by the SD bus either way, not CPU share. Re-tune only with
+    // /api/diag/loop max-iteration numbers from a sustained large upload.
+    // 8 KiB stack: the task runs FATFS-via-VFS + SHA-256 + snprintf; 4 KiB
+    // left ~no headroom (see sd_writer_stack_free in /api/diag/storage).
     const BaseType_t ok = xTaskCreatePinnedToCore(
-        task_fn, "sdwriter", 4096, nullptr, 5 /*priority*/, &s.task, 1 /*core 1*/);
+        task_fn, "sdwriter", 8192, nullptr, 5 /*priority*/, &s.task, 1 /*core 1*/);
     if (ok != pdPASS) { s.task = nullptr; return false; }
     NOTICEF("OutboundStaging: SD writer task up, ring=%u KiB", (unsigned)(s.store_sz / 1024));
     return true;
@@ -344,18 +361,19 @@ namespace _sdwriter {
     return true;
   }
 
-  // Signal end-of-data and wait for the writer to drain + fsync + close.
-  // Returns true iff the whole file was written and committed cleanly.
-  inline bool finish() {
+  // Non-blocking finalize. request_finish() signals end-of-data; the caller
+  // then polls finish_poll() until it reports done. The old blocking join
+  // (xSemaphoreTake for up to 20 s) ran on the AsyncTCP task and froze it
+  // for the whole drain+fsync; on cold first uploads that overflowed
+  // AsyncTCP's event queue and the connection dropped without a response
+  // (measured on the rig: first-after-boot uploads reliably died there).
+  inline void request_finish() { st().ending = true; }
+  // -1 = still draining, 0 = failed (errbuf set), 1 = drained+fsynced+closed.
+  inline int finish_poll() {
     State& s = st();
-    if (!s.active && !s.task) return true;   // nothing to finish (e.g. never started)
-    s.ending = true;
-    if (xSemaphoreTake(s.done_sig, pdMS_TO_TICKS(JOIN_TIMEOUT_MS)) != pdTRUE) {
-      snprintf(s.errbuf, sizeof(s.errbuf), "SD writer join timed out");
-      ERRORF("OutboundStaging: %s", s.errbuf);
-      return false;
-    }
-    return !s.error;
+    if (!s.task) return 1;   // never started: nothing to wait for
+    if (xSemaphoreTake(s.done_sig, 0) != pdTRUE) return -1;
+    return s.error ? 0 : 1;
   }
 
   // Abort the active job (client disconnected / GC). Drops buffered data and
@@ -398,6 +416,10 @@ struct Buffer {
   // and to remove it on release/GC).
   String     disk_path;
   microStore::File flash_file;  // Backend::Flash only
+  // SD finalize runs deferred (the writer drains off-task; the web layer
+  // parks the request and polls). Set by finalize_begin, cleared when
+  // finalize_poll reports a terminal state.
+  bool       finalize_deferred = false;
 };
 
 namespace _detail {
@@ -639,26 +661,40 @@ inline bool complete(uint32_t id) {
 // reading, so the read sees all bytes. Returns false if the final flush
 // of the SD accumulator to the card failed (the staged file is then
 // incomplete and the caller must reject the upload). No-op for PSRAM.
-inline bool finalize_write(uint32_t id) {
+// Begin finalize. Non-SD backends complete synchronously (returns 1). SD
+// returns 0 after signalling the writer: the caller must poll
+// finalize_poll() from OFF the AsyncTCP task until it reports done —
+// blocking the web task for the drain+fsync is what dropped connections.
+inline int finalize_begin(uint32_t id) {
   Buffer* b = _detail::find(id);
-  if (!b) return true;
+  if (!b) return 1;
   if (b->backend != Backend::Sd) {
     _detail::close_write_handle(*b);  // Flash: close the handle (PSRAM: no-op)
-    return true;
+    return 1;
   }
-  // SD: tell the writer no more data is coming and wait for it to drain the
-  // ring, fsync, and close. finish() returns false on any checked write/fsync
-  // failure or a join timeout.
-  bool ok = _sdwriter::finish();
-  if (!ok) {
+  b->finalize_deferred = true;
+  _sdwriter::request_finish();
+  return 0;
+}
+inline bool finalize_deferred(uint32_t id) {
+  Buffer* b = _detail::find(id);
+  return b && b->finalize_deferred;
+}
+// SD finalize completion poll: -1 still draining, 0 failed (fail_detail
+// set), 1 drained + fsynced + size-verified. The size check opens the file
+// fresh because VFSFileImpl::size() returns cached _stat data when stat()
+// fails, so it is only trustworthy on a fresh open; SHA-verify in the
+// upload handler is the byte-for-byte check on top of this length check.
+inline int finalize_poll(uint32_t id) {
+  Buffer* b = _detail::find(id);
+  if (!b) { snprintf(fail_detail(), 192, "staging buffer vanished mid-finalize"); return 0; }
+  const int w = _sdwriter::finish_poll();
+  if (w < 0) return -1;
+  b->finalize_deferred = false;
+  if (w == 0) {
     snprintf(fail_detail(), 192, "%s", _sdwriter::last_error());
-    return false;
+    return 0;
   }
-  // Integrity gate: the on-card file must be exactly the size we fed. Read
-  // size() on a FRESHLY OPENED read handle (the writer has closed its fd) —
-  // VFSFileImpl::size() returns cached _stat data when stat() fails, so it is
-  // only trustworthy on a fresh open. SHA-verify in the upload handler is the
-  // byte-for-byte check on top of this length check.
   size_t fsz = 0;
   {
     Storage::SDCard::BusGuard _bg;
@@ -669,9 +705,9 @@ inline bool finalize_write(uint32_t id) {
     snprintf(fail_detail(), 192, "SD file size %u != written %u (writer desync)",
              (unsigned)fsz, (unsigned)b->written);
     ERRORF("OutboundStaging: %s", fail_detail());
-    return false;
+    return 0;
   }
-  return true;
+  return 1;
 }
 
 inline size_t total_bytes(uint32_t id) {

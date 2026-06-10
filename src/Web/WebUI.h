@@ -230,6 +230,7 @@ namespace Web {
       // loop because the WiFi phase machine in Remote.h advances on
       // the same tick; doing it from a WebServer task would race.
       drain_wifi_provision_response();
+      drain_upload_finalize();
 
       // SD ejection edge — verify_or_disable in the SD write paths
       // flips a flag when a card stops responding mid-session. Drain

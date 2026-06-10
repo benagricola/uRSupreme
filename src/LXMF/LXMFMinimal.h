@@ -1243,7 +1243,11 @@ namespace LXMF {
                           _static_outbound_resource_concluded,
                           _static_outbound_resource_progress,
                           /*timeout=*/0.0);
-        ps.resource_hash = res.hash();
+        // Key on original_hash, not hash: a wire above MAX_EFFICIENT_SIZE
+        // goes out as chained segments, each a fresh Resource with its own
+        // hash but a constant original_hash (== hash when single-segment),
+        // and the concluded/progress trampolines must match every segment.
+        ps.resource_hash = res.original_hash();
         if (ps.total_bytes == 0) ps.total_bytes = (uint32_t)wire_len;
         // Release the in-RAM wire copy now that the Resource owns the
         // ciphertext (on disk if it spilled). The on-disk wire file
@@ -1264,7 +1268,7 @@ namespace LXMF {
       auto& m = pending_link_sends();
       for (const auto& kv : m) {
         const PendingLinkSend& ps = kv.second;
-        if (ps.resource_hash != res.hash()) continue;
+        if (ps.resource_hash != res.original_hash()) continue;
         if (!ps.owner || !ps.owner->_on_progress) return;
         // Sender progress: parts_done = _sent_parts on the Resource.
         // The Resource object's _object is private, so we use the public
@@ -1316,9 +1320,11 @@ namespace LXMF {
 
     static void _static_outbound_resource_concluded(const RNS::Resource& res) {
       auto& m = pending_link_sends();
-      // Find the pending send whose resource_hash matches.
+      // Find the pending send whose resource_hash matches. Matched by
+      // original_hash so the final segment of a split send (new per-segment
+      // hash, constant original_hash) still resolves its pending entry.
       for (auto it = m.begin(); it != m.end(); ) {
-        if (it->second.resource_hash == res.hash()) {
+        if (it->second.resource_hash == res.original_hash()) {
           PendingLinkSend& ps = it->second;
           const auto st = res.status();
           if (st == RNS::Type::Resource::COMPLETE) {
@@ -1395,6 +1401,27 @@ namespace LXMF {
     }
 
   public:
+    // Announce-triggered retry acceleration: a fresh delivery announce
+    // from a peer with a pending retry pulls that entry's timer forward
+    // so the next tick fires immediately instead of waiting out the flat
+    // backoff. Mirrors upstream LXMFDeliveryAnnounceHandler
+    // .received_announce (Handlers.py:23-32), which zeroes
+    // next_delivery_attempt for pending outbound messages; the attempt
+    // budget is deliberately untouched, as upstream's is. Main loop only.
+    static void accelerate_pending_for(const RNS::Bytes& dest_hash) {
+      auto& m = pending_link_sends();
+      const uint64_t now = (uint64_t)millis();
+      for (auto& kv : m) {
+        PendingLinkSend& ps = kv.second;
+        if (ps.retry_pending && ps.dest_hash == dest_hash &&
+            ps.next_retry_at_ms > now) {
+          ps.next_retry_at_ms = now;
+          NOTICEF("LXMF: announce from %s — accelerating pending retry",
+                  dest_hash.toHex().c_str());
+        }
+      }
+    }
+
     // Manually re-queue a Failed outbox entry. Called by the WebUI
     // /api/identities/{id}/outbox/{seq}/retry handler after it looks
     // up the MessageRecord's packet_hash (== PendingLinkSend.record_hash).
@@ -1656,7 +1683,10 @@ namespace LXMF {
       if (it == reg.end() || it->second == nullptr) return;
       if (!it->second->_on_progress) return;
       const float    frac  = res.get_progress();
-      const uint32_t total = (uint32_t)res.size();
+      // total_size() is the whole transfer (matches get_progress(), which is
+      // a whole-transfer fraction for split resources); size() would be the
+      // current segment only, skewing the byte counts mid-split.
+      const uint32_t total = (uint32_t)res.total_size();
       const uint32_t done  = (uint32_t)(frac * (float)total);
       try {
         it->second->_on_progress(RNS::Bytes(), link.hash(),

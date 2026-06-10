@@ -1766,7 +1766,7 @@ bool startRadio() {
         #elif MODEM == SX1280
           radio_error_expected_chip = "SX1280";
         #else
-          radio_error_expected_chip = "(unknown — MODEM define not recognised)";
+          radio_error_expected_chip = "(unknown: MODEM define not recognised)";
         #endif
         radio_error_reason =
             "Radio chip not responding to driver. This firmware was built for "

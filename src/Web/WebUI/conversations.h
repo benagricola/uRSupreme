@@ -206,7 +206,7 @@
         }
         const uint32_t id = Storage::OutboundStaging::allocate(total);
         if (id == 0) {
-          err = "Allocation rejected — file too large or PSRAM/SD unavailable.";
+          err = "Allocation rejected: file too large or PSRAM/SD unavailable.";
           return;
         }
         staging_id = id;
@@ -588,7 +588,7 @@
       if (rec->status != LXMF::OutboxStatus::Failed) {
         char msg[128];
         snprintf(msg, sizeof(msg),
-                 "Outbox entry %lu is %s, not Failed — only Failed entries can be retried.",
+                 "Outbox entry %lu is %s, not Failed. Only Failed entries can be retried.",
                  (unsigned long)seq, LXMF::outbox_status_name(rec->status));
         send_error_with_message(req, 409, "outbox_not_failed", msg);
         return;
@@ -703,7 +703,7 @@
           uint32_t sid = (uint32_t)(a["staging_id"] | 0);
           if (sid == 0) {
             send_error_with_message(req, 400, "missing_staging_id",
-              "Attachment is missing staging_id — upload bytes via /attachment/upload first.");
+              "Attachment is missing staging_id. Upload bytes via /attachment/upload first.");
             return;
           }
           if (!Storage::OutboundStaging::complete(sid)) {

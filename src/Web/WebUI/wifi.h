@@ -168,7 +168,7 @@
       wr_force_softap_pending = true;
       Common::PsramJsonDocument doc;
       doc["status"] = "queued";
-      doc["note"]   = "Switching to softAP — reconnect to the device's bootstrap SSID.";
+      doc["note"]   = "Switching to softAP. Reconnect to the device's bootstrap SSID.";
       send_json(req, 200, doc);
     }
 

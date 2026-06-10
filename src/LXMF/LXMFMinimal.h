@@ -553,7 +553,7 @@ namespace LXMF {
         RNS::Transport::request_path(dest_hash);
         WARNINGF("LXMF: no route to %s yet (path=%d key=%d) — issued path request",
                  dest_hash.toHex().c_str(), (int)have_path, (int)(bool)remote_identity);
-        return fail("Finding a route to the recipient (sent a path request) — resend in a few seconds.");
+        return fail("Finding a route to the recipient (sent a path request). Resend in a few seconds.");
       }
 
       // Build msgpack payload: [timestamp:f64, title:bin, content:bin, fields]
@@ -782,7 +782,7 @@ namespace LXMF {
         // runs for seconds). Nudge the path back and let the caller decide
         // how to surface the failure.
         RNS::Transport::request_path(dest_hash);
-        return fail("The route to the recipient was lost — issued a fresh path request.");
+        return fail("The route to the recipient was lost. Issued a fresh path request.");
       }
       RNS::Destination remote_dest(
         remote_identity,
@@ -814,7 +814,7 @@ namespace LXMF {
         signature = _identity.sign(signed_part);
       } catch (const std::exception& e) {
         ERRORF("LXMF: send: signing failed: %s", e.what());
-        return fail("Signing failed — identity may be misconfigured.");
+        return fail("Signing failed. Identity may be misconfigured.");
       }
       if (signature.size() != SIG_LEN) {
         ERRORF("LXMF: send: unexpected signature length %u", (unsigned)signature.size());

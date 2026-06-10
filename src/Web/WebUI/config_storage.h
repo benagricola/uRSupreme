@@ -130,7 +130,7 @@
       if (caller.empty()) return;
       if (!Storage::SDCard::present()) {
         send_error_with_message(req, 409, "sd_absent",
-          "No SD card is inserted — nothing to migrate to.");
+          "No SD card is inserted: nothing to migrate to.");
         return;
       }
       const auto result = Storage::Migration::run();

@@ -56,7 +56,7 @@
       // attempt to set discoverable=true even if a client tried.
       if ((bool)(body["discoverable"] | false)) {
         send_error_with_message(req, 400, "not_discoverable",
-          "TCP clients can't be advertised — peers can't connect to an outbound-only link.");
+          "TCP clients can't be advertised: peers can't connect to an outbound-only link.");
         return;
       }
       if (Discovery::Config::get(name)) {
@@ -119,7 +119,7 @@
       // TCP clients can't be advertised — see handle_tcp_clients_add.
       if ((bool)(body["discoverable"] | false)) {
         send_error_with_message(req, 400, "not_discoverable",
-          "TCP clients can't be advertised — peers can't connect to an outbound-only link.");
+          "TCP clients can't be advertised: peers can't connect to an outbound-only link.");
         return;
       }
       bool host_port_changed = false;

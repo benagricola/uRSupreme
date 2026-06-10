@@ -532,12 +532,12 @@ namespace Web {
         return "Identity code is required for this operation. Type the 6 hex chars currently displayed on the device.";
       }
       if (proof.size() != u.hex6.size()) {
-        return "Identity code is the wrong length — it should be 6 hex characters.";
+        return "Identity code is the wrong length. It should be 6 hex characters.";
       }
       uint8_t diff = 0;
       for (size_t i = 0; i < proof.size(); i++) diff |= proof[i] ^ u.hex6[i];
       if (diff != 0) {
-        return "Identity code didn't match — check you've read it from the correct device's OLED.";
+        return "Identity code didn't match. Check you've read it from the correct device's OLED.";
       }
       u.consumed = true;
       return nullptr;

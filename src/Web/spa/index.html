@@ -69,13 +69,13 @@
 <div id="view-bootstrap" class="page" x-data x-show="$store.s.view === 'view-bootstrap'" x-cloak>
   <div class="card">
     <h2>First-time setup</h2>
-    <p class="muted">This device hasn't been configured for a WiFi network yet. Configure home WiFi so you can reach it from any device on your network — or skip and use it directly from this softAP for standalone / off-grid operation.</p>
+    <p class="muted">This device hasn't been configured for a WiFi network yet. Configure home WiFi so you can reach it from any device on your network, or skip and use it directly from this softAP for standalone / off-grid operation.</p>
     <div class="row mb-2" >
       <select id="bs-ssid" x-model="$store.s.forms.bootstrap.ssid">
         <option value=""
-                x-text="$store.s.wifiScanState === 'scanning' ? '— scanning… —'
+                x-text="$store.s.wifiScanState === 'scanning' ? '(scanning…)'
                        : $store.s.wifiScanState === 'error' ? '(scan failed)'
-                       : '— pick a network —'"></option>
+                       : '(pick a network)'"></option>
         <template x-for="n in $store.s.wifiScanList" :key="n.ssid">
           <option :value="n.ssid" x-text="n.ssid + (n.secure ? ' 🔒' : '')"></option>
         </template>
@@ -92,7 +92,7 @@
             @click="onClickBsSave($event.currentTarget)">Save WiFi & reboot</button>
     <p class="muted mt-10" >Tip: leave the password empty for an open network.</p>
     <hr class="border-color-default mt-14 mb-14">
-    <button class="secondary w-full" id="bs-skip" @click="onClickBsSkip()">Skip — use chat from this softAP</button>
+    <button class="secondary w-full" id="bs-skip" @click="onClickBsSkip()">Skip: use chat from this softAP</button>
     <p class="muted mt-2" >Standalone mode: don't join a WiFi network at all; stay on this device's softAP. You can join a network later from the settings menu.</p>
   </div>
 </div>
@@ -103,7 +103,7 @@
     <h2>Identities</h2>
     <div id="identity-list" x-data>
       <template x-if="$store.s.identities.length === 0">
-        <div class="muted">No identities yet — create one below.</div>
+        <div class="muted">No identities yet. Create one below.</div>
       </template>
       <template x-for="id in $store.s.identities" :key="id.id">
         <div class="iden-card" @click="enterLogin(id)">
@@ -121,7 +121,7 @@
     </div>
     <details class="mt-14">
       <summary class="muted">Lost a password?</summary>
-      <p class="muted">Factory reset wipes <em>every</em> identity on this device — inboxes, sent messages, auth tokens, the lot. Required if every password is forgotten.</p>
+      <p class="muted">Factory reset wipes <em>every</em> identity on this device: inboxes, sent messages, auth tokens, the lot. Required if every password is forgotten.</p>
       <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
       <label>Identity code</label>
       <input class="font-mono-inline mb-2" id="fr-code" maxlength="6" placeholder="abc123"
@@ -157,7 +157,7 @@
 <div id="view-login" class="page" x-data x-show="$store.s.view === 'view-login'" x-cloak>
   <div class="card">
     <h2 id="login-title" x-text="$store.s.ui.loginTitle">Login</h2>
-    <p class="muted">Enter the password you set when this identity was created. No physical-presence proof is needed for login — the password is the only key.</p>
+    <p class="muted">Enter the password you set when this identity was created. No physical-presence proof is needed for login: the password is the only key.</p>
     <label>Password</label>
     <input class="mb-3" id="login-pw" type="password" x-model="$store.s.forms.login.pw"
            x-effect="$store.s.view === 'view-login' && $nextTick(() => $el.focus())"
@@ -452,19 +452,19 @@
                 <template x-if="attachmentMode(a) === 'sd_unreachable'">
                   <div class="chip bg-chip-warn color-inherit mt-6" 
             :title="'This attachment was saved on the SD card. Re-insert the card and reboot the device to recover it.'"
-            x-text="attachmentLabel(a) + ' — SD card unavailable'"></div>
+            x-text="attachmentLabel(a) + ' (SD card unavailable)'"></div>
                 </template>
                 <template x-if="attachmentMode(a) === 'click-to-load'">
                   <button class="attachment-chip chip chip-btn"
                           
                           @click="downloadAttachment(state.identityId, a, $event.currentTarget, $event.currentTarget.parentElement)"
-                          x-text="attachmentLabel(a) + ' — click to load'"></button>
+                          x-text="attachmentLabel(a) + ' (click to load)'"></button>
                 </template>
                 <template x-if="attachmentMode(a) === 'click-to-download'">
                   <button class="attachment-chip chip chip-btn"
                           
                           @click="downloadAttachment(state.identityId, a, $event.currentTarget, $event.currentTarget.parentElement)"
-                          x-text="attachmentLabel(a) + ' — click to download'"></button>
+                          x-text="attachmentLabel(a) + ' (click to download)'"></button>
                 </template>
                 <template x-if="attachmentMode(a) === 'static'">
                   <div class="chip mt-6" 
@@ -474,11 +474,11 @@
                   <div class="mt-6" x-init="loadAttachmentBlob(a)">
                     <template x-if="$store.s.attachmentBlobs[a.filename] === 'loading'">
                       <div class="muted chip" 
-                           x-text="attachmentLabel(a) + ' — loading…'"></div>
+                           x-text="attachmentLabel(a) + ' (loading…)'"></div>
                     </template>
                     <template x-if="isBlobFailed($store.s.attachmentBlobs[a.filename])">
                       <div class="chip-error">
-                        <div x-text="attachmentLabel(a) + ' — load failed'"></div>
+                        <div x-text="attachmentLabel(a) + ' (load failed)'"></div>
                         <div class="muted text-tiny mt-mini" 
                              x-text="$store.s.attachmentBlobs[a.filename] && $store.s.attachmentBlobs[a.filename].error"></div>
                         <button class="ghost mt-6 text-xs" 
@@ -496,11 +496,11 @@
                   <div class="mt-6" x-init="loadAttachmentBlob(a)">
                     <template x-if="$store.s.attachmentBlobs[a.filename] === 'loading'">
                       <div class="muted chip" 
-                           x-text="attachmentLabel(a) + ' — loading…'"></div>
+                           x-text="attachmentLabel(a) + ' (loading…)'"></div>
                     </template>
                     <template x-if="isBlobFailed($store.s.attachmentBlobs[a.filename])">
                       <div class="chip-error">
-                        <div x-text="attachmentLabel(a) + ' — load failed'"></div>
+                        <div x-text="attachmentLabel(a) + ' (load failed)'"></div>
                         <div class="muted text-tiny mt-mini" 
                              x-text="$store.s.attachmentBlobs[a.filename] && $store.s.attachmentBlobs[a.filename].error"></div>
                         <button class="ghost mt-6 text-xs" 
@@ -641,17 +641,17 @@
     <div class="radio-chart-wrap" id="status-net-chart" x-html="networkChartHTML"></div>
     <button class="secondary w-full mt-2" id="btn-force-softap"
             x-show="wifiMode === 'sta'"
-            title="Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again."
+            title="Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept; a reboot will try it again."
             @click="onClickForceSoftap($event.currentTarget)">Switch to softAP</button>
     <div class="popover-subline" id="status-wifi-hint"
-         x-show="wifiMode === 'sta'">Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept — a reboot will try it again.</div>
+         x-show="wifiMode === 'sta'">Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept; a reboot will try it again.</div>
   </div>
   <div class="popover-section">
     <div class="popover-row">
       <div class="popover-label">Transport</div>
       <div id="status-transport-line">
         <span :class="'pill ' + (transportEnabled ? 'ok' : '')"
-              x-text="transportEnabled ? 'On — relaying packets' : 'Off — endpoint only'"></span>
+              x-text="transportEnabled ? 'On: relaying packets' : 'Off: endpoint only'"></span>
       </div>
     </div>
     <button class="secondary w-full mt-2" id="btn-toggle-transport" 
@@ -921,7 +921,7 @@
                  x-text="p.dims.w + '×' + p.dims.h + ' · ' + formatBytes(p.size)"></div>
             <template x-if="p.size > $store.s.imageResize.cap">
               <div class="text-danger text-xs mt-1" 
-          x-text="'Too large — cap is ' + formatBytes($store.s.imageResize.cap)"></div>
+          x-text="'Too large. Cap is ' + formatBytes($store.s.imageResize.cap)"></div>
             </template>
             <div class="muted mono text-xs text-dim mt-1" 
                  x-text="$store.s.imageResize.etaByKey[p.key] || ''"></div>
@@ -990,9 +990,9 @@
     <label>Network</label>
     <select class="mb-2" id="cn-wifi-ssid" x-model="$store.s.forms.wifiAdd.ssid">
       <option value=""
-              x-text="$store.s.wifiScanState === 'scanning' ? '— scanning… —'
+              x-text="$store.s.wifiScanState === 'scanning' ? '(scanning…)'
                      : $store.s.wifiScanState === 'error' ? '(scan failed)'
-                     : '— pick a network —'"></option>
+                     : '(pick a network)'"></option>
       <template x-for="n in $store.s.wifiScanList" :key="n.ssid">
         <option :value="n.ssid" x-text="n.ssid + (n.secure ? ' 🔒' : '')"></option>
       </template>
@@ -1033,7 +1033,7 @@
       </div>
     </div>
     <p class="muted mt-2 text-xs" >
-      A TCP client is an outbound link only — this device opens the
+      A TCP client is an outbound link only; this device opens the
       connection. Peers can't reach back through it, so it can't be
       publicly advertised the way a LoRa or UDP interface can.
     </p>
@@ -1183,7 +1183,7 @@
       <!-- ============== Identity tab ============== -->
       <div class="tab-panel" data-panel="identity" :class="{ active: $store.s.settingsTab === 'identity' }">
         <div class="card">
-          <label>Display name <button type="button" class="info-icon" data-info="The display name peers see in your identity announce. Changes take effect on the next announce — press the megaphone after editing to re-broadcast immediately."></button></label>
+          <label>Display name <button type="button" class="info-icon" data-info="The display name peers see in your identity announce. Changes take effect on the next announce. Press the megaphone after editing to re-broadcast immediately."></button></label>
           <div class="list-row flex items-center gap-10" >
             <span class="idc" id="id-modal-idc"
                   x-html="$store.s.self ? identicon($store.s.self.address || $store.s.self.id, 40) : ''"></span>
@@ -1234,7 +1234,7 @@
 
       <!-- ============== Connectivity tab (accordion: Radio / WiFi / Bluetooth) ============== -->
       <div class="tab-panel" data-panel="connectivity" :class="{ active: $store.s.settingsTab === 'connectivity' }">
-        <div class="warn mx-0 mt-0">⚠ Connectivity settings are <strong>device-wide</strong> — they apply to every identity stored on this device. Changing radio params reboots the device and may interrupt active conversations.</div>
+        <div class="warn mx-0 mt-0">⚠ Connectivity settings are <strong>device-wide</strong>: they apply to every identity stored on this device. Changing radio params reboots the device and may interrupt active conversations.</div>
 
         <details class="cn-section" data-cn="radio" open x-show="$store.s.ui.showRadioSection">
           <summary>
@@ -1254,14 +1254,14 @@
             </label>
           </summary>
           <div class="cn-section-body">
-            <label>Region preset <button type="button" class="info-icon" data-info="Pick the region preset that matches your local mesh. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other."></button></label>
+            <label>Region preset <button type="button" class="info-icon" data-info="Pick the region preset that matches your local mesh. Both ends of a conversation must use the <em>same</em> region settings. If one device uses EU 869 and the other US 915, they won't hear each other."></button></label>
             <p class="muted mx-0 mt-1 mb-6" id="rd-intro"
                x-show="$store.s.settingsFirstRun"
                x-html="$store.s.settingsFirstRun
-                 ? `Before this device can talk to other LoRa nodes, it needs to know which region to operate in. Pick the preset for your local mesh — both ends of a conversation must use the <em>same</em> region settings, or they won't hear each other.`
-                 : `Pick the region preset that matches your local mesh. Both ends of a conversation must use the <em>same</em> region settings — if one device uses EU 869 and the other US 915, they won't hear each other.`"></p>
+                 ? `Before this device can talk to other LoRa nodes, it needs to know which region to operate in. Pick the preset for your local mesh. Both ends of a conversation must use the <em>same</em> region settings, or they won't hear each other.`
+                 : `Pick the region preset that matches your local mesh. Both ends of a conversation must use the <em>same</em> region settings. If one device uses EU 869 and the other US 915, they won't hear each other.`"></p>
             <select class="mb-6" id="rd-preset" x-model="$store.s.forms.radio.preset" @change="applyRadioPreset()">
-              <option value="__empty">— Pick a region —</option>
+              <option value="__empty">(Pick a region)</option>
               <template x-for="p in RADIO_PRESETS" :key="p.id">
                 <option :value="p.id" x-text="p.label"></option>
               </template>
@@ -1418,7 +1418,7 @@
                 </div>
               </template>
               <template x-if="$store.s.tcpClientsCap && $store.s.tcpClientsLive >= $store.s.tcpClientsCap">
-                <p class="muted" x-text="'All ' + $store.s.tcpClientsCap + ' TCP client slots in use — remove one before adding another.'"></p>
+                <p class="muted" x-text="'All ' + $store.s.tcpClientsCap + ' TCP client slots in use. Remove one before adding another.'"></p>
               </template>
             </div>
             <button class="secondary w-full" id="btn-tcp-add"  @click="openAddTcpModal()">Add a TCP client…</button>
@@ -1440,7 +1440,7 @@
                      x-model="$store.s.forms.diag.kissOut"
                      @change="onChangeKissOut()">
               <span>KISS-frame radio traffic on USB serial</span>
-              <button type="button" class="info-icon" @click.stop data-info="Turn OFF if you're reading the USB serial with <code>pio device monitor</code> or similar — KISS-framed binary bytes are otherwise interleaved with the diagnostic text log. Leave ON if you're using the device as a KISS host for tools like rnsd or MeshChat. Persists across reboots."></button>
+              <button type="button" class="info-icon" @click.stop data-info="Turn OFF if you're reading the USB serial with <code>pio device monitor</code> or similar; KISS-framed binary bytes are otherwise interleaved with the diagnostic text log. Leave ON if you're using the device as a KISS host for tools like rnsd or MeshChat. Persists across reboots."></button>
             </label>
           </div>
         </details>
@@ -1449,13 +1449,13 @@
 
       <!-- ============== Discovery tab ============== -->
       <div class="tab-panel" data-panel="discovery" :class="{ active: $store.s.settingsTab === 'discovery' }">
-        <div class="warn mx-0 mt-0">⚠ Discovery announces this device's interfaces to other nodes that can hear it. Off by default for privacy — only turn it on if you want to be findable.</div>
+        <div class="warn mx-0 mt-0">⚠ Discovery announces this device's interfaces to other nodes that can hear it. Off by default for privacy: only turn it on if you want to be findable.</div>
         <div class="card">
           <strong>Network identity <button type="button" class="info-icon" data-info="A device-wide long-lived keypair signs every discovery announce so other nodes can recognise this device across boots."></button></strong>
           <div class="list-row">
             <div>Identity hash</div>
             <div id="disc-identity-hash" class="muted font-mono-inline text-xs"
-                 x-text="$store.s.ui.discIdentityHash">—</div>
+                 x-text="$store.s.ui.discIdentityHash">-</div>
           </div>
         </div>
         <div class="card mt-3" >
@@ -1512,14 +1512,14 @@
           <p class="muted mt-0" >The highest-priority enabled source that's reported a value wins.</p>
           <div class="row mb-14 items-center gap-12" >
             <div class="flex-1-min0">
-              <div><strong id="tm-current" x-text="$store.s.ui.tmCurrent">—</strong></div>
+              <div><strong id="tm-current" x-text="$store.s.ui.tmCurrent">-</strong></div>
               <div class="muted text-xs" id="tm-source" x-text="$store.s.ui.tmSource">no source has reported yet</div>
             </div>
             <button class="m-0" id="btn-tm-browser-sync" @click="onClickTmBrowserSync($event.currentTarget)">Sync to browser time</button>
           </div>
         </div>
         <div class="card mt-3" >
-          <strong>Time sources (drag to reorder) <button type="button" class="info-icon" data-info="Top of the list = highest priority. Disable a source to skip it entirely. Some sources expose an interval — how often their driver polls."></button></strong>
+          <strong>Time sources (drag to reorder) <button type="button" class="info-icon" data-info="Top of the list = highest priority. Disable a source to skip it entirely. Some sources expose an interval: how often their driver polls."></button></strong>
           <div id="tm-sources" x-data>
             <template x-for="row in $store.s.timeSources" :key="row.key">
               <div class="tm-source-row mb-6 border-elev2 rounded-6 bg-elev user-select-none overflow-hidden" :data-source="row.key" draggable="true"
@@ -1593,7 +1593,7 @@
           <select id="inbox-default-retention"
                   x-model="$store.s.forms.prefs.inboxDefaultRetention"
                   @change="onChangeInboxDefaultRetention()">
-            <option value="none:0">No expiry — keep everything</option>
+            <option value="none:0">No expiry: keep everything</option>
             <option value="time:604800">Last 7 days</option>
             <option value="time:2592000">Last 30 days</option>
             <option value="time:7776000">Last 90 days</option>
@@ -1604,7 +1604,7 @@
           <div class="muted mt-6 text-xs" id="inbox-config-status" x-text="$store.s.ui.inboxConfigStatus"></div>
         </div>
         <div class="card mt-14" >
-          <strong>Transfer limits <button type="button" class="info-icon" data-info="Maximum outbound message size you can send, and maximum inbound size accepted from peers. The slider's upper bound tracks your device's available storage live — values above your current free space are disabled. Pull / re-insert the SD card to see the range change."></button></strong>
+          <strong>Transfer limits <button type="button" class="info-icon" data-info="Maximum outbound message size you can send, and maximum inbound size accepted from peers. The slider's upper bound tracks your device's available storage live. Values above your current free space are disabled. Pull / re-insert the SD card to see the range change."></button></strong>
           <label>Max send</label>
           <input class="mb-1" type="range" id="storage-max-send" min="65536" step="65536"
                  :max="$store.s.ui.storageMaxSendMax"
@@ -1621,7 +1621,7 @@
         </div>
         <div class="card mt-14" >
           <strong>Contacts</strong>
-          <div class="muted mt-1" >Stored in this browser only — they don't leave the device or sync between browsers.</div>
+          <div class="muted mt-1" >Stored in this browser only; they don't leave the device or sync between browsers.</div>
           <div class="mt-2" id="contacts-list" x-data x-cloak>
             <template x-if="Object.keys($store.s.contacts).length === 0">
               <div class="muted">No contacts saved.</div>
@@ -2001,11 +2001,11 @@ let state = {
     rdPresetNote: '',                // dynamic blurb beneath the preset select
     discNameStatus: '',              // "saved" / "saving…" caption
     discStatus: '',                  // master status caption on discovery tab
-    discIdentityHash: '—',           // hash printed in the Discovery tab
+    discIdentityHash: '-',           // hash printed in the Discovery tab
     storageStatus: '',               // status caption on storage sliders
     storageMaxSendLabel: '',         // KB readout next to the send slider
     storageMaxRecvLabel: '',         // KB readout next to the recv slider
-    tmCurrent: '—',                  // time-master current value
+    tmCurrent: '-',                  // time-master current value
     tmSource:  '',                   // time-master source label
     settingsTitle: 'Settings',       // h3 above the tab bar in #modal-settings
     tpEndpoint:    '',               // transport endpoint URL in App tab
@@ -2059,7 +2059,7 @@ function idCodeTtlText() {
   return s + ' seconds';
 }
 function idCodeHintHtml() {
-  return '<strong>Identity code:</strong> a 6-character hex code that proves you\'re physically holding the device — required for any action sensitive enough that doing it remotely should not be possible. To generate one: long-press the device\'s user button (~1 s), release, then short-press within 2 s; the code appears on the OLED for ' + idCodeTtlText() + '.';
+  return '<strong>Identity code:</strong> a 6-character hex code that proves you\'re physically holding the device, required for any action sensitive enough that doing it remotely should not be possible. To generate one: long-press the device\'s user button (~1 s), release, then short-press within 2 s; the code appears on the OLED for ' + idCodeTtlText() + '.';
 }
 
 // ============================== UTIL ==============================
@@ -3533,7 +3533,7 @@ async function startRecording() {
   }
   if (state.recorder) return;  // already recording
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    toast('Microphone is not available — try a different browser, or HTTPS.', 'error', 6000);
+    toast('Microphone is not available. Try a different browser, or HTTPS.', 'error', 6000);
     return;
   }
   let stream;
@@ -3578,7 +3578,7 @@ async function startRecording() {
     const cap = attachMaxBytes();
     if (blob.size > cap) {
       toast('Recording too large (' + formatBytes(blob.size)
-            + ') — cap is ' + formatBytes(cap) + '.', 'error', 6000);
+            + '). Cap is ' + formatBytes(cap) + '.', 'error', 6000);
       return;
     }
     const bytes = await blobToBytes(blob);
@@ -3631,7 +3631,7 @@ async function onChangeAttachFile(ev) {
 async function stageNonImageAttachment(file) {
   const cap = attachMaxBytes();
   if (file.size > cap) {
-    toast('File is ' + formatBytes(file.size) + ' — cap is '
+    toast('File is ' + formatBytes(file.size) + '. Cap is '
           + formatBytes(cap) + ' per attachment.', 'error', 6000);
     return;
   }
@@ -4006,7 +4006,7 @@ function attachTrayData() {
       const s  = Math.floor(ms / 1000);
       const mm = Math.floor(s / 60);
       const ss = (s % 60).toString().padStart(2, '0');
-      return mm + ':' + ss + ' — recording';
+      return mm + ':' + ss + ' (recording)';
     },
   };
 }
@@ -4141,7 +4141,7 @@ function applySystemDerived() {
 function applyStatusToButton(info) {
   const r = info && info.radio;
   if (!r)            { state.radioStatus.state = 'unknown'; state.radioStatus.title = 'Radio status unknown'; return; }
-  if (!r.have_conf)  { state.radioStatus.state = 'unconf';  state.radioStatus.title = 'Radio not configured — open Settings → Radio'; return; }
+  if (!r.have_conf)  { state.radioStatus.state = 'unconf';  state.radioStatus.title = 'Radio not configured. Open Settings → Radio'; return; }
   if (r.online)      { state.radioStatus.state = 'online';
                        state.radioStatus.title = 'Radio online · ' + (r.frequency/1e6).toFixed(3) + ' MHz'; return; }
   state.radioStatus.state = 'offline';
@@ -4230,7 +4230,7 @@ function statusPopoverData() {
       // Placeholder (not '') so the line reserves its height from the moment the
       // popover opens and doesn't shift everything down when the first real delta
       // lands a poll-interval later.
-      const PLACEHOLDER = 'Δ —: — RX · — TX';
+      const PLACEHOLDER = 'Δ -: - RX · - TX';
       if (!prev || !info.uptime_ms || !prev.ts) return PLACEHOLDER;
       const dt_s = (info.uptime_ms - prev.uptime_ms) / 1000;
       if (!(dt_s > 0.5 && dt_s < 600)) return PLACEHOLDER;
@@ -4579,14 +4579,14 @@ function radioChartHTMLBuild() {
       <!-- Row 1: left-axis lines (utilisation %). -->
       <div class="radio-chart-legend-row">
         <span><span class="swatch swatch-own" ></span>own ${vu(lastU.own ?? 0, '%')}</span>
-        <span title="Fraction of recent DCD samples that detected non-self channel activity. Aggregate — could be one peer, many peers, or LoRa-like interference. DCD doesn't sample while we're TX'ing, so our own emissions are excluded."><span class="swatch swatch-others" ></span>others ${vu(lastU.others ?? 0, '%')}</span>
+        <span title="Fraction of recent DCD samples that detected non-self channel activity. Aggregate: could be one peer, many peers, or LoRa-like interference. DCD doesn't sample while we're TX'ing, so our own emissions are excluded."><span class="swatch swatch-others" ></span>others ${vu(lastU.others ?? 0, '%')}</span>
       </div>
       <!-- Row 2: right-axis lines (dBm). RSSI / noise share a y-scale;
            grouping them on their own row keeps the legend readable on
            narrow popovers. -->
       <div class="radio-chart-legend-row">
-        <span><span class="swatch swatch-rssi" ></span>RSSI ${(typeof last.rssi === 'number' && last.rssi > -160) ? vu(last.rssi, 'dBm') : vu('—', 'dBm')}</span>
-        <span title="Measured ambient RSSI when no LoRa carrier is detected. The gap to RSSI is effective SNR. Jumps in noise indicate new in-band interferers."><span class="swatch swatch-noise" ></span>noise ${(typeof last.noise === 'number' && last.noise > -160) ? vu(last.noise, 'dBm') : vu('—', 'dBm')}</span>
+        <span><span class="swatch swatch-rssi" ></span>RSSI ${(typeof last.rssi === 'number' && last.rssi > -160) ? vu(last.rssi, 'dBm') : vu('-', 'dBm')}</span>
+        <span title="Measured ambient RSSI when no LoRa carrier is detected. The gap to RSSI is effective SNR. Jumps in noise indicate new in-band interferers."><span class="swatch swatch-noise" ></span>noise ${(typeof last.noise === 'number' && last.noise > -160) ? vu(last.noise, 'dBm') : vu('-', 'dBm')}</span>
       </div>
     </div>
   `;
@@ -4687,7 +4687,7 @@ function systemPopoverData() {
     },
     get storagePillLabel() {
       const fl = this._fl;
-      if (!fl.total_bytes) return '—';
+      if (!fl.total_bytes) return '-';
       const pct = Math.round(100 * (fl.free_bytes || 0) / fl.total_bytes);
       return pct + '% free';
     },
@@ -4711,7 +4711,7 @@ function systemPopoverData() {
     get clockPillClass() { return this._a.calibrated ? 'pill ok' : 'pill warn'; },
     get clockPillLabel() { return this._a.calibrated ? 'Calibrated' : 'Uncalibrated'; },
     get clockNowText() {
-      return this._a.deviceUnixMs ? fmtWallClock(this._a.deviceUnixMs) : '—';
+      return this._a.deviceUnixMs ? fmtWallClock(this._a.deviceUnixMs) : '-';
     },
     get clockSourceText() {
       const a = this._a;
@@ -5178,7 +5178,7 @@ function onClickToggleTransport(btn) {
 async function onClickForceSoftap(btn) {
   const r = await showConfirm({
     title: 'Switch to softAP?',
-    body: 'You will be disconnected; reconnect to the device\'s bootstrap WiFi to continue. The saved network is kept — a reboot will try it again.',
+    body: 'You will be disconnected; reconnect to the device\'s bootstrap WiFi to continue. The saved network is kept; a reboot will try it again.',
     okLabel: 'Switch to softAP',
     destructive: true,
     needsCode: true,
@@ -5187,7 +5187,7 @@ async function onClickForceSoftap(btn) {
   await withBusy(btn, async () => {
     try {
       await state.transport._req('/api/wifi/softap', { method: 'POST', body: { identity_code: r.code } });
-      toast('Device switching to softAP — reconnect to the bootstrap network.', 'info');
+      toast('Device switching to softAP. Reconnect to the bootstrap network.', 'info');
       state.popovers.status = false;
     } catch (e) {
       toast('softAP switch failed: ' + (e.message || e), 'error');
@@ -5223,8 +5223,8 @@ function refreshAnnounceCountdown() {
     state.ui.announceState = state.announcedThisBoot ? 'sent' : 'none';
     state.ui.announceLabelText = '';
     state.ui.announceTitle = state.announcedThisBoot
-      ? 'Announce me — auto-announce is OFF (manual announce sent this boot)'
-      : 'Announce me — auto-announce is OFF for this identity';
+      ? 'Announce me. Auto-announce is OFF (manual announce sent this boot)'
+      : 'Announce me. Auto-announce is OFF for this identity';
     return;
   }
   // Auto-announce on.
@@ -5392,9 +5392,9 @@ function dispatchEvent(ev) {
     if (typeof toast === 'function') {
       const mib = (n) => Math.round((n || 0) / (1024 * 1024));
       if (ev.sd_present) {
-        toast(`SD detected — up to ${mib(ev.effective_max_recv_bytes)} MiB receive`, 'info');
+        toast(`SD detected: up to ${mib(ev.effective_max_recv_bytes)} MiB receive`, 'info');
       } else {
-        toast(`SD removed — caps clamped to ${mib(ev.effective_max_recv_bytes)} MiB receive`, 'warn');
+        toast(`SD removed: caps clamped to ${mib(ev.effective_max_recv_bytes)} MiB receive`, 'warn');
       }
     }
     return;
@@ -6292,7 +6292,7 @@ const RADIO_PRESETS = [
     note: 'Same g3 sub-band, higher SF for range. 10 % duty cycle.' },
   { id: 'uk869',  label: 'UK 869.525 MHz',    freq: 869525000, bw: 125000, sf: 7,  cr: 5, tx: 17,
     airtime: 10, lt_airtime: 10,
-    note: 'UK SRD860 (Ofcom IR 2030). 869.4-869.65 MHz: 10 % duty cycle, 500 mW ERP — same regulatory regime as EU at this frequency, separate label so UK users can pick a familiar one.' },
+    note: 'UK SRD860 (Ofcom IR 2030). 869.4-869.65 MHz: 10 % duty cycle, 500 mW ERP. Same regulatory regime as EU at this frequency, separate label so UK users can pick a familiar one.' },
   { id: 'uk868-1pc',  label: 'UK 868.3 MHz (1 % duty)', freq: 868300000, bw: 125000, sf: 7,  cr: 5, tx: 14,
     airtime: 1, lt_airtime: 1,
     note: 'UK 868.0-868.6 MHz general sub-band. 1 % duty cycle, 25 mW ERP. More headroom in TX-power than the g3 sub-band but much tighter on airtime.' },
@@ -6310,7 +6310,7 @@ const RADIO_PRESETS = [
     note: 'IN 865-867 MHz. 1 % duty cycle (conservative).' },
   { id: 'as923',  label: 'AS 923 MHz',        freq: 923200000, bw: 125000, sf: 7,  cr: 5, tx: 14,
     airtime: 1, lt_airtime: 1,
-    note: 'AS923 (varies by country — check local rules).' },
+    note: 'AS923 (varies by country, check local rules).' },
   { id: 'jp920',  label: 'JP 920 MHz',        freq: 920900000, bw: 125000, sf: 7,  cr: 5, tx: 13,
     airtime: 10, lt_airtime: 10,
     note: 'JP 920.6-928 MHz (ARIB STD-T108). 10 % duty cycle.' },
@@ -6737,7 +6737,7 @@ const TIME_SOURCE_LABELS = {
   gps:     ['GPS',      'UTC from a GPS fix; works without internet.'],
   ntp:     ['NTP',      'pool.ntp.org sync when WiFi has an internet route.'],
   browser: ['Browser',  'Time the SPA pushed from your phone/laptop clock.'],
-  rns:     ['RNS peer', 'Wall clock from an LXMF peer announce — lowest trust, last-resort.'],
+  rns:     ['RNS peer', 'Wall clock from an LXMF peer announce. Lowest trust, last-resort.'],
 };
 // Sources for which a poll interval is meaningful (event-driven
 // sources hide the field).
@@ -6890,7 +6890,7 @@ function onClickTmBrowserSync(btn) {
       } else if (r.calibrated) {
         toast('Browser time recorded but a higher-priority source is in use (' + r.source + ')', 'info');
       } else {
-        toast('Browser sync did not take effect — check that Browser is enabled in the source list', 'error');
+        toast('Browser sync did not take effect. Check that Browser is enabled in the source list', 'error');
       }
       renderTimeStatus(r);
     } catch (e) {
@@ -6961,7 +6961,7 @@ async function forgetSavedNetwork(ssid) {
   if (!r) return;
   try {
     await state.transport.wifiForget(ssid, r.code);
-    waitForDeviceAndReload('Forgetting "' + ssid + '" — rebooting into softAP…');
+    waitForDeviceAndReload('Forgetting "' + ssid + '", rebooting into softAP…');
   } catch (e) {
     toast('Forget failed: ' + (e.message || e), 'error');
   }
@@ -7006,7 +7006,7 @@ function closeSettingsModal() {
 // will accept is 10s — anything below silently rounds up. The default
 // is 5 minutes (LXMF_DEFAULT_ANNOUNCE_INTERVAL_MS server-side).
 const ANNOUNCE_INTERVALS = [
-  { ms: 0,        label: 'Off — manual only' },
+  { ms: 0,        label: 'Off: manual only' },
   { ms: 60000,    label: 'Every 1 minute' },
   { ms: 300000,   label: 'Every 5 minutes' },
   { ms: 900000,   label: 'Every 15 minutes' },
@@ -7267,7 +7267,7 @@ function onClickContactSave() {
 async function onClickDeleteSelf(btn) {
   const ok = await showConfirm({
     title: 'Delete this identity?',
-    body: 'Inbox, outbox, identity material — all gone for ' +
+    body: 'Inbox, outbox, identity material: all gone for ' +
           (state.self ? state.self.display_name : state.identityId) + '.',
     okLabel: 'Delete identity',
     destructive: true,
@@ -7383,7 +7383,7 @@ async function onBlurDiscName() {
     await state.transport._req('/api/discovery/state',
       { method: 'POST', body: { advertised_name: v } });
     state.forms.discovery._lastSavedAdvertisedName = v;
-    state.ui.discNameStatus = v ? 'Saved.' : 'Cleared — falls back to interface name.';
+    state.ui.discNameStatus = v ? 'Saved.' : 'Cleared. Falls back to interface name.';
     setTimeout(() => { state.ui.discNameStatus = ''; }, 2000);
   } catch (e) {
     state.ui.discNameStatus = 'Save failed: ' + (e.message || e);
@@ -7435,7 +7435,7 @@ function showWifiProvisionedPanel(resp) {
       '<p class="muted">Your device is on your home network now. Switch your computer back to that network, then visit one of the URLs below.</p>' +
       (stUrl ? '<p><strong>Always works:</strong> <a id="urlIp">' + stUrl + '</a></p>' : '') +
       (mdUrl ? '<p><strong>Friendlier (where mDNS resolves):</strong> <a id="urlMdns">' + mdUrl + '</a></p>' : '') +
-      '<p class="muted">This page will lose its softAP connection in a moment — that\'s expected. The device is fine.</p>' +
+      '<p class="muted">This page will lose its softAP connection in a moment; that\'s expected. The device is fine.</p>' +
     '</div></div>';
   if (stUrl) { const a = document.getElementById('urlIp');   if (a) a.href = stUrl; }
   if (mdUrl) { const a = document.getElementById('urlMdns'); if (a) a.href = mdUrl; }
@@ -7503,11 +7503,11 @@ function waitForDeviceAndReload(message) {
     if (stopped) return;
     const elapsed = Math.floor((Date.now() - startMs) / 1000);
     const where = (wasAp && mdns)
-      ? '(trying both this IP and http://' + mdns + '.local — '
+      ? '(trying both this IP and http://' + mdns + '.local, '
       : '(';
     $('rb-status').textContent = 'Waiting for device to come back… ' + where + elapsed + 's)';
     if (attempts < 60) setTimeout(tick, 1500);
-    else $('rb-status').textContent = "Device hasn't come back after 90 s — check serial.";
+    else $('rb-status').textContent = "Device hasn't come back after 90 s. Check serial.";
   };
   setTimeout(tick, 2500);
 }

@@ -125,16 +125,19 @@ inline bool begin() {
   }
   NOTICEF("SDCard: probing pins clk=%d miso=%d mosi=%d cs=%d imu_cs=%d (held high)",
           SD_CLK, SD_MISO, SD_MOSI, SD_CS, IMU_CS);
-  // SD SPI clock stays at the driver default (4 MHz). Raising it was
-  // measured on real hardware: both 10 MHz and 20 MHz reintroduce
-  // sustained-write failures (a 64 KiB block short-writes mid-transfer at
-  // random offsets), and this held even with the bus-releasing retry that
-  // gives the card idle time to recover — so it is a genuine card limit,
-  // not a blocking artifact. The gain was marginal anyway (~1.7x at
-  // 20 MHz) because above ~4 MHz the WiFi/parser path, not the SD, is the
-  // upload ceiling (~365 KB/s). A faster card might sustain more, but this
-  // is card-dependent, so we keep the conservative, reliable default.
-  if (!SD.begin(SD_CS, *bus)) {
+  // SD SPI clock: 10 MHz. The earlier 4 MHz cap was measured against the
+  // pre-writer-task upload path (no bus serialisation, per-block fsync,
+  // latched-handle recovery); re-swept on the rig against the current path
+  // (2026-06-10, SanDisk Ultra 64 GB FAT32, rmap detached): 10 MHz ran
+  // 7/7 uploads with 0 write errors, SHA-verified, 10 MiB at ~540 KB/s
+  // (~1.9x the 4 MHz rate). 20 MHz was also error-free but no faster —
+  // above ~10 MHz the WiFi/multipart ingest is the ceiling — so 10 MHz
+  // keeps double the signal margin on the shared IMU bus for the same
+  // throughput. URTN_SD_SPI_HZ overrides for sweep builds.
+#ifndef URTN_SD_SPI_HZ
+#define URTN_SD_SPI_HZ 10000000
+#endif
+  if (!SD.begin(SD_CS, *bus, URTN_SD_SPI_HZ)) {
     _detail::last_status_ref() = "sd_begin_failed";
     NOTICE("SDCard: SD.begin() failed — card absent, wrong pinout, or unsupported FS (try FAT32)");
     _detail::present_ref() = false;

@@ -158,6 +158,10 @@ namespace LXMF {
       // Advance opportunistic (single-packet) sends: proof -> Delivered,
       // timeout -> Failed. Same shared-static cadence as the retry tick.
       LXMFMinimal::tick_opportunistic_receipts();
+      // Apply announce-triggered accelerations BEFORE the retry/recheck
+      // ticks below so a peer that just announced gets its queued work
+      // dispatched in this very pass.
+      drain_peer_announcements();
       // Auto-send messages whose recipient key has now arrived via the
       // path request issued at send time (AP-mode on-demand key learning).
       tick_pending_identity_sends();
@@ -533,6 +537,72 @@ namespace LXMF {
     static std::vector<PendingIdentitySend>& pending_identity_sends() {
       static std::vector<PendingIdentitySend> v;
       return v;
+    }
+
+    // --- Announce-triggered send acceleration --------------------------
+    // A fresh lxmf.delivery announce from a peer we hold queued work for
+    // should fire that work on the next tick instead of waiting out its
+    // retry backoff / recheck interval — upstream resets
+    // next_delivery_attempt the moment the announce handler sees a
+    // pending destination (Handlers.py:23-32). AnnounceLog subscribers
+    // may run off the main loop, so the callback only copies the raw
+    // 16-byte hash into this fixed ring under a critical section (no
+    // heap work, no map access); loop() drains it where every other
+    // pending-map mutation already happens. Overflow drops silently —
+    // acceleration is an optimisation, the regular cadence still
+    // delivers.
+    struct AnnouncedPeerRing {
+      static constexpr size_t SLOTS = 8;
+      uint8_t hash[SLOTS][16];
+      uint8_t count = 0;
+    };
+    static AnnouncedPeerRing& announced_peers() {
+      static AnnouncedPeerRing r;
+      return r;
+    }
+    static portMUX_TYPE& announce_accel_mux() {
+      static portMUX_TYPE m = portMUX_INITIALIZER_UNLOCKED;
+      return m;
+    }
+
+    static void drain_peer_announcements() {
+      uint8_t local[AnnouncedPeerRing::SLOTS][16];
+      uint8_t n = 0;
+      {
+        auto& r = announced_peers();
+        portENTER_CRITICAL(&announce_accel_mux());
+        n = r.count;
+        if (n) memcpy(local, r.hash, (size_t)n * 16);
+        r.count = 0;
+        portEXIT_CRITICAL(&announce_accel_mux());
+      }
+      if (n == 0) return;
+      const uint64_t now = (uint64_t)millis();
+      for (uint8_t i = 0; i < n; ++i) {
+        RNS::Bytes dest(local[i], 16);
+        LXMFMinimal::accelerate_pending_for(dest);
+        for (auto& e : pending_identity_sends()) {
+          if (e.dest == dest && e.next_at_ms > now) e.next_at_ms = now;
+        }
+      }
+    }
+
+    // Called from the AnnounceLog subscriber for every fresh
+    // lxmf.delivery announce (wired in the firmware setup). Safe from
+    // any task; see drain_peer_announcements.
+    static void note_peer_announced(const RNS::Bytes& dest) {
+      if (dest.size() != 16) return;
+      auto& r = announced_peers();
+      portENTER_CRITICAL(&announce_accel_mux());
+      bool present = false;
+      for (uint8_t i = 0; i < r.count; ++i) {
+        if (memcmp(r.hash[i], dest.data(), 16) == 0) { present = true; break; }
+      }
+      if (!present && r.count < AnnouncedPeerRing::SLOTS) {
+        memcpy(r.hash[r.count], dest.data(), 16);
+        r.count++;
+      }
+      portEXIT_CRITICAL(&announce_accel_mux());
     }
 
     // Returns the outbox seq reserved for this queued send, or 0 if it could

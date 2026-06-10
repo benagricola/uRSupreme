@@ -121,13 +121,14 @@ inline bool begin() {
   NOTICEF("SDCard: probing pins clk=%d miso=%d mosi=%d cs=%d imu_cs=%d (held high)",
           SD_CLK, SD_MISO, SD_MOSI, SD_CS, IMU_CS);
   // SD SPI clock stays at the driver default (4 MHz). Raising it was
-  // measured on real hardware: 10 MHz and 20 MHz both reintroduce
-  // sustained-write failures (a 64 KiB block short-writes mid-transfer)
-  // and the failing-write retries can block long enough to trip the task
-  // watchdog into a reboot. The gain was marginal anyway (~1.7x at 20 MHz)
-  // because above ~4 MHz the WiFi/parser path, not the SD, is the upload
-  // ceiling (~365 KB/s). A faster card might sustain more, but this is
-  // card-dependent, so we keep the conservative, reliable default.
+  // measured on real hardware: both 10 MHz and 20 MHz reintroduce
+  // sustained-write failures (a 64 KiB block short-writes mid-transfer at
+  // random offsets), and this held even with the bus-releasing retry that
+  // gives the card idle time to recover — so it is a genuine card limit,
+  // not a blocking artifact. The gain was marginal anyway (~1.7x at
+  // 20 MHz) because above ~4 MHz the WiFi/parser path, not the SD, is the
+  // upload ceiling (~365 KB/s). A faster card might sustain more, but this
+  // is card-dependent, so we keep the conservative, reliable default.
   if (!SD.begin(SD_CS, *bus)) {
     _detail::last_status_ref() = "sd_begin_failed";
     NOTICE("SDCard: SD.begin() failed — card absent, wrong pinout, or unsupported FS (try FAT32)");

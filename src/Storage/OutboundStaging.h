@@ -63,6 +63,11 @@ inline constexpr uint32_t STAGING_TIMEOUT_MS = 60000;
 // flush, pause, and retry the remainder; while we block here TCP
 // back-pressure pauses the upload, so the card gets real breathing room.
 // Budget ~1.6 s of retry before declaring a genuinely failing card.
+// The retry releases the HSPI bus during each wait (see _sd_write_all), so
+// it never blocks the rest of the device. ~1.6 s budget recovers a card
+// that briefly stalls a sector-commit; a card that returns 0 for longer
+// than this is genuinely failing the block and won't recover with more
+// waiting (measured), so we fail the upload reasonably promptly instead.
 inline constexpr int      SD_WRITE_MAX_STALLS    = 80;
 inline constexpr uint32_t SD_WRITE_STALL_DELAY_MS = 20;
 
@@ -312,15 +317,23 @@ inline uint32_t allocate(size_t total_bytes) {
 inline char* fail_detail() { static char buf[192] = {0}; return buf; }
 
 // Write `len` bytes to the buffer's SD handle, retrying a short write
-// (sector-commit stall) with flush + pause. While we block here, TCP
-// back-pressure pauses the upload, giving the card time to recover.
-// Returns false after the stall budget, setting fail_detail(). Caller
-// holds the HSPI BusGuard.
+// (sector-commit stall). Returns false after the stall budget, setting
+// fail_detail().
+//
+// Crucially this acquires the HSPI bus mutex ONLY around each individual
+// write/flush call, and RELEASES it across the inter-retry wait. Holding
+// the shared bus (and, transitively, any rns_lock holder waiting on it)
+// for the whole multi-second retry is what let a failing/slow upload
+// degrade the rest of the device — main-loop bus users and other web
+// requests stalled behind it. With the bus freed during the wait, a
+// stalled card can't impair anything else; only this upload waits, and
+// the card gets idle bus time to recover (which it can't if we squat it).
 inline bool _sd_write_all(Buffer& b, const uint8_t* data, size_t len) {
   size_t off = 0;
   int stalls = 0;
   while (off < len) {
-    const size_t w = b.sd_file.write(data + off, len - off);
+    size_t w;
+    { Storage::SDCard::BusGuard _bg; w = b.sd_file.write(data + off, len - off); }
     off += w;
     if (off >= len) return true;
     if (w > 0) { stalls = 0; continue; }
@@ -336,16 +349,20 @@ inline bool _sd_write_all(Buffer& b, const uint8_t* data, size_t len) {
       Storage::SDCard::verify_or_disable();
       return false;
     }
-    b.sd_file.flush();
+    // Bus released across the wait: yields (delay == vTaskDelay) so the main
+    // loop / IMU / other web work run while the card settles. No flush() —
+    // the card returned 0 (accepted nothing), so there is nothing new to
+    // commit; the next write() re-attempts the same sector once the card is
+    // ready, and squatting the bus to flush only denies it recovery time.
     delay(SD_WRITE_STALL_DELAY_MS);
   }
   return true;
 }
 
 // Flush the PSRAM accumulator to the card as one large aligned write.
+// _sd_write_all takes the bus per write call, so we must NOT hold it here.
 inline bool _flush_sd_wbuf(Buffer& b) {
   if (b.sd_wbuf_used == 0) return true;
-  Storage::SDCard::BusGuard _bg;
   if (!_sd_write_all(b, b.sd_wbuf, b.sd_wbuf_used)) return false;
   b.sd_wbuf_used = 0;
   return true;
@@ -379,8 +396,8 @@ inline bool append(uint32_t id, const uint8_t* data, size_t len) {
         if (b->sd_wbuf_used == SD_WRITE_BUF_BYTES && !_flush_sd_wbuf(*b)) return false;
       }
     } else {
-      // No accumulator (PSRAM alloc failed): direct write.
-      Storage::SDCard::BusGuard _bg;
+      // No accumulator (PSRAM alloc failed): direct write. _sd_write_all
+      // takes the bus per write call.
       if (!_sd_write_all(*b, data, len)) return false;
     }
   } else {  // Flash

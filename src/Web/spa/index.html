@@ -1282,6 +1282,41 @@
             <span>Show new messages on the device screen</span>
             <button type="button" class="info-icon" @click.stop data-info="This is the account whose messages appear on the device screen. Anyone holding the device can read them. Turning this on needs the 6-character device code. One account at a time; turn it off here before enabling it on another."></button>
           </label>
+          <details class="cn-section mt-4" data-cn="messenger"
+                   x-show="$store.s.forms.identity.screen" x-cloak>
+            <summary><span class="cn-title">Device messages</span>
+              <button type="button" class="info-icon" @click.stop data-info="Preset messages you can send from the device with its buttons. Up to 8. Each needs a label for the device list, a destination address, and the message text. Position is added when there is a GPS fix."></button>
+            </summary>
+            <div class="cn-section-body">
+              <template x-for="(p, i) in $store.s.forms.messenger.presets" :key="i">
+                <div class="preset-card">
+                  <div class="preset-head">
+                    <input type="text" maxlength="24" placeholder="Label (shown on the device)"
+                           x-model.trim="p.label">
+                    <label class="toggle-row">
+                      <input class="input-inline" type="checkbox" x-model="p.gps">
+                      <span>Attach position</span>
+                    </label>
+                  </div>
+                  <input type="text" maxlength="32" placeholder="Destination address (32 hex)"
+                         class="font-mono-inline mt-1" spellcheck="false" autocomplete="off"
+                         x-model.trim="p.dest">
+                  <textarea maxlength="200" rows="2" placeholder="Message" class="mt-1"
+                            x-model="p.content"></textarea>
+                  <div class="preset-foot">
+                    <button type="button" class="secondary"
+                            @click="$store.s.forms.messenger.presets.splice(i, 1)">Remove</button>
+                  </div>
+                </div>
+              </template>
+              <div class="row mt-2">
+                <button type="button" class="secondary"
+                        x-show="$store.s.forms.messenger.presets.length < 8"
+                        @click="addMessengerPreset()">Add message</button>
+                <button type="button" @click="saveMessengerPresets($event.currentTarget)">Save messages</button>
+              </div>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -2025,6 +2060,7 @@ let state = {
     idCode:          { input: '' },          // physical-presence modal
     contactRename:   { addr: '', name: '' },
     identity:        { displayName: '', announceInterval: '', persistOutbound: false, stampCost: '0', enforceStamps: false, screen: false },
+    messenger:       { presets: [] },        // OLED messenger preset editor
     wifiAdd:         { ssid: '', psk: '', code: '' },
     tcpAdd:          { name: '', host: '', port: 4242 },
     radio:           { discoverable: false, preset: '__empty',
@@ -6775,6 +6811,7 @@ async function populateIdentityTab() {
       enforceStamps: !!me.enforce_stamps,
       screen: !!me.screen,
     });
+    populateMessengerPresets();
     // Remember the server-side last-saved name so onBlurIdName can no-op
     // if the user blurred without actually editing. Stored on the form
     // object (not in state.ui) because it's submit-state, not display.
@@ -7299,6 +7336,41 @@ async function onChangeScreenIdentity() {
     }
   };
   openIdCodeModal({ codePresent: false });
+}
+
+// ---- OLED messenger presets (Settings → Identity, shown while the
+// screen toggle is on). The list is edited locally and saved whole -
+// it is at most 8 small rows.
+function normalizeMessengerPresets(list) {
+  return (list || []).map(p => ({
+    label: p.label || '', dest: p.dest || '',
+    content: p.content || '', gps: !!p.gps,
+  }));
+}
+
+function addMessengerPreset() {
+  if (state.forms.messenger.presets.length >= 8) return;
+  state.forms.messenger.presets.push({ label: '', dest: '', content: '', gps: false });
+}
+
+async function populateMessengerPresets() {
+  try {
+    const r = await state.transport._req(API.MESSENGER_PRESETS);
+    state.forms.messenger.presets = normalizeMessengerPresets(r.presets);
+  } catch (e) { /* editor keeps last-known values */ }
+}
+
+function saveMessengerPresets(btn) {
+  return withBusy(btn, async () => {
+    try {
+      const r = await state.transport._req(API.MESSENGER_PRESETS,
+        { method: 'POST', body: { presets: state.forms.messenger.presets } });
+      state.forms.messenger.presets = normalizeMessengerPresets(r.presets);
+      toast('Messages saved', 'success');
+    } catch (e) {
+      toast('Save failed: ' + (e.message || e), 'error');
+    }
+  });
 }
 
 // Settings → Identity → Message stamps. The cost is validated here so a

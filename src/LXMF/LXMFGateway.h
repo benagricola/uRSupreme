@@ -78,6 +78,12 @@ namespace LXMF {
 namespace LXMF {
   struct MessageRecord;
   void screen_notify_incoming(const MessageRecord& rec);
+  // OLED messenger delivery-state hook - same arrangement, defined in
+  // LXMF/Messenger.h. Drives the Sent / Delivered / Failed result page
+  // for sends made from the device buttons.
+  namespace Messenger {
+    void on_outbox_status(const RNS::Bytes& hash, OutboxStatus status);
+  }
 }
 
 namespace LXMF {
@@ -1436,6 +1442,9 @@ namespace LXMF {
             // Telemetry sends have no outbox record (see send()); their
             // receipts only land here.
             TelemetrySender::on_outbox_status(link_hash, status);
+            // Update the OLED messenger's result page when this is a
+            // device-button send (Messenger.h).
+            Messenger::on_outbox_status(link_hash, status);
             // Push a typed status frame to any WS subscriber - gives
             // the SPA's outbox row a direct trigger to flip the pill.
             Web::WS::publish_outbox_status(p->id, link_hash,

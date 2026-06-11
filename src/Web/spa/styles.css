@@ -684,6 +684,38 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .cn-section[open] > summary { border-bottom: 1px solid var(--bg-elev-2); }
 .cn-section-body { padding: 12px; }
 
+/* One device-message preset in Settings > Identity > Device messages.
+   A bordered card per preset: label + position toggle on the head
+   row, then destination + message, Remove tucked bottom-right. */
+.preset-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.preset-card .preset-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.preset-card .preset-head input[type=text] { flex: 1; }
+.preset-card .preset-head .toggle-row {
+  flex: 0 0 auto;
+  margin: 0;
+  white-space: nowrap;
+}
+.preset-card .preset-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.preset-card .preset-foot button {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 4px 14px;
+  min-height: auto;
+}
+
 /* Row-level toggle on a `<summary>` - used for "Discoverable" on the
    LoRa accordion so the user can flip the broadcast on/off without
    expanding the radio config panel. Sits flush-right of the title.

@@ -981,6 +981,13 @@ void draw_disp_area() {
       disp_area.printf("%lus left", (unsigned long)((remaining_ms + 999) / 1000));
       return;
     }
+    // Messenger mode pages (preset list / confirm / result). The
+    // identity code keeps priority above - it is single-use with a
+    // 60 s TTL, the messenger can wait.
+    if (LXMF::Messenger::active() && device_init_done && !firmware_update_mode) {
+      LXMF::Messenger::render(disp_area);
+      return;
+    }
   #endif
   if (!device_init_done || firmware_update_mode) {
     uint8_t p_by = 37;

@@ -47,7 +47,7 @@ float pmu_temperature = PMU_TEMP_MIN-1;
     }
   }
 
-  bool pmuInterrupt;
+  volatile bool pmuInterrupt;
   void setPmuFlag()
   {
       pmuInterrupt = true;
@@ -635,9 +635,15 @@ bool init_pmu() {
     PMU->setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
     PMU->setPowerKeyPressOnTime(XPOWERS_POWERON_128MS);
 
-    // disable all axp chip interrupt
+    // Power-key short press drives the OLED messenger (enter / back).
+    // Enable just that IRQ; the ISR only sets pmuInterrupt - the main
+    // loop reads and clears the PMU's IRQ status over I2C
+    // (power_key_short_pressed below).
+    pinMode(PMU_IRQ, INPUT_PULLUP);
+    attachInterrupt(PMU_IRQ, setPmuFlag, FALLING);
     PMU->disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
     PMU->clearIrqStatus();
+    PMU->enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ);
 
     // It is necessary to disable the detection function of the TS pin on the board
     // without the battery temperature detection function, otherwise it will cause abnormal charging
@@ -650,7 +656,24 @@ bool init_pmu() {
     ((XPowersAXP2101*)PMU)->enableTemperatureMeasure();
 
 
-    return true; 
+    return true;
+  #else
+    return false;
+  #endif
+}
+
+// Consume a power-key short press. True exactly once per press: the
+// ISR latches pmuInterrupt off the PMU's IRQ line; this reads and
+// clears the chip's IRQ status (one I2C transaction, and only after a
+// latched edge) and reports whether the cause was a PKEY short press.
+bool power_key_short_pressed() {
+  #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+    if (!pmuInterrupt || PMU == NULL) return false;
+    pmuInterrupt = false;
+    PMU->getIrqStatus();
+    const bool short_press = PMU->isPekeyShortPressIrq();
+    PMU->clearIrqStatus();
+    return short_press;
   #else
     return false;
   #endif

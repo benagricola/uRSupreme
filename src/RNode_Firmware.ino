@@ -35,6 +35,7 @@
 #include "LXMF/TelemetrySender.h"
 #include "LXMF/AnnounceLog.h"
 #include "LXMF/ScreenNotify.h"
+#include "LXMF/Messenger.h"
 #include "LXMF/RatchetBridge.h"
 #include "Common/LoopTiming.h"
 #if HAS_WIFI
@@ -1270,6 +1271,9 @@ void setup() {
     // Telemetry-to-collector config. No-op if /lxmf/telemetry.json
     // doesn't exist yet (feature defaults to off).
     LXMF::TelemetrySender::load(filesystem);
+    // OLED messenger presets. No-op if /lxmf/messenger.json doesn't
+    // exist yet.
+    LXMF::Messenger::load(filesystem);
 #endif
 
     // Remove legacy files
@@ -3116,6 +3120,15 @@ void loop() {
   // tick packs ~100 bytes from cached sensor reads and hands off to
   // the LXMF send path.
   LXMF::TelemetrySender::tick();
+  // Power-key short press: enter the OLED messenger, or step back
+  // inside it. Cheap - one latched-flag check; the I2C IRQ-status read
+  // only happens after a real press.
+  if (power_key_short_pressed()) {
+    if (display_blanked) display_unblank();
+    LXMF::Messenger::on_power_key();
+  }
+  // Messenger housekeeping (auto-dismiss of the result page).
+  LXMF::Messenger::tick();
 
   // Retention prune. Time-based expirations fire even when no fresh
   // messages are arriving - without this, an idle device with TTL-
@@ -3338,6 +3351,21 @@ void button_event(uint8_t event, unsigned long duration) {
     // press for action dispatch.
     bool was_blanked = display_blanked;
     if (was_blanked) display_unblank();
+
+    #if defined(HAS_LXMF_GATEWAY)
+      // Mode-local remap: while the messenger is on screen, the user
+      // button drives it (short = next, longer hold = select). The
+      // global gestures (sleep, BT toggle, console, identity code)
+      // stay outside the mode; presses past 5 s exit it and fall
+      // through so pairing and the console remain reachable.
+      if (LXMF::Messenger::active()) {
+        if (duration <= 5000) {
+          LXMF::Messenger::on_user_button(duration);
+          return;
+        }
+        LXMF::Messenger::exit_mode();
+      }
+    #endif
 
     if (duration > 10000) {
       #if HAS_CONSOLE

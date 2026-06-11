@@ -71,6 +71,15 @@ namespace LXMF {
   }
 }
 
+// Forward declaration of the screen-identity OLED notifier. Defined
+// inline in LXMF/ScreenNotify.h (which needs AnnounceLog, a header
+// this file cannot include - see ScreenNotify.h). The firmware TU
+// includes the definition.
+namespace LXMF {
+  struct MessageRecord;
+  void screen_notify_incoming(const MessageRecord& rec);
+}
+
 namespace LXMF {
 
   #ifndef LXMF_GATEWAY_MAX_IDENTITIES
@@ -108,6 +117,12 @@ namespace LXMF {
     // enforce_stamps(): off = validate-and-record but deliver anyway.
     uint8_t              stamp_cost = 0;
     bool                 enforce_stamps = false;
+    // The "screen" identity: the one identity whose messages the OLED
+    // surfaces. Opt-in, at most one holder at a time (see
+    // set_screen_identity). Holding the device means reading this
+    // identity's messages, by design - enabling therefore requires the
+    // physical-presence identity code (enforced at the web handler).
+    bool                 screen = false;
     bool                 active = false;
     // Password hash (PBKDF2-HMAC-SHA256) + per-identity salt. Set at
     // identity creation; required for login. Empty if identity is from an
@@ -236,6 +251,40 @@ namespace LXMF {
       if (!a) return false;
       a->display_name = name;
       a->lxmf.set_display_name(name.c_str());
+      write_meta(*a);
+      return true;
+    }
+
+    // The identity whose messages the OLED surfaces, or nullptr when
+    // none is assigned. At most one active identity holds the flag.
+    static const LXMFIdentity* screen_identity() {
+      for (auto& a : identities_storage()) {
+        if (a.active && a.screen) return &a;
+      }
+      return nullptr;
+    }
+
+    // Assign or clear the screen flag. Enabling fails while another
+    // identity holds it - the holder must disable it first, explicitly,
+    // so the screen never silently changes hands. Physical-presence
+    // proof for enabling is the web handler's responsibility.
+    static bool set_screen_identity(const IdentityId& iden_id, bool enable,
+                                    const char** out_err = nullptr) {
+      LXMFIdentity* a = identity_by_id_mut(iden_id);
+      if (!a) {
+        if (out_err) *out_err = "No such identity is logged in on this device.";
+        return false;
+      }
+      if (enable) {
+        const LXMFIdentity* holder = screen_identity();
+        if (holder && holder->id != a->id) {
+          if (out_err) *out_err = "Another identity already shows on the screen. Turn it off there first.";
+          return false;
+        }
+        a->screen = true;
+      } else {
+        a->screen = false;
+      }
       write_meta(*a);
       return true;
     }
@@ -1214,6 +1263,7 @@ namespace LXMF {
       doc["persist_outbound_attachments"] = a.persist_outbound_attachments;
       doc["stamp_cost"]                   = a.stamp_cost;
       doc["enforce_stamps"]               = a.enforce_stamps;
+      doc["screen"]                       = a.screen;
       if (a.password_hash.size() > 0) doc["password_hash"] = a.password_hash.toHex();
       if (a.password_salt.size() > 0) doc["password_salt"] = a.password_salt.toHex();
       String body;
@@ -1235,6 +1285,7 @@ namespace LXMF {
       const uint32_t sc = (uint32_t)(doc["stamp_cost"] | 0);
       a.stamp_cost     = (sc >= 1 && sc <= 254) ? (uint8_t)sc : 0;
       a.enforce_stamps = (bool)(doc["enforce_stamps"] | false);
+      a.screen         = (bool)(doc["screen"] | false);
       std::string ph = (const char*)(doc["password_hash"] | "");
       std::string ps = (const char*)(doc["password_salt"] | "");
       if (!ph.empty()) a.password_hash.assignHex(ph.c_str());
@@ -1370,6 +1421,9 @@ namespace LXMF {
         // Push to any WS client subscribed to this identity. SSE
         // pollers still pick up the same record via inbox->since().
         Web::WS::publish_incoming(p->id, local);
+        // Screen identity: surface the sender + preview on the OLED
+        // marquee (ScreenNotify.h).
+        if (p->screen) screen_notify_incoming(local);
       });
       // Outbound lifecycle: link-mode sends start as Queued in the outbox
       // (see LXMFMinimal::send_message), and transition to Sent / Delivered
@@ -1667,6 +1721,17 @@ namespace LXMF {
         NOTICEF("LXMFGateway: loaded identity %s (%s) → %s (ratchets=%u)",
                 slot->id.c_str(), slot->display_name.c_str(),
                 slot->address_hex().c_str(), (unsigned)slot->ratchets.size());
+      }
+      // Single-holder invariant for the screen flag. Two metas can both
+      // claim it after a crash between the two write_meta calls of a
+      // hand-off; keep the first loaded holder and clear the rest.
+      bool screen_seen = false;
+      for (auto& a : identities_storage()) {
+        if (!a.active || !a.screen) continue;
+        if (!screen_seen) { screen_seen = true; continue; }
+        WARNINGF("LXMFGateway: clearing duplicate screen flag on %s", a.id.c_str());
+        a.screen = false;
+        write_meta(a);
       }
     }
 

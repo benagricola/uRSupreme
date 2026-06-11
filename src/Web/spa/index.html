@@ -1275,6 +1275,13 @@
             <span>Discard messages without a valid stamp</span>
             <button type="button" class="info-icon" @click.stop data-info="When on, messages that arrive without the required stamp are discarded before reaching your inbox. When off, they are still delivered, just marked in the conversation."></button>
           </label>
+          <label class="toggle-row mt-4">
+            <input class="input-inline" type="checkbox" id="id-screen"
+                   x-model="$store.s.forms.identity.screen"
+                   @change="onChangeScreenIdentity()">
+            <span>Show new messages on the device screen</span>
+            <button type="button" class="info-icon" @click.stop data-info="This is the account whose messages appear on the device screen. Anyone holding the device can read them. Turning this on needs the 6-character device code. One account at a time; turn it off here before enabling it on another."></button>
+          </label>
         </div>
       </div>
 
@@ -2017,7 +2024,7 @@ let state = {
     compose:         { text: '' },
     idCode:          { input: '' },          // physical-presence modal
     contactRename:   { addr: '', name: '' },
-    identity:        { displayName: '', announceInterval: '', persistOutbound: false, stampCost: '0', enforceStamps: false },
+    identity:        { displayName: '', announceInterval: '', persistOutbound: false, stampCost: '0', enforceStamps: false, screen: false },
     wifiAdd:         { ssid: '', psk: '', code: '' },
     tcpAdd:          { name: '', host: '', port: 4242 },
     radio:           { discoverable: false, preset: '__empty',
@@ -6766,6 +6773,7 @@ async function populateIdentityTab() {
       persistOutbound: me.persist_outbound_attachments !== false,
       stampCost: String(me.stamp_cost ?? 0),
       enforceStamps: !!me.enforce_stamps,
+      screen: !!me.screen,
     });
     // Remember the server-side last-saved name so onBlurIdName can no-op
     // if the user blurred without actually editing. Stored on the form
@@ -7258,6 +7266,39 @@ async function onChangePersistOutbound() {
   } catch (err) {
     toast('Could not update setting: ' + (err.message || err), 'error');
   }
+}
+
+// Settings → Identity → device screen. Turning ON needs the
+// physical-presence code, so the checkbox stays off until the device
+// confirms; the id-code modal collects the proof. Turning OFF is a
+// plain save. A 409 means another identity holds the screen - the
+// server message says where to turn it off.
+async function onChangeScreenIdentity() {
+  const want = !!state.forms.identity.screen;
+  if (!want) {
+    try {
+      await state.transport.setIdentitySettings(state.identityId, { screen: false });
+      if (state.self) state.self.screen = false;
+      toast('Messages no longer show on the device screen', 'success');
+    } catch (err) {
+      state.forms.identity.screen = true;
+      toast('Could not update: ' + (err.message || err), 'error');
+    }
+    return;
+  }
+  state.forms.identity.screen = false;  // pessimistic until confirmed
+  state.pendingIdCodeAction = async (code) => {
+    try {
+      await state.transport.setIdentitySettings(state.identityId,
+        { screen: true, identity_code: code });
+      state.forms.identity.screen = true;
+      if (state.self) state.self.screen = true;
+      toast('New messages will show on the device screen', 'success');
+    } catch (err) {
+      toast('Could not enable: ' + (err.message || err), 'error');
+    }
+  };
+  openIdCodeModal({ codePresent: false });
 }
 
 // Settings → Identity → Message stamps. The cost is validated here so a

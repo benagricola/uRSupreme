@@ -34,6 +34,7 @@
 #include "LXMF/LXMFGateway.h"
 #include "LXMF/TelemetrySender.h"
 #include "LXMF/AnnounceLog.h"
+#include "LXMF/ScreenNotify.h"
 #include "LXMF/RatchetBridge.h"
 #include "Common/LoopTiming.h"
 #if HAS_WIFI

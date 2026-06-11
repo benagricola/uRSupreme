@@ -58,6 +58,8 @@ struct Fix {
                                      // separately from RMC each second.
   bool     altitude_valid  = false;  // True once we've seen at least one GGA with
                                      // fix_quality >= 1 since boot (or since last fix lost).
+  float    hdop            = 0.0f;   // Horizontal dilution of precision (from GGA).
+  bool     hdop_valid      = false;  // True once a fixed GGA carried an HDOP value.
   double   speed_knots     = 0.0;
   double   heading_deg     = 0.0;
   double   unix_epoch      = 0.0;    // UTC seconds since 1970
@@ -227,7 +229,12 @@ namespace _detail {
       Fix& f = fix_ref();
       if (fq <= 0) {
         f.altitude_valid = false;
+        f.hdop_valid     = false;
         return;
+      }
+      if (fields[7] && fields[7][0] != '\0') {
+        f.hdop       = (float)atof(fields[7]);
+        f.hdop_valid = true;
       }
       if (fields[8] && fields[8][0] != '\0') {
         f.altitude_m     = atof(fields[8]);

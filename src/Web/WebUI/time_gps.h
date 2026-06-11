@@ -220,6 +220,8 @@
       doc["valid"]       = f.valid;
       doc["latitude"]    = f.latitude_deg;
       doc["longitude"]   = f.longitude_deg;
+      if (f.altitude_valid) doc["altitude_m"] = f.altitude_m;
+      if (f.hdop_valid)     doc["hdop"]       = f.hdop;
       doc["speed_knots"] = f.speed_knots;
       doc["heading"]     = f.heading_deg;
       doc["unix_ms"]     = (uint64_t)(f.unix_epoch * 1000.0);

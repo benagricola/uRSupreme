@@ -240,14 +240,15 @@ namespace _detail {
     // response to send" — drain_wifi_provision_response() early-outs
     // and Improv::loop() handles the response over serial instead.
     wifi_remote_eeprom_write_sta_creds(ssid, psk);
-    if (wr_pending.req != nullptr || wr_pending.pending) {
+    if (wr_pending.parked || wr_pending.pending) {
       // An HTTP provision is already in flight; report busy.
       send_error_state(ERR_UNABLE_TO_CONNECT);
       return;
     }
     strncpy(wr_pending.ssid, ssid, 32); wr_pending.ssid[32] = 0;
     strncpy(wr_pending.psk,  psk,  32); wr_pending.psk[32]  = 0;
-    wr_pending.req           = nullptr;
+    wr_pending.req.reset();          // serial provisioning: no HTTP response owed
+    wr_pending.parked        = false;
     wr_pending.requested_ms  = millis();
     wr_pending.pending       = true;
 

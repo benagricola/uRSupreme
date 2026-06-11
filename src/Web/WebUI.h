@@ -435,27 +435,30 @@ namespace Web {
     //   - The provision attempt timed out → respond with 504.
     //   - Neither yet → no-op, try again next tick.
     static void drain_wifi_provision_response() {
-      if (wr_pending.req == nullptr) return;
+      if (!wr_pending.parked) return;
       if (wifi_phase == WifiPhase::ApStaGrace) {
-        Common::PsramJsonDocument doc;
-        doc["status"]   = "connected";
-        doc["sta_ip"]   = WiFi.localIP().toString();
-        doc["hostname"] = String(wr_hostname);
-        doc["mdns_url"] = String("http://") + wr_hostname + ".local/";
-        doc["sta_url"]  = String("http://") + WiFi.localIP().toString() + "/";
-        AsyncWebServerRequest* req = wr_pending.req;
-        wr_pending.req = nullptr;
-        send_json(req, 200, doc);
-        // TCP-flush margin before deauthing AP clients. Web::WebUI is
-        // upstream of Remote.h's pump in the include graph; we set the
-        // deadline here and the pump fires the deauth when millis()
-        // catches up.
+        auto req = wr_pending.req.lock();   // empty if the client dropped
+        wr_pending.req.reset();
+        wr_pending.parked = false;
+        if (req) {
+          Common::PsramJsonDocument doc;
+          doc["status"]   = "connected";
+          doc["sta_ip"]   = WiFi.localIP().toString();
+          doc["hostname"] = String(wr_hostname);
+          doc["mdns_url"] = String("http://") + wr_hostname + ".local/";
+          doc["sta_url"]  = String("http://") + WiFi.localIP().toString() + "/";
+          send_json(req.get(), 200, doc);
+        }
+        // TCP-flush margin before deauthing AP clients (scheduled even when
+        // the client vanished — the transition must still complete). The
+        // pump in Remote.h fires the deauth when millis() catches up.
         wifi_apsta_deauth_at_ms = millis() + WR_APSTA_DEAUTH_DELAY;
       } else if (wifi_phase == WifiPhase::ApStaConnecting
                  && (millis() - wr_pending.requested_ms) >= WR_PROVISION_TIMEOUT_MS) {
-        AsyncWebServerRequest* req = wr_pending.req;
-        wr_pending.req = nullptr;
-        send_error(req, 504, "sta_timeout");
+        auto req = wr_pending.req.lock();
+        wr_pending.req.reset();
+        wr_pending.parked = false;
+        if (req) send_error(req.get(), 504, "sta_timeout");
       }
     }
 

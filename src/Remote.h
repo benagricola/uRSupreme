@@ -406,7 +406,7 @@ void wifi_pump_phase() {
       wr_device_ip          = WiFi.localIP();
       NOTICEF("WiFi: STA up, IP %s — AP grace 2 min",
               wr_device_ip.toString().c_str());
-      // Web::WebUI::loop() will see ApStaGrace + a non-null wr_pending.req
+      // Web::WebUI::loop() will see ApStaGrace + a parked wr_pending
       // and send the HTTP response carrying sta_ip + hostname; once the
       // response is in flight it bumps wifi_apsta_deauth_at_ms so the
       // deauth fires after a TCP-flush margin.

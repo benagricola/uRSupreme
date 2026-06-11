@@ -37,7 +37,7 @@
       // Refuse mid-flight provisioning if a previous request is still
       // parked — otherwise we'd race two concurrent /api/wifi/configure
       // calls trying to drive the same phase machine.
-      if (wr_pending.req != nullptr || wr_pending.pending) {
+      if (wr_pending.parked || wr_pending.pending) {
         send_error(req, 409, "provision_in_progress");
         return;
       }
@@ -60,20 +60,19 @@
       if (ap_up) {
         strncpy(wr_pending.ssid, ssid.c_str(), 32); wr_pending.ssid[32] = 0;
         strncpy(wr_pending.psk,  psk.c_str(),  32); wr_pending.psk[32]  = 0;
-        wr_pending.req           = req;
+        // Park via the lib's request-continuation API. pause() is the
+        // only correct way to answer later from another task: a handler
+        // that just returns is auto-501'd and closed (WebRequest.cpp
+        // ~999), which both killed the parked response and left a
+        // dangling pointer. pause() suppresses the 501, disables the
+        // 3 s client rx-timeout, and hands back a weak_ptr that expires
+        // if the client disconnects — the drain in Web::WebUI::loop()
+        // lock()s it and answers, or skips if the client is gone (the
+        // phase machine still completes the STA transition either way).
+        wr_pending.req           = req->pause();
+        wr_pending.parked        = true;
         wr_pending.requested_ms  = millis();
         wr_pending.pending       = true;
-        // The client often drops off the softAP while the request is
-        // parked (the phone's WiFi follows the new network, or the AP
-        // goes down), and ESPAsyncWebServer frees the request object on
-        // disconnect. Un-park it so the drain in Web::WebUI::loop()
-        // never answers a freed request. The phase machine still
-        // completes the STA transition; the AP-grace expiry in
-        // Remote.h covers teardown when nobody is left to answer.
-        // (Narrow residual race: this hook runs on the AsyncTCP task,
-        // the drain on the main loop — same soft-flag convention as the
-        // rest of this state machine.)
-        req->onDisconnect([]() { wr_pending.req = nullptr; });
       } else {
         Common::PsramJsonDocument doc;
         doc["status"]  = "saved";

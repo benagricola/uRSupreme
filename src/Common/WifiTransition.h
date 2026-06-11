@@ -10,6 +10,7 @@
 // drag in the other's full header to compile.
 
 #include <cstdint>
+#include <memory>
 
 class AsyncWebServerRequest;  // forward — pointer-only use here
 
@@ -36,6 +37,10 @@ struct PendingProvision {
   bool                   pending       = false;
   char                   ssid[33]      = {0};
   char                   psk[33]       = {0};
-  AsyncWebServerRequest* req           = nullptr;
+  // Weak handle from AsyncWebServerRequest::pause(): expires if the
+  // client disconnects, so the drain can never answer a freed request.
+  // (weak_ptr only needs the forward declaration above.)
+  std::weak_ptr<AsyncWebServerRequest> req;
+  bool                   parked        = false;  // a response is owed (req may have expired)
   uint32_t               requested_ms  = 0;
 };

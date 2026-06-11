@@ -1,3 +1,4 @@
+#include <atomic>
 // Auto-extracted from Web/WebUI.h on the SPA-migration branch.
 // Included from inside the class body of Web::WebUI in WebUI.h -
 // this file has NO include guard, NO `#pragma once`, and is not a
@@ -302,22 +303,27 @@
     // one finalize in flight at a time.
     struct PendingFinalize {
       AsyncWebServerRequestPtr req;   // weak; expires on client disconnect
-      uint32_t id    = 0;             // nonzero = a finalize is in flight
+      // id is the publish gate: the final handler (AsyncTCP task) fills
+      // req/t0_ms first and store-releases id last; the drain (main loop)
+      // load-acquires id before reading the rest, so it can never observe
+      // a half-initialised slot.
+      std::atomic<uint32_t> id{0};
       uint32_t t0_ms = 0;
     };
     static PendingFinalize& _pending_finalize() { static PendingFinalize v; return v; }
 
     static void drain_upload_finalize() {
       PendingFinalize& pf = _pending_finalize();
-      if (pf.id == 0) return;
-      const int st = Storage::OutboundStaging::finalize_poll(pf.id);
+      const uint32_t cur = pf.id.load(std::memory_order_acquire);
+      if (cur == 0) return;
+      const int st = Storage::OutboundStaging::finalize_poll(cur);
       if (st < 0) {
         // Writer still draining. Past the join budget it is wedged: answer
         // 500 and release so the pipeline frees up (begin_job's reclaim
         // handles the writer task itself).
         if ((millis() - pf.t0_ms) > 30000) {
           auto r = pf.req.lock(); pf.req.reset();
-          const uint32_t id = pf.id; pf.id = 0;
+          const uint32_t id = cur; pf.id.store(0, std::memory_order_release);
           Storage::OutboundStaging::release(id);
           if (r) send_error_with_message(r.get(), 500, "upload_failed",
                                          "SD finalize timed out.");
@@ -325,7 +331,12 @@
         return;
       }
       auto r = pf.req.lock(); pf.req.reset();   // empty if the client vanished
-      const uint32_t id = pf.id; pf.id = 0;
+      const uint32_t id = cur; pf.id.store(0, std::memory_order_release);
+      {
+        const uint32_t dt = millis() - pf.t0_ms;
+        auto& mx = Storage::OutboundStaging::_sdwriter::finish_max_ms();
+        if (dt > mx) mx = dt;
+      }
       if (st == 0) {
         Storage::OutboundStaging::release(id);
         if (r) {
@@ -393,7 +404,7 @@
         PendingFinalize& pf = _pending_finalize();
         pf.t0_ms = millis();
         pf.req   = req->pause();
-        pf.id    = id;   // set last: the drain triggers on id != 0
+        pf.id.store(id, std::memory_order_release);  // publish gate: set last
         return;
       }
       send_upload_success(req, id);

@@ -146,7 +146,7 @@
     //     full ring = longest the AsyncTCP task was frozen by an SD stall. The
     //     responsiveness metric; should stay small (tens of ms).
     //   * sd_feed_slow_blocks   - count of chunk handler blocks over 250 ms.
-    //   * sd_finish_max_ms      - worst finalize join (drain+fsync) on the web task
+    //   * sd_finish_max_ms      - worst deferred-finalize duration (park to answer)
     //   * sd_writer_stack_free  - writer-task minimum free stack, bytes
     // Space is the cached free-space (SDCard::refresh_used_cache); reported in
     // KiB so the 64-bit byte counts fit a uint32 (a 64 GB card is ~67 M KiB).

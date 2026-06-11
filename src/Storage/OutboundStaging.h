@@ -150,8 +150,9 @@ namespace _sdwriter {
   // AsyncTCP task was frozen by an SD stall). Headline responsiveness metric.
   inline uint32_t& feed_max_block_ms() { static uint32_t v = 0; return v; }
   inline uint32_t& feed_slow_blocks()  { static uint32_t v = 0; return v; }  // count of >250 ms blocks
-  // Worst finalize join (drain + fsync + close) observed, ms. finish() runs on
-  // the AsyncTCP task, so this is the other side of the responsiveness story.
+  // Worst deferred-finalize duration observed, ms: from the final handler
+  // parking the request to the drain answering it (drain + fsync + close +
+  // verification). Recorded by drain_upload_finalize in conversations.h.
   inline uint32_t& finish_max_ms()     { static uint32_t v = 0; return v; }
   // Writer-task minimum free stack (bytes), sampled after each job. The task
   // runs FATFS-via-VFS + SHA-256; if this trends toward zero, raise the stack.
@@ -284,12 +285,13 @@ namespace _sdwriter {
       s.stream = xStreamBufferCreateStatic(want, 1 /*trigger*/, s.store, &s.ctl);
       if (!s.stream) { heap_caps_free(s.store); s.store = nullptr; return false; }
     }
-    // Priority 1 == loopTask, deliberately: SPI-mode SD writes poll the CPU,
-    // and a higher-priority writer would preempt the main loop (which still
-    // services LoRa) in back-to-back slices for the length of an upload - the
-    // #84 starvation class. Equal priority round-robins the core; throughput
-    // is bounded by the SD bus either way, not CPU share. Re-tune only with
-    // /api/diag/loop max-iteration numbers from a sustained large upload.
+    // Priority 5, above loopTask (1), and validated: an equal-priority
+    // experiment (writer at 1, round-robinning the core with the main
+    // loop) correlated with deterministic upload write failures on the
+    // rig and was reverted. The writer mostly blocks on the stream
+    // buffer or the SD bus, so the higher priority does not starve the
+    // main loop in practice. Re-tune only with /api/diag/loop
+    // max-iteration numbers from a sustained large upload.
     // 8 KiB stack: the task runs FATFS-via-VFS + SHA-256 + snprintf; 4 KiB
     // left ~no headroom (see sd_writer_stack_free in /api/diag/storage).
     const BaseType_t ok = xTaskCreatePinnedToCore(

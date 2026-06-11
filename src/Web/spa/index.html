@@ -2511,7 +2511,25 @@ class UReticulumHTTPTransport extends Transport {
   }
   // Upload bytes for a single attachment. Resolves to { staging_id, total_bytes, backend }.
   // Uses XHR (not fetch) so we can surface upload progress to the SPA tray.
-  async uploadAttachment(identityId, bytes, filename, mime, onProgress) {
+  async uploadAttachment(identityId, bytes, filename, mime, onProgress, onBusy) {
+    // The server allows one upload at a time (409 upload_busy for the
+    // rest). Rather than surfacing that as an error, wait and retry so
+    // a second send queues behind the first; onBusy lets the caller
+    // show a waiting state. Gives up after the deadline and lets the
+    // server's message reach the normal failure toast.
+    const deadline = Date.now() + 90000;
+    for (;;) {
+      try {
+        return await this._uploadAttachmentOnce(bytes, filename, mime, onProgress);
+      } catch (e) {
+        const busy = e && e.status === 409 && e.body && e.body.error === 'upload_busy';
+        if (!busy || Date.now() >= deadline) throw e;
+        if (onBusy) onBusy();
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    }
+  }
+  async _uploadAttachmentOnce(bytes, filename, mime, onProgress) {
     const total = bytes.length;
     const url = API.ATTACHMENT_UPLOAD;
     const tok = this.tokenGetter();
@@ -3343,11 +3361,18 @@ async function sendMessage() {
       a.uploading = true;
       try {
         const r = await state.transport.uploadAttachment(
-          state.identityId, a.bytes, a.filename, a.mime);
+          state.identityId, a.bytes, a.filename, a.mime,
+          (loaded, totalBytes) => {
+            a.queued = false;
+            a.uploaded_bytes = loaded;
+            a.uploaded_total = totalBytes;
+          },
+          () => { a.queued = true; });
         a.staging_id     = r.staging_id;
         a.staging_backend = r.backend;
       } finally {
         a.uploading = false;
+        a.queued = false;
       }
     }
     const attachments = pending.map(a => {
@@ -4000,6 +4025,7 @@ async function stagePendingAttachment(att) {
 // chip. Called from the x-text on each chip's .eta span.
 function attachEtaText(a) {
   if (a.processing) return 'preparing…';
+  if (a.queued) return 'waiting…';
   if (a.uploading) {
     const denom = a.uploaded_total || a.bytes.length;
     const pct = denom > 0

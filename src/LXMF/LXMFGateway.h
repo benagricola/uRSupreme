@@ -78,11 +78,14 @@ namespace LXMF {
 namespace LXMF {
   struct MessageRecord;
   void screen_notify_incoming(const MessageRecord& rec);
-  // OLED messenger delivery-state hook - same arrangement, defined in
-  // LXMF/Messenger.h. Drives the Sent / Delivered / Failed result page
-  // for sends made from the device buttons.
+  // OLED messenger hooks - same arrangement, defined in
+  // LXMF/Messenger.h. on_outbox_status drives the Sent / Delivered /
+  // Failed result page for sends made from the device buttons;
+  // on_screen_identity_changed loads (or seeds) the new holder's
+  // private preset store on enable and destroys it on disable.
   namespace Messenger {
     void on_outbox_status(const RNS::Bytes& hash, OutboxStatus status);
+    void on_screen_identity_changed(bool enabled, const std::string& identity_dir);
   }
 }
 
@@ -292,6 +295,9 @@ namespace LXMF {
         a->screen = false;
       }
       write_meta(*a);
+      // Preset lifecycle: load-or-seed the holder's private store on
+      // enable, destroy it on disable (Messenger.h).
+      Messenger::on_screen_identity_changed(enable, a->dir());
       return true;
     }
 
@@ -1734,13 +1740,17 @@ namespace LXMF {
       // Single-holder invariant for the screen flag. Two metas can both
       // claim it after a crash between the two write_meta calls of a
       // hand-off; keep the first loaded holder and clear the rest.
-      bool screen_seen = false;
+      LXMFIdentity* screen_holder = nullptr;
       for (auto& a : identities_storage()) {
         if (!a.active || !a.screen) continue;
-        if (!screen_seen) { screen_seen = true; continue; }
+        if (!screen_holder) { screen_holder = &a; continue; }
         WARNINGF("LXMFGateway: clearing duplicate screen flag on %s", a.id.c_str());
         a.screen = false;
         write_meta(a);
+      }
+      // Bring the holder's private preset store up (Messenger.h).
+      if (screen_holder) {
+        Messenger::on_screen_identity_changed(true, screen_holder->dir());
       }
     }
 

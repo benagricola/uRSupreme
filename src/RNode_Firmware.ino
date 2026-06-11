@@ -1271,9 +1271,10 @@ void setup() {
     // Telemetry-to-collector config. No-op if /lxmf/telemetry.json
     // doesn't exist yet (feature defaults to off).
     LXMF::TelemetrySender::load(filesystem);
-    // OLED messenger presets. No-op if /lxmf/messenger.json doesn't
-    // exist yet.
-    LXMF::Messenger::load(filesystem);
+    // OLED messenger boot cleanup (removes the legacy device-wide
+    // presets file; the screen identity's own store is loaded by the
+    // gateway's identity load path).
+    LXMF::Messenger::boot(filesystem);
 #endif
 
     // Remove legacy files
@@ -3354,10 +3355,10 @@ void button_event(uint8_t event, unsigned long duration) {
 
     #if defined(HAS_LXMF_GATEWAY)
       // Mode-local remap: while the messenger is on screen, the user
-      // button drives it (short = next, longer hold = select). The
-      // global gestures (sleep, BT toggle, console, identity code)
-      // stay outside the mode; presses past 5 s exit it and fall
-      // through so pairing and the console remain reachable.
+      // button drives it (short = next, hold = back). The global
+      // gestures (sleep, BT toggle, console, identity code) stay
+      // outside the mode; presses past 5 s exit it and fall through
+      // so pairing and the console remain reachable.
       if (LXMF::Messenger::active()) {
         if (duration <= 5000) {
           LXMF::Messenger::on_user_button(duration);

@@ -1292,8 +1292,26 @@ void update_display(bool blank = false) {
           display.fillScreen(SSD1306_WHITE);
         #endif
 
-        update_stat_area();
-        update_disp_area();
+        #if defined(HAS_LXMF_GATEWAY)
+        if (LXMF::Messenger::active() && device_init_done && !firmware_update_mode
+            && disp_mode == DISP_MODE_PORTRAIT
+            && Web::WebUI::identity_code_for_display().empty()) {
+          // Messenger pages own the whole panel in portrait - both
+          // area slots, one tall canvas - so message text and the
+          // button hints get the full height. The identity-code page
+          // still wins (the normal path below renders it); landscape
+          // keeps the split layout via draw_disp_area's override.
+          static GFXcanvas1 messenger_full_area(64, 128);
+          LXMF::Messenger::render(messenger_full_area);
+          drawBitmap(p_ad_x, p_ad_y, messenger_full_area.getBuffer(),
+                     messenger_full_area.width(), messenger_full_area.height(),
+                     SSD1306_WHITE, SSD1306_BLACK);
+        } else
+        #endif
+        {
+          update_stat_area();
+          update_disp_area();
+        }
       }
       
       #if BOARD_MODEL == BOARD_TECHO

@@ -662,6 +662,21 @@ bool init_pmu() {
   #endif
 }
 
+// Message-notification LED. The Supreme has no plain GPIO LED; the
+// AXP2101's charge LED is the one indicator, normally driven by the
+// charger (CTRL_CHG). Blink it while an unread message is on screen,
+// hand it back to the charger after. One I2C register write per
+// transition.
+void notify_led(bool blinking) {
+  #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+    if (PMU == NULL) return;
+    PMU->setChargingLedMode(blinking ? XPOWERS_CHG_LED_BLINK_4HZ
+                                     : XPOWERS_CHG_LED_CTRL_CHG);
+  #else
+    (void)blinking;
+  #endif
+}
+
 // Consume a power-key short press. True exactly once per press: the
 // ISR latches pmuInterrupt off the PMU's IRQ line; this reads and
 // clears the chip's IRQ status (one I2C transaction, and only after a

@@ -531,13 +531,13 @@ namespace Web {
       auto& u = id_code();
       const uint32_t now = millis();
       if (u.hex6.empty()) {
-        return "No identity code is pending on this device. Press the device's program button: long-press (~1s), release, then short-press within 2s. Read the 6 hex chars from the OLED or serial console.";
+        return "No identity code is pending on this device. Press the device's BOOT button: long-press (~1s), release, then short-press within 2s. Read the 6 hex chars from the OLED or serial console.";
       }
       if (u.consumed) {
-        return "The pending identity code was already used. Press the device button again to generate a fresh one.";
+        return "The pending identity code was already used. Press the BOOT button again to generate a fresh one.";
       }
       if (now > u.expires_ms) {
-        return "The identity code expired (60s lifetime). Press the device button again to generate a fresh one.";
+        return "The identity code expired (60s lifetime). Press the BOOT button again to generate a fresh one.";
       }
       if (proof.empty()) {
         return "Identity code is required for this operation. Type the 6 hex chars currently displayed on the device.";

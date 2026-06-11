@@ -1285,9 +1285,10 @@
           <details class="cn-section mt-4" data-cn="messenger"
                    x-show="$store.s.forms.identity.screen" x-cloak>
             <summary><span class="cn-title">Device messages</span>
-              <button type="button" class="info-icon" @click.stop data-info="Preset messages you can send from the device with its buttons. Up to 8. Each needs a label for the device list, a destination address, and the message text. Position is added when there is a GPS fix."></button>
+              <button type="button" class="info-icon" @click.stop data-info="Preset messages you can send from the device with its buttons. Up to 8. Stored with this account only, and cleared when its screen toggle turns off. Position is added when there is a GPS fix."></button>
             </summary>
             <div class="cn-section-body">
+              <p class="muted">Each message needs a recipient before it appears on the device.</p>
               <template x-for="(p, i) in $store.s.forms.messenger.presets" :key="i">
                 <div class="preset-card">
                   <div class="preset-head">
@@ -1298,8 +1299,24 @@
                       <span>Attach position</span>
                     </label>
                   </div>
+                  <!-- :selected on each option (not just :value on the
+                       select) because the option list renders after the
+                       value binding on first paint - without it the DOM
+                       falls back to the placeholder. -->
+                  <select class="mt-1"
+                          @change="if ($event.target.value === '__manual__') { p._manual = true; }
+                                   else { p._manual = false; p.dest = $event.target.value; }">
+                    <option value="" :selected="!p._manual && !p.dest">Choose a recipient</option>
+                    <template x-for="o in messengerDestOptions()" :key="o.addr">
+                      <option :value="o.addr" x-text="o.label"
+                              :selected="!p._manual && p.dest === o.addr"></option>
+                    </template>
+                    <option value="__manual__"
+                            :selected="p._manual || (!!p.dest && !messengerDestKnown(p.dest))">Enter an address</option>
+                  </select>
                   <input type="text" maxlength="32" placeholder="Destination address (32 hex)"
                          class="font-mono-inline mt-1" spellcheck="false" autocomplete="off"
+                         x-show="p._manual || (!messengerDestKnown(p.dest) && p.dest !== '')" x-cloak
                          x-model.trim="p.dest">
                   <textarea maxlength="200" rows="2" placeholder="Message" class="mt-1"
                             x-model="p.content"></textarea>
@@ -2156,7 +2173,7 @@ function idCodeTtlText() {
   return s + ' seconds';
 }
 function idCodeHintHtml() {
-  return '<strong>Identity code:</strong> a 6-character hex code that proves you\'re physically holding the device, required for any action sensitive enough that doing it remotely should not be possible. To generate one: long-press the device\'s user button (~1 s), release, then short-press within 2 s; the code appears on the OLED for ' + idCodeTtlText() + '.';
+  return '<strong>Identity code:</strong> a 6-character hex code that proves you\'re physically holding the device, required for any action sensitive enough that doing it remotely should not be possible. To generate one: long-press the device\'s BOOT button (~1 s), release, then short-press within 2 s; the code appears on the OLED for ' + idCodeTtlText() + '.';
 }
 
 // ============================== UTIL ==============================
@@ -7313,10 +7330,20 @@ async function onChangePersistOutbound() {
 async function onChangeScreenIdentity() {
   const want = !!state.forms.identity.screen;
   if (!want) {
+    // Turning the screen off destroys that account's device messages
+    // on the device - destructive, so it confirms first.
+    const ok = await showConfirm({
+      title: 'Turn off the device screen?',
+      body: 'The device messages saved for this account will be cleared.',
+      okLabel: 'Turn off',
+      destructive: true,
+    });
+    if (!ok) { state.forms.identity.screen = true; return; }
     try {
       await state.transport.setIdentitySettings(state.identityId, { screen: false });
       if (state.self) state.self.screen = false;
-      toast('Messages no longer show on the device screen', 'success');
+      state.forms.messenger.presets = [];   // wiped on the device too
+      toast('Screen off. Device messages were cleared.', 'success');
     } catch (err) {
       state.forms.identity.screen = true;
       toast('Could not update: ' + (err.message || err), 'error');
@@ -7330,6 +7357,7 @@ async function onChangeScreenIdentity() {
         { screen: true, identity_code: code });
       state.forms.identity.screen = true;
       if (state.self) state.self.screen = true;
+      await populateMessengerPresets();   // freshly seeded templates
       toast('New messages will show on the device screen', 'success');
     } catch (err) {
       toast('Could not enable: ' + (err.message || err), 'error');
@@ -7345,7 +7373,29 @@ function normalizeMessengerPresets(list) {
   return (list || []).map(p => ({
     label: p.label || '', dest: p.dest || '',
     content: p.content || '', gps: !!p.gps,
+    _manual: false,   // editor-only: recipient select is on "Enter an address"
   }));
+}
+
+// Recipient choices for the device-message editor: saved contacts
+// first, then peers with an existing chat, then discovered announces.
+// Deduped by address; this device's own identities excluded.
+function messengerDestOptions() {
+  const own = new Map();
+  const seen = new Set((state.identities || []).map(i => i.address));
+  const add = (addr, name) => {
+    if (!addr || addr.length !== 32 || seen.has(addr)) return;
+    seen.add(addr);
+    own.set(addr, name ? (name + ' · ' + addr.slice(0, 8)) : (addr.slice(0, 16) + '…'));
+  };
+  for (const [addr, name] of Object.entries(state.contacts || {})) add(addr, name);
+  for (const c of Object.values(state.conversations || {})) add(c.peer, c.display_name || state.contacts[c.peer]);
+  for (const a of Object.values(state.announces || {})) add(a.dest, a.display_name || '');
+  return [...own.entries()].map(([addr, label]) => ({ addr, label }));
+}
+
+function messengerDestKnown(addr) {
+  return !!addr && messengerDestOptions().some(o => o.addr === addr);
 }
 
 function addMessengerPreset() {
@@ -7705,7 +7755,7 @@ function openIdCodeModal(opts) {
     : 'Identity code required';
   state.ui.idCodeModalHint  = codePresent
     ? 'A code is on the device OLED for ~' + idCodeTtlText() + '. Read the 6 hex chars and type them below.'
-    : 'A 6-character code is needed to authorise this action. If one is not already on the device OLED, press the device button (see below) to generate one, then type it below.';
+    : 'A 6-character code is needed to authorise this action. If one is not already on the device OLED, press the BOOT button (see below) to generate one, then type it below.';
   state.modals.idCode = true;
   // #idc-input has x-effect bound to $store.s.modals.idCode that calls
   // $el.focus() inside $nextTick, so flipping the modal flag above is

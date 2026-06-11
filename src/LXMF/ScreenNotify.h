@@ -1,11 +1,12 @@
 // OLED notification for the screen identity's incoming messages.
 //
-// Builds one short, self-contained marquee line per delivered message
-// ("<sender>: <content...>") and posts it to Common::Status, where
-// Display.h's marquee strip renders it. Only the screen identity's
-// messages land here (LXMFGateway's delivery callback gates on the
-// flag); showing the preview on the device is the point of that
-// opt-in - holding the device means reading that identity's messages.
+// Resolves the sender's display name (from their most recent
+// announce) and hands the message to the Messenger's full-screen
+// message page, which also drives the notification LED. Only the
+// screen identity's messages land here (LXMFGateway's delivery
+// callback gates on the flag); showing the message on the device is
+// the point of that opt-in - holding the device means reading that
+// identity's messages.
 //
 // Defined in its own header (not LXMFGateway.h) because the sender
 // name comes from AnnounceLog, which LXMFGateway.h cannot include -
@@ -19,14 +20,9 @@
 
 #include "LXMFTypes.h"
 #include "AnnounceLog.h"
-#include "../Common/Status.h"
+#include "Messenger.h"
 
 namespace LXMF {
-
-// Keep a glanceable notification around for a few minutes; a fresh
-// message replaces it, and steady-state widgets return when it
-// expires.
-inline constexpr uint32_t SCREEN_NOTIFY_TTL_MS = 5 * 60 * 1000;
 
 inline void screen_notify_incoming(const MessageRecord& rec) {
   // Sender label: display name from the peer's most recent announce,
@@ -40,17 +36,13 @@ inline void screen_notify_incoming(const MessageRecord& rec) {
   }
   if (name.empty()) name = rec.peer_hash.toHex().substr(0, 8);
 
-  std::string line = name + ": ";
-  if (line.size() < Common::Status::MAX_MESSAGE_LEN - 1) {
-    const size_t room = (Common::Status::MAX_MESSAGE_LEN - 1) - line.size();
-    if (rec.content.size() > 0) {
-      line.append(rec.content.c_str(),
-                  std::min((size_t)rec.content.size(), room));
-    } else if (!rec.attachments.empty()) {
-      line.append("(attachment)", std::min((size_t)12, room));
-    }
+  std::string body;
+  if (rec.content.size() > 0) {
+    body.assign(rec.content.c_str(), rec.content.size());
+  } else if (!rec.attachments.empty()) {
+    body = "(attachment)";
   }
-  Common::Status::say(line.c_str(), SCREEN_NOTIFY_TTL_MS);
+  Messenger::show_incoming(name, body);
 }
 
 }  // namespace LXMF

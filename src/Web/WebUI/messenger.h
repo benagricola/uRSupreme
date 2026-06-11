@@ -3,9 +3,33 @@
 // GET  /api/messenger/presets  - current list + caps.
 // POST /api/messenger/presets  - replace the whole list (it is tiny;
 //                                item CRUD would be more states than
-//                                data). Persists to /lxmf/messenger.json.
+//                                data). Persists into the screen
+//                                identity's own directory.
+//
+// Both verbs require the caller to BE the screen identity: the
+// presets are that identity's private data (see Messenger.h), so no
+// other account on the device may read or edit them. A preset may
+// have an empty destination - that is a template awaiting a
+// recipient; it shows in the editor but not on the device.
 //
 // State lives in LXMF::Messenger; this file only translates HTTP.
+
+    static bool messenger_presets_allowed(AsyncWebServerRequest* req) {
+      LXMF::IdentityId caller = require_auth(req);
+      if (caller.empty()) return false;   // 401 already sent
+      const LXMF::LXMFIdentity* scr = LXMF::LXMFGateway::screen_identity();
+      if (scr == nullptr) {
+        send_error_with_message(req, 409, "no_screen_identity",
+          "Turn on the device screen for an identity first.");
+        return false;
+      }
+      if (scr->id != caller) {
+        send_error_with_message(req, 403, "screen_identity_only",
+          "Only the screen identity can manage device messages.");
+        return false;
+      }
+      return true;
+    }
 
     static void fill_messenger_presets(Common::PsramJsonDocument& doc) {
       doc["max_presets"]     = (uint32_t)LXMF::Messenger::MAX_PRESETS;
@@ -22,7 +46,7 @@
     }
 
     static void handle_messenger_presets_get(AsyncWebServerRequest* req) {
-      if (require_auth(req).empty()) return;
+      if (!messenger_presets_allowed(req)) return;
       Common::PsramJsonDocument doc;
       fill_messenger_presets(doc);
       send_json(req, 200, doc);
@@ -30,7 +54,7 @@
 
     static void handle_messenger_presets_post(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
-      if (require_auth(req).empty()) return;
+      if (!messenger_presets_allowed(req)) return;
       JsonArrayConst arr = body["presets"].as<JsonArrayConst>();
       if (arr.isNull()) {
         send_error_with_message(req, 400, "missing_presets",
@@ -54,10 +78,13 @@
             "Each preset needs a label of 1 to 24 characters.");
           return;
         }
-        if (p.dest_hex.size() != 32 ||
-            p.dest_hex.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
+        // Empty destination = template (kept in the editor, hidden on
+        // the device until a recipient is chosen).
+        if (!p.dest_hex.empty() &&
+            (p.dest_hex.size() != 32 ||
+             p.dest_hex.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)) {
           send_error_with_message(req, 400, "bad_dest",
-            "Each preset needs a 32-hex-character destination.");
+            "Recipient addresses are 32 hex characters.");
           return;
         }
         if (p.content.empty() || p.content.size() > LXMF::Messenger::MAX_CONTENT_LEN) {

@@ -16,22 +16,26 @@
 //                   Unknown and everything behaves as a plain NMEA
 //                   receiver.
 //
-//   power           Source enable + interval come from the GPS time
-//                   source config (Clock::Manager):
+//   power           Enable + LOCATION interval come from the sensor
+//                   power config (set_power_config, persisted with
+//                   the other sensors):
 //                     disabled              -> rail off
 //                     interval <  5 min     -> always on
 //                     interval >= 5 min     -> duty-cycled
-//                   Duty cycle strategy is per module: the L76K (and
-//                   Unknown) get the firmware rail pulse (power up,
-//                   acquire, report, power down, exponential backoff
-//                   on failure); the MAX-M10 manages itself via PSMOO
-//                   with POSUPDATEPERIOD = interval_s and the rail
-//                   held up, which keeps its backup RAM warm for hot
-//                   starts instead of cold-starting every pulse.
+//                   Acquisition always runs at full power with a
+//                   progress-aware window (a cold receiver cannot
+//                   download ephemeris in short power-save wakes);
+//                   failures back off exponentially. Between fixes
+//                   the L76K sleeps by rail cut, the MAX-M10 by PSMOO
+//                   (after first fix) or RXM-PMREQ (backoff), both
+//                   with backup RAM kept warm where the hardware
+//                   allows. M10 config writes are wake-prefixed and
+//                   ACK-verified.
 //
-//   time            On a valid RMC whose epoch is fresh per the
-//                   configured interval, reports to Clock::Manager -
-//                   the GPS time-source policy, unchanged.
+//   time            On a valid RMC whose epoch is fresh per the GPS
+//                   entry in Clock::Manager, reports to the clock.
+//                   That config gates ONLY clock resync cadence; it
+//                   has no influence on receiver power.
 
 #pragma once
 
@@ -57,12 +61,47 @@ struct Pins {
   uint32_t baud;
 };
 
-// If the user's GPS poll interval is at or above this, duty-cycle the
+// Sensor-side power policy. Owned by Sensors::SensorConfig (persisted
+// in /lxmf/sensors.json), pushed here via set_power_config(). This is
+// the LOCATION cadence: how often the receiver should be awake and
+// producing fixes. It is deliberately decoupled from the GPS entry in
+// Clock::Manager, which only gates how often a live fix may resync
+// the clock (see maybe_report_time) and has no power meaning.
+struct PowerConfig {
+  bool     enabled    = true;
+  uint32_t interval_s = 0;   // 0 = always on; >= PULSE_THRESHOLD_S = pulsed
+};
+
+// If the location interval is at or above this, duty-cycle the
 // receiver (rail pulse or PSMOO depending on the module). Below it,
 // keep it continuously powered - frequent rail cycling would shred
-// the L76K's cold-start budget.
+// the L76K's cold-start budget, and a PSMOO period that short saves
+// nothing.
 inline constexpr uint32_t PULSE_THRESHOLD_S    = 5 * 60;     // 5 min
-inline constexpr uint32_t PULSE_ACQUIRE_TIMEOUT_MS = 120000; // give up after 2 min hunting
+// Acquisition window: give up after 2 min of hunting with NOTHING in
+// view, but while satellites are visible the window extends (the
+// receiver is converging on ephemeris - aborting now throws that work
+// away) up to the hard cap below.
+inline constexpr uint32_t PULSE_ACQUIRE_TIMEOUT_MS = 120000; // base: 2 min
+inline constexpr uint32_t PULSE_ACQUIRE_MAX_MS     = 300000; // progress cap: 5 min
+inline constexpr uint32_t PROGRESS_HOLD_MS         = 30000;  // "recently saw sats"
+// M10 config delivery. WAKE_SETTLE: a PSMOO-inactive receiver discards
+// the bytes that wake it and needs time to bring its UART back before
+// it can hear a real frame; 150 ms is comfortably above the observed
+// wake-to-output latency. ACK_WAIT: VALSET acknowledgements arrive
+// within one navigation epoch (1 s) when the receiver is awake; 700 ms
+// catches the awake case quickly so a sleeping receiver gets re-woken
+// without long stalls. RETRIES bounds one request cycle; the scheduler
+// re-requests later, so giving up here is never final.
+inline constexpr uint32_t M10_CFG_WAKE_SETTLE_MS = 150;
+inline constexpr uint32_t M10_CFG_ACK_WAIT_MS    = 700;
+inline constexpr uint8_t  M10_CFG_RETRIES        = 3;
+// In pulsed mode with PSMOO active the module schedules its own fixes;
+// the firmware intervenes only when fixes go stale past this factor of
+// the location interval plus a fixed grace (one module-side ACQPERIOD
+// retry round) - distinguishing "running a little late" from "lost".
+inline constexpr uint32_t PSMOO_STALE_FACTOR     = 2;
+inline constexpr uint32_t PSMOO_STALE_GRACE_MS   = 60000;
 inline constexpr uint32_t PULSE_RETRY_BACKOFF_MS   = 60000;  // try again 60 s later on first timeout
 // Exponential backoff cap for consecutive failed pulses (no sky
 // view): base << shift, clamped here.
@@ -106,6 +145,31 @@ namespace _detail {
   inline uint8_t&        backoff_count_ref()  { static uint8_t v = 0; return v; }
   inline M10Power&       m10_power_ref()      { static M10Power v = M10Power::NotApplied; return v; }
   inline uint32_t&       m10_interval_ref()   { static uint32_t v = 0; return v; }
+  // Location scheduling state - intentionally separate from
+  // last_report_ms_ref(), which belongs to the CLOCK-sync path.
+  inline uint32_t&       last_fix_ms_ref()    { static uint32_t v = 0; return v; }
+  inline bool&           ever_fixed_ref()     { static bool v = false; return v; }
+  inline uint32_t&       next_attempt_ms_ref(){ static uint32_t v = 0; return v; }
+  inline uint32_t&       sats_seen_ms_ref()   { static uint32_t v = 0; return v; }
+  // Non-blocking M10 config delivery (wake byte -> settle -> VALSETs
+  // -> verified ACKs). A sleeping M10 discards the bytes that wake it
+  // and the VALSET ACK is the only proof of delivery, so the cached
+  // power state advances ONLY when every sent VALSET is acknowledged.
+  enum class M10Cfg : uint8_t { Idle, Settling, AwaitAck };
+  inline M10Cfg&         m10_cfg_state_ref()  { static M10Cfg v = M10Cfg::Idle; return v; }
+  inline uint32_t&       m10_cfg_t_ref()      { static uint32_t v = 0; return v; }
+  inline uint32_t&       m10_cfg_acks_ref()   { static uint32_t v = 0; return v; }
+  inline uint32_t&       m10_cfg_naks_ref()   { static uint32_t v = 0; return v; }
+  inline uint8_t&        m10_cfg_need_ref()   { static uint8_t v = 0; return v; }
+  inline uint8_t&        m10_cfg_tries_ref()  { static uint8_t v = 0; return v; }
+  inline M10Power&       m10_cfg_want_ref()   { static M10Power v = M10Power::NotApplied; return v; }
+  inline uint32_t&       m10_cfg_iv_ref()     { static uint32_t v = 0; return v; }
+}
+
+inline PowerConfig& power_config() { static PowerConfig c; return c; }
+inline void set_power_config(bool enabled, uint32_t interval_s) {
+  power_config().enabled    = enabled;
+  power_config().interval_s = interval_s;
 }
 
 inline Module module() { return (Module)_detail::module_ref(); }
@@ -200,29 +264,23 @@ inline void reset_backoff() {
   }
 }
 
-// Decide the current target power mode from the user's GPS time-
-// source config. Source enable-disable is the master switch; the
-// interval picks always-on vs duty-cycled.
+// Decide the current target power mode from the SENSOR power config.
+// The GPS time-source config plays no part here: clock-sync cadence
+// must never wake or sleep the receiver.
 inline PowerMode target_mode() {
-  const auto& cfg = Clock::Manager::get_config(Clock::Manager::Source::GPS);
-  if (!cfg.enabled)                              return PowerMode::Off;
-  // interval_s == 0 -> "boot-only": power on long enough to acquire one
-  // fix + report it to TimeManager, then power down and stay off until
-  // reboot. Without this the AlwaysOn branch below catches 0 (since
-  // 0 < PULSE_THRESHOLD_S) and the module would burn battery
-  // indefinitely while every subsequent fix gets thrown away.
-  if (cfg.interval_s == 0) {
-    return (_detail::last_report_ms_ref() != 0) ? PowerMode::Off
-                                                : PowerMode::AlwaysOn;
-  }
-  if (cfg.interval_s < PULSE_THRESHOLD_S)        return PowerMode::AlwaysOn;
+  const PowerConfig& pc = power_config();
+  if (!pc.enabled)                          return PowerMode::Off;
+  if (pc.interval_s < PULSE_THRESHOLD_S)    return PowerMode::AlwaysOn;
   return PowerMode::Pulsed;
 }
 
 namespace _detail {
 
   // Time-source policy: report a fresh RMC epoch to TimeManager when
-  // the configured interval has elapsed (or on the very first fix).
+  // the CLOCK-sync interval has elapsed (or on the very first fix).
+  // Clock interval 0 means "sync the clock once per boot"; any other
+  // value re-syncs that often WHILE fixes happen to be flowing. This
+  // path never influences receiver power.
   inline void maybe_report_time(double epoch) {
     if (epoch <= 0.0) return;
     const auto& cfg = Clock::Manager::get_config(Clock::Manager::Source::GPS);
@@ -241,79 +299,168 @@ namespace _detail {
   // (and unidentified modules). Ported behaviour: power up when due,
   // detect acquisition via the last_report snapshot, exponential
   // backoff on timeout.
-  inline void pulse_strategy(uint32_t now, uint32_t interval_s) {
-    const uint32_t last_rep = last_report_ms_ref();
-    const uint32_t interval_ms = interval_s * 1000UL;
-    const bool first_time = (last_rep == 0);
-    const bool due        = first_time || ((now - last_rep) >= interval_ms);
-    if (pulse_state_ref() == PulseState::Idle) {
-      if (due) {
-        power_on();
-        pulse_state_ref()         = PulseState::Acquiring;
-        pulse_started_ms_ref()    = now;
-        pulse_last_rep_snapshot() = last_rep;   // pin pre-pulse value
-        NOTICEF("GPS: pulse start (interval=%lus, last=%lums ago)",
-                (unsigned long)interval_s,
-                (unsigned long)(first_time ? 0 : (now - last_rep)));
-      } else {
-        // Idle between polls - make sure power is off.
-        if (hw_powered_ref()) power_off();
-      }
-    } else /* Acquiring */ {
-      // A fresh report happened *during this pulse* iff
-      // maybe_report_time bumped last_report_ms_ref above its
-      // pre-pulse snapshot.
-      const bool acquired = (last_rep != pulse_last_rep_snapshot());
-      const bool timed_out = (now - pulse_started_ms_ref())
-                              > PULSE_ACQUIRE_TIMEOUT_MS;
-      if (acquired) {
-        NOTICEF("GPS: pulse acquired in %lums",
-                (unsigned long)(now - pulse_started_ms_ref()));
-        backoff_count_ref() = 0;
-        power_off();
-        pulse_state_ref() = PulseState::Idle;
-      } else if (timed_out) {
-        // No fix within the window. Exponential backoff: base * 2^N,
-        // capped. Indoors with no sky view this lifts retry cadence
-        // from once a minute to once every ~30 min. Motion through
-        // the IMU calls reset_backoff() to drop back to base.
-        uint8_t& n = backoff_count_ref();
-        const uint8_t shift = (n < PULSE_RETRY_BACKOFF_SHIFT_MAX) ? n : PULSE_RETRY_BACKOFF_SHIFT_MAX;
-        uint32_t delay_ms = PULSE_RETRY_BACKOFF_MS << shift;
-        if (delay_ms > PULSE_RETRY_BACKOFF_MAX_MS) delay_ms = PULSE_RETRY_BACKOFF_MAX_MS;
-        if (n < 255) n++;
-        WARNINGF("GPS: pulse timed out after %lums; backing off %lums (attempt %u)",
-                 (unsigned long)PULSE_ACQUIRE_TIMEOUT_MS,
-                 (unsigned long)delay_ms,
-                 (unsigned)n);
-        power_off();
-        pulse_state_ref() = PulseState::Idle;
-        // Set last_report_ms so the next due-check fires `delay_ms`
-        // from now rather than interval_s from "never".
-        if (interval_ms > delay_ms) {
-          last_report_ms_ref() = now - (interval_ms - delay_ms);
+  // ---- M10 config delivery (non-blocking, pump-driven) ----------------
+  //
+  // Request a power mode; the pump below walks wake -> settle ->
+  // VALSETs -> ACK verification. m10_power_ref() advances only when
+  // every VALSET in the batch is acknowledged, so a command swallowed
+  // by a sleeping receiver is retried instead of silently lost.
+  inline void m10_request_power(M10Power want, uint32_t interval_s) {
+    if (m10_power_ref() == want
+        && (want != M10Power::Psmoo || m10_interval_ref() == interval_s)) return;
+    if (m10_cfg_state_ref() != M10Cfg::Idle
+        && m10_cfg_want_ref() == want && m10_cfg_iv_ref() == interval_s) return;
+    m10_cfg_want_ref()  = want;
+    m10_cfg_iv_ref()    = interval_s;
+    m10_cfg_tries_ref() = 0;
+    m10_cfg_state_ref() = M10Cfg::Settling;
+    m10_cfg_t_ref()     = millis();
+    HardwareSerial* s = serial_ref();
+    if (s) MaxM10::wake(*s);
+  }
+
+  inline void m10_cfg_pump(uint32_t now) {
+    HardwareSerial* s = serial_ref();
+    if (!s || m10_cfg_state_ref() == M10Cfg::Idle) return;
+    switch (m10_cfg_state_ref()) {
+      case M10Cfg::Settling:
+        if (now - m10_cfg_t_ref() < M10_CFG_WAKE_SETTLE_MS) return;
+        m10_cfg_acks_ref() = MaxM10::valset_acks();
+        m10_cfg_naks_ref() = MaxM10::valset_naks();
+        if (m10_cfg_want_ref() == M10Power::Full) {
+          MaxM10::set_power(*s, /*full_power=*/true, 0);
+          m10_cfg_need_ref() = 1;
         } else {
-          last_report_ms_ref() = now;
+          MaxM10::set_power(*s, /*full_power=*/false, m10_cfg_iv_ref());
+          m10_cfg_need_ref() = 3;   // period + acqperiod + operatemode
         }
+        m10_cfg_t_ref()     = now;
+        m10_cfg_state_ref() = M10Cfg::AwaitAck;
+        return;
+      case M10Cfg::AwaitAck: {
+        const uint32_t acks = MaxM10::valset_acks() - m10_cfg_acks_ref();
+        const uint32_t naks = MaxM10::valset_naks() - m10_cfg_naks_ref();
+        if (naks == 0 && acks >= m10_cfg_need_ref()) {
+          m10_power_ref()    = m10_cfg_want_ref();
+          m10_interval_ref() = m10_cfg_iv_ref();
+          m10_cfg_state_ref() = M10Cfg::Idle;
+          NOTICEF("GPS: MAX-M10 %s acknowledged%s",
+                  m10_cfg_want_ref() == M10Power::Full ? "full power" : "PSMOO",
+                  m10_cfg_want_ref() == M10Power::Psmoo ? " (self-cycling)" : "");
+          return;
+        }
+        if (naks != 0 || (now - m10_cfg_t_ref()) > M10_CFG_ACK_WAIT_MS) {
+          if (++m10_cfg_tries_ref() < M10_CFG_RETRIES) {
+            m10_cfg_state_ref() = M10Cfg::Settling;
+            m10_cfg_t_ref()     = now;
+            MaxM10::wake(*s);
+          } else {
+            WARNINGF("GPS: MAX-M10 config not acknowledged (%lu acks, %lu naks, 3 tries)",
+                     (unsigned long)acks, (unsigned long)naks);
+            m10_cfg_state_ref() = M10Cfg::Idle;
+            // Leave m10_power_ref() untouched: a later scheduler pass
+            // re-requests and the cycle starts again.
+          }
+        }
+        return;
       }
+      default: return;
     }
   }
 
-  // The MAX-M10 duty-cycle strategy: rail stays up, the receiver
-  // sleeps itself (PSMOO). POSUPDATEPERIOD maps 1:1 onto the user's
-  // interval. Reapplied whenever the rail has cycled or the interval
-  // changed.
-  inline void psmoo_strategy(uint32_t interval_s) {
-    if (!hw_powered_ref()) power_on();
-    pulse_state_ref() = PulseState::Idle;
-    HardwareSerial* s = serial_ref();
-    if (s == nullptr) return;
-    if (m10_power_ref() != M10Power::Psmoo || m10_interval_ref() != interval_s) {
-      MaxM10::set_power(*s, /*full_power=*/false, interval_s);
-      m10_power_ref()    = M10Power::Psmoo;
-      m10_interval_ref() = interval_s;
-      NOTICEF("GPS: MAX-M10 PSMOO, position update every %lus",
-              (unsigned long)interval_s);
+  // ---- unified acquisition scheduler -----------------------------------
+  //
+  // One state machine for both modules. Acquisition ALWAYS runs at
+  // full power: a receiver that has never fixed cannot download
+  // ephemeris in short power-save wakes (it needs ~30 s of continuous
+  // tracking per satellite), so cold receivers are never handed to a
+  // duty cycle. The window is progress-aware: 2 min base, extended
+  // while satellites are in view, capped at 5 min. A hopeless window
+  // backs off exponentially (60 s doubling to 30 min, IMU motion
+  // resets it); the L76K sleeps by rail cut, the M10 by RXM-PMREQ with
+  // the rail up so backup RAM keeps the next attempt hot.
+  //
+  // After a fix: the L76K rail-pulses on the location interval as
+  // before; the M10 is handed to PSMOO with the location interval and
+  // self-cycles, the firmware only re-acquiring if fixes go stale
+  // (2x interval + margin) - PSMOO with warm ephemeris re-fixes in
+  // seconds, so its fixed 60 s ACQPERIOD is then appropriate.
+  inline void scheduler_pump(uint32_t now, uint32_t interval_s) {
+    const bool m10 = (module() == Module::MAXM10);
+    const uint32_t interval_ms = interval_s * 1000UL;
+    const uint32_t last_fix    = last_fix_ms_ref();
+
+    if (pulse_state_ref() == PulseState::Idle) {
+      bool due;
+      if (!ever_fixed_ref()) {
+        // Cold: attempt schedule is the backoff ladder.
+        due = (next_attempt_ms_ref() == 0)
+              || ((int32_t)(now - next_attempt_ms_ref()) >= 0);
+      } else if (m10 && m10_power_ref() == M10Power::Psmoo) {
+        // PSMOO is doing the cycling; intervene only on staleness.
+        due = (now - last_fix)
+              > (PSMOO_STALE_FACTOR * interval_ms + PSMOO_STALE_GRACE_MS);
+      } else {
+        due = (now - last_fix) >= interval_ms;
+      }
+      if (!due) {
+        if (!m10 && hw_powered_ref()) power_off();
+        return;
+      }
+      if (!hw_powered_ref()) power_on();
+      if (m10) m10_request_power(M10Power::Full, 0);
+      pulse_state_ref()      = PulseState::Acquiring;
+      pulse_started_ms_ref() = now;
+      sats_seen_ms_ref()     = 0;
+      NOTICEF("GPS: acquisition start (interval=%lus, %s, %s)",
+              (unsigned long)interval_s,
+              ever_fixed_ref() ? "warm" : "cold",
+              m10 ? "MAX-M10 full power" : "rail pulse");
+      return;
+    }
+
+    // Acquiring.
+    const bool acquired = ever_fixed_ref()
+                          && last_fix != 0
+                          && (int32_t)(last_fix - pulse_started_ms_ref()) >= 0;
+    const uint32_t elapsed   = now - pulse_started_ms_ref();
+    const bool progressing   = sats_seen_ms_ref() != 0
+                               && (now - sats_seen_ms_ref()) < PROGRESS_HOLD_MS;
+    const uint32_t window_ms = progressing ? PULSE_ACQUIRE_MAX_MS
+                                           : PULSE_ACQUIRE_TIMEOUT_MS;
+    if (acquired) {
+      NOTICEF("GPS: acquired in %lums (attempt %u)",
+              (unsigned long)elapsed, (unsigned)backoff_count_ref());
+      backoff_count_ref() = 0;
+      next_attempt_ms_ref() = 0;
+      pulse_state_ref() = PulseState::Idle;
+      if (m10) {
+        m10_request_power(M10Power::Psmoo, interval_s);
+      } else {
+        power_off();
+      }
+      return;
+    }
+    if (elapsed > window_ms) {
+      uint8_t& n = backoff_count_ref();
+      const uint8_t shift = (n < PULSE_RETRY_BACKOFF_SHIFT_MAX) ? n : PULSE_RETRY_BACKOFF_SHIFT_MAX;
+      uint32_t delay_ms = PULSE_RETRY_BACKOFF_MS << shift;
+      if (delay_ms > PULSE_RETRY_BACKOFF_MAX_MS) delay_ms = PULSE_RETRY_BACKOFF_MAX_MS;
+      if (n < 255) n++;
+      WARNINGF("GPS: no fix after %lums (%s); backing off %lums (attempt %u)",
+               (unsigned long)elapsed,
+               progressing ? "had satellites in view" : "nothing in view",
+               (unsigned long)delay_ms, (unsigned)n);
+      next_attempt_ms_ref() = now + delay_ms;
+      pulse_state_ref() = PulseState::Idle;
+      HardwareSerial* s = serial_ref();
+      if (m10 && s != nullptr) {
+        // Timed backup sleep: rail up, BBR warm, self-wakes when due.
+        MaxM10::sleep_for(*s, delay_ms);
+      } else {
+        power_off();
+      }
+      return;
     }
   }
 }
@@ -326,9 +473,8 @@ inline void pump() {
   const PowerMode mode = target_mode();
   const uint32_t  now  = millis();
   Fix&            f    = _detail::fix_ref();
-  const auto&     cfg  = Clock::Manager::get_config(Clock::Manager::Source::GPS);
 
-  // ---- power-mode transitions ----
+  // ---- power-mode transitions (location config only) ----
   if (mode == PowerMode::Off) {
     if (_detail::hw_powered_ref()) power_off();
     _detail::pulse_state_ref() = PulseState::Idle;
@@ -338,19 +484,17 @@ inline void pump() {
     if (!_detail::hw_powered_ref()) power_on();
     _detail::pulse_state_ref() = PulseState::Idle;
     // An M10 may still hold PSMOO from an earlier config (it persists
-    // in RAM/BBR); put it back to continuous operation.
-    if (module() == Module::MAXM10 &&
-        _detail::m10_power_ref() != M10Power::Full) {
-      MaxM10::set_power(*s, /*full_power=*/true, 0);
-      _detail::m10_power_ref() = M10Power::Full;
+    // in RAM/BBR across ESP reboots while the rail stays up); put it
+    // back to continuous operation, ACK-verified.
+    if (module() == Module::MAXM10) {
+      _detail::m10_request_power(M10Power::Full, 0);
     }
   }
   if (mode == PowerMode::Pulsed) {
-    if (module() == Module::MAXM10) {
-      _detail::psmoo_strategy(cfg.interval_s);
-    } else {
-      _detail::pulse_strategy(now, cfg.interval_s);
-    }
+    _detail::scheduler_pump(now, power_config().interval_s);
+  }
+  if (module() == Module::MAXM10) {
+    _detail::m10_cfg_pump(now);
   }
 
   // ---- drain UART (only meaningful if powered) ----
@@ -377,6 +521,10 @@ inline void pump() {
       const char* txt = nullptr;
       const Nmea::Sentence kind = Nmea::parse_line(buf, blen, f, &txt);
       if (kind == Nmea::Sentence::RmcValid) {
+        // Location bookkeeping (drives the power scheduler)...
+        _detail::last_fix_ms_ref() = millis();
+        _detail::ever_fixed_ref()  = true;
+        // ...and clock bookkeeping (drives nothing but the RTC).
         _detail::maybe_report_time(f.unix_epoch);
       } else if (kind == Nmea::Sentence::Txt && txt != nullptr
                  && module() == Module::Unknown) {
@@ -396,6 +544,9 @@ inline void pump() {
       blen = 0;
     }
   }
+  // Acquisition progress signal: any satellites in view keep the
+  // current acquisition window open (see scheduler_pump).
+  if (f.sats_visible > 0) _detail::sats_seen_ms_ref() = millis();
 }
 
 // Read access for /api/gps. Caller gets a copy of the current fix.

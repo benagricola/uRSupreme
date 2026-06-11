@@ -1266,6 +1266,10 @@ void setup() {
     // Its begin() reuses SDCard::ensure_shared_bus() so we don't
     // double-init the bus.
     Sensors::QMI8658::begin();
+    // Restore time-source priority/enable/interval from
+    // /lxmf/time.json. Must precede the sensor config load: the GPS
+    // location/clock split migrates its default from this config.
+    Clock::Manager::load_config(filesystem);
     // Restore user-configured enable/interval overrides on
     // top of the driver defaults. No-op if /lxmf/sensors.json doesn't
     // exist yet (factory state).

@@ -14,10 +14,12 @@
 //     "gps":          {"enabled": true,  "interval_s": 3600}
 //   }
 //
-// GPS reuses Clock::Manager's GPS source config rather than this
-// store - its enable/interval are bound to the time source priority
-// list. Surfaced here read-only so the popover UI can show it
-// alongside the other sensors.
+// GPS owns a real entry here like every other sensor: enabled +
+// interval_s are the LOCATION policy (0 = always on, otherwise the
+// pulsed location-update cadence) consumed by Sensors::Gnss for
+// receiver power. The GPS entry in Clock::Manager's time.json is a
+// different setting: how often a live fix may resync the clock. The
+// two were one value historically; see load() for the migration.
 
 #pragma once
 
@@ -30,6 +32,7 @@
 #include "Environment/BME280.h"
 #include "Compass/QMC6310.h"
 #include "Motion/QMI8658.h"
+#include "Position/Gnss.h"
 #include "../Clock/Manager.h"
 
 extern microStore::FileSystem filesystem;
@@ -39,10 +42,22 @@ namespace SensorConfig {
 
 inline constexpr const char* CONFIG_PATH = "/lxmf/sensors.json";
 
+// One-time migration for configs predating the location/clock split:
+// the GPS interval used to live solely in Clock::Manager and did
+// double duty as the power schedule. If sensors.json has no gps entry
+// yet, adopt the old combined value when it looks like a power
+// setting (>= 5 min was the old duty-cycle threshold); otherwise
+// default to always-on so a cold receiver can actually acquire.
+inline void migrate_gps_defaults() {
+  const auto& c = Clock::Manager::get_config(Clock::Manager::Source::GPS);
+  const uint32_t adopted = (c.interval_s >= 300) ? c.interval_s : 0;
+  Sensors::Gnss::set_power_config(c.enabled, adopted);
+}
+
 // Apply the JSON at /lxmf/sensors.json on top of the drivers'
 // compiled defaults. Safe to call whether or not the file exists.
-// GPS is intentionally not touched here - see TimeManager.
 inline void load(microStore::FileSystem& fs) {
+  migrate_gps_defaults();
   if (!fs.exists(CONFIG_PATH)) return;
   std::vector<uint8_t> data;
   if (fs.readFile(CONFIG_PATH, data) == 0) return;
@@ -60,6 +75,16 @@ inline void load(microStore::FileSystem& fs) {
   apply("environment",       Sensors::BME280::set_enabled,  Sensors::BME280::set_interval_ms);
   apply("magnetometer", Sensors::QMC6310::set_enabled,  Sensors::QMC6310::set_interval_ms);
   apply("imu",          Sensors::QMI8658::set_enabled,  Sensors::QMI8658::set_interval_ms);
+  {
+    JsonObjectConst o = doc["gps"].as<JsonObjectConst>();
+    if (!o.isNull()) {
+      bool en = Sensors::Gnss::power_config().enabled;
+      uint32_t iv = Sensors::Gnss::power_config().interval_s;
+      if (o["enabled"].is<bool>())        en = o["enabled"].as<bool>();
+      if (o["interval_s"].is<uint32_t>()) iv = o["interval_s"].as<uint32_t>();
+      Sensors::Gnss::set_power_config(en, iv);
+    }
+  }
 }
 
 inline void persist(microStore::FileSystem& fs) {
@@ -72,6 +97,8 @@ inline void persist(microStore::FileSystem& fs) {
   write("environment",       Sensors::BME280::enabled(),  Sensors::BME280::interval_ms());
   write("magnetometer", Sensors::QMC6310::enabled(),  Sensors::QMC6310::interval_ms());
   write("imu",          Sensors::QMI8658::enabled(),  Sensors::QMI8658::interval_ms());
+  write("gps",          Sensors::Gnss::power_config().enabled,
+                        Sensors::Gnss::power_config().interval_s * 1000UL);
   String out;
   serializeJson(doc, out);
   fs.writeFile(CONFIG_PATH,
@@ -83,12 +110,8 @@ inline void persist(microStore::FileSystem& fs) {
 // persist the new full config. Key is one of "environment" / "magnetometer"
 // / "imu" / "gps". Returns true if applied.
 //
-// GPS bridges through to TimeManager: GPS lives in the sensor
-// popover (it *is* a sensor - fix age, position, etc.) but its
-// time-side enable / poll interval are owned by TimeManager's GPS
-// source config. Persisting the GPS update therefore writes through
-// to /lxmf/time.json, not /lxmf/sensors.json. The SPA's view is the
-// same; the storage just lands in the right backing file.
+// GPS persists here like every other sensor; the update reaches
+// Sensors::Gnss immediately (power mode follows on its next pump).
 inline bool update_one(microStore::FileSystem& fs, const char* key,
                        bool enabled, uint32_t interval_s) {
   const uint32_t iv_ms = interval_s * 1000UL;
@@ -102,13 +125,7 @@ inline bool update_one(microStore::FileSystem& fs, const char* key,
     Sensors::QMI8658::set_enabled(enabled);
     Sensors::QMI8658::set_interval_ms(iv_ms);
   } else if (strcmp(key, "gps") == 0) {
-    Clock::Manager::SourceConfig c =
-        Clock::Manager::get_config(Clock::Manager::Source::GPS);
-    c.enabled    = enabled;
-    c.interval_s = interval_s;
-    Clock::Manager::set_config(Clock::Manager::Source::GPS, c);
-    Clock::Manager::persist_config(fs);
-    return true;
+    Sensors::Gnss::set_power_config(enabled, interval_s);
   } else {
     return false;
   }

@@ -162,9 +162,6 @@ namespace Web {
       _started = true;
       AuthTokens::load();
       BootCounter::init();  // emit the log line; current() is otherwise lazy
-      // Restore time-source priority/enable/interval from
-      // /lxmf/time.json.
-      Clock::Manager::load_config(filesystem);
       register_routes();
       server.begin();
       // Wire AnnounceLog → WebSocket. Every new announce / path now

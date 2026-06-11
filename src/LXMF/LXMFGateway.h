@@ -60,6 +60,17 @@ namespace Web {
   }
 }
 
+// Forward declaration of the telemetry sender's delivery-state hook.
+// Defined inline in LXMF/TelemetrySender.h, which #includes us - the
+// same cycle-breaking arrangement as the Web hooks above. Telemetry
+// sends skip the outbox, so this hook is the only consumer of their
+// delivery receipts.
+namespace LXMF {
+  namespace TelemetrySender {
+    void on_outbox_status(const RNS::Bytes& hash, OutboxStatus status);
+  }
+}
+
 namespace LXMF {
 
   #ifndef LXMF_GATEWAY_MAX_IDENTITIES
@@ -390,8 +401,21 @@ namespace LXMF {
                      // seq. The auto-send tick passes use_seq so the real
                      // record reuses that seq and the SPA bubble merges.
                      bool* out_queued = nullptr,
-                     uint32_t use_seq = 0) {
+                     uint32_t use_seq = 0,
+                     // Optional pre-packed Telemeter blob for
+                     // FIELD_TELEMETRY (see TelemetrySender.h). A send
+                     // that is ONLY telemetry (no title, content or
+                     // attachments) stays out of the outbox and the
+                     // conversation - Sideband keeps its collector
+                     // updates out of the conversation too, and one
+                     // record per interval would crowd the bounded
+                     // outbox. Its delivery state flows through
+                     // TelemetrySender::on_outbox_status instead.
+                     const RNS::Bytes* telemetry = nullptr) {
       if (out_queued) *out_queued = false;
+      const bool telemetry_only = telemetry != nullptr
+                                  && title.empty() && content.empty()
+                                  && (attachments == nullptr || attachments->empty());
       LXMFIdentity* a = identity_by_id_mut(iden_id);
       if (!a) {
         if (out_err) *out_err = "No such identity is logged in on this device.";
@@ -415,7 +439,7 @@ namespace LXMF {
       // timeout and the staging deadline start together and expire together.
       if (!RNS::Transport::has_path(dest_hash) || !RNS::Identity::recall(dest_hash)) {
         RNS::Transport::request_path(dest_hash);
-        const uint32_t seq = queue_pending_identity_send(a, iden_id, dest_hash, title, content, attachments);
+        const uint32_t seq = queue_pending_identity_send(a, iden_id, dest_hash, title, content, attachments, telemetry);
         if (seq != 0) {
           // Accepted, not yet sent. Hand back an optimistic record - the
           // reserved seq, a "finding route" status, and the attachment
@@ -468,14 +492,20 @@ namespace LXMF {
       // the UI and survives a reboot; dispatch later mutates it in place.
       const uint8_t required_cost = LXMFMinimal::peer_stamp_cost(dest_hash);
       if (required_cost >= 1) {
+        // Telemetry-only sends DO get an outbox record on this path:
+        // the deferred-stamp machinery resumes and fails by outbox seq,
+        // so skipping the record would orphan those flows. The cost is
+        // a visible telemetry message per interval in the conversation
+        // with a stamp-costed collector - rare, and visible rather
+        // than silently wrong.
         return send_with_stamp(a, iden_id, dest_hash, title, content,
                                attachments, required_cost, out_rec,
-                               out_err, use_seq);
+                               out_err, use_seq, telemetry);
       }
-      if (!a->lxmf.send_message(dest_hash, title, content, attachments, out_rec, out_err)) {
+      if (!a->lxmf.send_message(dest_hash, title, content, attachments, out_rec, out_err, telemetry)) {
         return false;
       }
-      if (a->outbox) {
+      if (a->outbox && !telemetry_only) {
         // When this is the queue's auto-send, reuse the seq the optimistic
         // bubble already has so the SPA merges rather than duplicating.
         if (use_seq != 0) out_rec.seq = use_seq;
@@ -504,6 +534,12 @@ namespace LXMF {
       // buffers - either send_message frees them on a successful auto-send,
       // or the give-up path frees them when the window expires.
       std::vector<LXMFMinimal::OutgoingAttachment> attachments;
+      // Packed Telemeter blob for FIELD_TELEMETRY; empty for normal
+      // sends. Bounded: Telemeter::MAX_PACKED bytes x PENDING_ID_MAX
+      // entries. A delayed send keeps its original sample - the blob
+      // timestamps itself, so a late delivery reports its real
+      // sample time.
+      RNS::Bytes  telemetry;
       uint32_t    outbox_seq  = 0;   // reserved seq the eventual record reuses
       uint8_t     attempts    = 0;
       uint64_t    next_at_ms  = 0;
@@ -619,7 +655,8 @@ namespace LXMF {
         const RNS::Bytes& dest,
         const std::string& title,
         const std::string& content,
-        const std::vector<LXMFMinimal::OutgoingAttachment>* attachments = nullptr) {
+        const std::vector<LXMFMinimal::OutgoingAttachment>* attachments = nullptr,
+        const RNS::Bytes* telemetry = nullptr) {
       auto& q = pending_identity_sends();
       const bool has_atts = (attachments != nullptr && !attachments->empty());
       const uint64_t now = (uint64_t)millis();
@@ -627,13 +664,15 @@ namespace LXMF {
       // attachment-free entries. Two attachment sends carry distinct staging
       // buffers even with identical text, so they must stay separate; merging
       // them would orphan one set of staging ids. Reuse the coalesced entry's
-      // seq so the caller's bubble still matches.
+      // seq so the caller's bubble still matches. A coalesced telemetry
+      // entry adopts the newest sample - the older one is superseded.
       if (!has_atts) {
         for (auto& p : q) {
           if (p.attachments.empty() && p.iden_id == iden && p.dest == dest &&
               p.title == title && p.content == content) {
             p.attempts = 0;
             p.next_at_ms = now + PENDING_ID_BACKOFF_MS;
+            if (telemetry) p.telemetry = *telemetry;
             return p.outbox_seq;
           }
         }
@@ -642,6 +681,7 @@ namespace LXMF {
       if (!a || !a->outbox) return 0;
       PendingIdentitySend p;
       p.iden_id = iden; p.dest = dest; p.title = title; p.content = content;
+      if (telemetry) p.telemetry = *telemetry;
       p.outbox_seq = a->outbox->reserve_seq();
       if (has_atts) {
         p.attachments     = *attachments;    // take ownership of the staging ids
@@ -680,7 +720,8 @@ namespace LXMF {
             // and the loop is cooperative (no yield before send()'s own
             // check), so send() can't re-enter the no-route gate and re-queue.
             if (send(it->iden_id, it->dest, it->title, it->content, &it->attachments,
-                     rec, &err, nullptr, it->outbox_seq)) {
+                     rec, &err, nullptr, it->outbox_seq,
+                     it->telemetry.size() ? &it->telemetry : nullptr)) {
               NOTICEF("LXMF: auto-sent queued attachment message to %s once a route arrived",
                       it->dest.toHex().c_str());
             } else {
@@ -717,7 +758,8 @@ namespace LXMF {
           MessageRecord rec;
           const char* err = nullptr;
           if (send(it->iden_id, it->dest, it->title, it->content, nullptr,
-                   rec, &err, nullptr, it->outbox_seq)) {
+                   rec, &err, nullptr, it->outbox_seq,
+                   it->telemetry.size() ? &it->telemetry : nullptr)) {
             NOTICEF("LXMF: auto-sent queued message to %s once its key arrived",
                     it->dest.toHex().c_str());
           } else {
@@ -939,7 +981,8 @@ namespace LXMF {
                                 uint8_t cost,
                                 MessageRecord& out_rec,
                                 const char** out_err,
-                                uint32_t use_seq) {
+                                uint32_t use_seq,
+                                const RNS::Bytes* telemetry = nullptr) {
       // Ownership of staged attachment buffers passes to this call (the
       // same contract as send_message): prepare_message releases them on
       // every one of its exit paths, so only the two early-outs BEFORE
@@ -962,7 +1005,8 @@ namespace LXMF {
         return false;
       }
       LXMFMinimal::PreparedMessage pm;
-      if (!a->lxmf.prepare_message(dest_hash, title, content, attachments, pm, out_rec, out_err)) {
+      if (!a->lxmf.prepare_message(dest_hash, title, content, attachments, pm,
+                                   out_rec, out_err, telemetry)) {
         return false;
       }
       out_rec.status = OutboxStatus::GeneratingStamp;
@@ -1335,6 +1379,9 @@ namespace LXMF {
           [p](const RNS::Bytes& link_hash, OutboxStatus status) {
             if (!p->active || !p->outbox) return;
             p->outbox->update_status(link_hash, status);
+            // Telemetry sends have no outbox record (see send()); their
+            // receipts only land here.
+            TelemetrySender::on_outbox_status(link_hash, status);
             // Push a typed status frame to any WS subscriber - gives
             // the SPA's outbox row a direct trigger to flip the pill.
             Web::WS::publish_outbox_status(p->id, link_hash,

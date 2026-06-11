@@ -497,9 +497,11 @@ namespace LXMF {
                       const std::string& content,
                       const std::vector<OutgoingAttachment>* attachments,
                       MessageRecord& out_rec,
-                      const char** out_err = nullptr) {
+                      const char** out_err = nullptr,
+                      const RNS::Bytes* telemetry = nullptr) {
       PreparedMessage pm;
-      if (!prepare_message(dest_hash, title, content, attachments, pm, out_rec, out_err)) {
+      if (!prepare_message(dest_hash, title, content, attachments, pm, out_rec,
+                           out_err, telemetry)) {
         return false;
       }
       return send_prepared(dest_hash, pm, RNS::Bytes::NONE, out_rec, out_err);
@@ -508,14 +510,18 @@ namespace LXMF {
     // Pack the payload, compute the message id, and fill the outbox record
     // (including outbound attachment persistence). Does NOT sign or send -
     // see PreparedMessage. Takes ownership of any staging buffers in
-    // `attachments` (released on every exit path).
+    // `attachments` (released on every exit path). `telemetry` is an
+    // optional pre-packed Telemeter blob carried verbatim as the
+    // FIELD_TELEMETRY value - the shape Sideband builds with
+    // fields[FIELD_TELEMETRY] = telemeter.packed() (core.py:1515).
     bool prepare_message(const RNS::Bytes& dest_hash,
                          const std::string& title,
                          const std::string& content,
                          const std::vector<OutgoingAttachment>* attachments,
                          PreparedMessage& pm,
                          MessageRecord& out_rec,
-                         const char** out_err = nullptr) {
+                         const char** out_err = nullptr,
+                         const RNS::Bytes* telemetry = nullptr) {
       auto fail = [&](const char* msg) { if (out_err) *out_err = msg; return false; };
       // prepare_message takes ownership of any staging buffers referenced
       // in `attachments` - they get released on every exit path so the
@@ -570,7 +576,8 @@ namespace LXMF {
       // 8 B per attachment for bin/array headers, +8 per element for
       // inner [name, bytes] wrapping, +map header.
       const size_t mp_cap = 96 + title.size() + content.size()
-                          + att_bytes + att_names_bytes + 16 * (attachments ? attachments->size() : 0);
+                          + att_bytes + att_names_bytes + 16 * (attachments ? attachments->size() : 0)
+                          + (telemetry ? telemetry->size() + 8 : 0);
       // Large attachments (multi-MB) won't fit in DRAM. Allocate the
       // working buffer from PSRAM when above an SRAM-safe threshold;
       // small messages stay on the heap for zero PSRAM pressure. The
@@ -608,28 +615,43 @@ namespace LXMF {
 
       // Field encoding follows the Sideband convention so peers (Sideband,
       // Nomadnet, Columba) can decode our attachments natively:
+      //   FIELD_TELEMETRY:        bytes (a packed Telemeter map)
       //   FIELD_IMAGE:            [ext_str, bytes]
       //   FIELD_AUDIO:            [mode_int, bytes]
       //   FIELD_FILE_ATTACHMENTS: [[name_str, bytes], ...]
       // Group by tag first so multi-file messages produce ONE map entry
       // with an array value (not a malformed map with duplicate keys).
-      if (!attachments || attachments->empty()) {
+      const bool have_atts = attachments && !attachments->empty();
+      if (!have_atts && telemetry == nullptr) {
         mp[mp_pos++] = 0xC0;  // fields: nil
       } else {
         // Collect indices per tag in attachment order.
         std::vector<size_t> file_idxs, image_idxs, audio_idxs;
-        for (size_t i = 0; i < attachments->size(); ++i) {
-          const uint8_t t = (*attachments)[i].tag;
-          if      (t == FIELD_FILE_ATTACHMENTS) file_idxs.push_back(i);
-          else if (t == FIELD_IMAGE)            image_idxs.push_back(i);
-          else if (t == FIELD_AUDIO)            audio_idxs.push_back(i);
+        if (have_atts) {
+          for (size_t i = 0; i < attachments->size(); ++i) {
+            const uint8_t t = (*attachments)[i].tag;
+            if      (t == FIELD_FILE_ATTACHMENTS) file_idxs.push_back(i);
+            else if (t == FIELD_IMAGE)            image_idxs.push_back(i);
+            else if (t == FIELD_AUDIO)            audio_idxs.push_back(i);
+          }
         }
         size_t field_count = (file_idxs.empty() ? 0 : 1)
                            + (image_idxs.empty() ? 0 : 1)
-                           + (audio_idxs.empty() ? 0 : 1);
+                           + (audio_idxs.empty() ? 0 : 1)
+                           + (telemetry ? 1 : 0);
         n = Common::MsgPack::pack_map_header(&mp[mp_pos], mp_cap - mp_pos, field_count);
         if (n == 0) { ERROR("LXMF: send: map header pack failed"); return fail("Too many attachments."); }
         mp_pos += n;
+
+        if (telemetry) {
+          n = Common::MsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, FIELD_TELEMETRY);
+          if (n == 0) { ERROR("LXMF: send: telemetry key pack failed"); return fail("Internal error packing telemetry."); }
+          mp_pos += n;
+          n = Common::MsgPack::pack_bin(&mp[mp_pos], mp_cap - mp_pos,
+                                        telemetry->data(), telemetry->size());
+          if (n == 0) { ERROR("LXMF: send: telemetry bin pack failed"); return fail("Internal error packing telemetry."); }
+          mp_pos += n;
+        }
 
         // Pack one [name_or_mode, bytes] pair. When the attachment was
         // staged (uploaded via the multipart endpoint), stream the
@@ -1008,7 +1030,7 @@ namespace LXMF {
     // across all time sources - GPS, NTP, Browser, RNS peer, RTC.
     // Falls back to a compile-time-epoch + millis() guess until the
     // manager is calibrated, so outbound messages don't carry ts=0.
-    double get_timestamp() {
+    double get_timestamp() const {
       if (Clock::Manager::is_calibrated()) {
         return Clock::Manager::now_epoch();
       }

@@ -66,6 +66,7 @@ extern char             wr_hostname[10];
 
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
+#include "../LXMF/TelemetrySender.h"
 #include "../LXMF/AnnounceLog.h"
 #include "AuthTokens.h"
 #include "BootCounter.h"
@@ -826,6 +827,10 @@ namespace Web {
       // the same payload, with the initial snapshot in the `hello` frame.
       // Per-sensor enable + polling-interval overrides.
       on_json_post(ApiRoutes::SENSORS_CONFIG,       handle_sensors_config_post);
+      // Telemetry-to-collector config + manual send trigger.
+      on_http(HTTP_GET, ApiRoutes::TELEMETRY_CONFIG, handle_telemetry_config_get);
+      on_json_post(ApiRoutes::TELEMETRY_CONFIG,     handle_telemetry_config_post);
+      on_json_post(ApiRoutes::TELEMETRY_SEND,       handle_telemetry_send);
       // Global inbox capacity + wall-clock TTL pruning.
       on_http(HTTP_GET, ApiRoutes::INBOX_CONFIG, handle_inbox_config_get);
       on_json_post(ApiRoutes::INBOX_CONFIG,         handle_inbox_config_post);
@@ -938,6 +943,7 @@ namespace Web {
     #include "WebUI/system.h"
     #include "WebUI/time_gps.h"
     #include "WebUI/config_storage.h"
+    #include "WebUI/telemetry.h"
     #include "WebUI/wifi.h"
     #include "WebUI/radio.h"
     #include "WebUI/discovery.h"

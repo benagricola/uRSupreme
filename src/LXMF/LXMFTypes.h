@@ -15,10 +15,11 @@ namespace LXMF {
   static constexpr size_t HEADER_LEN = HASH_LEN + SIG_LEN;  // 80 bytes
 
   // LXMF fields-dict tags we recognise (LXMF-upstream/LXMF/LXMF.py).
-  // Only the file-shaped tags are persisted on-device for now -
-  // FIELD_TELEMETRY / FIELD_RENDERER / FIELD_TICKET / etc. flow through
-  // as unparsed bytes that the SPA can read out of /api/info if it
-  // ever needs them.
+  // Only the file-shaped tags are persisted on-device for now - other
+  // inbound tags (FIELD_RENDERER / FIELD_TICKET / etc.) flow through
+  // as unparsed bytes. FIELD_TELEMETRY is outbound-only: the telemetry
+  // sender packs it for Sideband collectors (TelemetrySender.h).
+  static constexpr uint8_t FIELD_TELEMETRY        = 0x02;  // LXMF.py:9
   static constexpr uint8_t FIELD_FILE_ATTACHMENTS = 0x05;
   static constexpr uint8_t FIELD_IMAGE            = 0x06;
   static constexpr uint8_t FIELD_AUDIO            = 0x07;

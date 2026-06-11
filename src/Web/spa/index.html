@@ -690,7 +690,7 @@
      hosts device-side state: storage, clock + RTC, on-board sensors. -->
 <div id="popover-system" class="popover" x-data="systemPopoverData()"
      x-show="$store.s.popovers.system"
-     x-effect="$store.s.popovers.system && refreshSensorConfigUI()"
+     x-effect="$store.s.popovers.system && (refreshSensorConfigUI(), refreshTelemetry())"
      x-cloak>
   <div class="popover-section">
     <div class="popover-row">
@@ -820,6 +820,52 @@
           <option :value="String(p.value)" x-text="p.label"></option>
         </template>
       </select>
+    </div>
+  </div>
+  <div class="popover-section" id="sys-section-telemetry"
+       :class="{ 'is-open': sectionOpen.telemetry }">
+    <div class="popover-row clickable" data-role="header" @click="toggleSection('telemetry')">
+      <div class="popover-label">Telemetry</div>
+      <div id="sys-tele-line">
+        <span :class="telePillClass" x-text="telePillLabel"></span>
+      </div>
+      <span class="popover-chev" data-role="chev">▾</span>
+    </div>
+    <div class="popover-subline" x-text="teleStatusText"></div>
+    <div class="popover-config" data-role="config" x-show="sectionOpen.telemetry" x-cloak>
+      <label>
+        <input type="checkbox" x-model="tele.enabled" @change="saveTelemetry()">
+        <span>Send readings to a collector</span>
+      </label>
+      <input type="text" placeholder="Collector address (32 hex)" maxlength="32"
+             spellcheck="false" autocomplete="off"
+             x-model.trim="tele.collector" @change="saveTelemetry()">
+      <select x-model="tele.identity" @change="saveTelemetry()">
+        <option value="">First identity</option>
+        <template x-for="i in $store.s.identities" :key="i.id">
+          <option :value="i.id" x-text="i.display_name || i.id"></option>
+        </template>
+      </select>
+      <select x-model.number="tele.interval_s" @change="saveTelemetry()">
+        <template x-for="p in TELEMETRY_INTERVALS" :key="p.value">
+          <option :value="p.value" x-text="p.label"></option>
+        </template>
+      </select>
+      <label>
+        <input type="checkbox" x-model="tele.battery" @change="saveTelemetry()">
+        <span>Battery</span>
+      </label>
+      <label>
+        <input type="checkbox" x-model="tele.location" @change="saveTelemetry()">
+        <span>Location</span>
+      </label>
+      <label>
+        <input type="checkbox" x-model="tele.environment" @change="saveTelemetry()">
+        <span>Environment</span>
+      </label>
+      <button class="secondary w-full mt-2" @click="telemetrySendNow($event.currentTarget)">
+        Send now
+      </button>
     </div>
   </div>
 </div>
@@ -4860,8 +4906,77 @@ function systemPopoverData() {
       const im = this._im;
       return ageLine(im.taken_ms, im.model || 'imu');
     },
+
+    // -------- telemetry to collector --------
+    tele: { loaded: false, enabled: false, collector: '', identity: '',
+            interval_s: 900, battery: true, location: true, environment: true,
+            last_result: 'never', last_sent_epoch: 0 },
+    _teleApply(r) {
+      this.tele.loaded      = true;
+      this.tele.enabled     = !!r.enabled;
+      this.tele.collector   = r.collector || '';
+      this.tele.identity    = r.identity || '';
+      this.tele.interval_s  = r.interval_s || 900;
+      this.tele.battery     = r.battery !== false;
+      this.tele.location    = r.location !== false;
+      this.tele.environment = r.environment !== false;
+      this.tele.last_result = r.last_result || 'never';
+      this.tele.last_sent_epoch = r.last_sent_epoch || 0;
+    },
+    async refreshTelemetry() {
+      try {
+        this._teleApply(await state.transport._req(API.TELEMETRY_CONFIG));
+      } catch (e) { /* popover stays on last-known values */ }
+    },
+    async saveTelemetry() {
+      const t = this.tele;
+      const body = { enabled: t.enabled, collector: t.collector,
+                     identity: t.identity, interval_s: t.interval_s,
+                     battery: t.battery, location: t.location,
+                     environment: t.environment };
+      try {
+        this._teleApply(await state.transport._req(API.TELEMETRY_CONFIG, { method: 'POST', body }));
+      } catch (e) {
+        toast('Telemetry save failed: ' + (e.message || e), 'error');
+        await this.refreshTelemetry();
+      }
+    },
+    telemetrySendNow(btn) {
+      return withBusy(btn, async () => {
+        try {
+          const r = await state.transport._req(API.TELEMETRY_SEND, { method: 'POST', body: {} });
+          this._teleApply(r);
+          if (r.accepted) toast('Telemetry sent', 'success');
+          else toast('Telemetry not sent: ' + (r.last_error || r.last_result), 'error');
+        } catch (e) { toast('Telemetry send failed: ' + (e.message || e), 'error'); }
+      });
+    },
+    get telePillClass() {
+      if (!this.tele.enabled) return 'pill';
+      if (this.tele.last_result === 'failed' ||
+          this.tele.last_result === 'config_error' ||
+          this.tele.last_result === 'no_identity') return 'pill bad';
+      return 'pill ok';
+    },
+    get telePillLabel() {
+      if (!this.tele.enabled) return 'Off';
+      return TELE_RESULT_LABELS[this.tele.last_result] || this.tele.last_result;
+    },
+    get teleStatusText() {
+      if (!this.tele.enabled) return 'Periodic sensor readings over LXMF. Off.';
+      const when = this.tele.last_sent_epoch
+        ? fmtWallClock(this.tele.last_sent_epoch * 1000) : 'never';
+      return 'Last update: ' + when;
+    },
   };
 }
+
+// Human labels for the telemetry sender's last_result slugs.
+const TELE_RESULT_LABELS = {
+  never: 'On', sent: 'Sent', delivered: 'Delivered', failed: 'Failed',
+  finding_route: 'Finding route', config_error: 'Check address',
+  no_identity: 'No identity', pack_error: 'Failed',
+};
 
 // The legacy storage-migrate click handler had no name; expose one so
 // the new @click in markup can reach it.
@@ -5104,6 +5219,16 @@ const SENSOR_INTERVALS = [
   { value: 300,   label: 'Every 5 min' },
   { value: 3600,  label: 'Every hour' },
   { value: 0,     label: 'At boot only' },
+];
+
+// Send cadence for telemetry-to-collector. Floor matches the
+// firmware's MIN_INTERVAL_S clamp.
+const TELEMETRY_INTERVALS = [
+  { value: 300,   label: 'Every 5 min' },
+  { value: 900,   label: 'Every 15 min' },
+  { value: 3600,  label: 'Every hour' },
+  { value: 21600, label: 'Every 6 hours' },
+  { value: 86400, label: 'Every day' },
 ];
 function sensorIntervalSnap(secs) {
   if (secs == null) return 60;

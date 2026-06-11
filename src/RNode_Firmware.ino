@@ -32,6 +32,7 @@
 #endif
 #if defined(HAS_LXMF_GATEWAY)
 #include "LXMF/LXMFGateway.h"
+#include "LXMF/TelemetrySender.h"
 #include "LXMF/AnnounceLog.h"
 #include "LXMF/RatchetBridge.h"
 #include "Common/LoopTiming.h"
@@ -1265,6 +1266,9 @@ void setup() {
     // top of the driver defaults. No-op if /lxmf/sensors.json doesn't
     // exist yet (factory state).
     Sensors::SensorConfig::load(filesystem);
+    // Telemetry-to-collector config. No-op if /lxmf/telemetry.json
+    // doesn't exist yet (feature defaults to off).
+    LXMF::TelemetrySender::load(filesystem);
 #endif
 
     // Remove legacy files
@@ -3106,6 +3110,11 @@ void loop() {
   // limited to once a minute regardless of caller cadence; master
   // toggle off short-circuits immediately).
   Discovery::Announcer::tick();
+  // Telemetry-to-collector scheduler. Cheap on the no-op path
+  // (disabled or interval not yet elapsed returns immediately); a due
+  // tick packs ~100 bytes from cached sensor reads and hands off to
+  // the LXMF send path.
+  LXMF::TelemetrySender::tick();
 
   // Retention prune. Time-based expirations fire even when no fresh
   // messages are arriving - without this, an idle device with TTL-

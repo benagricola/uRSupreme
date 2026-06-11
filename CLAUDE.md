@@ -5,6 +5,9 @@ repo. They exist because a full audit of the fork's first 377 commits
 (2026-06) traced its most expensive defects to a small set of recurring
 process failures. Each rule names the failure it prevents.
 
+A subset is enforced by CI (see Enforcement at the end). The rest are
+review-time: they hold only if you apply them, so do.
+
 ## 1. Upstream parity comes from upstream code, not reasoning
 
 This firmware ports Reticulum (RNS), LXMF and RNode behaviour. Upstream
@@ -18,7 +21,9 @@ is the source of truth.
 - If you must diverge (hardware limits, memory, missing primitive),
   add or update an entry in `DIVERGENCES.md` in the same commit and
   mark the code comment with `DIVERGES:` and the reason. Keep the
-  divergence minimal.
+  divergence minimal. CI enforces the same-commit pairing: a `src/`
+  diff that touches a `DIVERGES:` marker without touching
+  `DIVERGENCES.md` fails the build (`tools/check_diverges_ledger.py`).
 - A plausible rationale is not verification. The fork's worst defect
   (TCP `MODE_GATEWAY`, 28 days of LoRa starvation) shipped with a
   confident, wrong rationale written from upstream *docs* while
@@ -49,21 +54,27 @@ is the source of truth.
   diff contain anything the message does not say? Undisclosed payloads
   (silent endpoint renames, removed fallbacks, deleted patches) caused
   several of the fork's longest-lived regressions.
-- When the user gives feedback on a commit, rewrite that commit
-  (`git commit --fixup <hash>`, then
-  `GIT_SEQUENCE_EDITOR=true git rebase -i --autosquash <hash>~1`)
-  instead of stacking a correction commit. Local history rewrites
-  before push are encouraged. The final history must represent the work
-  delivered, not the feedback churn that produced it.
+- When the user gives feedback on a commit, fold it into that commit
+  rather than stacking a correction commit: amend if it is the tip,
+  otherwise a fixup squashed before push. The rule is the outcome, a
+  history with no feedback-churn commits, not one specific command
+  (interactive rebase is unavailable in some agent harnesses, so do not
+  hard-depend on it). Local history rewrites before push are
+  encouraged. The final history must represent the work delivered, not
+  the feedback churn that produced it.
+- Do not add a `Co-Authored-By` line or any AI-authorship trailer to
+  commits or pull requests.
 - Editing `src/Web/spa/*` requires regenerating `src/Web/SPAEmbedded.h`
   in the same commit (any `pio run` does it, or mirror the
   `embed_spa()` logic in `extra_script.py`).
 
 ## 4. Device constraints
 
-- No flash, SD, or other blocking I/O on the main loop. Persistence is
-  event-driven or runs off-loop; anything periodic must be measured
-  against the loop-timing diag before it lands.
+- No long or unbounded blocking I/O on the main loop. Persistence and
+  any multi-tick op (a FAT scan, a ring drain, a multi-sector write)
+  run off-loop on a dedicated task. A brief, bounded op (a single stat)
+  may run on-loop only after it is measured against the loop-timing
+  diag; if it can stall for more than a tick, it does not belong there.
 - Any new table, ring, queue, or persistence tier states its bound in
   the commit message. Unbounded growth on a 8 MB-flash device is a
   defect, not a TODO.
@@ -81,9 +92,12 @@ is the source of truth.
 - Non-technical and minimal. State the outcome and the numbers, not the
   mechanism ("Message too long. 1200/1024", never an explanation of
   UTF-8). Mechanism explanations live in code comments.
-- No em dashes anywhere in the repo - not in copy, not in comments,
-  not in docs (CI enforces this tree-wide). Short sentences. It is a
-  "web app", not an "SPA", in user-facing text.
+- No em dashes in any authored file: copy, comments, and docs alike.
+  Mirrored and vendored trees (`Console/`, `MIRROR.md`, generated and
+  vendored files) are excluded; do not rewrite imported upstream
+  content to satisfy a house style rule. CI enforces this
+  (`tools/check_copy_and_config.py`). Short sentences. It is a "web
+  app", not an "SPA", in user-facing text.
 - Surface failures: any user-triggered action that can fail shows a
   toast or status with the server's message. A silent 404 hid a broken
   button for 19 days.
@@ -92,7 +106,10 @@ is the source of truth.
 
 - DRY is a first-class concern: extract duplicates into shared helpers
   or `Common/`; never ship parallel implementations of the same logic.
-  Use a library already in `lib_deps` before writing your own.
+  Use a library already in `lib_deps` before writing your own. The one
+  exception is upstream parity (rule 1): where a faithful port must
+  mirror an upstream structure, keep the upstream shape even if it
+  reads as duplication. Parity wins over DRY.
 - Repeat-use SPA icons are defined once as CSS-mask `::before` classes;
   only genuine one-offs stay inline.
 - Put state at the layer that reads it; `Web/` consumes data, it does
@@ -113,5 +130,26 @@ is the source of truth.
   touches the web API.
 - Keep all rig devices flashed to the same build when testing; version
   skew between the two radios produces misleading results.
-- CI must stay green on every branch push: both Supreme env builds and
-  `tools/check_api_parity.py` (SPA calls vs firmware routes).
+- CI must stay green on every branch push: the builds and the guardrail
+  checks (see Enforcement). A red guardrail is a stop, not a warning.
+
+## 8. Enforcement
+
+Which rules are mechanical and which are not, so nobody mistakes
+aspiration for a guarantee.
+
+- Enforced by CI on every push (the `guardrails` job plus the builds):
+  both Supreme env builds; API route parity
+  (`tools/check_api_parity.py`); no absolute paths in `platformio.ini`
+  and the em-dash ban over authored paths
+  (`tools/check_copy_and_config.py`); and the
+  `DIVERGES:`-moves-with-`DIVERGENCES.md` gate
+  (`tools/check_diverges_ledger.py`).
+- Review-time only, so they hold only if you apply them: the upstream
+  file:line citation (rule 1), hardware evidence for verification
+  claims (rule 2), commit-message-matches-diff (rule 3), bounding every
+  ring/queue and keeping blocking I/O off the loop (rule 4), DRY and
+  state placement (rule 6), and running the API regression suite before
+  presenting web changes (rule 7). These are the expensive,
+  silent-failure rules: the cost of skipping one is paid weeks later,
+  not at the next push.

@@ -50,6 +50,19 @@
       }
       doc["ws_clients"]        = ws_clients;
       doc["ws_queue"]          = (uint32_t)ws_queue;
+#if HAS_WIFI
+      // WiFi RX watchdog (driver-level inbound wedge detector). reconnects
+      // climbing means the gateway-probe watchdog found the RX path dead
+      // while associated and forced a reassociation to clear it.
+      {
+        JsonObject wd = doc["wifi_rx_watchdog"].to<JsonObject>();
+        wd["probes"]        = (uint32_t)WifiRxWatchdog::probes_sent();
+        wd["replies"]       = (uint32_t)WifiRxWatchdog::replies_seen();
+        wd["reconnects"]    = (uint32_t)WifiRxWatchdog::reconnects();
+        wd["last_reply_ms_ago"] = WifiRxWatchdog::last_reply_ms()
+            ? (uint32_t)(millis() - WifiRxWatchdog::last_reply_ms()) : 0;
+      }
+#endif
       // Outbound LoRa packets dropped because the TX ring was full (radio
       // couldn't keep up - e.g. a duty-cycle airtime lock holding the queue).
       // Non-zero + climbing means user/announce TX is being silently lost.

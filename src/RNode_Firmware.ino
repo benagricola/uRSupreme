@@ -35,6 +35,9 @@
 #include "LXMF/AnnounceLog.h"
 #include "LXMF/RatchetBridge.h"
 #include "Common/LoopTiming.h"
+#if HAS_WIFI
+#include "WifiRxWatchdog.h"   // before WebUI.h: diag.h surfaces its counters
+#endif
 #include "Web/WebUI.h"
 #include "Sensors/Clock/PCF8563.h"
 #include "Sensors/Position/L76K.h"
@@ -3022,6 +3025,9 @@ static void pump_radio_fifo() {
 }
 
 void loop() {
+#if HAS_WIFI
+  WifiRxWatchdog::tick();
+#endif
   URTN_LT_PERIOD();
 
 #if defined(HAS_LXMF_GATEWAY)

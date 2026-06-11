@@ -30,7 +30,7 @@ WEB = os.path.join(ROOT, "src", "Web")
 SPA = os.path.join(WEB, "spa", "index.html")
 DEF = os.path.join(WEB, "api_routes.def")
 
-DEF_LINE = re.compile(r'^\s*ROUTE(_OPT)?\(\s*([A-Z][A-Z0-9_]*)\s*,\s*"(/api/[^"]+)"\s*\)\s*$')
+DEF_LINE = re.compile(r'^\s*ROUTE(_OPT)?\(\s*([A-Z][A-Z0-9_]*)\s*,\s*"([A-Z|]+)"\s*,\s*"(/api/[^"]+)"\s*\)\s*$')
 
 
 def parse_def():
@@ -44,7 +44,8 @@ def parse_def():
             errors.append(f"api_routes.def:{n}: line does not match the "
                           f"ROUTE grammar: {line.strip()[:80]}")
             continue
-        entries.append((m.group(2), m.group(3), bool(m.group(1))))
+        entries.append((m.group(2), m.group(4), bool(m.group(1)),
+                        set(m.group(3).split("|"))))
     names = [e[0] for e in entries]
     paths = [e[1] for e in entries]
     for dup in {x for x in names if names.count(x) > 1}:
@@ -71,6 +72,7 @@ def main() -> int:
     # 1. C++: quoted /api literals are banned (comments use bare paths,
     # which never match the quoted pattern, so no comment-stripping).
     referenced = set()
+    cpp_methods: dict[str, set] = {}
     for path in cpp_files():
         text = open(path, encoding="utf-8").read()
         rel = os.path.relpath(path, ROOT)
@@ -79,6 +81,14 @@ def main() -> int:
                 errors.append(f"{rel}:{n}: quoted /api literal; use "
                               f"ApiRoutes:: from api_routes.def")
         referenced.update(re.findall(r"ApiRoutes::([A-Z][A-Z0-9_]*)", text))
+        # Method parity: what the registration wrappers actually bind.
+        for meth, name in re.findall(
+                r"on_(?:http|uri)\((HTTP_\w+),\s*ApiRoutes::([A-Z][A-Z0-9_]*)", text):
+            cpp_methods.setdefault(name, set()).add(meth.replace("HTTP_", ""))
+        for name in re.findall(r"on_json_post\(ApiRoutes::([A-Z][A-Z0-9_]*)", text):
+            cpp_methods.setdefault(name, set()).add("POST")
+        if re.search(r"AsyncWebSocket\s+\w+\(ApiRoutes::WS\)", text):
+            cpp_methods.setdefault("WS", set()).add("WS")
 
     # 2+3. SPA: quoted /api literals banned; API.* refs must exist.
     spa_text = open(SPA, encoding="utf-8").read()
@@ -92,6 +102,14 @@ def main() -> int:
         if ref not in names:
             errors.append(f"SPA references API.{ref}, which is not in "
                           f"api_routes.def")
+
+    # 3b. Method parity: the def's declared methods must equal what the
+    # registration wrappers bind (catches GET-vs-POST drift statically).
+    for name, path, _opt, meths in entries:
+        got = cpp_methods.get(name)
+        if got is not None and got != meths:
+            errors.append(f"api_routes.def {name}: declares {sorted(meths)} "
+                          f"but C++ registers {sorted(got)}")
 
     # 4. Dead def entries: every route must be registered somewhere.
     for name in sorted(names - referenced):

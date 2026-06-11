@@ -13,7 +13,7 @@ def api_routes_js(def_path):
     import re
     entries = []
     for line in open(def_path):
-        m = re.match(r'\s*ROUTE(?:_OPT)?\(\s*([A-Z0-9_]+)\s*,\s*"([^"]+)"\s*\)', line)
+        m = re.match(r'\s*ROUTE(?:_OPT)?\(\s*([A-Z0-9_]+)\s*,\s*"[A-Z|]+"\s*,\s*"([^"]+)"\s*\)', line)
         if not m:
             continue
         name, path = m.groups()

@@ -6,8 +6,8 @@
 // /api string literals anywhere else.
 namespace Web {
 namespace ApiRoutes {
-#define ROUTE(name, path)     constexpr const char* name = path;
-#define ROUTE_OPT(name, path) constexpr const char* name = path;
+#define ROUTE(name, methods, path)     constexpr const char* name = path;
+#define ROUTE_OPT(name, methods, path) constexpr const char* name = path;
 #include "api_routes.def"
 #undef ROUTE
 #undef ROUTE_OPT

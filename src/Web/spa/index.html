@@ -6262,10 +6262,15 @@ function onComposeKeydown(e) {
 function onComposeInput(e) {
   e.target.style.height = 'auto';
   e.target.style.height = Math.min(120, e.target.scrollHeight) + 'px';
-  const len = (state.forms.compose.text || '').length;
-  state.ui.composeCounterShown  = len >= COMPOSE_MAX_CHARS * 0.75;
-  state.ui.composeCounterDanger = len >= COMPOSE_MAX_CHARS * 0.95;
-  state.ui.composeCounter       = len + ' / ' + COMPOSE_MAX_CHARS;
+  // Count what the device counts: UTF-8 bytes against the live
+  // server-published cap. .length counts UTF-16 code units, which
+  // under-reads emoji/CJK and made the counter disagree with the
+  // device's 413 verdict.
+  const cap = state.ui.composeMaxLength || COMPOSE_MAX_CHARS;
+  const len = new TextEncoder().encode(state.forms.compose.text || '').length;
+  state.ui.composeCounterShown  = len >= cap * 0.75;
+  state.ui.composeCounterDanger = len >= cap * 0.95;
+  state.ui.composeCounter       = len + ' / ' + cap;
 }
 function onClickEmoji(ev) {
   ev.stopPropagation();

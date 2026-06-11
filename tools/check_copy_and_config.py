@@ -21,7 +21,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXCLUDE = {
     "src/Web/SPAEmbedded.h",     # generated (gzip embed of the SPA)
     "src/Web/spa/alpine.min.js", # vendored
+    "MIRROR.md",                 # upstream author's notice, mirrored verbatim
 }
+# Mirrored/vendored trees we must never rewrite: upstream content is
+# excluded wholesale so a future upstream sync can't trip the style ban
+# (and so nobody "fixes" text the project doesn't own).
+EXCLUDE_PREFIXES = (
+    "Console/",
+)
 
 
 def check_platformio() -> list[str]:
@@ -40,7 +47,7 @@ def check_no_emdash() -> list[str]:
     files = subprocess.run(["git", "ls-files"], cwd=ROOT,
                            capture_output=True, text=True).stdout.splitlines()
     for f in files:
-        if f in EXCLUDE:
+        if f in EXCLUDE or f.startswith(EXCLUDE_PREFIXES):
             continue
         try:
             with open(os.path.join(ROOT, f), encoding="utf-8") as fh:

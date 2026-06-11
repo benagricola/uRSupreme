@@ -33,6 +33,10 @@ jobs:
         run: python3 tools/check_api_parity.py
       - name: No absolute paths in platformio.ini; copy rules
         run: python3 tools/check_copy_and_config.py
+      - name: DIVERGES markers move with DIVERGENCES.md
+        run: |
+          git fetch --no-tags --depth=200 origin master
+          python3 tools/check_diverges_ledger.py origin/master
 
   build:
     name: Build (${{ matrix.label }})

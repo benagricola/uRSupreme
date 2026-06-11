@@ -364,3 +364,86 @@
 #endif  // URTN_LOOP_DIAG
       send_json(req, 200, doc);
     }
+
+    // GET /api/diag/display - the live OLED framebuffer as hex, plus
+    // its geometry and the messenger's current page. The buffer is
+    // SH1106 page-organized 1 bpp (128 cols x 8 pages, byte = 8
+    // vertical pixels, LSB on top); tools/oled_capture renders it to
+    // PNG. Defined in Display.h - it owns the display object; this
+    // file compiles before it in the firmware TU, hence the extern.
+    //
+    // POST injects messenger navigation for remote testing:
+    // {"key":"power"|"next"|"select"} - the same transitions the
+    // physical inputs produce.
+    //
+    // Access: when a screen identity is configured, the OLED carries
+    // that identity's message previews and messenger pages, and the
+    // messenger sends FROM it - so only the screen identity's own
+    // session may capture or inject. Any other account on the device
+    // could otherwise read those messages (or send as that identity)
+    // with no physical access. With no screen identity the panel is
+    // whole-device status, and any authenticated session may look.
+    // Independently, capture is refused while an identity code is on
+    // screen (see oled_capture) and code generation stays button-only.
+    static bool screen_capture_allowed(AsyncWebServerRequest* req,
+                                       LXMF::IdentityId* out_caller = nullptr) {
+      LXMF::IdentityId caller = require_auth(req);
+      if (caller.empty()) return false;   // 401 already sent
+      const LXMF::LXMFIdentity* scr = LXMF::LXMFGateway::screen_identity();
+      if (scr != nullptr && scr->id != caller) {
+        send_error_with_message(req, 403, "screen_identity_only",
+          "Only the screen identity can view or drive the device screen.");
+        return false;
+      }
+      if (out_caller) *out_caller = caller;
+      return true;
+    }
+
+    static void handle_diag_display_get(AsyncWebServerRequest* req) {
+      if (!screen_capture_allowed(req)) return;
+      static uint8_t snap[128 * 64 / 8];  // web task is single-threaded
+      uint16_t w = 0, h = 0;
+      if (!::oled_capture(snap, sizeof(snap), &w, &h)) {
+        send_error_with_message(req, 409, "capture_unavailable",
+          "The screen cannot be captured right now.");
+        return;
+      }
+      static const char hexd[] = "0123456789abcdef";
+      Common::PsramJsonDocument doc;
+      doc["w"]   = w;
+      doc["h"]   = h;
+      doc["fmt"] = "sh1106_pages";
+      #if defined(HAS_LXMF_GATEWAY)
+        doc["messenger_page"] = LXMF::Messenger::page_name();
+      #endif
+      std::string fb;
+      fb.reserve(sizeof(snap) * 2);
+      for (size_t i = 0; i < sizeof(snap); ++i) {
+        fb.push_back(hexd[snap[i] >> 4]);
+        fb.push_back(hexd[snap[i] & 0x0F]);
+      }
+      doc["fb"] = fb;
+      send_json(req, 200, doc);
+    }
+
+    static void handle_diag_display_post(AsyncWebServerRequest* req, JsonVariant& body) {
+      if (!screen_capture_allowed(req)) return;
+      #if defined(HAS_LXMF_GATEWAY)
+        const char* key = body["key"] | "";
+        if      (strcmp(key, "power")  == 0) LXMF::Messenger::on_power_key();
+        else if (strcmp(key, "next")   == 0) LXMF::Messenger::on_user_button(100);
+        else if (strcmp(key, "select") == 0) LXMF::Messenger::on_user_button(1000);
+        else {
+          send_error_with_message(req, 400, "bad_key",
+            "key must be power, next, or select.");
+          return;
+        }
+        Common::PsramJsonDocument doc;
+        doc["status"]         = "ok";
+        doc["messenger_page"] = LXMF::Messenger::page_name();
+        send_json(req, 200, doc);
+      #else
+        (void)body;
+        send_error(req, 404, "not_available");
+      #endif
+    }

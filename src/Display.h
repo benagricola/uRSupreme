@@ -1317,6 +1317,36 @@ void display_unblank() {
   last_unblank_event = millis();
 }
 
+// Live framebuffer copy for GET /api/diag/display (declared extern in
+// WebUI/diag.h, which compiles earlier in this TU). The SH1106 buffer
+// is page-organized 1 bpp: 128 columns x 8 pages, each byte one
+// 8-pixel column slice, LSB at the top. The copy is taken without a
+// lock - the main loop may be mid-draw, and a torn diagnostic frame
+// is acceptable.
+//
+// Refused while an identity code is on screen: the code proves
+// physical presence, and letting a bearer-token holder read it
+// remotely would let them consume a code the person at the device
+// generated for themselves.
+bool oled_capture(uint8_t* out, size_t cap, uint16_t* w, uint16_t* h) {
+  #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+    #if defined(HAS_LXMF_GATEWAY)
+      if (!Web::WebUI::identity_code_for_display().empty()) return false;
+    #endif
+    const size_t fb_len = (size_t)(128 * 64 / 8);
+    if (out == nullptr || cap < fb_len) return false;
+    uint8_t* buf = display.getBuffer();
+    if (buf == nullptr) return false;
+    memcpy(out, buf, fb_len);
+    if (w) *w = 128;
+    if (h) *h = 64;
+    return true;
+  #else
+    (void)out; (void)cap; (void)w; (void)h;
+    return false;
+  #endif
+}
+
 void ext_fb_enable() {
   disp_ext_fb = true;
 }

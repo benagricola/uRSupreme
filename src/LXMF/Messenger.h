@@ -96,6 +96,20 @@ inline size_t cursor()     { return _detail::cursor_ref(); }
 inline bool   active()     { return _detail::page_ref() != Page::Hidden; }
 inline const std::string& result_text() { return _detail::result_ref(); }
 
+// Stable page label for the display diag endpoint, so a test script
+// can assert which page it is capturing.
+inline const char* page_name() {
+  switch (_detail::page_ref()) {
+    case Page::Hidden:     return "hidden";
+    case Page::NoIdentity: return "no_identity";
+    case Page::NoPresets:  return "no_presets";
+    case Page::List:       return "list";
+    case Page::Confirm:    return "confirm";
+    case Page::Result:     return "result";
+  }
+  return "unknown";
+}
+
 // Copy-out for the web GET handler (web task).
 inline std::vector<Preset> presets_snapshot() {
   _detail::Guard g;

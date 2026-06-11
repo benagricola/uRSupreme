@@ -112,6 +112,9 @@ extern float    st_airtime_limit; // short-term duty-cycle cap (0..1, 0=disabled
 extern float    lt_airtime_limit; // long-term duty-cycle cap (0..1, 0=disabled)
 extern bool     airtime_lock;     // true when current airtime exceeds the cap; TX blocked
 extern bool     kiss_serial_output;  // toggle KISS-framed bytes on USB UART
+// Live OLED framebuffer copy for /api/diag/display. Defined in
+// Display.h, which compiles after this file in the firmware TU.
+extern bool oled_capture(uint8_t* out, size_t cap, uint16_t* w, uint16_t* h);
 
 #include <algorithm>
 #include <vector>
@@ -787,6 +790,9 @@ namespace Web {
 #endif
       on_http(HTTP_GET, ApiRoutes::DIAG_TRANSPORT, handle_diag_transport);
       on_http(HTTP_GET, ApiRoutes::DIAG_ROUTES, handle_diag_routes);
+      // Live OLED framebuffer + messenger nav injection (testing).
+      on_http(HTTP_GET, ApiRoutes::DIAG_DISPLAY, handle_diag_display_get);
+      on_json_post(ApiRoutes::DIAG_DISPLAY,     handle_diag_display_post);
 #if defined(URTN_HEAP_TRACE)
       on_http(HTTP_GET, ApiRoutes::DIAG_HEAPTRACE, handle_diag_heaptrace);
 #endif

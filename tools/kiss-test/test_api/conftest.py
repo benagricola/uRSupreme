@@ -108,6 +108,16 @@ def _login(dev: Device) -> str:
     return tok
 
 
+# KISS_TEST_DEVICES=sx (comma-separated names) limits the suite to a
+# subset of the rig, e.g. when the other device is reserved for
+# unrelated work. Tests whose fixtures need an excluded device fail
+# their setup; deselect them for such runs (-m "not lora", -k ...).
+_only = os.environ.get("KISS_TEST_DEVICES")
+if _only:
+    _names = {n.strip() for n in _only.split(",") if n.strip()}
+    _DEVICES[:] = [d for d in _DEVICES if d.name in _names]
+
+
 @pytest.fixture(scope="session")
 def devices() -> list[Device]:
     return list(_DEVICES)

@@ -1,5 +1,5 @@
 // Auto-extracted from Web/WebUI.h on the SPA-migration branch.
-// Included from inside the class body of Web::WebUI in WebUI.h —
+// Included from inside the class body of Web::WebUI in WebUI.h -
 // this file has NO include guard, NO `#pragma once`, and is not a
 // standalone translation unit. The static method definitions below
 // remain implicit-inline because they sit inside a class body via
@@ -33,7 +33,7 @@
     // POST /api/system/kiss { enabled: bool }
     // Flips the KISS-framed-serial-output toggle in RAM and persists
     // it to the radio-config EEPROM byte ADDR_CONF_KISS_OUT (0x00=off,
-    // 0x01=on). No reboot — takes effect on the next call to
+    // 0x01=on). No reboot - takes effect on the next call to
     // serial_write(). Auth: bearer token only; the user is in front
     // of the serial monitor when they want to flip this.
     static void handle_kiss_toggle(AsyncWebServerRequest* req, JsonVariant& body) {
@@ -54,7 +54,7 @@
       send_json(req, 200, doc);
     }
 
-    // POST /api/system/reboot { } — clean, no-side-effect reboot trigger.
+    // POST /api/system/reboot { } - clean, no-side-effect reboot trigger.
     // Bearer-auth gated like the other /api/system/* routes. Optional
     // {delay_ms: N} in the body lets the caller widen/shorten the window
     // between response and reset; default 2 s is enough for the client
@@ -74,7 +74,7 @@
       respond_and_reboot(req, doc, delay_ms);
     }
 
-    // GET /api/time — returns the current calibrated time, the source
+    // GET /api/time - returns the current calibrated time, the source
     // that set it, and the source-priority/enable config. Open to any
     // authenticated session (the time itself is also exposed via
     // /api/info → clock.now_ms, so this just adds source detail).
@@ -132,7 +132,7 @@
       }
       // ---- user-facing storage config ----
       // Append to the already-populated `storage` object built at line
-      // 1204 — using .to<JsonObject>() here overwrites the .flash /
+      // 1204 - using .to<JsonObject>() here overwrites the .flash /
       // .sd sub-objects (regression that made the SPA think the SD
       // card was absent). .as<JsonObject>() returns the existing
       // object so the new fields land alongside the legacy ones.
@@ -164,12 +164,12 @@
       }
     }
 
-    // GET /api/inbox_config — default retention for NEW chats. The
+    // GET /api/inbox_config - default retention for NEW chats. The
     // server's source of truth for newly-discovered peers; existing
     // peers' overrides live in /api/identities/{id}/conversations/{peer}/config.
     static void handle_factory_reset(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
-      // Physical-presence required, regardless of any active session —
+      // Physical-presence required, regardless of any active session -
       // factory reset wipes ALL identities and all messages, so the
       // proof-of-possession bar applies just like identity creation.
       const char* proof = body["identity_code"] | "";
@@ -178,7 +178,7 @@
         send_error_with_message(req, 401, "identity_code_required", code_err);
         return;
       }
-      NOTICE("WebUI: factory reset triggered — wiping /lxmf and rebooting");
+      NOTICE("WebUI: factory reset triggered - wiping /lxmf and rebooting");
 
       // Walk every active identity, deregister + remove its files.
       // Iterate by value-copy because delete_identity mutates the slot.
@@ -192,7 +192,7 @@
       filesystem.remove("/lxmf/auth_tokens.json");
       filesystem.remove("/lxmf/button_unlock.json");
       // We deliberately do NOT touch the Reticulum transport identity
-      // (stored at /transport_identity) or path_store — those are
+      // (stored at /transport_identity) or path_store - those are
       // device-level state, not per-identity secrets.
 
       Common::PsramJsonDocument doc;

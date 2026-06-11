@@ -27,7 +27,7 @@ extern microStore::FileSystem filesystem;
 
 // Forward declaration of the WebUI's progress-publish hook. Defined inline
 // in Web/WebUI.h (which #includes us, creating a header cycle the other
-// direction — so we can't pull it in here). Linker resolves the inline
+// direction - so we can't pull it in here). Linker resolves the inline
 // definition once any TU that included WebUI.h has been seen.
 namespace RNS { class Bytes; }
 namespace LXMF { struct MessageRecord; }
@@ -47,7 +47,7 @@ namespace Web {
     void publish_outbox_status(const LXMF::IdentityId& identity_id,
                                const RNS::Bytes& link_hash,
                                const char* status_name);
-    // Status update keyed by outbox seq rather than packet hash — used for
+    // Status update keyed by outbox seq rather than packet hash - used for
     // queued sends that have no packet hash yet (e.g. the "finding route"
     // give-up, or a deferred-stamp send). The SPA matches the bubble by
     // seq; link_hash (may be empty) lets it adopt the packet hash a
@@ -101,7 +101,7 @@ namespace LXMF {
     // Password hash (PBKDF2-HMAC-SHA256) + per-identity salt. Set at
     // identity creation; required for login. Empty if identity is from an
     // older firmware build that didn't set passwords (in which case
-    // login is blocked until the identity is recreated — there is no
+    // login is blocked until the identity is recreated - there is no
     // password-recovery path, by design).
     RNS::Bytes           password_hash;
     RNS::Bytes           password_salt;
@@ -147,7 +147,7 @@ namespace LXMF {
       // static across all LXMFMinimal instances, so one call covers
       // every identity. Entries whose next_retry_at_ms has elapsed get
       // a fresh Link and another attempt. The orphan sweep runs in
-      // the same tick — catches any PendingLinkSend whose lifecycle
+      // the same tick - catches any PendingLinkSend whose lifecycle
       // callback never fired (radio cut out mid-transfer, async event
       // loop dropped a frame, etc.) so the map can't grow unbounded.
       LXMFMinimal::tick_retries();
@@ -218,7 +218,7 @@ namespace LXMF {
 
     // Update the LXMF announcement label and persist. Pushes the new
     // name into the live LXMFMinimal so the next announce() carries it
-    // — does NOT trigger an announce here (the caller fires one off
+    // - does NOT trigger an announce here (the caller fires one off
     // separately so peers re-learn the label).
     static bool set_display_name(const IdentityId& iden_id, const std::string& name) {
       LXMFIdentity* a = identity_by_id_mut(iden_id);
@@ -284,7 +284,7 @@ namespace LXMF {
       LXMFIdentity* a = identity_by_id_mut(iden_id);
       if (!a) return false;
       if (a->password_hash.size() == 0 || a->password_salt.size() == 0) {
-        // Pre-password identity from an older firmware — refuse login;
+        // Pre-password identity from an older firmware - refuse login;
         // user must factory-reset to recover.
         return false;
       }
@@ -298,11 +298,11 @@ namespace LXMF {
       a->lxmf.shutdown();
       // Drop the on-disk attachment files before the JSONL spool. Walk
       // every loaded record and unlink each AttachmentMeta's backing
-      // file — without this, the spool goes away but
+      // file - without this, the spool goes away but
       // <dir>/attachments/<filename> stays forever.
       auto unlink_atts = [&](const LXMFInbox* box) {
         if (!box) return;
-        // Iterate the deque directly — no vector copy. The old
+        // Iterate the deque directly - no vector copy. The old
         // recent(SIZE_MAX) call duplicated the entire ring just to
         // walk it once.
         for (const auto& rec : box->ring()) {
@@ -321,7 +321,7 @@ namespace LXMF {
       };
       unlink_atts(a->inbox.get());
       unlink_atts(a->outbox.get());
-      // Drop any stamped sends still pending for this identity —
+      // Drop any stamped sends still pending for this identity -
       // aborts in-flight proof-of-work and removes payload sidecars.
       {
         auto& q = pending_stamp_sends();
@@ -397,13 +397,13 @@ namespace LXMF {
         if (out_err) *out_err = "No such identity is logged in on this device.";
         return false;
       }
-      // Auto-retry when there's no route to the recipient yet — either no
+      // Auto-retry when there's no route to the recipient yet - either no
       // transport PATH to them, or their public key isn't cached. Upstream
       // LXMF requests the path whenever has_path() is false
       // (LXMRouter.py:1675), not just on an identity-cache miss: under load
       // the path table evicts the active contact while the key stays cached,
       // so gating on the key alone silently built a pathless packet that
-      // Transport then dropped. A path request covers both — its response
+      // Transport then dropped. A path request covers both - its response
       // announce re-populates the key too. Queue + auto-resend once a route
       // exists (tick_pending_identity_sends).
       //
@@ -411,15 +411,15 @@ namespace LXMF {
       // ownership of the staged attachment buffers (we return here, before
       // send_message's StagingReleaser would free them) and releases them the
       // instant the window expires. The window is exactly PATH_REQUEST_TIMEOUT
-      // — the path request fires here, once, on this first attempt, so its
+      // - the path request fires here, once, on this first attempt, so its
       // timeout and the staging deadline start together and expire together.
       if (!RNS::Transport::has_path(dest_hash) || !RNS::Identity::recall(dest_hash)) {
         RNS::Transport::request_path(dest_hash);
         const uint32_t seq = queue_pending_identity_send(a, iden_id, dest_hash, title, content, attachments);
         if (seq != 0) {
-          // Accepted, not yet sent. Hand back an optimistic record — the
+          // Accepted, not yet sent. Hand back an optimistic record - the
           // reserved seq, a "finding route" status, and the attachment
-          // metadata — so the caller shows a live bubble that the eventual
+          // metadata - so the caller shows a live bubble that the eventual
           // auto-send (same seq, via use_seq) or the give-up event resolves.
           out_rec = MessageRecord{};
           out_rec.seq          = seq;
@@ -434,7 +434,7 @@ namespace LXMF {
           out_rec.received_ms  = (uint32_t)millis();
           // LXMF wall-clock ts, same source a dispatched send uses. Without it
           // the optimistic record carries ts=0, which sorts it to the very top
-          // of the thread (msgCmp orders by ts first) — out of view below the
+          // of the thread (msgCmp orders by ts first) - out of view below the
           // auto-scrolled bottom, so the bubble looks like it never appeared.
           out_rec.ts           = a->lxmf.get_timestamp();
           if (attachments) {
@@ -461,7 +461,7 @@ namespace LXMF {
       }
       // Delivery stamps: when the recipient's latest announce carries a
       // stamp cost, the message is prepared (payload + message id frozen)
-      // and parked while the background worker searches for a stamp —
+      // and parked while the background worker searches for a stamp -
       // mirrors upstream LXMRouter.handle_outbound auto-applying the
       // cached cost and deferring to pending_deferred_stamps. The outbox
       // record is appended NOW with GeneratingStamp status so it shows in
@@ -501,7 +501,7 @@ namespace LXMF {
       std::string content;
       // Owned staged attachments (staging_id references). Empty for text
       // sends. When set, the queue is responsible for releasing the staging
-      // buffers — either send_message frees them on a successful auto-send,
+      // buffers - either send_message frees them on a successful auto-send,
       // or the give-up path frees them when the window expires.
       std::vector<LXMFMinimal::OutgoingAttachment> attachments;
       uint32_t    outbox_seq  = 0;   // reserved seq the eventual record reuses
@@ -542,13 +542,13 @@ namespace LXMF {
     // --- Announce-triggered send acceleration --------------------------
     // A fresh lxmf.delivery announce from a peer we hold queued work for
     // should fire that work on the next tick instead of waiting out its
-    // retry backoff / recheck interval — upstream resets
+    // retry backoff / recheck interval - upstream resets
     // next_delivery_attempt the moment the announce handler sees a
     // pending destination (Handlers.py:23-32). AnnounceLog subscribers
     // may run off the main loop, so the callback only copies the raw
     // 16-byte hash into this fixed ring under a critical section (no
     // heap work, no map access); loop() drains it where every other
-    // pending-map mutation already happens. Overflow drops silently —
+    // pending-map mutation already happens. Overflow drops silently -
     // acceleration is an optimisation, the regular cadence still
     // delivers.
     struct AnnouncedPeerRing {
@@ -581,7 +581,7 @@ namespace LXMF {
       for (uint8_t i = 0; i < n; ++i) {
         RNS::Bytes dest(local[i], 16);
         LXMFMinimal::accelerate_pending_for(dest);
-        // Same announce-driven re-fire for opportunistic sends — ports the
+        // Same announce-driven re-fire for opportunistic sends - ports the
         // OPPORTUNISTIC arm of Handlers.py received_announce so an SX->LR
         // send recovers the instant the recipient announces.
         LXMFMinimal::accelerate_opp_for(dest);
@@ -623,7 +623,7 @@ namespace LXMF {
       auto& q = pending_identity_sends();
       const bool has_atts = (attachments != nullptr && !attachments->empty());
       const uint64_t now = (uint64_t)millis();
-      // Coalesce an identical re-queue (user mashing send) — but only for
+      // Coalesce an identical re-queue (user mashing send) - but only for
       // attachment-free entries. Two attachment sends carry distinct staging
       // buffers even with identical text, so they must stay separate; merging
       // them would orphan one set of staging ids. Reuse the coalesced entry's
@@ -666,7 +666,7 @@ namespace LXMF {
         if (!it->attachments.empty()) {
           // Attachment entry. Re-request the path up to
           // PENDING_ATTACH_MAX_ATTEMPTS at PATH_REQUEST_WAIT cadence (mirrors
-          // upstream LXMF DIRECT retry) instead of a single 15s give-up — a
+          // upstream LXMF DIRECT retry) instead of a single 15s give-up - a
           // multi-hop LoRa cold resolution often needs more than one window.
           // The cheap has_path/recall poll runs every recheck; the
           // path-request nudge is throttled to REQUEST_MS. Staging
@@ -698,7 +698,7 @@ namespace LXMF {
               // Tell the SPA the "finding route" bubble has given up, keyed by
               // its seq (the message was never sent, so there's no packet hash).
               Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed", RNS::Bytes());
-              WARNINGF("LXMF: route never resolved for attachment message to %s after %u path requests — freed staging",
+              WARNINGF("LXMF: route never resolved for attachment message to %s after %u path requests - freed staging",
                        it->dest.toHex().c_str(), (unsigned)it->attempts);
               it = q.erase(it);
               continue;
@@ -711,7 +711,7 @@ namespace LXMF {
           continue;
         }
 
-        // Text entry — lenient attempt-count retry with a path-request nudge.
+        // Text entry - lenient attempt-count retry with a path-request nudge.
         if (now < it->next_at_ms) { ++it; continue; }
         if (RNS::Transport::has_path(it->dest) && RNS::Identity::recall(it->dest)) {
           MessageRecord rec;
@@ -727,7 +727,7 @@ namespace LXMF {
           }
           it = q.erase(it);
         } else if (++it->attempts >= PENDING_ID_MAX_ATTEMPTS) {
-          WARNINGF("LXMF: giving up auto-send to %s — key never arrived after %u tries",
+          WARNINGF("LXMF: giving up auto-send to %s - key never arrived after %u tries",
                    it->dest.toHex().c_str(), (unsigned)it->attempts);
           Web::WS::publish_outbox_status_seq(it->iden_id, it->outbox_seq, "failed", RNS::Bytes());
           it = q.erase(it);
@@ -743,7 +743,7 @@ namespace LXMF {
     // A send whose recipient requires a delivery stamp. The outbox
     // record (status GeneratingStamp) was appended at send() time; the
     // frozen payload lives in an on-disk sidecar (SD first, flash
-    // fallback — the same policy as attachment persistence) so the
+    // fallback - the same policy as attachment persistence) so the
     // multi-second proof-of-work holds no payload bytes in RAM and the
     // send survives a reboot. `payload` is only populated as a RAM
     // fallback when the sidecar write failed. Mirrors upstream
@@ -796,7 +796,7 @@ namespace LXMF {
       memcpy(hdr + 22, message_id.data(), 32);
       const size_t total = sizeof(hdr) + payload.size();
       // Chunked writer: header bytes first, then payload straight from
-      // the (PSRAM-backed) Bytes buffer — no contiguous header+payload
+      // the (PSRAM-backed) Bytes buffer - no contiguous header+payload
       // copy is ever materialised.
       auto reader = [&](uint8_t* dst, size_t off, size_t want) -> size_t {
         size_t filled = 0;
@@ -818,7 +818,7 @@ namespace LXMF {
           return true;
         }
         if (SD.exists(path.c_str())) SD.remove(path.c_str());
-        WARNINGF("LXMF: SD sidecar write failed for %s — falling back to flash", path.c_str());
+        WARNINGF("LXMF: SD sidecar write failed for %s - falling back to flash", path.c_str());
       }
       if (Storage::Streaming::write_streamed(path.c_str(), false, total, reader) == total) {
         return true;
@@ -893,7 +893,7 @@ namespace LXMF {
     }
 
     // Terminal failure of a pending stamped send: flip the outbox record
-    // to Failed, tell the SPA (seq-keyed — the record never had a packet
+    // to Failed, tell the SPA (seq-keyed - the record never had a packet
     // hash), and drop the payload sidecar.
     static void fail_pending_stamp(LXMFIdentity& a, const PendingStampSend& f, const char* why) {
       WARNINGF("LXMF: stamped send to %s (seq %lu) failed: %s",
@@ -980,7 +980,7 @@ namespace LXMF {
       } else {
         // Disk full / no backend: hold the payload in PSRAM. The send
         // still completes, it just won't survive a reboot mid-search.
-        WARNING("LXMF: pending-stamp sidecar write failed — holding payload in PSRAM");
+        WARNING("LXMF: pending-stamp sidecar write failed - holding payload in PSRAM");
         p.payload = pm.payload;
       }
       q.push_back(std::move(p));
@@ -992,7 +992,7 @@ namespace LXMF {
 
     // Called from loop(): advance the front pending stamped send.
     // Generation phase: hand the job to the shared PoW worker (which
-    // may be busy with a discovery announce or an inbound validation —
+    // may be busy with a discovery announce or an inbound validation -
     // bounce and retry next tick) and poll for its result. Dispatch
     // phase: reload the payload from the sidecar and send it with the
     // stamp as the 5th payload element. Only the front entry is ever
@@ -1048,7 +1048,7 @@ namespace LXMF {
       MessageRecord rec;
       const char* err = nullptr;
       if (!a->lxmf.send_prepared(f.dest, pm, f.stamp, rec, &err)) {
-        // Usually a route that lapsed during the multi-second search —
+        // Usually a route that lapsed during the multi-second search -
         // send_prepared has already issued a fresh path request. Back
         // off and retry; the generated stamp is kept (it's bound to the
         // message id, not the route).
@@ -1062,7 +1062,7 @@ namespace LXMF {
       }
       // Dispatched. Flip the GeneratingStamp record into its sent form
       // in place (the record predates the send, so dispatch must update,
-      // not append). stamp_value is recorded on the sender side too —
+      // not append). stamp_value is recorded on the sender side too -
       // the SPA shows the work that was attached to the message.
       const int16_t value = f.stamp_value > 0x7FFF ? (int16_t)0x7FFF : (int16_t)f.stamp_value;
       a->outbox->mutate_by_seq(f.outbox_seq, [&](MessageRecord& m) {
@@ -1097,7 +1097,7 @@ namespace LXMF {
 
     // Apply the current InboxConfig to every active identity's
     // inbox + outbox. The default retention is propagated; per-peer
-    // overrides ARE NOT touched here — by design, changing the
+    // overrides ARE NOT touched here - by design, changing the
     // global default after a chat already exists doesn't retroactively
     // touch that chat.
     static void apply_inbox_config_to_all() {
@@ -1265,7 +1265,7 @@ namespace LXMF {
       // away but the file under <dir>/attachments/<filename> stays
       // forever and flash fills up.
       const std::string adir = a.dir();
-      // Body-spill machinery removed — bodies are always inline in
+      // Body-spill machinery removed - bodies are always inline in
       // the JSONL ring (capped at LXMF_MAX_BODY_BYTES on the send
       // path). The earlier per-message spill files + lazy /body
       // endpoint were dead infrastructure: the SPA never called the
@@ -1313,7 +1313,7 @@ namespace LXMF {
       a.outbox->prune_expired();
 
       a.lxmf.init(a.identity, a.display_name.c_str());
-      // Inbound stamp policy from meta.json — must land before the
+      // Inbound stamp policy from meta.json - must land before the
       // first announce so peers see the cost in app_data element [1].
       a.lxmf.set_stamp_cost(a.stamp_cost);
       a.lxmf.set_enforce_stamps(a.enforce_stamps);
@@ -1335,7 +1335,7 @@ namespace LXMF {
           [p](const RNS::Bytes& link_hash, OutboxStatus status) {
             if (!p->active || !p->outbox) return;
             p->outbox->update_status(link_hash, status);
-            // Push a typed status frame to any WS subscriber — gives
+            // Push a typed status frame to any WS subscriber - gives
             // the SPA's outbox row a direct trigger to flip the pill.
             Web::WS::publish_outbox_status(p->id, link_hash,
                                            outbox_status_name(status));
@@ -1372,7 +1372,7 @@ namespace LXMF {
       // Inbound receive-complete: symmetric counterpart to the outbox
       // Sent/Delivered terminal in set_outbox_status_callback above.
       // Fires when the receiving Resource finishes streaming bytes,
-      // BEFORE the decrypt step — so even decrypt-fail / malformed-
+      // BEFORE the decrypt step - so even decrypt-fail / malformed-
       // payload cases get a terminal message_complete on the wire and
       // the SPA's synthetic "Incoming attachment …" row + topbar strip
       // clear correctly. peer_hash is empty here (the LXMF source hash
@@ -1386,7 +1386,7 @@ namespace LXMF {
                 /*bytes_done=*/bytes_total, /*bytes_total=*/bytes_total,
                 /*finished=*/true);
           });
-      // Attachment persistence — when an incoming LXMF message carries
+      // Attachment persistence - when an incoming LXMF message carries
       // FIELD_FILE_ATTACHMENTS / FIELD_IMAGE / FIELD_AUDIO blobs, write
       // each one to <identity_dir>/attachments/ (routing: SD if a
       // card is mounted, else LittleFS). On-disk filenames are always
@@ -1402,7 +1402,7 @@ namespace LXMF {
             const bool use_sd = Storage::SDCard::present();
             const std::string att_dir = p->dir() + "/attachments";
             // LittleFS-side directory still gets prepared even when SD
-            // is mounted — small attachments (or fallback) land here.
+            // is mounted - small attachments (or fallback) land here.
             if (!filesystem.isDirectory(att_dir.c_str())) {
               filesystem.mkdir(att_dir.c_str());
             }
@@ -1420,7 +1420,7 @@ namespace LXMF {
                     full.c_str(), /*use_sd=*/true, f.raw, f.raw_len);
                 if (w == f.raw_len) { wrote_ok = true; backend = "sd"; }
                 else {
-                  WARNINGF("LXMF: SD attachment write short (wrote %u/%u for %s) — falling back to flash",
+                  WARNINGF("LXMF: SD attachment write short (wrote %u/%u for %s) - falling back to flash",
                            (unsigned)w, (unsigned)f.raw_len, on_disk);
                 }
               }
@@ -1461,7 +1461,7 @@ namespace LXMF {
             }
             return out;
           });
-      // Outbound attachment persistence — copy the staging bytes to
+      // Outbound attachment persistence - copy the staging bytes to
       // the sender's identity dir so their own chat bubble can show
       // an inline preview of what they sent. Same filename layout as
       // the inbound path; the SPA renders both from the same endpoint.
@@ -1509,7 +1509,7 @@ namespace LXMF {
                 const size_t w = Storage::Streaming::write_streamed(
                     full.c_str(), /*use_sd=*/true, total, next_chunk);
                 if (w == total) { wrote_ok = true; backend = "sd"; }
-                else WARNINGF("LXMF: SD outbound write short (%u/%u) for %s — fallback to flash",
+                else WARNINGF("LXMF: SD outbound write short (%u/%u) for %s - fallback to flash",
                               (unsigned)w, (unsigned)total, on_disk);
                 if (!wrote_ok && SD.exists(full.c_str())) SD.remove(full.c_str());
               }
@@ -1532,7 +1532,7 @@ namespace LXMF {
           });
       // Resume sends a reboot interrupted mid-stamp-generation: every
       // outbox record still in GeneratingStamp has (should have) a
-      // payload sidecar on disk — re-queue the proof-of-work from it.
+      // payload sidecar on disk - re-queue the proof-of-work from it.
       // Records whose sidecar is gone (SD removed, write failed before
       // the reboot, RAM-fallback entry) flip to Failed so the UI never
       // shows a perpetual "generating stamp" that can't complete.
@@ -1551,7 +1551,7 @@ namespace LXMF {
               && read_pending_stamp_sidecar(path, &dest, &cost, &mid, nullptr)
               && cost >= 1;
           if (!ok) {
-            WARNINGF("LXMF: cannot resume stamped send (outbox seq %lu) — marking failed",
+            WARNINGF("LXMF: cannot resume stamped send (outbox seq %lu) - marking failed",
                      (unsigned long)seq);
             a.outbox->mutate_by_seq(seq, [](MessageRecord& m) {
               m.status = OutboxStatus::Failed;
@@ -1581,7 +1581,7 @@ namespace LXMF {
       // don't silently skip identity loading. Same applies in ensure_root()
       // and ensure_identity_dir().
       if (!filesystem.isDirectory(accts)) {
-        NOTICEF("LXMFGateway: %s is not a directory — no identities to load", accts);
+        NOTICEF("LXMFGateway: %s is not a directory - no identities to load", accts);
         return;
       }
       auto entries = filesystem.listDirectory(accts);
@@ -1612,7 +1612,7 @@ namespace LXMF {
         slot->display_name = "LXMF Identity";  // overridden by meta if present
         read_meta(*slot);
         // Load persisted ratchet ring (if any). Identities created on
-        // pre-ratchet builds won't have a file — that's fine, the ring
+        // pre-ratchet builds won't have a file - that's fine, the ring
         // stays empty and will populate on first announce.
         slot->ratchets.load(slot->ratchet_path(), filesystem);
         activate(*slot);
@@ -1639,7 +1639,7 @@ namespace LXMF {
     // destination hash matches `dest_hash`, persists the ring, and writes
     // the new pubkey into `out_pubkey` (must be 32 bytes wide).
     // Returns true on success. False means "no LXMF identity matches this
-    // destination" — the announce should not include a ratchet.
+    // destination" - the announce should not include a ratchet.
     static bool rotate_outbound_ratchet(const uint8_t* dest_hash, uint8_t* out_pubkey) {
       if (!dest_hash || !out_pubkey) return false;
       RNS::Bytes dh(dest_hash, 16);

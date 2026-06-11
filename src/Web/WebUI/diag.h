@@ -1,18 +1,18 @@
-// Auto-extracted domain handlers for Web::WebUI — heap / allocation
+// Auto-extracted domain handlers for Web::WebUI - heap / allocation
 // diagnostics. Included from inside the class body of Web::WebUI in
 // WebUI.h: this file has NO include guard, NO `#pragma once`, and is not
 // a standalone translation unit. The static methods below stay
 // implicit-inline because they sit inside the class body via the
 // surrounding #include directive.
 
-    // GET /api/diag/mem — internal-SRAM / DMA / PSRAM headroom snapshot.
+    // GET /api/diag/mem - internal-SRAM / DMA / PSRAM headroom snapshot.
     //
     // Bearer-auth gated on purpose: heap internals are not public, and
     // /api/info (which IS served unauthed for the login screen) no
     // longer carries them. Two distinct troughs are reported:
-    //   * min_free_internal — exact since-boot low, tracked by IDF
+    //   * min_free_internal - exact since-boot low, tracked by IDF
     //     inside the allocator (never misses a transient dip).
-    //   * window_low         — resettable per-window low fed by the
+    //   * window_low         - resettable per-window low fed by the
     //     esp_timer sampler (Common::HeapWatermark). POST to reset it so
     //     a measurement window can be compared without rebooting.
     static void handle_diag_mem(AsyncWebServerRequest* req) {
@@ -51,7 +51,7 @@
       doc["ws_clients"]        = ws_clients;
       doc["ws_queue"]          = (uint32_t)ws_queue;
       // Outbound LoRa packets dropped because the TX ring was full (radio
-      // couldn't keep up — e.g. a duty-cycle airtime lock holding the queue).
+      // couldn't keep up - e.g. a duty-cycle airtime lock holding the queue).
       // Non-zero + climbing means user/announce TX is being silently lost.
       doc["lora_tx_dropped"]   = (uint32_t)lora_tx_dropped;
       // Bytes currently held in the TX flow-control queue (frames waiting for
@@ -120,7 +120,7 @@
       send_json(req, 200, doc);
     }
 
-    // POST /api/diag/mem — reset the window-low marker to the current
+    // POST /api/diag/mem - reset the window-low marker to the current
     // free-internal and stamp window_start_ms = now. Body ignored.
     static void handle_diag_mem_reset(AsyncWebServerRequest* req, JsonVariant& /*body*/) {
       if (require_auth(req).empty()) return;
@@ -131,23 +131,23 @@
       send_json(req, 200, doc);
     }
 
-    // GET /api/diag/storage — SD card space + attachment-staging writer health.
+    // GET /api/diag/storage - SD card space + attachment-staging writer health.
     //
     // The writer counters are the headline reliability metrics for large
     // uploads (the staging write path runs entirely on the dedicated SD writer
     // task, off AsyncTCP):
-    //   * sd_bytes_written      — KiB the writer has committed to the card
-    //   * sd_write_errors       — checked POSIX write/fsync failures (target 0;
+    //   * sd_bytes_written      - KiB the writer has committed to the card
+    //   * sd_write_errors       - checked POSIX write/fsync failures (target 0;
     //     nonzero means the card or SPI clock is the bottleneck)
-    //   * sd_ring_timeouts      — upload chunks that gave up waiting for a full
+    //   * sd_ring_timeouts      - upload chunks that gave up waiting for a full
     //     ring to drain (target 0; nonzero means the card can't keep up with
     //     the inflow and uploads are being failed cleanly)
-    //   * sd_feed_max_block_ms  — longest the chunk handler ever blocked on a
+    //   * sd_feed_max_block_ms  - longest the chunk handler ever blocked on a
     //     full ring = longest the AsyncTCP task was frozen by an SD stall. The
     //     responsiveness metric; should stay small (tens of ms).
-    //   * sd_feed_slow_blocks   — count of chunk handler blocks over 250 ms.
-    //   * sd_finish_max_ms      — worst finalize join (drain+fsync) on the web task
-    //   * sd_writer_stack_free  — writer-task minimum free stack, bytes
+    //   * sd_feed_slow_blocks   - count of chunk handler blocks over 250 ms.
+    //   * sd_finish_max_ms      - worst finalize join (drain+fsync) on the web task
+    //   * sd_writer_stack_free  - writer-task minimum free stack, bytes
     // Space is the cached free-space (SDCard::refresh_used_cache); reported in
     // KiB so the 64-bit byte counts fit a uint32 (a 64 GB card is ~67 M KiB).
     static void handle_diag_storage(AsyncWebServerRequest* req) {
@@ -171,7 +171,7 @@
     }
 
 #if defined(URTN_HEAP_TRACE)
-    // GET /api/diag/heaptrace — live allocations aggregated by caller (innermost
+    // GET /api/diag/heaptrace - live allocations aggregated by caller (innermost
     // two return addresses), sorted by bytes, each tagged `where`:internal|psram.
     // In leak-finder mode (default) only internal-SRAM blocks appear; fetch twice
     // minutes apart and the site whose `bytes` grows is the leak. In threshold-
@@ -209,7 +209,7 @@
 #endif
 
 #if defined(URTN_LOOP_DIAG)
-    // GET /api/diag/loop — per-section maxima (microseconds) of the main loop,
+    // GET /api/diag/loop - per-section maxima (microseconds) of the main loop,
     // to find which step holds the single-threaded loop long enough to starve
     // LoRa receive. POST zeroes them so a caller can measure a clean window.
     // Compiled in only for -DURTN_LOOP_DIAG instrumented builds.
@@ -237,7 +237,7 @@
       rs["interfaces"] = RNS::Reticulum::loop_interfaces_ms();
       rs["fs"]         = RNS::Reticulum::loop_fs_ms();
       rs["txloop"]     = RNS::Reticulum::loop_txloop_ms();
-      // Largest backbone TCP backlog seen at a service() entry since reset —
+      // Largest backbone TCP backlog seen at a service() entry since reset -
       // confirms bursts are landing (the freeze condition) and that the per-call
       // drain budget is keeping the loop bounded despite them.
       doc["tcp_max_burst_bytes"] = TCPClientInterface::max_burst_bytes;
@@ -255,7 +255,7 @@
     }
 #endif  // URTN_LOOP_DIAG
 
-    // GET /api/diag/transport — forwarding counters for a transit (bridge) node.
+    // GET /api/diag/transport - forwarding counters for a transit (bridge) node.
     // linkreqs_* count link requests received / relayed onward / terminated
     // here; link_transit_* count link/resource packets relayed between
     // interfaces (in, forwarded, forwarded-onto-LoRa, dropped on hop mismatch).
@@ -266,7 +266,7 @@
       doc["linkreqs_fwd"]          = RNS::Transport::linkreqs_fwd();
       doc["linkreqs_local"]        = RNS::Transport::linkreqs_local();
 #if defined(URTN_LINK_DIAG)
-      // Link-handshake stage counters — bisect a stuck direct-link establishment.
+      // Link-handshake stage counters - bisect a stuck direct-link establishment.
       // Only populated in a -DURTN_LINK_DIAG build (counters are no-ops otherwise).
       doc["links_initiated"]       = RNS::Transport::links_initiated();
       doc["lrproofs_sent"]         = RNS::Transport::lrproofs_sent();
@@ -288,7 +288,7 @@
       doc["link_transit_drop"]     = RNS::Transport::link_transit_drop();
       doc["packets_received"]      = RNS::Transport::packets_received();
       // Path-store (microStore) write/compaction counters since boot. Sample
-      // the delta over a window to get puts/sec + compactions/window — the
+      // the delta over a window to get puts/sec + compactions/window - the
       // write-rate reference for the known-destinations store migration (#95).
       {
         auto ps = RNS::Transport::path_store_stats();

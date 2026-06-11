@@ -15,7 +15,7 @@ namespace LXMF {
   static constexpr size_t HEADER_LEN = HASH_LEN + SIG_LEN;  // 80 bytes
 
   // LXMF fields-dict tags we recognise (LXMF-upstream/LXMF/LXMF.py).
-  // Only the file-shaped tags are persisted on-device for now —
+  // Only the file-shaped tags are persisted on-device for now -
   // FIELD_TELEMETRY / FIELD_RENDERER / FIELD_TICKET / etc. flow through
   // as unparsed bytes that the SPA can read out of /api/info if it
   // ever needs them.
@@ -23,12 +23,12 @@ namespace LXMF {
   static constexpr uint8_t FIELD_IMAGE            = 0x06;
   static constexpr uint8_t FIELD_AUDIO            = 0x07;
 
-  // Identity identifier — the first 16 hex chars of an Identity's hexhash.
+  // Identity identifier - the first 16 hex chars of an Identity's hexhash.
   using IdentityId = std::string;
 
   // Stored message text + attachment metadata live in PSRAM, not the scarce
   // internal SRAM heap. With the default allocator a std::string under
-  // HEAP_EXTMEM_THRESHOLD (256 B) lands in internal — and an inbox of records
+  // HEAP_EXTMEM_THRESHOLD (256 B) lands in internal - and an inbox of records
   // does that for every title/filename/mime, tens of KB that grow with the ring.
   // ContainerAllocator routes them to PSRAM regardless of size, matching
   // RNS::Bytes (already PSRAM-backed). These are the in-memory storage types;
@@ -103,13 +103,13 @@ namespace LXMF {
   }
 
   // Attachment metadata persisted alongside a MessageRecord. The actual
-  // bytes live at <a->dir()>/attachments/<filename> — we just store a
+  // bytes live at <a->dir()>/attachments/<filename> - we just store a
   // pointer so the inbox JSONL line stays small (the body itself is
   // capped at LXMF_MAX_BODY_BYTES per LXMFMinimal.h, and per-attachment
   // name + mime are capped via LXMF_MAX_ATTACHMENT_NAME / _MIME).
   //
   // tag matches the LXMF FIELD_* constant. filename is the on-disk stem
-  // ("<msg_hash_hex>_<tag>_<n>.bin") generated at receive time — used
+  // ("<msg_hash_hex>_<tag>_<n>.bin") generated at receive time - used
   // as the URL path on /api/.../attachments/<filename>. display_name
   // is the sender-supplied original name (Sideband convention) and is
   // ONLY for UI display + download-prompt; never trust it for disk
@@ -133,7 +133,7 @@ namespace LXMF {
   // Ordering: the authoritative in-device ordering key is the tuple
   // (boot_epoch, received_ms), NOT received_ms alone. millis() resets
   // to 0 on each reboot, so received_ms is only monotonic within a
-  // single boot session — boot_epoch (incremented at each boot and
+  // single boot session - boot_epoch (incremented at each boot and
   // persisted via Web::BootCounter) makes the tuple globally monotonic
   // across reboots. `ts` is the LXMF wire timestamp; it depends on
   // peer clocks and is not reliable for sorting.
@@ -144,7 +144,7 @@ namespace LXMF {
   struct MessageRecord {
     uint32_t      seq         = 0;       // Monotonic per-identity-per-mailbox sequence number (inbox and outbox have independent counters).
     double        ts          = 0.0;     // LXMF timestamp (peer's clock for incoming, local for outgoing). Display-only; not reliable for ordering when peer clocks aren't synced.
-    uint32_t      boot_epoch  = 0;       // Web::BootCounter value at append time. Combined with received_ms forms (boot_epoch, received_ms) — a tuple monotonic across reboots.
+    uint32_t      boot_epoch  = 0;       // Web::BootCounter value at append time. Combined with received_ms forms (boot_epoch, received_ms) - a tuple monotonic across reboots.
     uint32_t      received_ms = 0;       // millis() at the moment this record was appended to its inbox/outbox. Monotonic only within boot_epoch.
     RNS::Bytes    peer_hash;             // Remote LXMF address (16 bytes). For incoming: source. For outgoing: destination.
     PsString      title;                 // LXMF title field (often empty).
@@ -157,7 +157,7 @@ namespace LXMF {
     // LXMF delivery-stamp state, mirroring upstream LXMessage.stamp_value /
     // stamp_valid / stamp_checked. checked=false means no stamp policy
     // applied (no inbound cost configured, or an outbound send to a peer
-    // that requires none) — value/valid are then meaningless. For incoming
+    // that requires none) - value/valid are then meaningless. For incoming
     // messages valid records whether the sender's stamp met OUR announced
     // cost; for outgoing, the stamp we generated (always valid). value is
     // the stamp's leading-zero-bit score; -1 when no stamp was present.
@@ -167,7 +167,7 @@ namespace LXMF {
     PsVector<AttachmentMeta> attachments;  // Empty for messages without LXMF fields.
   };
 
-  // The inbox/outbox ring lives in PSRAM too — the record structs (and thus the
+  // The inbox/outbox ring lives in PSRAM too - the record structs (and thus the
   // PsString control blocks + small SSO buffers they carry) sit in the deque's
   // own blocks, so PSRAM-back the deque to keep them off internal SRAM.
   using MessageRing = std::deque<MessageRecord, PsAlloc<MessageRecord>>;

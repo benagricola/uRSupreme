@@ -1,6 +1,6 @@
 #pragma once
 
-// Improv WiFi over Serial — https://www.improv-wifi.com/serial/
+// Improv WiFi over Serial - https://www.improv-wifi.com/serial/
 //
 // ESP Web Tools opens the USB CDC port for flashing and keeps the
 // handle alive across the post-flash reboot. Once the device boots,
@@ -95,10 +95,10 @@ namespace _detail {
   inline bool& prov_in_progress() { static bool b = false; return b; }
   inline uint32_t& prov_started_ms() { static uint32_t t = 0; return t; }
 
-  // The "effective state" — what GET_CURRENT_STATE should answer right
+  // The "effective state" - what GET_CURRENT_STATE should answer right
   // now. Computed dynamically from WiFi.status() so a device that boots
   // with saved STA creds reports PROVISIONED (not the stale AUTHORIZED
-  // from a cached variable). PROVISIONING wins over both — it's the
+  // from a cached variable). PROVISIONING wins over both - it's the
   // mid-flight WIFI_SETTINGS substate driven by Improv::loop.
   inline uint8_t effective_state() {
     if (prov_in_progress())              return STATE_PROVISIONING;
@@ -108,7 +108,7 @@ namespace _detail {
 
   // Buffer the whole frame and emit via one Serial.write(buf, len) call.
   // Arduino's HWCDC::write() takes a per-call TX lock but releases it
-  // between calls — so a sequence of one-byte writes can be sandwiched
+  // between calls - so a sequence of one-byte writes can be sandwiched
   // by a Log.h NOTICEF/WARNINGF emitted from another FreeRTOS task
   // (the WebUI server task is on a different core). The host's Improv
   // parser would then see a corrupted frame. Writing once locks once.
@@ -208,7 +208,7 @@ namespace _detail {
 
   inline void handle_identify() {
     Common::Status::say("Improv: identify", 5000);
-    // IDENTIFY has no RPC_RESULT data per spec — implementations
+    // IDENTIFY has no RPC_RESULT data per spec - implementations
     // typically blink an LED / buzz. We surface a Status message so
     // the OLED ticker (when integrated) shows the device is being
     // physically located.
@@ -228,7 +228,7 @@ namespace _detail {
     memcpy(ssid, data + 1,                 ssid_len);
     memcpy(psk,  data + 1 + ssid_len + 1,  psk_len);
     NOTICEF("Improv: WIFI_SETTINGS ssid='%s'", ssid);
-    // 35 s TTL — slightly longer than PROVISION_TIMEOUT_MS so the
+    // 35 s TTL - slightly longer than PROVISION_TIMEOUT_MS so the
     // "provisioning…" message naturally ages out by the time the
     // success / failure message lands, and doesn't permanently win
     // the latest() lookup against the TTL'd success message.
@@ -237,7 +237,7 @@ namespace _detail {
     // EEPROM-persist via the shared helper, then route through the
     // existing wr_pending pump so the WifiPhase machine in Remote.h
     // drives the APSTA + STA transitions. req=nullptr signals "no HTTP
-    // response to send" — drain_wifi_provision_response() early-outs
+    // response to send" - drain_wifi_provision_response() early-outs
     // and Improv::loop() handles the response over serial instead.
     wifi_remote_eeprom_write_sta_creds(ssid, psk);
     if (wr_pending.parked || wr_pending.pending) {
@@ -363,7 +363,7 @@ inline void loop() {
     prov_in_progress() = false;
     send_current_state();   // STATE_PROVISIONED via effective_state()
     NOTICEF("Improv: STA up, IP %s", WiFi.localIP().toString().c_str());
-    // No IP-on-marquee affirmation — the WiFi icon shows connected
+    // No IP-on-marquee affirmation - the WiFi icon shows connected
     // state and the URL has already been handed back over USB-CDC to
     // the web flasher. Clear so the "Improv: provisioning" message
     // doesn't linger.
@@ -374,7 +374,7 @@ inline void loop() {
     send_current_state();   // STATE_AUTHORIZED via effective_state()
     NOTICE("Improv: provisioning timed out");
     Common::Status::say("Improv: connect failed");   // sticky
-    // Cancel the pending provision in the WifiPhase machine too —
+    // Cancel the pending provision in the WifiPhase machine too -
     // otherwise the AP teardown timer keeps ticking.
     wr_pending.pending = false;
   }

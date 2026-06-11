@@ -4,7 +4,7 @@
 // with the microSD slot (CS=34 for IMU, CS=47 for SD). We borrow the
 // SPIClass instance from SDCard::ensure_shared_bus() so both devices
 // drive the same bus through different chip-selects. Concurrent
-// transactions are not expected — IMU pump runs from the main loop
+// transactions are not expected - IMU pump runs from the main loop
 // once per interval, SD writes happen synchronously from LXMF persist
 // callbacks; both serialise on the FreeRTOS scheduler.
 //
@@ -15,7 +15,7 @@
 //   * chip temperature
 // What we don't expose yet:
 //   * Madgwick / Mahony fusion for absolute orientation. Not needed
-//     for the popover — the magnetometer already gives heading.
+//     for the popover - the magnetometer already gives heading.
 //   * Interrupt-driven reads. The poll-on-interval pattern is plenty
 //     for the system-popover use case.
 
@@ -47,7 +47,7 @@ struct Reading {
 // Motion-detection thresholds. The IMU runs at a long-ish poll
 // interval (default 60 s), so any "motion" we surface here is the
 // difference between two snapshots one interval apart. We compare
-// gravity-removed accel magnitude — gyro is noisier and the GPS-reset
+// gravity-removed accel magnitude - gyro is noisier and the GPS-reset
 // use case cares about translation, not rotation. The hysteresis is
 // deliberately loose: the goal is to spot "the device was picked up
 // and walked somewhere" not "someone breathed on it". The default
@@ -71,12 +71,12 @@ namespace _detail {
 inline bool begin() {
 #if defined(BOARD_MODEL) && (BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1)
   // Share the SPI bus the SDCard module set up. begin() form here is
-  // (SPIClass&, cs, mosi, miso, sck) — the trailing pin args are
+  // (SPIClass&, cs, mosi, miso, sck) - the trailing pin args are
   // ignored when the bus is already begin()'d, but SensorLib still
   // expects them for cs-pinMode init.
   SPIClass* bus = Storage::SDCard::ensure_shared_bus();
   if (!bus) {
-    NOTICE("QMI8658: shared SPI bus unavailable — not on a Supreme board");
+    NOTICE("QMI8658: shared SPI bus unavailable - not on a Supreme board");
     return false;
   }
   // SensorLib's SPI begin signature: (cs, mosi, miso, sck, spi_ref).
@@ -131,7 +131,7 @@ inline void pump() {
     // would corrupt the SD transfer. See Storage::SDCard::BusGuard.
     Storage::SDCard::BusGuard _bg;
     // getDataReady() is cheap; if neither domain has fresh data yet,
-    // skip — we'll catch it on the next poll.
+    // skip - we'll catch it on the next poll.
     if (!_detail::sensor().getDataReady()) return;
     _detail::sensor().getAccelerometer(acc.x, acc.y, acc.z);
     _detail::sensor().getGyroscope(gyr.x, gyr.y, gyr.z);
@@ -147,7 +147,7 @@ inline void pump() {
   r.gyro_z_dps  = gyr.z;
   r.temp_c      = temp_c;
   r.valid       = true;
-  // Motion detection — compare gravity-removed magnitude against
+  // Motion detection - compare gravity-removed magnitude against
   // the previous snapshot's. Skip if there's no previous (first
   // valid reading), and respect the cooldown so a long walk doesn't
   // fire dozens of reset_backoff() pings.

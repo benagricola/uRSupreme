@@ -41,7 +41,7 @@ public:
   inline static void (*rx_pump)() = nullptr;
 
   // Diagnostic: largest TCP backlog (bytes buffered) seen at a service() entry.
-  // A big value confirms backbone bursts are landing — the condition that, when
+  // A big value confirms backbone bursts are landing - the condition that, when
   // drained unbounded, froze the loop. Read/reset via /api/diag/loop.
   inline static uint32_t max_burst_bytes = 0;
 
@@ -133,7 +133,7 @@ protected:
         HDLC::encode(data, framed);
         size_t written = _client.write(framed.data(), framed.size());
         if (written != framed.size()) {
-          // Partial write — drop the connection so we resync on next reconnect
+          // Partial write - drop the connection so we resync on next reconnect
           _client.stop();
           _state = State::DISCONNECTED;
           _online = false;

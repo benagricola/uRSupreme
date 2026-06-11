@@ -1,4 +1,4 @@
-// Battery telemetry — voltage / percent / charge state plus a derived
+// Battery telemetry - voltage / percent / charge state plus a derived
 // dV/dt slope over a sliding window.
 //
 // The slope (mV/min while discharging) is the load-bearing metric for
@@ -6,7 +6,7 @@
 // hardware that doesn't expose direct battery-current measurement.
 //
 // AXP2101 (T-Beam Supreme) does not expose a getBattDischargeCurrent()
-// accessor — that method is AXP192-only. So on Supreme builds we
+// accessor - that method is AXP192-only. So on Supreme builds we
 // infer relative current from voltage slope. AXP192 boards get the
 // true current alongside (via the Sensors::AXP2101 wrapper which
 // gracefully routes AXP192 discharge_ma() too).
@@ -136,7 +136,7 @@ inline Snapshot current() {
   }
   // AXP2101's built-in percent reading is unreliable on shipped FW
   // (returns 0 on many units). Compute from voltage instead, same as
-  // Power.h's measure_battery — caller can override with a calibrated
+  // Power.h's measure_battery - caller can override with a calibrated
   // table later if needed.
   if (has_batt && s.voltage_v > 0.0f) {
     constexpr float V_MIN = 3.30f;
@@ -148,7 +148,7 @@ inline Snapshot current() {
   }
   // PMU die temperature (AXP2101 only). The 18650 cell on these boards
   // has no thermistor wired to the PMU, so this is the AXP2101's *own*
-  // die temp — useful for spotting heat during charge or hot-load.
+  // die temp - useful for spotting heat during charge or hot-load.
   bool t_ok = false;
   const float t = Sensors::AXP2101::temperature_c(&t_ok);
   if (t_ok) {

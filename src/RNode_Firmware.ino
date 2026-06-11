@@ -57,7 +57,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include "Utilities.h"
-#include "Improv.h"   // Improv WiFi over USB CDC — taps Serial.read in buffer_serial
+#include "Improv.h"   // Improv WiFi over USB CDC - taps Serial.read in buffer_serial
 
 // CBA SD
 #if HAS_SDCARD
@@ -108,13 +108,13 @@ volatile uint16_t queued_bytes = 0;
 volatile uint16_t queue_cursor = 0;
 volatile uint16_t current_packet_start = 0;
 // Count of outbound LoRa packets dropped because the TX ring was full
-// (the radio could not keep up — e.g. duty-cycle airtime lock holding the
+// (the radio could not keep up - e.g. duty-cycle airtime lock holding the
 // queue, or a genuine burst). Exposed via diag so a full queue is visible
 // instead of a silent drop.
 volatile uint32_t lora_tx_dropped = 0;
 // Per-type LoRa TX breakdown (diagnostic): classify every frame accepted for
 // transmit by its RNS packet type (raw[0] & 0x03). Pins what saturates the LoRa
-// duty cycle on the rmap-bridging AP node — announce flood vs path-request flood
+// duty cycle on the rmap-bridging AP node - announce flood vs path-request flood
 // vs data forwards. Indexed by packet type: 0 DATA, 1 ANNOUNCE, 2 LINKREQUEST,
 // 3 PROOF.
 volatile uint32_t lora_tx_by_type[4] = {0, 0, 0, 0};
@@ -150,13 +150,13 @@ void update_csma_parameters();
 
 #ifdef HAS_RNS
 // TX flow control (upstream RNodeInterface.process_outgoing / packet_queue
-// parity). When the modem ring is full — duty-cycle airtime lock holding it,
-// or a Resource dumping parts faster than a slow link drains — HOLD frames in
+// parity). When the modem ring is full - duty-cycle airtime lock holding it,
+// or a Resource dumping parts faster than a slow link drains - HOLD frames in
 // this PSRAM-backed queue and meter them into the ring as it frees, instead of
 // dropping them. Silent drops were failing multi-hop link/Resource delivery:
 // the LINKREQUEST / LRPROOF / Resource parts (~355 B) hit a full ring and
 // vanished, so the link never reached ACTIVE. Bounded so a genuinely stuck
-// radio can't exhaust memory — only a full hold queue forces a last-resort drop.
+// radio can't exhaust memory - only a full hold queue forces a last-resort drop.
 std::deque<RNS::Bytes> tx_hold_queue;
 volatile uint32_t tx_hold_bytes = 0;
 #define TX_HOLD_MAX_BYTES (64u * 1024u)
@@ -205,7 +205,7 @@ protected:
       // Flow control. Drain any held frames first so ordering is preserved,
       // then enqueue this frame whole if the ring has room; otherwise HOLD it
       // (bounded) rather than dropping, so a burst that outruns a duty-cycle-
-      // limited link survives. lora_ring_enqueue is an all-or-nothing write —
+      // limited link survives. lora_ring_enqueue is an all-or-nothing write -
       // the ring is bounds-checked before it, so it never writes a partial
       // packet (which would leave current_packet_start stale and mis-measure
       // the next packet's length).
@@ -224,7 +224,7 @@ protected:
                  "(dropped_total=%lu)", (unsigned)tx_hold_bytes, (unsigned)len,
                  (unsigned long)lora_tx_dropped);
       }
-      // Post-send housekeeping (tx byte accounting) — once per accepted frame.
+      // Post-send housekeeping (tx byte accounting) - once per accepted frame.
       if (accepted) {
 #if defined(URTN_LINK_DIAG)
         lora_tx_by_type[data.data()[0] & 0x03]++;
@@ -248,7 +248,7 @@ void on_log(const char* msg, RNS::LogLevel level) {
   // CMD_DATA frames. Once we've flipped into MODE_TNC (host has sent
   // CMD_DETECT and the radio is up) wrap log lines in CMD_LOG KISS
   // frames so a KISS decoder either displays them on its own pane or
-  // silently discards them — but the radio byte stream stays clean.
+  // silently discards them - but the radio byte stream stays clean.
   //
   // Exception: the kiss_serial_output toggle is the user's
   // override for "I want a clean text monitor on USB, KISS host be
@@ -492,19 +492,19 @@ static void start_display_refresh_task() {
 }
 
 
-// Alloc-failure hook — fires from inside heap_caps_malloc when it returns
+// Alloc-failure hook - fires from inside heap_caps_malloc when it returns
 // NULL. We get the requested size, requested caps, and the calling
 // function name. Logs the failure plus calls heap_caps_dump for the
 // requested cap mask so we see every live block in that pool at the
 // failure moment. Block size patterns identify the consumer (many
 // 1500-byte blocks = lwIP pbufs, one 24KB block = WiFi rxbuf, etc).
 //
-// Throttle to one dump per second — if alloc failures cascade we don't
+// Throttle to one dump per second - if alloc failures cascade we don't
 // want to drown serial.
 static void on_heap_alloc_failed(size_t size, uint32_t caps, const char* function_name) {
   static uint32_t last_dump_ms = 0;
   const uint32_t now = millis();
-  ERRORF("[HEAP-FAIL] %s requested %u bytes caps=0x%x — dma_free=%u dma_largest=%u int_free=%u int_largest=%u",
+  ERRORF("[HEAP-FAIL] %s requested %u bytes caps=0x%x - dma_free=%u dma_largest=%u int_free=%u int_largest=%u",
          function_name ? function_name : "?",
          (unsigned)size, (unsigned)caps,
          (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
@@ -518,7 +518,7 @@ static void on_heap_alloc_failed(size_t size, uint32_t caps, const char* functio
   esp_backtrace_print(10);
   if (now - last_dump_ms > 1000) {
     last_dump_ms = now;
-    // Dump heap info for the requested caps mask — prints each free
+    // Dump heap info for the requested caps mask - prints each free
     // block size + count per region. Reveals fragmentation pattern.
     heap_caps_print_heap_info(caps);
   }
@@ -579,7 +579,7 @@ void setup() {
 
   // Allocate the four big radio/UART buffers in PSRAM (~14 KB freed
   // from internal SRAM on PSRAM boards). MUST happen before fifo_init.
-  // No graceful failure path — these are required to operate; panic
+  // No graceful failure path - these are required to operate; panic
   // early if both PSRAM and internal allocations are out.
   serialBuffer       = (uint8_t*)psram_or_internal(CONFIG_UART_BUFFER_SIZE + 1);
   packet_queue       = (uint8_t*)psram_or_internal(CONFIG_QUEUE_SIZE);
@@ -619,7 +619,7 @@ void setup() {
   // Heap diagnostics. The alloc-failure callback fires with a backtrace +
   // pool dump when any heap_caps_malloc returns NULL. The watermark timer
   // samples internal-SRAM free continuously. Both are display-independent.
-  // The old 1 Hz serial [HEAP] sampler task is gone — its data is served
+  // The old 1 Hz serial [HEAP] sampler task is gone - its data is served
   // over /api/diag/mem instead (exact since-boot trough + resettable
   // per-window low), which avoids the two-tasks-tangling-Serial problem.
   heap_caps_register_failed_alloc_callback(on_heap_alloc_failed);
@@ -630,7 +630,7 @@ void setup() {
 
 #if defined(ESP32)
   // Route generic heap allocations >= this size to PSRAM, leaving scarce
-  // internal SRAM for the allocations that MUST be internal — WiFi
+  // internal SRAM for the allocations that MUST be internal - WiFi
   // esf_buf, lwIP pbufs and DMA descriptors request MALLOC_CAP_INTERNAL /
   // MALLOC_CAP_DMA explicitly and bypass this threshold, so the relief is
   // one-directional: our message bodies, JSON/HTTP scratch and container
@@ -655,7 +655,7 @@ void setup() {
 
   // Reserve 32 KiB (2 x 16 KiB) of MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL
   // for Token's AES staging scratch. This MUST happen before BLE and
-  // WiFi initialise — once they're up they consume most of the DMA-cap
+  // WiFi initialise - once they're up they consume most of the DMA-cap
   // heap and a 16 KiB allocation reliably fails.
   //
   // Runtime equivalent of CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768,
@@ -667,11 +667,11 @@ void setup() {
   //
   // Soft-fail: if the alloc doesn't succeed (extremely unlikely at
   // this point in boot, would mean total heap exhaustion), Token
-  // falls back to direct mbedtls_aes_crypt_cbc calls — works for
+  // falls back to direct mbedtls_aes_crypt_cbc calls - works for
   // small messages but crashes for big Resource transfers, i.e.
   // pre-fix behaviour.
   if (!RNS::Cryptography::Token::init_shared_scratch(4 * 1024)) {
-    printf("WARNING: Token AES scratch reservation failed at boot — "
+    printf("WARNING: Token AES scratch reservation failed at boot - "
            "big Resource transfers may fail under WiFi load\n");
   }
 #endif
@@ -794,7 +794,7 @@ void setup() {
 
   // Initialise buffers. The four PSRAM-allocated buffers
   // (serialBuffer, packet_queue, packet_starts_buf, packet_lengths_buf)
-  // use literal sizes — sizeof(ptr) would give 4 (the pointer size).
+  // use literal sizes - sizeof(ptr) would give 4 (the pointer size).
   memset(pbuf, 0, sizeof(pbuf));
   memset(cmdbuf, 0, sizeof(cmdbuf));
 
@@ -905,7 +905,7 @@ void setup() {
 
     #if HAS_BLUETOOTH || HAS_BLE == true
       // bt_init() populates `bt_dh` (device hash) and `bt_devname` as a
-      // side-effect. Several non-BT subsystems read those — softAP SSID
+      // side-effect. Several non-BT subsystems read those - softAP SSID
       // uses bt_devname, mDNS hostname (wr_hostname) is derived from
       // it, etc. Compute them up front from the efuse-backed BT MAC so
       // they're available regardless of whether we actually init the
@@ -928,19 +928,19 @@ void setup() {
       // from bt_init) loads the entire Bluedroid controller + host
       // stack, which consumes ~20-30 KB of internal SRAM permanently
       // regardless of whether advertising is started. On devices where
-      // BLE is disabled the cost is pure waste — and worse, it eats
+      // BLE is disabled the cost is pure waste - and worse, it eats
       // contiguous internal-SRAM blocks the WiFi driver needs for its
       // esf_buf (1626 B) and lwIP pbuf allocations under web load.
       //
       // If the user later enables BLE via the SPA, the device reboots
       // (existing behaviour for radio/wifi config changes), so init at
-      // boot is sufficient — no need to support runtime BLE toggle
+      // boot is sufficient - no need to support runtime BLE toggle
       // without reboot.
       if (EEPROM.read(eeprom_addr(ADDR_CONF_BT)) == BT_ENABLE_BYTE) {
         bt_init();
         bt_init_ran = true;
       } else {
-        NOTICEF("BLE: disabled in EEPROM — skipping bt_init() (frees ~20-30 KB internal SRAM, devname=%s)", bt_devname);
+        NOTICEF("BLE: disabled in EEPROM - skipping bt_init() (frees ~20-30 KB internal SRAM, devname=%s)", bt_devname);
       }
     #endif
 
@@ -955,7 +955,7 @@ void setup() {
         wifi_mode = EEPROM.read(eeprom_addr(ADDR_CONF_WIFI));
         // Boot policy: STA creds → STA-only at boot, no AP. If STA
         // doesn't reach WL_CONNECTED inside WR_STA_BEFORE_AP_DELAY_MS
-        // (Remote.h), the pump promotes the device to APSTA — recovery
+        // (Remote.h), the pump promotes the device to APSTA - recovery
         // AP comes up alongside the still-trying STA. Successful
         // STA-connect disarms the timer so subsequent runtime drops
         // never expose an AP; only a reboot can re-enter the
@@ -973,7 +973,7 @@ void setup() {
             wifi_remote_init();
             if (wifi_initialized) {
               Web::WebUI::bootstrap_mode = true;
-              NOTICE("WebUI: WiFi unconfigured — entered bootstrap softAP mode");
+              NOTICE("WebUI: WiFi unconfigured - entered bootstrap softAP mode");
             }
           }
         #endif
@@ -1104,21 +1104,21 @@ void setup() {
         }
       });
     }
-    // GPS — L76K on UART1, pins 8/9, EN on 7. Pumps NMEA into
+    // GPS - L76K on UART1, pins 8/9, EN on 7. Pumps NMEA into
     // the parser; valid RMC fixes call TimeManager::report_time
     // (Source::GPS) per the user-configured interval.
     {
       Sensors::L76K::Pins pins{ /*rx=*/9, /*tx=*/8, /*en=*/7, /*baud=*/9600 };
       Sensors::L76K::begin(Serial1, pins);
     }
-    // NTP — non-blocking SNTP against pool.ntp.org. Sync
+    // NTP - non-blocking SNTP against pool.ntp.org. Sync
     // happens when WiFi STA becomes ready; pump() handles adoption.
     Clock::Ntp::begin();
-    // SD card — mount the microSD slot if a card is inserted.
+    // SD card - mount the microSD slot if a card is inserted.
     // The card's power rails (BLDO1 + BLDO2 on the AXP2101) are
     // disabled by default in Power.h. Bring them up here, and do a
     // full power-cycle (off → wait → on) matching LilyGo's factory
-    // reference — some cards need the off-edge before they'll
+    // reference - some cards need the off-edge before they'll
     // initialise cleanly.
     if (PMU && PMU->getChipModel() == XPOWERS_AXP2101) {
       NOTICE("SDCard: power-cycling BLDO1/BLDO2 (AXP2101 SD rails)");
@@ -1138,7 +1138,7 @@ void setup() {
               (int)b1_on, b1_mV, (int)b2_on, b2_mV);
       Storage::SDCard::set_rail_state(b1_on, b1_mV, b2_on, b2_mV);
     } else {
-      NOTICEF("SDCard: PMU=%p chip=%d — not AXP2101, leaving rails alone",
+      NOTICEF("SDCard: PMU=%p chip=%d - not AXP2101, leaving rails alone",
               (void*)PMU, PMU ? (int)PMU->getChipModel() : -1);
     }
     Storage::SDCard::begin();
@@ -1164,19 +1164,19 @@ void setup() {
     // answers from microStore.
     //
     // Skipped on purpose:
-    //   - Exists / Remove / Mkdir / Rmdir / Rename — false return is
+    //   - Exists / Remove / Mkdir / Rmdir / Rename - false return is
     //     normal during routine path-table maintenance (does this
     //     segment file exist yet? remove this old version, mkdir if
     //     missing, etc.). microStore probes these constantly on the
     //     happy path; each one triggering SD.totalBytes() was choking
     //     the WiFi/loop task on the SX.
-    //   - Open(create=true) — handled by the Write/WriteFile path
+    //   - Open(create=true) - handled by the Write/WriteFile path
     //     when the subsequent write actually fails.
     //
     // Fired:
-    //   - Read / Write / Seek — mid-stream I/O on an already-open
+    //   - Read / Write / Seek - mid-stream I/O on an already-open
     //     handle. If these fail the card is genuinely gone.
-    //   - WriteFile — full-file write returned short.
+    //   - WriteFile - full-file write returned short.
     microStore::set_io_failure_callback(
         [](const char* path, microStore::IoOp op) {
             if (!path || strncmp(path, "/sd/", 4) != 0) return;
@@ -1188,7 +1188,7 @@ void setup() {
                     Storage::SDCard::verify_or_disable();
                     break;
                 default:
-                    // Negative answer from a probe is normal — don't
+                    // Negative answer from a probe is normal - don't
                     // hit the SDMMC bus.
                     break;
             }
@@ -1210,9 +1210,9 @@ void setup() {
     // Sweep transfer scratch orphaned by a reboot, a crash mid-transfer,
     // or a sender that died between split segments (the receiver's
     // cross-segment store has no in-flight resource to receive the ICL).
-    // Everything under the resource-tmp dirs is per-transfer state —
+    // Everything under the resource-tmp dirs is per-transfer state -
     // spilled ciphertext, split-sender input files, cross-segment
-    // receive stores — and no transfer can be in flight this early in
+    // receive stores - and no transfer can be in flight this early in
     // boot, so clear both wholesale. Upstream relies on its periodic
     // resource-cache cleaner for this; the port has no equivalent task.
     {
@@ -1247,14 +1247,14 @@ void setup() {
       return Storage::Config::effective_max_receive();
     });
     // Bring up the user/sensor I2C bus (Wire) at SDA=17 SCL=18
-    // — this is where BME280 lives (and where future QMC6310
+    // - this is where BME280 lives (and where future QMC6310
     // magnetometer + any other Wire-side sensors will sit). PMU /
     // RTC are on Wire1 (42/41), untouched by this.
     Wire.begin(17, 18);
     Sensors::BME280::begin(Wire);
-    // QMC6310 magnetometer — also on Wire (0x1C or 0x3C).
+    // QMC6310 magnetometer - also on Wire (0x1C or 0x3C).
     Sensors::QMC6310::begin(Wire);
-    // QMI8658 IMU — on the HSPI bus shared with the SD slot.
+    // QMI8658 IMU - on the HSPI bus shared with the SD slot.
     // Its begin() reuses SDCard::ensure_shared_bus() so we don't
     // double-init the bus.
     Sensors::QMI8658::begin();
@@ -1277,7 +1277,7 @@ void setup() {
 
     // If filesystem is essentially full then clear all path store files.
     // This is also the first (and only boot-time) free-space scan, so it warms
-    // the cache before WiFi/web/RNS tasks come up — after this every other
+    // the cache before WiFi/web/RNS tasks come up - after this every other
     // reader uses the non-blocking Storage::flash_free(), never scanning under
     // the rns_lock.
     if (Storage::flash_free_refresh() < 1024) {
@@ -1370,7 +1370,7 @@ void setup() {
         // MODE_FULL, matching upstream RNS (UDPInterface never sets a mode, so
         // _add_interface defaults it to FULL). A DISCOVER_PATHS_FOR mode here
         // (GATEWAY) would make this node rebroadcast every path request arriving
-        // over UDP onto all interfaces incl. the LoRa edge — the same duty-cycle
+        // over UDP onto all interfaces incl. the LoRa edge - the same duty-cycle
         // flood that the TCP default caused.
         Discovery::Config::apply_mode_ifac(udp_interface, udp_cfg,
                                            RNS::Type::Interface::MODE_FULL);
@@ -1439,7 +1439,7 @@ void setup() {
 #endif
       RNS::Destination destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "rnstransport", "local");
 
-      // Per-device network identity — generated on first boot and
+      // Per-device network identity - generated on first boot and
       // persisted to /lxmf/network_identity.bin. Independent of any
       // LXMF chat identity (survives factory_reset of an LXMF
       // identity, isolates chat keys from network-feature keys).
@@ -1451,7 +1451,7 @@ void setup() {
       // Load the per-interface discoverable config from
       // /reticulum/interfaces.json into Discovery's in-memory map.
       // Discovery::Announcer will consult that map when iterating
-      // RNS::Transport::get_interfaces() at announce time — no
+      // RNS::Transport::get_interfaces() at announce time - no
       // mirroring onto the interface objects themselves, single
       // source of truth. Privacy-by-design: empty file / missing
       // file = nothing discoverable.
@@ -1464,7 +1464,7 @@ void setup() {
       // Build the shared rnstransport.discovery.interface destination
       // signed by the persistent network identity. Setup is a no-op
       // if discovery is master-disabled (announcer.tick short-circuits
-      // anyway) — but the destination itself is always constructed so
+      // anyway) - but the destination itself is always constructed so
       // toggling the master enable at runtime doesn't need a reboot.
       Discovery::Announcer::setup();
 
@@ -1473,7 +1473,7 @@ void setup() {
       // Inbox cap + TTL config. Load before LXMFGateway::setup
       // so identity activation picks up the user's settings rather
       // than the compiled default. The TTL prune needs a wall-clock
-      // — wire TimeManager::now_epoch as the inbox clock source.
+      // - wire TimeManager::now_epoch as the inbox clock source.
       LXMF::LXMFInbox::set_now_epoch_provider(&Clock::Manager::now_epoch);
       LXMF::InboxConfig::load(filesystem);
       Storage::Config::load(filesystem);
@@ -1749,7 +1749,7 @@ bool startRadio() {
         radio_error = true;
         // Surface a CRITICAL log line + machine-readable hint over /api/info
         // (radio.error_reason). The most common cause is a wrong-variant
-        // flash (e.g. SX1262 firmware on an LR1121 board, or vice versa) —
+        // flash (e.g. SX1262 firmware on an LR1121 board, or vice versa) -
         // the SPI commands the compiled driver sends don't get the expected
         // responses from the actual chip, begin() returns false, and the
         // firmware otherwise comes up looking healthy while the radio
@@ -1774,7 +1774,7 @@ bool startRadio() {
             "board is different (a wrong-variant flash), re-flash with the env "
             "that matches the board's radio chip. WiFi / web UI stay up so "
             "recovery is possible without a power cycle.";
-        CRITICALF("Radio init failed — expected %s, chip not responding. "
+        CRITICALF("Radio init failed - expected %s, chip not responding. "
                   "Likely wrong-variant flash. See radio.error_reason in /api/info.",
                   radio_error_expected_chip);
         kiss_indicate_error(ERROR_INITRADIO);
@@ -1836,7 +1836,7 @@ bool queue_full() { return (queue_height >= CONFIG_QUEUE_MAX_LENGTH || queued_by
 
 #ifdef HAS_RNS
 // TX flow-control helpers (see the tx_hold_queue declaration above the
-// LoRaInterface class). lora_ring_enqueue is all-or-nothing — the caller
+// LoRaInterface class). lora_ring_enqueue is all-or-nothing - the caller
 // bounds-checks via lora_ring_has_space first, so it never writes a partial
 // packet into the ring.
 bool lora_ring_has_space(size_t len) {
@@ -3049,7 +3049,7 @@ void loop() {
     // mutations inside reticulum.loop(). The lock is released as
     // soon as the loop returns so the WebServer task can run during
     // the radio/serial/display work that follows. The lock only
-    // exists when the WebUI is compiled in — on builds without
+    // exists when the WebUI is compiled in - on builds without
     // HAS_LXMF_GATEWAY there's no second accessor and no lock.
 #if defined(HAS_LXMF_GATEWAY)
     Web::WebUI::RnsLockGuard guard;
@@ -3078,22 +3078,22 @@ void loop() {
 #endif
 
   // Drain whatever NMEA the GPS module shoved at us this
-  // tick. Cheap if no bytes pending. No rns_lock needed — the GPS
+  // tick. Cheap if no bytes pending. No rns_lock needed - the GPS
   // parser only touches its own static state and TimeManager (whose
   // adopt path is reentrant-safe).
 #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
   Sensors::L76K::pump();
-  // NTP — cheap when no transition; checks SNTP sync status
+  // NTP - cheap when no transition; checks SNTP sync status
   // and forwards to TimeManager when a fresh epoch lands. Gated on
   // WiFi STA connection internally.
   Clock::Ntp::pump();
-  // BME280 — periodic temp/humidity/pressure poll, gated by
+  // BME280 - periodic temp/humidity/pressure poll, gated by
   // the driver's own interval. No-op if the chip wasn't detected.
   Sensors::BME280::pump();
-  // QMC6310 magnetometer + QMI8658 IMU — same pattern.
+  // QMC6310 magnetometer + QMI8658 IMU - same pattern.
   Sensors::QMC6310::pump();
   Sensors::QMI8658::pump();
-  // Battery: voltage + state + sliding-window slope. Cheap — only
+  // Battery: voltage + state + sliding-window slope. Cheap - only
   // hits the PMU once per SAMPLE_PERIOD_MS, otherwise no-op.
   Telemetry::Battery::tick();
   // Discovery announce scheduler. Cheap on the no-op path (rate-
@@ -3102,7 +3102,7 @@ void loop() {
   Discovery::Announcer::tick();
 
   // Retention prune. Time-based expirations fire even when no fresh
-  // messages are arriving — without this, an idle device with TTL-
+  // messages are arriving - without this, an idle device with TTL-
   // based retention would let expired records linger until something
   // triggered append(). Run at a low cadence (60 s) since prune is
   // cheap on the no-op path but does a full ring walk otherwise.
@@ -3215,7 +3215,7 @@ void loop() {
       // shows the bootstrap UI for the duration.
       if (wr_runtime_softap && !Web::WebUI::bootstrap_mode) {
         Web::WebUI::bootstrap_mode = true;
-        NOTICE("WebUI: entered runtime softAP — bootstrap UI live");
+        NOTICE("WebUI: entered runtime softAP - bootstrap UI live");
       }
     #endif
     #if defined(TCP_TRANSPORT)
@@ -3229,8 +3229,8 @@ void loop() {
         URTN_LT(Common::LoopTiming::max_lxmf_us, LXMF::LXMFGateway::loop());
       }
       if (wifi_initialized) {
-        Web::WebUI::start();        // idempotent — runs once after WiFi STA is up
-        Web::WebUI::start_task();   // idempotent — spawns the WebServer FreeRTOS task once
+        Web::WebUI::start();        // idempotent - runs once after WiFi STA is up
+        Web::WebUI::start_task();   // idempotent - spawns the WebServer FreeRTOS task once
         URTN_LT(Common::LoopTiming::max_webui_us, Web::WebUI::loop());  // periodic sweep; handleClient() runs in the task
       }
     #endif
@@ -3353,7 +3353,7 @@ void button_event(uint8_t event, unsigned long duration) {
             (now - lxmf_long_press_armed_ms) < LXMF_GESTURE_WINDOW_MS) {
           lxmf_long_press_armed_ms = 0;
           Web::WebUI::on_button_request_identity_code();
-          // Gesture consumed — don't also toggle BT this press.
+          // Gesture consumed - don't also toggle BT this press.
           return;
         }
       #endif

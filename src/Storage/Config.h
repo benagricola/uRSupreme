@@ -15,7 +15,7 @@
 // physical capacity by construction.
 //
 // The seven legacy constants in OutboundStaging.h + Type.h keep their
-// roles as *inputs* to the resolver — they constrain which backend a
+// roles as *inputs* to the resolver - they constrain which backend a
 // transfer uses, not whether the transfer is allowed.
 //
 // SD removed mid-session: the saved user_max_* values are preserved

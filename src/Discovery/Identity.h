@@ -1,8 +1,8 @@
-// Network-level identity — a per-device RNS::Identity persisted to
+// Network-level identity - a per-device RNS::Identity persisted to
 // /reticulum/network_identity.bin and reused across boots.
 //
 // This is the analogue of upstream Reticulum's `network_identity`
-// config — a single stable keypair the device uses for cross-cutting
+// config - a single stable keypair the device uses for cross-cutting
 // network features that don't belong to any individual LXMF chat
 // identity. The first such feature is interface-discovery announces
 // (Discovery::Announcer, to land in a later commit) which sign
@@ -20,7 +20,7 @@
 //
 // Storage path is under /reticulum/ rather than /lxmf/ because this
 // is a Reticulum-level concern, not an LXMF concern (LXMF sits on
-// top of Reticulum). Survives a per-LXMF-identity factory reset —
+// top of Reticulum). Survives a per-LXMF-identity factory reset -
 // the user can rotate any chat identity without breaking their
 // device's network presence. One-shot migration moves the file
 // from the historical /lxmf/network_identity.bin location on first
@@ -60,7 +60,7 @@ namespace _detail {
 // subsequent calls return immediately.
 inline void ensure() {
   if (_detail::ready_ref()) return;
-  // Make sure /reticulum/ exists — microStore creates files but not
+  // Make sure /reticulum/ exists - microStore creates files but not
   // their parent dirs. Idempotent.
   if (!filesystem.isDirectory("/reticulum")) {
     filesystem.mkdir("/reticulum");
@@ -90,7 +90,7 @@ inline void ensure() {
     ERRORF("Discovery: failed to persist network identity to %s",
            PERSIST_PATH);
     // Hold the in-RAM one anyway so callers don't crash on null.
-    // It just won't survive reboot — the next ensure() will try
+    // It just won't survive reboot - the next ensure() will try
     // again and most likely succeed (transient FS error).
   } else {
     NOTICEF("Discovery: generated new network identity (hash=%s, persisted to %s)",
@@ -105,7 +105,7 @@ inline void ensure() {
 inline bool ready() { return _detail::ready_ref(); }
 
 // The persisted identity. Returns an "empty" Identity if ensure()
-// hasn't run yet — callers should check ready() first or expect
+// hasn't run yet - callers should check ready() first or expect
 // undefined behaviour from the returned object's methods.
 inline const RNS::Identity& get() { return _detail::slot(); }
 

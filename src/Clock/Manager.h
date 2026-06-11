@@ -1,4 +1,4 @@
-// TimeManager — unified wall-clock state for the firmware.
+// TimeManager - unified wall-clock state for the firmware.
 //
 // LXMF needs a real Unix epoch for the `ts` field on every outbound
 // message (peers display message times from it). Reticulum itself is
@@ -6,11 +6,11 @@
 // labels in the SPA, log timestamps, certificate expiry, etc.
 //
 // Sources, in default priority order (most trusted first):
-//   1. GPS         — UTC from a fix; works without internet
-//   2. NTP         — when WiFi-STA has an internet route
-//   3. Browser     — POST /api/time from the SPA, populated with the
+//   1. GPS         - UTC from a fix; works without internet
+//   2. NTP         - when WiFi-STA has an internet route
+//   3. Browser     - POST /api/time from the SPA, populated with the
 //                    user's wall clock
-//   4. RNS peer    — LXMF::calibrate_time(); the remote's `ts` field
+//   4. RNS peer    - LXMF::calibrate_time(); the remote's `ts` field
 //
 // Each source is independently enable-able from the SPA settings UI
 // (auth-gated) and the priority order is user-reorderable. When a
@@ -27,7 +27,7 @@
 // `seed_from_rtc()` once during setup.
 //
 // Storage: source config is persisted to `/lxmf/time.json` via
-// microStore's filesystem adapter — same pattern as identity meta
+// microStore's filesystem adapter - same pattern as identity meta
 // files and `/lxmf/transport.json`. The wall-clock offset itself is
 // in-memory only (reseeded from RTC at boot).
 
@@ -44,7 +44,7 @@ namespace Clock {
 namespace Manager {
 
 // User-configurable sources occupy indices 1..4 (GPS, NTP, Browser,
-// RNS). RTC is a display-only label for the cold-boot seed —
+// RNS). RTC is a display-only label for the cold-boot seed -
 // reported via source_name() but never exposed in the user's source
 // list and not accepted by source_from_name().
 enum class Source : uint8_t {
@@ -76,13 +76,13 @@ inline Source source_from_name(const char* name) {
   if (strcmp(name, "ntp")     == 0) return Source::NTP;
   if (strcmp(name, "browser") == 0) return Source::Browser;
   if (strcmp(name, "rns")     == 0) return Source::RNS;
-  // Note: "rtc" deliberately not accepted — it's a display label only,
+  // Note: "rtc" deliberately not accepted - it's a display label only,
   // not a user-selectable input source.
   return Source::None;
 }
 
 // Per-source config. `interval_s` is interpreted by the source's
-// driver — for GPS, how often to consume an NMEA RMC fix and report
+// driver - for GPS, how often to consume an NMEA RMC fix and report
 // it; for NTP, how often to refresh against pool.ntp.org. Ignored
 // for sources where polling doesn't apply (Browser, RNS).
 struct SourceConfig {
@@ -96,7 +96,7 @@ inline SourceConfig default_config(Source s) {
     // NTP is preferred over GPS by default: when WiFi has an internet
     // route the NTP path is faster (<1 s) and doesn't keep the GPS
     // chip warm. GPS remains enabled for offline-only deployments
-    // where WiFi isn't available — it just sits a step behind NTP in
+    // where WiFi isn't available - it just sits a step behind NTP in
     // the priority list. Users can re-order via the Time settings tab.
     case Source::NTP:     return { true,  0, 3600 };  // hourly NTP refresh
     case Source::GPS:     return { true,  1, 3600 };  // hourly GPS time reports
@@ -118,7 +118,7 @@ namespace _detail {
     };
     const uint8_t idx = (uint8_t)s;
     // Source::RTC (and any future non-user source) is out of array
-    // bounds — collapse to the "None" slot which carries the disabled
+    // bounds - collapse to the "None" slot which carries the disabled
     // default. RTC is never user-configured via cfg_ref anyway.
     if (idx >= SOURCE_COUNT) return c[0];
     return c[idx];
@@ -128,7 +128,7 @@ namespace _detail {
   inline int64_t& offset_seconds_ref()   { static int64_t v = 0; return v; }
   inline Source&  current_source_ref()   { static Source v = Source::None; return v; }
   inline uint8_t& current_priority_ref() { static uint8_t v = 255; return v; }
-  // RTC-seed hook — populated by the firmware-side RTC driver if the
+  // RTC-seed hook - populated by the firmware-side RTC driver if the
   // PCF8563 reads a sensible time at boot. Used for /api/info to
   // surface "we have an RTC value but no live source" state.
   inline bool& rtc_seed_applied_ref()    { static bool v = false; return v; }
@@ -151,7 +151,7 @@ namespace _detail {
   inline on_change_fn& on_change_ref() { static on_change_fn fn = nullptr; return fn; }
 }
 
-// Register a post-adopt callback. Only one slot — RtcPCF8563 takes
+// Register a post-adopt callback. Only one slot - RtcPCF8563 takes
 // it on the firmware's behalf. Pass nullptr to unhook.
 inline void set_on_adopt(_detail::on_adopt_fn fn) {
   _detail::on_adopt_ref() = fn;
@@ -179,7 +179,7 @@ inline Source current_source() { return _detail::current_source_ref(); }
 inline uint32_t last_calibrated_ms() { return _detail::last_calibrated_ms_ref(); }
 
 // Internal helper that bypasses source-priority gating. Used by the
-// RTC seed path at boot — RTC isn't a user-visible source so its
+// RTC seed path at boot - RTC isn't a user-visible source so its
 // values shouldn't compete in the priority list, but the wall clock
 // still needs a starting point if no live source reports. Marks
 // `rtc_seed_applied` so is_calibrated() returns true even before a
@@ -219,7 +219,7 @@ inline bool report_time(Source src, double epoch_seconds) {
   _detail::current_priority_ref() = cfg.priority;
   _detail::last_calibrated_ms_ref() = millis();
   // Fire the post-adopt hook (RTC write-through, etc). Exceptions
-  // here must not break the caller — the callback is fire-and-forget.
+  // here must not break the caller - the callback is fire-and-forget.
   if (_detail::on_adopt_ref()) {
     _detail::on_adopt_ref()(src, epoch_seconds);
   }
@@ -239,7 +239,7 @@ inline void set_config(Source s, const SourceConfig& cfg) {
 // pattern. Path is /lxmf/time.json. Schema:
 //   { sources: { gps: {enabled, priority, interval_s}, ntp: {...}, … } }
 // Caller passes the filesystem because microStore::FileSystem is
-// non-default-constructible — it owns its adapter (Posix/FlashFS/SD).
+// non-default-constructible - it owns its adapter (Posix/FlashFS/SD).
 inline constexpr const char* CONFIG_PATH = "/lxmf/time.json";
 
 inline void load_config(microStore::FileSystem& fs) {

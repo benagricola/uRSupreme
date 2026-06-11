@@ -60,7 +60,7 @@ button.is-busy { opacity: 0.55; cursor: progress; }
 @keyframes btn-spin { to { transform: rotate(360deg); } }
 
 /* Centred spinner for icon buttons (e.g. send). The .is-busy::before glyph
-   above prepends a spinner + margin, which doesn't fit a 44px icon button —
+   above prepends a spinner + margin, which doesn't fit a 44px icon button -
    here we swap the icon's SVG for this spinner instead, and keep the button at
    full opacity + progress cursor so it reads as "working", not "disabled". */
 .icon-spinner {
@@ -91,7 +91,7 @@ button.icon:hover { background: var(--bg-hover); border-color: var(--border); }
 button.icon:disabled { opacity: 0.4; cursor: not-allowed; }
 button.icon svg { width: 20px; height: 20px; display: block; }
 /* Close "✕" glyph, defined ONCE here as a mask so the (2+) close buttons carry
-   no inline SVG — add class="icon-x" to any .icon button to get it. The 44px
+   no inline SVG - add class="icon-x" to any .icon button to get it. The 44px
    button's flex centering sizes/positions the 20px glyph. */
 .icon-x::before {
   content: '';
@@ -124,7 +124,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .row > * { flex: 1; }
 .empty-state { padding: 32px 16px; text-align: center; color: var(--text-dim); font-size: 13px; }
 
-/* Stand-alone "page" views (bootstrap, identity picker, login) — single
+/* Stand-alone "page" views (bootstrap, identity picker, login) - single
    centered card with full-screen height. */
 .page {
   display: flex; flex-direction: column;
@@ -154,7 +154,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   overflow: hidden;
 }
 
-/* App-wide top bar — same row across both panes. The middle is
+/* App-wide top bar - same row across both panes. The middle is
    deliberately left empty so the top-centered toasts can land in it
    without overlapping any control. Identity details live on the
    left, announce icon next to them, radio + settings on the right. */
@@ -185,7 +185,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   pointer-events: none; overflow: hidden;
   background: transparent;
   /* Fallback indicator only for when the per-conversation progress rows aren't
-     on screen — i.e. the mobile thread view (shown below). Desktop and the
+     on screen - i.e. the mobile thread view (shown below). Desktop and the
      mobile list view already show progress in the contact list, so hide it. */
   display: none;
 }
@@ -256,7 +256,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 @media (max-width: 720px) {
   #topbar #self-info .name, #topbar #self-info .addr { max-width: 36vw; }
   #announce-countdown { display: none; }
-  /* On narrow screens the icon owns the slot — the percentage text
+  /* On narrow screens the icon owns the slot - the percentage text
      reads as redundant alongside the (now colour-coded + level-fill)
      battery glyph. Long-press / tap to open the popover for the exact
      percentage and the dV/dt slope. */
@@ -310,7 +310,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .conv-row .when { color: var(--text-dim); font-size: 11px; }
 /* Per-row ⋮ hamburger button. Hidden by default; the landscape mobile
    + tablet media query at the bottom of the stylesheet flips it on.
-   Right-click + long-press still open the menu on any viewport — only
+   Right-click + long-press still open the menu on any viewport - only
    the always-visible icon is breakpoint-gated. Smaller hit-area than
    the 44px topbar icons so it doesn't blow out the row height. */
 .conv-row .row-menu-btn {
@@ -350,7 +350,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   min-width: 18px; text-align: center;
 }
 
-/* Section headers inside the conversation list — small uppercase
+/* Section headers inside the conversation list - small uppercase
    label for the "Chats" / "Discovered" groupings. */
 .list-section {
   padding: 8px 14px 4px;
@@ -373,7 +373,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   transform: rotate(90deg);
 }
 
-/* Avatar identicon — rendered into a <span> by JS as an SVG. The
+/* Avatar identicon - rendered into a <span> by JS as an SVG. The
    data-online attribute adds a small green dot in the bottom-right
    corner to signal the peer was heard via announce in the last 60s. */
 .idc { display: inline-block; line-height: 0; flex-shrink: 0; position: relative; }
@@ -507,8 +507,8 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .modal.modal-tall {
   width: 100%; max-width: 560px;
   /* `100dvh` (dynamic viewport height) tracks the CURRENTLY visible
-     area, so Firefox Android's bottom address bar — and any other
-     collapsible browser chrome — actually counts. `100vh` returns
+     area, so Firefox Android's bottom address bar - and any other
+     collapsible browser chrome - actually counts. `100vh` returns
      the largest possible viewport, which was leaving tab content
      (notably Settings → App and Settings → Connectivity) sliding
      under the address bar on portrait phones. */
@@ -537,7 +537,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   /* Non-scrolling parts of .modal-tall must not get squeezed by the
      body's content. Without flex-shrink: 0, a tall tab-panel ends up
      compressing the header + tab-bar instead of the body's internal
-     scroller absorbing the overflow — visible on landscape phones
+     scroller absorbing the overflow - visible on landscape phones
      where the modal is height-constrained. */
   flex-shrink: 0;
 }
@@ -628,7 +628,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   overflow: hidden;
 }
 /* Small status dot shown in each accordion header. Colour comes from
-   the per-section JS — green when the transport is active and a peer
+   the per-section JS - green when the transport is active and a peer
    is connected, amber when configured-but-down, red on error. Hidden
    by default; populateConnectivityTab toggles `hidden` + sets style. */
 .cn-dot {
@@ -684,7 +684,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .cn-section[open] > summary { border-bottom: 1px solid var(--bg-elev-2); }
 .cn-section-body { padding: 12px; }
 
-/* Row-level toggle on a `<summary>` — used for "Discoverable" on the
+/* Row-level toggle on a `<summary>` - used for "Discoverable" on the
    LoRa accordion so the user can flip the broadcast on/off without
    expanding the radio config panel. Sits flush-right of the title.
    The accordion-toggle click is suppressed in JS so clicking the
@@ -731,7 +731,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   vertical-align: middle;
 }
 /* The "i" glyph is defined ONCE here as a CSS mask, so every
-   <button class="info-icon"> needs no inline SVG — single source, no markup
+   <button class="info-icon"> needs no inline SVG - single source, no markup
    duplication. background-color: currentColor keeps it colour-inheriting
    (muted, brightening on hover via the rule below). */
 .info-icon::before {
@@ -758,7 +758,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 }
 .info-tooltip a { color: var(--accent); }
 
-/* iOS/Material-style switch. Reusable — wrap a checkbox so the SPA
+/* iOS/Material-style switch. Reusable - wrap a checkbox so the SPA
    stops shipping bare browser-default checkboxes wherever a boolean
    preference is being expressed. Usage:
      <label class="switch">
@@ -842,7 +842,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   font-size: 13px;
   /* Cap to viewport so long popovers (radio popover with its chart,
      system popover with all sensor blocks) scroll internally instead
-     of clipping below the fold. Mostly engages on phones — both
+     of clipping below the fold. Mostly engages on phones - both
      portrait (height ~890 px so 80 px reserved fits everything) and
      landscape (height ~412 px, the more painful case). Mobile-portrait
      and landscape media queries below tighten the reserved space when
@@ -859,13 +859,13 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   color: var(--text-mute); margin: 0; font-weight: 600;
 }
 /* Consistent two-tier body layout for every popover section:
-   - .popover-value: the main bright line (mono, 13px) — the
+   - .popover-value: the main bright line (mono, 13px) - the
      "primary fact" for the section (eg. the current temperature,
      the radio config summary, the wall-clock string).
-   - .popover-subline: dimmed secondary info (mono, 11px) — used
+   - .popover-subline: dimmed secondary info (mono, 11px) - used
      for "Last read 2s ago (BME280)", "RX 12 / TX 4 packets", etc.
    Multiple .popover-subline children stack vertically. Both
-   inherit the section's left edge — no extra indent.
+   inherit the section's left edge - no extra indent.
    .popover-row spacer collapses the gap when the value and subline
    are missing on a hidden section. */
 .popover-value {
@@ -915,7 +915,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .radio-chart-line  { fill: none; stroke-width: 1.4; }
 .radio-chart-line.own    { stroke: #58a6ff; }  /* own TX duty cycle */
 .radio-chart-line.others { stroke: #ff9933; }  /* aggregate non-self DCD-busy */
-.radio-chart-line.rssi   { stroke: #4caf50; }  /* RSSI dBm — right axis */
+.radio-chart-line.rssi   { stroke: #4caf50; }  /* RSSI dBm - right axis */
 .radio-chart-line.noise  { stroke: #b39ddb; stroke-dasharray: 3 2; stroke-width: 1; }
 .radio-chart-line.net-tx { stroke: #58a6ff; }            /* WiFi/transport TX rate */
 .radio-chart-line.net-rx { stroke: #4caf50; }            /* WiFi/transport RX rate */
@@ -923,7 +923,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .net-rate-line .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; }
 .swatch-net-tx { background: #58a6ff; }
 .swatch-net-rx { background: #4caf50; }
-                                              /* noise-floor dBm — right axis */
+                                              /* noise-floor dBm - right axis */
 .radio-chart-legend {
   margin-top: 4px;
   font-family: var(--mono, ui-monospace, monospace);
@@ -944,7 +944,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   background: var(--bg-elev); border: 1px solid var(--bg-elev-2);
   border-radius: 4px;
 }
-/* Sensor / interface configuration row — checkbox + interval
+/* Sensor / interface configuration row - checkbox + interval
    dropdown + any extras. Lives at the bottom of an expandable
    section. Hidden until the user clicks the header (handled in
    JS via [data-role="header"] + [data-role="config"]). */
@@ -973,7 +973,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 /* Radio-option cards used by the retention modal (and any future
    "pick one of N" modals). The global `input { width:100%;
    min-height:36px }` rule makes raw radio buttons unusable in flex
-   layouts — overrides here put them back to their natural size and
+   layouts - overrides here put them back to their natural size and
    wrap each option in a clickable label-card. */
 .cr-option {
   display: flex; align-items: center; gap: 10px;
@@ -1043,7 +1043,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 #toast-stack {
   /* Centred vertically in the 56px top bar for a single-line toast.
      (56 − 40) / 2 = 8px from the top. Multi-line toasts naturally
-     extend downward past the bar — that's fine because the middle of
+     extend downward past the bar - that's fine because the middle of
      the bar is reserved empty space precisely so longer toasts have
      room to grow into it. */
   position: fixed;
@@ -1094,7 +1094,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   .toast { max-width: none; }
   /* Popovers sit BELOW the toast slot on mobile so toasts (z-index
      400) don't overlay popover content (z-index 250). A 70 px band is
-     reserved for the toast stack — fits one multi-line toast or two
+     reserved for the toast stack - fits one multi-line toast or two
      single-line ones; further stacks would overlap, but those
      auto-dismiss in seconds. Internal scroll keeps tall popovers from
      clipping off the bottom of the viewport. */
@@ -1106,7 +1106,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 }
 
 /* ============================== MOBILE ============================== */
-/* iPad portrait + small-laptop range — shrink the list pane so the
+/* iPad portrait + small-laptop range - shrink the list pane so the
    thread isn't squashed at intermediate widths. */
 @media (min-width: 721px) and (max-width: 960px) {
   #view-app { grid-template-columns: 280px 1fr; }
@@ -1139,8 +1139,8 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   #modal-settings.modal-bg { padding-top: calc(56px + env(safe-area-inset-top)); }
   .modal.modal-tall        { max-height: calc(100dvh - 64px); }
   /* Short-height layout (phone in landscape, ~412 px viewport tall).
-     Topbar + thread-header default heights total ~110 px — over a
-     quarter of the screen — leaving the message list cramped. Squeeze
+     Topbar + thread-header default heights total ~110 px - over a
+     quarter of the screen - leaving the message list cramped. Squeeze
      them down to ~40 px each, keep the icons usable at 36 px (the
      Material guideline 32 px floor, with 4 px clear-zone). Saves
      ~30 vertical px for messages. */
@@ -1166,13 +1166,13 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   }
   #compose textarea { min-height: 32px; padding: 6px 12px; }
   /* Landscape phone (~412 px tall, with browser address bar possibly
-     eating another 50–60 px). Pull popovers back near the topbar —
+     eating another 50–60 px). Pull popovers back near the topbar -
      the mobile-portrait 130 px offset would leave very little for
      content. `100dvh` instead of `100vh` so the height reflects the
      CURRENTLY visible viewport (Firefox Android's bottom address bar
      would otherwise hide the popover's bottom edge under it).
      Toasts inherit the desktop default (top: 8 px, centred in topbar)
-     — the topbar in landscape is short enough that toasts overlap it
+     - the topbar in landscape is short enough that toasts overlap it
      only briefly during their 3-5 s lifespan, and the landscape
      topbar has more horizontal slack than portrait so the icons
      under a centered toast are usually still tappable in the gaps. */
@@ -1188,9 +1188,9 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
    long-press continue to open the row menu in all modes so touch-
    screen laptops still have an entry point.
 
-   Two rules — broader scope for the ⋮ icon (any landscape
+   Two rules - broader scope for the ⋮ icon (any landscape
    phone/tablet) and a narrower scope for the full thread-header
-   hide (split-pane only — at ≤720 the conv list is hidden when a
+   hide (split-pane only - at ≤720 the conv list is hidden when a
    chat is open and the thread header is the only way to navigate
    back). Boundary is `max-width: 1279px` so a 1280×800 laptop
    stays in the desktop layout (where the header is wanted). */
@@ -1204,7 +1204,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 }
 
 /* Identity picker */
-/* Default <summary> shows plain text — add a pointer so users know it's
+/* Default <summary> shows plain text - add a pointer so users know it's
    clickable. Same hint applies to anything else expandable. */
 summary { cursor: pointer; }
 summary:hover { color: var(--text); }
@@ -1233,7 +1233,7 @@ summary:hover { color: var(--text); }
 
 /* ============== utility classes ==============
    Replace the most common inline styles. Stick to spacing / sizing /
-   flex / monospace — anything with bespoke colours or borders keeps
+   flex / monospace - anything with bespoke colours or borders keeps
    its own component class. The naming follows a small fragment of
    the Tailwind convention (mt-N / mb-N where N is a 4px step) so a
    reader who knows Tailwind has a head start. Declared LAST so they

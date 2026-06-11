@@ -21,7 +21,7 @@
 // every WebSocket broadcast constructs a JsonDocument that grows by
 // allocating from the default heap (= internal SRAM under arduino-esp32
 // v2.0.17's default allocator settings). Under web load these allocs
-// fragment internal SRAM into many small holes — at which point the
+// fragment internal SRAM into many small holes - at which point the
 // ESP-IDF WiFi driver's `esf_buf_alloc_dynamic(1626)` fails because no
 // contiguous 1.6 KB block is available even though total free is
 // nominally higher. Symptom: HTTP becomes unresponsive, the device
@@ -33,7 +33,7 @@
 // placed it; only its dynamically allocated nodes go to PSRAM.
 //
 // Use via the PsramJsonDocument typedef below: `PsramJsonDocument doc;`
-// is a drop-in replacement for `JsonDocument doc;` — same API, same
+// is a drop-in replacement for `JsonDocument doc;` - same API, same
 // operators, same serializeJson/deserializeJson semantics. Functions
 // that accept `const JsonDocument&` or `JsonDocument&` parameters still
 // work unchanged because PsramJsonDocument *is-a* JsonDocument.
@@ -47,7 +47,7 @@ class PsramAllocator : public ArduinoJson::Allocator {
 public:
   void* allocate(size_t size) override {
     // MALLOC_CAP_SPIRAM forces the allocation to PSRAM. If PSRAM is
-    // exhausted (very unlikely — we have 8 MB) the call returns NULL
+    // exhausted (very unlikely - we have 8 MB) the call returns NULL
     // and ArduinoJson degrades to its low-memory mode (the document
     // grows up to but not past available memory).
     return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);

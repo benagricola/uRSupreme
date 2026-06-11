@@ -1,21 +1,21 @@
-// Network telemetry — 1 Hz rolling history of WiFi/transport byte rates.
+// Network telemetry - 1 Hz rolling history of WiFi/transport byte rates.
 //
 // The radio graph (Telemetry::Radio) shows what's happening on-air; this is
-// its counterpart for the IP side — the aggregate tx/rx byte rate across the
+// its counterpart for the IP side - the aggregate tx/rx byte rate across the
 // non-LoRa interfaces (backbone TCP client, TCP server, UDP). It makes the
 // otherwise-invisible backbone traffic visible while a test runs: whether a
 // forwarded path request is actually leaving over the backbone, how hard the
 // sustained traffic is hitting us, whether a transfer is moving bytes at all.
 //
 // Two consumers, identical mechanism to the radio telemetry:
-//   * `GET /api/network/telemetry` — returns the ring (oldest→newest).
-//   * WS frame `{"type":"network_telemetry", ...}` — pushed once per
+//   * `GET /api/network/telemetry` - returns the ring (oldest→newest).
+//   * WS frame `{"type":"network_telemetry", ...}` - pushed once per
 //     SAMPLE_PERIOD_MS while at least one SPA client is connected.
 //
 // This header stays free of RNS includes (like Telemetry::Radio): the caller
 // sums the interface txb()/rxb() counters and passes the cumulative totals to
 // tick(); we keep the previous totals and emit per-second deltas (= B/s, since
-// the period is 1 s). Deltas are uint32 — the backbone client can push tens of KB/s, well
+// the period is 1 s). Deltas are uint32 - the backbone client can push tens of KB/s, well
 // past the uint16 the radio packet-count deltas use.
 
 #pragma once
@@ -80,8 +80,8 @@ namespace _detail {
 }
 
 // Build a Sample from cumulative tx/rx byte totals (summed by the caller over
-// the non-LoRa interfaces). The first call only primes the baseline — it can't
-// know the rate without a prior total — and returns a zero-rate sample.
+// the non-LoRa interfaces). The first call only primes the baseline - it can't
+// know the rate without a prior total - and returns a zero-rate sample.
 inline Sample snapshot(uint32_t now_ms, uint64_t tx_total, uint64_t rx_total) {
   Sample s = {};
   s.ts_ms = now_ms;
@@ -105,7 +105,7 @@ inline void encode(const Sample& s, JsonObject o) {
   o["rx"] = s.rx_bps;
 }
 
-// Fill a JsonArray (oldest→newest) with the entire ring — for the REST history
+// Fill a JsonArray (oldest→newest) with the entire ring - for the REST history
 // a freshly-connected SPA client wants before its WS subscription catches up.
 inline void fill_history(JsonArray arr) {
   const size_t n = _detail::ring_count();

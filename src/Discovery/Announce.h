@@ -1,12 +1,12 @@
 // Discovery announce wire-format encoder.
 //
 // Builds the `app_data` payload that goes on an
-// `rnstransport.discovery.interface` aspect announce — the upstream
+// `rnstransport.discovery.interface` aspect announce - the upstream
 // Reticulum InterfaceAnnouncer.get_interface_announce_data() in
 // reticulum/RNS/Discovery.py is the reference implementation; the
 // tag values + ordering + framing here match it byte-for-byte (so
-// any standard listener — a downstream RNS listener, or another RNS node
-// running InterfaceAnnounceHandler — can parse what we emit).
+// any standard listener - a downstream RNS listener, or another RNS node
+// running InterfaceAnnounceHandler - can parse what we emit).
 //
 // Frame shape:
 //
@@ -25,7 +25,7 @@
 //     get the bytes that feed the PoW, and serialize_with_stamp() to
 //     assemble the final wire frame once the 32-byte stamp is back.
 //
-// Serialisation primitives come from Common/MsgPack.h — same module
+// Serialisation primitives come from Common/MsgPack.h - same module
 // LXMF uses, so the codebase has a single msgpack encoder.
 
 #pragma once
@@ -41,7 +41,7 @@
 namespace Discovery {
 namespace Announce {
 
-// Upstream tag table — keep these constants in sync with
+// Upstream tag table - keep these constants in sync with
 // reticulum/RNS/Discovery.py.
 enum Tag : uint8_t {
   TAG_INTERFACE_TYPE  = 0x00,
@@ -81,9 +81,9 @@ struct Field {
   RNS::Bytes bin;      // Bin
 };
 
-// Builder — accumulate fields in any order, then serialize() to
+// Builder - accumulate fields in any order, then serialize() to
 // the wire bytes. The internal representation is intentionally
-// minimal — there are at most ~10-15 fields per announce, no need
+// minimal - there are at most ~10-15 fields per announce, no need
 // for a hash map.
 class Builder {
 public:
@@ -110,11 +110,11 @@ public:
   Builder& modulation(const std::string& s)         { return set_str(TAG_MODULATION, s); }
   Builder& channel(int64_t v)                       { return set_int(TAG_CHANNEL, v); }
 
-  // Serialise just the msgpack dict — the bytes that get hashed to
+  // Serialise just the msgpack dict - the bytes that get hashed to
   // produce the LXStamper "material" input. Caller hands this to
   // Discovery::Stamp::submit() and assembles the final wire frame via
   // serialize_with_stamp() once the 32-byte stamp is back.
-  // Returns empty Bytes on encoder overflow (shouldn't happen — the
+  // Returns empty Bytes on encoder overflow (shouldn't happen - the
   // MAX_WIRE_SIZE upper bound is generous).
   RNS::Bytes serialize_unstamped() const {
     uint8_t buf[MAX_WIRE_SIZE];
@@ -154,7 +154,7 @@ public:
     return out;
   }
 
-  // Direct read of the in-progress field list — useful for tests
+  // Direct read of the in-progress field list - useful for tests
   // that want to verify a builder's contents before serialization.
   const std::vector<Field>& fields() const { return _fields; }
 

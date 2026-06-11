@@ -5,7 +5,7 @@
 //
 // The matching `rns_set_outbound_ratchet_provider` / `rns_set_inbound_ratchet_provider`
 // setters are injected into microReticulum's Destination.cpp / Identity.cpp
-// by extra_script.py — see patch_outbound_ratchet and patch_inbound_ratchet
+// by extra_script.py - see patch_outbound_ratchet and patch_inbound_ratchet
 // there.  The patched code stores the function pointer in a static, calls
 // the registered provider during announce/decrypt, and falls back to its
 // pre-patch behaviour if no provider has been registered.

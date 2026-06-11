@@ -189,7 +189,7 @@ void console_start() {
 }
 
 void console_loop(){
-    // AsyncWebServer runs in its own AsyncTCP task — nothing to drive
+    // AsyncWebServer runs in its own AsyncTCP task - nothing to drive
     // from here. Keep the function so the existing call site doesn't
     // need to change; just yield.
     delay(2);

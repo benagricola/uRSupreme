@@ -15,7 +15,7 @@ namespace Web {
   // Persistent boot epoch counter.
   //
   // We want a monotonic-across-reboots ordering key for inbox + outbox
-  // entries. `millis()` alone won't do — it resets to 0 on every boot,
+  // entries. `millis()` alone won't do - it resets to 0 on every boot,
   // so a record appended early in boot N+1 (small millis) would sort
   // before a record persisted late in boot N (large millis), inverting
   // the timeline.
@@ -28,7 +28,7 @@ namespace Web {
   //
   // Records loaded from JSONL spools that pre-date this field decode
   // with boot_epoch = 0, so they always sort *before* anything from
-  // a fresh (≥1) boot. That's a reasonable post-upgrade default — old
+  // a fresh (≥1) boot. That's a reasonable post-upgrade default - old
   // history clusters at the bottom of the timeline rather than
   // shuffling unpredictably with new activity.
   //
@@ -42,7 +42,7 @@ namespace Web {
     static constexpr const char* STORE_PATH = "/lxmf/boot_epoch.json";
 
     // Increment-and-save on first call; subsequent calls are no-ops.
-    // Safe to call from anywhere — current() also lazy-inits — but
+    // Safe to call from anywhere - current() also lazy-inits - but
     // wiring an explicit call in setup() makes the log line easy to
     // find.
     static uint32_t init() {

@@ -6,13 +6,13 @@
 // rest of the WiFi remote stack); the HTTP-response side of the
 // parked /api/wifi/configure request lives in Web/WebUI.h. Both files
 // need to agree on the type of `wr_pending` and `wifi_phase`, which
-// is why these declarations sit in Common/ — neither side has to
+// is why these declarations sit in Common/ - neither side has to
 // drag in the other's full header to compile.
 
 #include <cstdint>
 #include <memory>
 
-class AsyncWebServerRequest;  // forward — pointer-only use here
+class AsyncWebServerRequest;  // forward - pointer-only use here
 
 // What stage of the APSTA bridge we're currently in. See the policy
 // note above wifi_pump_phase() in Remote.h.
@@ -22,7 +22,7 @@ enum class WifiPhase : uint8_t {
   ApStaGrace,       // APSTA, STA up, AP in 2-minute grace before teardown
 };
 
-// Policy constants — number-of-milliseconds knobs the transition
+// Policy constants - number-of-milliseconds knobs the transition
 // state machine uses. Shared so Remote.h's pump and Web/WebUI.h's
 // response handoff agree on the timings.
 static constexpr uint32_t WR_PROVISION_TIMEOUT_MS = 30 * 1000UL;

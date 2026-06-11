@@ -1,4 +1,4 @@
-// AXP2101 PMU driver — raw accessors over the global XPowersLib
+// AXP2101 PMU driver - raw accessors over the global XPowersLib
 // interface. Owns nothing; the actual PMU instance is created and
 // initialised by Power.h at boot and exposed via the `PMU` global. We
 // just wrap that here so callers don't have to touch XPowersLib types
@@ -46,7 +46,7 @@ inline uint8_t chip_model() {
 }
 
 // AXP2101 die temperature. The 18650 cell on T-Beam Supreme has no
-// thermistor wired to the PMU, so this reads the PMU IC itself —
+// thermistor wired to the PMU, so this reads the PMU IC itself -
 // useful for spotting heat on charge or hot-load. Power.h enables
 // the internal temp ADC channel at boot. Returns 0 and sets *ok to
 // false on unsupported chips.
@@ -63,7 +63,7 @@ inline float temperature_c(bool* ok = nullptr) {
 }
 
 // AXP192-only: actual battery discharge current (mA). The AXP2101
-// the T-Beam Supreme ships with does NOT expose this — callers should
+// the T-Beam Supreme ships with does NOT expose this - callers should
 // fall back to dV/dt slope inference (see Telemetry::Battery) on this
 // hardware. Returns 0 and sets *ok to false on AXP2101 / no PMU.
 inline float discharge_ma(bool* ok = nullptr) {

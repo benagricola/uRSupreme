@@ -129,7 +129,7 @@ namespace TCPTransport {
   // Find the slot a named client occupies, or -1 if not present.
   inline int find_client_slot(const char* name) {
     if (!name) return -1;
-    // Read the name through the wrapper — InterfaceImpl's _name is
+    // Read the name through the wrapper - InterfaceImpl's _name is
     // protected, only the RNS::Interface wrapper exposes a public
     // accessor.
     for (uint8_t i = 0; i < TCP_MAX_CLIENTS; ++i) {
@@ -154,7 +154,7 @@ namespace TCPTransport {
       if (!client_impls[i]) { slot = (int)i; break; }
     }
     if (slot < 0) {
-      RNS::logf(RNS::LOG_WARNING, "TCPTransport: add_client('%s') refused — all %u slots full",
+      RNS::logf(RNS::LOG_WARNING, "TCPTransport: add_client('%s') refused - all %u slots full",
                 name, (unsigned)TCP_MAX_CLIENTS);
       return false;
     }
@@ -168,7 +168,7 @@ namespace TCPTransport {
     // It must NOT be a DISCOVER_PATHS_FOR mode (AP/GATEWAY/ROAMING): a backbone
     // TCP link in GATEWAY mode makes this node "search for unknown paths" on
     // behalf of every path request arriving from the backbone, rebroadcasting
-    // them onto ALL interfaces — including a constrained LoRa AP edge, which it
+    // them onto ALL interfaces - including a constrained LoRa AP edge, which it
     // floods to its duty-cycle cap (airtime_locked) and starves local LoRa
     // links. MODE_FULL still forwards everything and answers for known dests;
     // it just doesn't proactively re-broadcast the backbone's path discovery.
@@ -219,7 +219,7 @@ namespace TCPTransport {
   inline void setup() {
     // Server-side config still lives in the legacy /tcp_config.json
     // for the moment (separate concern from outbound clients, no UI
-    // yet). The clients block there is now ignored — outbound TCP
+    // yet). The clients block there is now ignored - outbound TCP
     // clients are sourced exclusively from Discovery::Config's
     // /reticulum/interfaces.json entries of type=tcp_client.
     ClientCfg ignored_clients[TCP_MAX_CLIENTS];
@@ -257,7 +257,7 @@ namespace TCPTransport {
     // Transport::_interfaces stores Interface by value (Transport.h:75),
     // so it holds its own shared_ptr ref to the impl we created with
     // `new`. We must drop Transport's ref via deregister_interface()
-    // before clearing our own — once both refs are gone, shared_ptr's
+    // before clearing our own - once both refs are gone, shared_ptr's
     // deleter frees the impl. The raw server_peer_impls[i] pointer
     // becomes dangling at that point; we only use it as a slot marker.
     for (uint8_t i = 0; i < TCP_MAX_SERVER_PEERS; ++i) {
@@ -287,7 +287,7 @@ namespace TCPTransport {
       auto* impl = new TCPServerPeer(name, c);
       server_peer_impls[slot] = impl;
       server_peers[slot] = impl;
-      // MODE_FULL, not GATEWAY: see the add_client mode rationale — a
+      // MODE_FULL, not GATEWAY: see the add_client mode rationale - a
       // DISCOVER_PATHS_FOR mode here would re-broadcast backbone path requests
       // onto the LoRa edge and saturate its duty cycle.
       server_peers[slot].mode(RNS::Type::Interface::MODE_FULL);

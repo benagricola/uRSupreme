@@ -4,7 +4,7 @@
 Opens the given serial port, prints every line to stdout with a wall-clock
 timestamp, and also appends to a log file for post-mortem inspection.
 Designed to be run in the background while the test harness drives the
-device via HTTP — when the device crashes/reboots we'll have the full
+device via HTTP - when the device crashes/reboots we'll have the full
 panic trace + boot output captured.
 
 Usage:

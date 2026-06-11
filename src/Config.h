@@ -44,12 +44,12 @@
 	#define WR_WIFI_OFF        0x00
 	#define WR_WIFI_STA        0x01
 	#define WR_WIFI_AP         0x02
-	// Runtime-only — never written to EEPROM. The boot path stays at
+	// Runtime-only - never written to EEPROM. The boot path stays at
 	// AP-only or STA-only; APSTA exists for two windows:
-	//   1. Boot with saved STA creds — AP runs concurrently for ~2 min
+	//   1. Boot with saved STA creds - AP runs concurrently for ~2 min
 	//      after STA stabilises so the user can recover if STA was
 	//      misconfigured.
-	//   2. Runtime provisioning from the softAP web flow — AP keeps
+	//   2. Runtime provisioning from the softAP web flow - AP keeps
 	//      serving the HTTP response while STA connects, then is
 	//      deauthed + torn down on a 2-min grace.
 	#define WR_WIFI_APSTA      0x03
@@ -157,7 +157,7 @@
 	bool hw_ready      = false;
 	bool radio_error   = false;
 	// Filled in by startRadio() when LoRa->begin() reports the chip
-	// isn't responding. Most common cause is a wrong-variant flash —
+	// isn't responding. Most common cause is a wrong-variant flash -
 	// SPI commands the compiled driver sends don't match the chip
 	// actually on the board. Exposed via /api/info.radio so the SPA
 	// can surface a clear failure mode instead of leaving the user
@@ -217,7 +217,7 @@
 		float longterm_airtime = 0.0;
 		#define current_airtime_bin(void) (millis()%AIRTIME_LONGTERM_MS)/AIRTIME_BINLEN_MS
 	#endif
-	// Airtime duty-cycle limits — default to 1% long-term so we stay
+	// Airtime duty-cycle limits - default to 1% long-term so we stay
 	// within ETSI EN 300 220-1 limits for the 868 MHz general sub-band
 	// (UK/EU). User can override via the API once exposed, or via the
 	// legacy KISS CMD_ST_ALOCK / CMD_LT_ALOCK commands. 0.0 disables

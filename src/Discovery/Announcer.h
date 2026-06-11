@@ -1,4 +1,4 @@
-// Discovery announcer — periodic per-interface
+// Discovery announcer - periodic per-interface
 // `rnstransport.discovery.interface` announces.
 //
 // Mirrors the upstream Reticulum InterfaceAnnouncer.job() loop
@@ -10,14 +10,14 @@
 // shared discovery destination's announce().
 //
 // Single destination shared across all interfaces (matches upstream
-// — the announce identifies the originating interface in the
+// - the announce identifies the originating interface in the
 // app_data, not via separate per-interface destinations). Constructed
 // once at setup() using the Discovery::Identity persistent keypair
 // so consumers can verify the announce signature against a stable
 // device-wide identity.
 //
 // Master toggle (Discovery::State::current().enabled) short-circuits
-// the whole tick when false — privacy-by-design, nothing on-air
+// the whole tick when false - privacy-by-design, nothing on-air
 // until the user explicitly enables.
 
 #pragma once
@@ -52,7 +52,7 @@ extern int      lora_cr;
 namespace Discovery {
 namespace Announcer {
 
-// Upstream calls the LoRa interface type "RNodeInterface" — that's
+// Upstream calls the LoRa interface type "RNodeInterface" - that's
 // what InterfaceAnnounceHandler whitelists (DISCOVERABLE_INTERFACE_TYPES
 // in RNS/Discovery.py). Match it so cross-implementation listeners
 // (downstream RNS listeners, other RNS nodes) accept our LoRa announces.
@@ -78,14 +78,14 @@ namespace _detail {
   // checking that the announcer is alive at all on a long-uptime
   // device where the per-interface ms timestamp could be stale.
   inline uint32_t& total_announce_count() { static uint32_t v = 0; return v; }
-  // Rate-limit the tick itself — upstream's job loop runs every 60s.
+  // Rate-limit the tick itself - upstream's job loop runs every 60s.
   // No point evaluating "is anything due" more often than once a
   // minute since the minimum cadence in State is also several minutes.
   inline constexpr uint32_t TICK_PERIOD_MS = 60UL * 1000UL;
 
   // Populate the Announce::Builder for one running interface. Returns
   // true on a complete payload, false if mandatory fields are missing
-  // (e.g. unknown interface type — we just skip those rather than
+  // (e.g. unknown interface type - we just skip those rather than
   // emitting half-formed announces).
   // Sanitise the user-supplied label the same way upstream
   // RNS/Discovery.py does: strip newlines + carriage returns +
@@ -115,7 +115,7 @@ namespace _detail {
     b.name(nm);
     b.transport_enabled(RNS::Reticulum::transport_enabled());
     b.transport_id(RNS::Transport::identity().hash());
-    // GPS — include lat/lon only when we actually have a fix.
+    // GPS - include lat/lon only when we actually have a fix.
     // Skip if invalid to avoid lighting up (0, 0) on the map for
     // devices that never got a fix.
     const auto fix = Sensors::L76K::last_fix();
@@ -139,12 +139,12 @@ namespace _detail {
         b.interface_type(TYPE_TCP_CLIENT);
         // host/port aren't required for a discoverability announce on
         // an outbound TCP client (the device is the connector, not
-        // the connectable) — leave off.
+        // the connectable) - leave off.
         return true;
       case Config::Type::Udp:
         // Upstream's DISCOVERABLE_INTERFACE_TYPES doesn't include UDP;
         // listeners following upstream will reject. We still emit
-        // "UDPInterface" for our own consumers — explicit type for
+        // "UDPInterface" for our own consumers - explicit type for
         // forward-compat.
         b.interface_type("UDPInterface");
         return true;
@@ -160,7 +160,7 @@ namespace _detail {
 inline void setup() {
   if (_detail::destination()) return;
   if (!Identity::ready()) {
-    WARNING("Discovery::Announcer: cannot setup before Identity::ensure() — skipping");
+    WARNING("Discovery::Announcer: cannot setup before Identity::ensure() - skipping");
     return;
   }
   // app_name = "rnstransport", aspects = "discovery.interface". The
@@ -233,7 +233,7 @@ inline void tick() {
     if (!iface) continue;
     if (iface.name() != due_name) continue;
     if (!_detail::build_for_interface(builder, iface, due_cfg)) {
-      WARNINGF("Discovery::Announcer: skipping interface '%s' — unknown type",
+      WARNINGF("Discovery::Announcer: skipping interface '%s' - unknown type",
                due_name.c_str());
       return;
     }
@@ -247,7 +247,7 @@ inline void tick() {
   }
 
   // PoW + announce runs on the Stamp worker. We pass the on_done
-  // callback that captures the interface name (by value — the worker
+  // callback that captures the interface name (by value - the worker
   // outlives this scope) so the snapshot is consistent even if the
   // config changes between dispatch and completion.
   const uint32_t cost = s.default_stamp_cost;  // 0 = disable PoW entirely
@@ -262,7 +262,7 @@ inline void tick() {
       return;
     }
     // The RNS path tables aren't reentrant. Take the recursive lock
-    // before calling into the destination — the WebUI handlers grab
+    // before calling into the destination - the WebUI handlers grab
     // the same lock when they touch state.
     Common::RnsLock::Guard guard;
     if (!guard) {
@@ -278,7 +278,7 @@ inline void tick() {
   };
 
   if (!Stamp::submit(packed, cost, std::move(on_done))) {
-    // Worker is busy with a prior submission — leave last_map untouched
+    // Worker is busy with a prior submission - leave last_map untouched
     // so this interface remains "due" and we retry on the next tick.
     NOTICEF("Discovery::Announcer: stamp worker busy, deferring '%s'",
             due_name.c_str());
@@ -294,7 +294,7 @@ inline void tick() {
 
 // Snapshot for /api/discovery/state. Read-only view that lets the
 // SPA tell the user when the device last shouted and how many times
-// since boot — useful when serial isn't available and the user
+// since boot - useful when serial isn't available and the user
 // wants to verify the announcer is actually running.
 struct Status {
   uint32_t last_any_announce_ms;   // device millis() of most recent announce, 0 = never

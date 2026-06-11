@@ -15,14 +15,14 @@
 
 #include <WiFi.h>
 #include <ESPmDNS.h>
-#include <esp_wifi.h>           // esp_wifi_deauth_sta — drops AP clients
+#include <esp_wifi.h>           // esp_wifi_deauth_sta - drops AP clients
                                 // on the WIFI layer, not just at HTTP.
 #if defined(UDP_TRANSPORT)
 #include <WiFiUdp.h>
 #include <Bytes.h>
 #endif
 
-// Shared WiFi transition types — both this file and Web/WebUI.h
+// Shared WiFi transition types - both this file and Web/WebUI.h
 // reference WifiPhase / PendingProvision, so the types live in
 // Common/ and neither side has to pull the other's full header.
 #include "Common/WifiTransition.h"
@@ -70,7 +70,7 @@ bool wifi_init_ran = false;
 bool wifi_initialized = false;
 // Tracks the millis() value of the first STA-mode init attempt this
 // boot. Drives the "no AP at boot, promote to APSTA after 3 min if
-// STA hasn't connected" recovery policy — see WR_STA_BEFORE_AP_DELAY_MS
+// STA hasn't connected" recovery policy - see WR_STA_BEFORE_AP_DELAY_MS
 // in wifi_update_status(). Cleared on first successful STA-connect
 // so subsequent runtime drops never re-arm AP; only a reboot can
 // re-enter the AP-recovery window.
@@ -103,11 +103,11 @@ bool wr_runtime_softap = false;
 //                      the AP interface down entirely.
 //
 // Once teardown completes we're STA-only and don't re-arm AP on STA
-// drops — see the policy note in handle_wifi_configure. The only ways
+// drops - see the policy note in handle_wifi_configure. The only ways
 // back to AP at that point are a reboot (boot path may go AP if STA
 // fails) or an authenticated /api/wifi/softap call (which already
 // requires the identity-code physical-presence proof).
-// WifiPhase + PendingProvision come from Common/WifiTransition.h —
+// WifiPhase + PendingProvision come from Common/WifiTransition.h -
 // included near the top of this file so the variable definitions
 // below resolve.
 WifiPhase wifi_phase                 = WifiPhase::Idle;
@@ -178,7 +178,7 @@ void wifi_remote_start_sta() {
     // WiFi and Bluetooth are enabled" if PS_NONE is set while the
     // BT controller is compiled in (HAS_BLE on Supreme builds), and
     // explicitly setting PS_MIN_MODEM gave the same wake-latency
-    // grief as the default. Leaving it as Arduino's default — when
+    // grief as the default. Leaving it as Arduino's default - when
     // we want to tune this it needs (a) BT-controller-runtime aware
     // gating and (b) retry-aware HTTP transports both sides.
   }
@@ -190,7 +190,7 @@ void wifi_remote_start_sta() {
   //Serial.println(wr_wifi_status);
   wifi_initialized = true;
   wr_last_connect_try = millis();
-  // No "WiFi: connecting <SSID>" affirmation — the topbar WiFi icon
+  // No "WiFi: connecting <SSID>" affirmation - the topbar WiFi icon
   // already shows the state, and the marquee strip is reserved for
   // things the user can act on (errors, recovery countdown).
 }
@@ -208,16 +208,16 @@ void wifi_remote_stop() {
 // the transition to STA-only after STA stabilises.
 void wifi_remote_start_apsta() {
   WiFi.mode(WIFI_AP_STA);
-  // softAP — open, named after bt_devname. Matches the bootstrap softAP
+  // softAP - open, named after bt_devname. Matches the bootstrap softAP
   // exactly (same SSID format, no PSK) so a user joining "RNode XXXX"
   // sees the same network whether the device is freshly out of the
   // box or coming up in the APSTA boot grace window. Using wr_psk
-  // would advertise the user's home-WiFi password as the AP PSK —
+  // would advertise the user's home-WiFi password as the AP PSK -
   // unhelpful and a soft security leak.
   WiFi.softAP(bt_devname, NULL, wr_channel);
   delay(150);
   WiFi.softAPConfig(ap_ip, ap_ip, ap_nm);
-  // STA — same wiring as wifi_remote_start_sta(), minus the bare
+  // STA - same wiring as wifi_remote_start_sta(), minus the bare
   // WiFi.mode(WIFI_STA) call that would tear down the AP we just set
   // up.
   uint8_t ip[4]; bool ip_ok = true;
@@ -277,7 +277,7 @@ void wifi_remote_init() {
   wr_hostname[9] = 0x00;
   // mDNS / DNS-SD convention is all-lowercase hostnames. The DNS spec
   // is case-insensitive but Bonjour/Avahi clients display whatever is
-  // advertised verbatim — keeping it lowercase avoids "RNode7D31.local"
+  // advertised verbatim - keeping it lowercase avoids "RNode7D31.local"
   // looking inconsistent with other devices on the LAN that follow the
   // convention. Same byte count, just lowercased in place.
   for (int i = 0; i < 9 && wr_hostname[i]; i++) {
@@ -294,7 +294,7 @@ void wifi_remote_init() {
   wr_channel = EEPROM.read(eeprom_addr(ADDR_CONF_WCHN)); if (wr_channel < 1 || wr_channel > 14) { wr_channel = WR_CHANNEL_DEFAULT; }
   wifi_remote_start();
   wifi_init_ran = true;
-  // Reset the runtime-softAP marker — a fresh init means whatever
+  // Reset the runtime-softAP marker - a fresh init means whatever
   // mode we're trying now is the authoritative one. Auto-fallback
   // and force-softap rearm themselves on the next tick if needed.
   wr_runtime_softap = (wifi_mode == WR_WIFI_AP);
@@ -307,7 +307,7 @@ void wifi_remote_init() {
 // Runtime STA→AP switch. Reinits the WiFi stack as a softAP using the
 // device's BT name, sets bootstrap_mode so the SPA shows the wifi
 // configure form, and clears the auto-fallback timer so we don't
-// loop. EEPROM is untouched — a reboot tries STA again.
+// loop. EEPROM is untouched - a reboot tries STA again.
 void wifi_runtime_force_softap(const char* reason) {
   NOTICEF("WiFi: switching to softAP (%s)", reason ? reason : "manual");
   wifi_mode = WR_WIFI_AP;
@@ -342,27 +342,27 @@ void wifi_remote_eeprom_write_sta_creds(const char* ssid, const char* psk) {
 // boot (wr_sta_fallback_armed flips to false). EEPROM untouched; a
 // reboot resets the timer.
 void wifi_promote_to_apsta(const char* reason) {
-  NOTICEF("WiFi: STA timeout — promoting STA→APSTA (%s)",
+  NOTICEF("WiFi: STA timeout - promoting STA→APSTA (%s)",
           reason ? reason : "boot delay expired");
   Common::Status::say("WiFi: no network found, AP recovery up");
   wifi_mode = WR_WIFI_APSTA;
-  // softAP first — open, named after bt_devname (matches the bootstrap
+  // softAP first - open, named after bt_devname (matches the bootstrap
   // softAP exactly). WiFi.mode() with WIFI_AP_STA doesn't tear down
   // the active STA attempt; it just enables the AP interface alongside.
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(bt_devname, NULL, wr_channel);
   delay(50);
   WiFi.softAPConfig(ap_ip, ap_ip, ap_nm);
-  // Disarm permanently for this boot — security policy: AP can only be
+  // Disarm permanently for this boot - security policy: AP can only be
   // brought up by boot path or by explicit authenticated request.
   wr_sta_fallback_armed = false;
 }
 
 // Called every wifi_update_status() tick. Drives the WifiPhase state
-// machine — applies pending provisions, detects STA-connect, runs the
+// machine - applies pending provisions, detects STA-connect, runs the
 // deauth + teardown timers. The HTTP-response side of the parked
 // request is owned by Web::WebUI::loop() so this file doesn't have to
-// drag in the AsyncWebServer headers — wr_pending.req is just data
+// drag in the AsyncWebServer headers - wr_pending.req is just data
 // to those who care.
 void wifi_pump_phase() {
   // -------- 1. Apply pending provision from the HTTP task --------
@@ -371,12 +371,12 @@ void wifi_pump_phase() {
     NOTICEF("WiFi: applying new SSID '%s'", wr_pending.ssid);
 
     // Make sure AP is up so the requesting client can still receive
-    // the response. softAP() is idempotent — if we're already in
+    // the response. softAP() is idempotent - if we're already in
     // APSTA from boot this is a no-op.
     if (wifi_mode != WR_WIFI_APSTA) {
       wifi_mode = WR_WIFI_APSTA;
       WiFi.mode(WIFI_AP_STA);
-      WiFi.softAP(bt_devname, NULL, wr_channel);  // open AP — see wifi_remote_start_apsta
+      WiFi.softAP(bt_devname, NULL, wr_channel);  // open AP - see wifi_remote_start_apsta
       delay(50);
       WiFi.softAPConfig(ap_ip, ap_ip, ap_nm);
     }
@@ -404,7 +404,7 @@ void wifi_pump_phase() {
       wifi_phase            = WifiPhase::ApStaGrace;
       wifi_phase_started_ms = millis();
       wr_device_ip          = WiFi.localIP();
-      NOTICEF("WiFi: STA up, IP %s — AP grace 2 min",
+      NOTICEF("WiFi: STA up, IP %s - AP grace 2 min",
               wr_device_ip.toString().c_str());
       // Web::WebUI::loop() will see ApStaGrace + a parked wr_pending
       // and send the HTTP response carrying sta_ip + hostname; once the
@@ -431,7 +431,7 @@ void wifi_pump_phase() {
       wifi_phase            = WifiPhase::Idle;
       wifi_phase_started_ms = 0;
       wifi_apsta_deauth_at_ms = 0;
-      NOTICE("WiFi: AP grace expired — STA only");
+      NOTICE("WiFi: AP grace expired - STA only");
     }
   }
 }
@@ -501,7 +501,7 @@ void wifi_remote_write(uint8_t byte) { if (connection) { connection.write(byte);
 #define WR_STA_BEFORE_AP_DELAY_MS (3UL * 60UL * 1000UL)
 
 void wifi_update_status() {
-  // Web handler asked for a switch to softAP — apply it on the main
+  // Web handler asked for a switch to softAP - apply it on the main
   // loop, not the WebServer task, so WiFi reinit doesn't race
   // with in-flight requests.
   if (wr_force_softap_pending) {
@@ -520,7 +520,7 @@ void wifi_update_status() {
     wr_device_ip = WiFi.localIP();
     // First-time STA-connect this boot: clear any countdown / "no
     // network" message the marquee was showing, disarm the AP-recovery
-    // timer permanently. We don't announce the IP on the marquee —
+    // timer permanently. We don't announce the IP on the marquee -
     // the WiFi icon shows connected state and the SPA / /api/info
     // surface the IP for anyone who needs it.
     if (wr_sta_fallback_armed) {
@@ -530,7 +530,7 @@ void wifi_update_status() {
     // mDNS: advertise the device under wr_hostname.local so the SPA
     // can redirect to it after a WiFi-save reboot, and so users on the
     // LAN can reach the web UI without hunting for the DHCP-assigned
-    // IP. Start once on first STA-connected — MDNS.begin is idempotent
+    // IP. Start once on first STA-connected - MDNS.begin is idempotent
     // but logging it twice is noisy.
     //
     // Retry on failure with a 30-second backoff, NOT every main-loop
@@ -544,7 +544,7 @@ void wifi_update_status() {
     // we're STA-only or APSTA. Holding it off during the post-
     // provisioning APSTA grace means a freshly Improv-provisioned
     // device isn't resolvable as <hostname>.local for the first
-    // ~2 minutes — exactly the window when the SPA most needs the
+    // ~2 minutes - exactly the window when the SPA most needs the
     // friendly URL.
     const bool sta_carrier = (wifi_mode == WR_WIFI_STA || wifi_mode == WR_WIFI_APSTA);
     if (!s_mdns_started && sta_carrier
@@ -554,18 +554,18 @@ void wifi_update_status() {
         NOTICEF("mDNS: advertising as http://%s.local", wr_hostname);
         s_mdns_started = true;
       } else {
-        WARNINGF("mDNS: begin(%s) failed — retrying in 30s", wr_hostname);
+        WARNINGF("mDNS: begin(%s) failed - retrying in 30s", wr_hostname);
         s_mdns_next_retry_ms = millis() + 30000UL;
       }
     }
   }
   if (wifi_mode == WR_WIFI_AP && wifi_initialized) { wr_device_ip = WiFi.softAPIP(); wr_wifi_status = WL_CONNECTED; }
   if (wifi_init_ran && wifi_mode == WR_WIFI_STA && wr_wifi_status != WL_CONNECTED) {
-    // STA-only path — no AP in play. Two things happen here:
+    // STA-only path - no AP in play. Two things happen here:
     //   1. Boot timer: if STA hasn't connected within
     //      WR_STA_BEFORE_AP_DELAY_MS (3 min), promote to APSTA so
     //      the user has a recovery channel. Only fires while
-    //      wr_sta_fallback_armed is true — i.e. only during the
+    //      wr_sta_fallback_armed is true - i.e. only during the
     //      first boot window before any successful STA connection.
     //   2. Reconnect: every WR_RECONNECT_INTERVAL_MS, re-run the
     //      WiFi init. Once promoted to APSTA the wifi_mode check
@@ -577,7 +577,7 @@ void wifi_update_status() {
         wifi_promote_to_apsta("no STA connection in 3 min");
         return;
       }
-      // Throttle to ~1Hz — update() replaces the most recent ring
+      // Throttle to ~1Hz - update() replaces the most recent ring
       // entry in place, so we don't fill the ring with countdown
       // ticks. The OLED / SPA marquee sees a single message whose
       // text changes each second.
@@ -599,7 +599,7 @@ void wifi_update_status() {
     if (millis()-wr_last_connect_try >= WR_RECONNECT_INTERVAL_MS) { wifi_remote_init(); }
   }
   if (wifi_init_ran && wifi_mode == WR_WIFI_APSTA && wr_wifi_status != WL_CONNECTED) {
-    // APSTA path — AP is already up as the recovery channel, so we
+    // APSTA path - AP is already up as the recovery channel, so we
     // don't tear down on STA timeout. Just keep retrying STA in the
     // background; the user can either wait it out or reconfigure via
     // the AP.

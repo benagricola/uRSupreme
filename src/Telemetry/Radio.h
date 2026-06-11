@@ -1,20 +1,20 @@
-// Radio telemetry — 1 Hz rolling history of channel/RSSI/CSMA state.
+// Radio telemetry - 1 Hz rolling history of channel/RSSI/CSMA state.
 //
 // Captures what the OLED status bar already shows plus the parts we
 // usually only learn about post-mortem (peer-side channel utilisation,
 // the contention-window band the CSMA loop is parked in, instantaneous
 // DCD). Samples are pushed to a fixed ring and published live over the
 // SPA WebSocket so a browser can plot what's happening on-air while a
-// test is running — much faster diagnosis than re-running the test
+// test is running - much faster diagnosis than re-running the test
 // after every firmware change.
 //
 // Two consumers:
-//   * `GET /api/radio/telemetry` — returns the ring (oldest→newest).
-//   * WS frame `{"type":"radio_telemetry", ...}` — pushed once per
+//   * `GET /api/radio/telemetry` - returns the ring (oldest→newest).
+//   * WS frame `{"type":"radio_telemetry", ...}` - pushed once per
 //     SAMPLE_PERIOD_MS while at least one SPA client is connected.
 //
 // Field-name choice is deliberately terse (rx/tx/own/peer/total/cw/dcd
-// rather than full words) — this frame ships every second over WiFi
+// rather than full words) - this frame ships every second over WiFi
 // and we want it well under a typical pbuf so it never blocks on lwIP
 // flow control.
 
@@ -55,20 +55,20 @@ inline constexpr size_t   RING_CAP         = 120;   // 2 minutes at 1 Hz
 
 struct Sample {
   uint32_t ts_ms;          // device millis() at sample
-  int16_t  rssi_dbm;       // current_rssi — last decoded RSSI
-  int16_t  noise_dbm;      // noise_floor — measured ambient when DCD off.
+  int16_t  rssi_dbm;       // current_rssi - last decoded RSSI
+  int16_t  noise_dbm;      // noise_floor - measured ambient when DCD off.
                            // Gap to rssi is effective SNR; a +10 dB rise
                            // tracks new interferers walking into the band.
-  uint8_t  own_pct;        // (int)(airtime * 100), 0-100 — our own TX duty cycle
-  uint8_t  others_pct;     // (int)(local_channel_util * 100), 0-100 — aggregate
+  uint8_t  own_pct;        // (int)(airtime * 100), 0-100 - our own TX duty cycle
+  uint8_t  others_pct;     // (int)(local_channel_util * 100), 0-100 - aggregate
                            // non-self DCD-busy fraction. DCD does not sample
                            // while we are TX'ing (modem is in TX mode) so
                            // this excludes our own emissions. It conflates
                            // multiple peers and any LoRa-modulated
-                           // interferer the modem demodulates — NOT a
+                           // interferer the modem demodulates - NOT a
                            // per-device figure.
                            // `total` (own + others, capped at 100) was
-                           // dropped — on a half-duplex medium it's a pure
+                           // dropped - on a half-duplex medium it's a pure
                            // derived value and adds no visual information.
   uint8_t  cw_band;        // 1..CSMA_CW_BANDS
   uint8_t  flags;          // bit0 = dcd, bit1 = airtime_lock
@@ -82,7 +82,7 @@ struct Sample {
 // Per-window own-TX accumulator. The firmware-level `airtime` global
 // is a 15-second moving average (two 7.5s bins, summed and divided by
 // 2 × AIRTIME_BINLEN_MS), so a single ~30ms announce packet
-// contributes 30/15000 ≈ 0.2% — rounds to 0% in our uint8 sample. To
+// contributes 30/15000 ≈ 0.2% - rounds to 0% in our uint8 sample. To
 // catch short bursts at 1Hz resolution we accumulate per-packet
 // airtime here from add_airtime() and convert to a percentage at each
 // snapshot tick. This is purely a telemetry side-channel; the
@@ -93,7 +93,7 @@ inline uint32_t& tx_window_start_ms()         { static uint32_t v = 0; return v;
 
 // Called from add_airtime() after the per-packet airtime calculation.
 // `packet_ms` is the same value the firmware adds to airtime_bins.
-// Cheap — one add into a volatile uint32_t.
+// Cheap - one add into a volatile uint32_t.
 inline void note_tx_ms(uint32_t packet_ms) {
   tx_window_ms_acc() += packet_ms;
 }
@@ -105,7 +105,7 @@ inline void note_tx_ms(uint32_t packet_ms) {
 // dcd_high_ticks each time the DCD-busy sample comes back true,
 // bump dcd_total_ticks unconditionally, divide at snapshot.
 // Caller in check_modem_status() fires every STATUS_INTERVAL_MS (3ms)
-// so each tick represents a 3ms slice — the same source the upstream
+// so each tick represents a 3ms slice - the same source the upstream
 // local_channel_util uses, just without the 7.5-second smoothing tail.
 inline volatile uint32_t& dcd_high_ticks()  { static volatile uint32_t v = 0; return v; }
 inline volatile uint32_t& dcd_total_ticks() { static volatile uint32_t v = 0; return v; }
@@ -120,7 +120,7 @@ namespace _detail {
   // access; the pointer is cached in a function-local static so a
   // failed allocation gets re-attempted next tick rather than poisoning
   // the slot permanently. Falls back to MALLOC_CAP_8BIT (internal SRAM)
-  // only if PSRAM isn't available — non-fatal for boards without it.
+  // only if PSRAM isn't available - non-fatal for boards without it.
   inline Sample* ring() {
     static Sample* r = nullptr;
     if (r) return r;
@@ -230,7 +230,7 @@ inline Sample snapshot(uint32_t now_ms) {
 // Encode a Sample into the WS/REST JSON shape. The three utilisation
 // figures are grouped under `util` so they're visually clustered apart
 // from RSSI/noise/CSMA state. `util.others` = aggregate non-self
-// channel activity — see Sample::others_pct comment for what it does
+// channel activity - see Sample::others_pct comment for what it does
 // and doesn't include.
 inline void encode(const Sample& s, JsonObject o) {
   o["ts"]    = s.ts_ms;
@@ -276,7 +276,7 @@ inline const Sample* tick(uint32_t now_ms) {
   _detail::push(s);
   Sample* r = _detail::ring();
   if (!r) return nullptr;
-  // Return a pointer into the ring at the head's prior slot — i.e.
+  // Return a pointer into the ring at the head's prior slot - i.e.
   // the slot we just wrote.
   const size_t idx = (_detail::ring_head() + RING_CAP - 1) % RING_CAP;
   return &r[idx];

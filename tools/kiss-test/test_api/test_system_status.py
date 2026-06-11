@@ -1,6 +1,6 @@
 """System snapshot (storage, sensors, battery, outbound_caps, rtc) is
 delivered via the WS `hello` frame on connect and refreshed by
-`system_update` events. The REST endpoint was retired — these tests
+`system_update` events. The REST endpoint was retired - these tests
 pin the WS contract.
 
 Each datum still has exactly one home. Things on /api/info
@@ -129,11 +129,11 @@ def test_hello_carries_clock(sx, tokens):
     h = _hello(d, tokens["sx"], d.identity)
     c = h.get("clock") or {}
     for k in ("now_ms", "unix_ms", "calibrated", "source", "current_boot_epoch"):
-        assert k in c, f"hello.clock missing {k!r} — got {list(c.keys())}"
+        assert k in c, f"hello.clock missing {k!r} - got {list(c.keys())}"
 
 
 def test_system_status_endpoint_gone(sx):
-    """The REST endpoint is retired — anyone polling it must migrate
+    """The REST endpoint is retired - anyone polling it must migrate
     to the WS hello/system_update contract."""
     s, d = sx
     r = s.get(f"{d.url}/api/system_status", timeout=5)

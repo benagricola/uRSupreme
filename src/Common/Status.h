@@ -1,6 +1,6 @@
 #pragma once
 
-// Common::Status — a transient-status-message bus for surfaces that
+// Common::Status - a transient-status-message bus for surfaces that
 // want to communicate operational state to the user.
 //
 // Producers (anywhere in the firmware):
@@ -9,12 +9,12 @@
 //     Common::Status::say("WiFi: connected, IP 192.168.1.42", /*ttl_ms=*/5000);
 //     Common::Status::clear();
 //
-// Consumers (currently: nobody — the OLED integration is deliberately
+// Consumers (currently: nobody - the OLED integration is deliberately
 // deferred until a display layout has been chosen). The intended sink
 // is a small scrolling marquee on the OLED, rendered in the same
 // Picopixel font the identity-code page uses for the 6-char code
 // (Display.h:852). Picopixel is monospace and teeny, which is exactly
-// the constraint on a status strip — fits the most characters per
+// the constraint on a status strip - fits the most characters per
 // line on a 128×64 panel and reads cleanly without leaning.
 // The marquee can scroll horizontally for messages wider than the
 // screen's effective text width.
@@ -26,7 +26,7 @@
 // Threading: producers may call from any task (HTTP handler, main
 // loop, sensor reader). The internal state is guarded by a small
 // FreeRTOS mutex. Consumers should call get/latest from the main
-// loop only — that's the only place we know the OLED canvas is safe
+// loop only - that's the only place we know the OLED canvas is safe
 // to touch.
 //
 // Memory: messages are copied into a fixed-size ring (8 slots, 64
@@ -54,7 +54,7 @@ namespace Status {
   };
 
   namespace _detail {
-    // Forward declarations — defined in the inline impls below so this
+    // Forward declarations - defined in the inline impls below so this
     // stays header-only (consistent with the rest of the project's
     // Common/* style).
     inline SemaphoreHandle_t& mtx_handle() {
@@ -101,7 +101,7 @@ namespace Status {
     say(s.c_str(), ttl_ms);
   }
 
-  // Replace the most recent message in place (no new ring slot) — use
+  // Replace the most recent message in place (no new ring slot) - use
   // when you're updating a long-running operation's progress and don't
   // want to spam history (e.g. "AP closing in 2:00" → "1:59" → …).
   inline void update(const char* text, uint32_t ttl_ms = DEFAULT_TTL_MS) {
@@ -110,7 +110,7 @@ namespace Status {
     if (xSemaphoreTake(_detail::mtx_handle(), pdMS_TO_TICKS(50)) != pdTRUE) return;
     auto& r = _detail::ring();
     if (r.count == 0) {
-      // Nothing to update — promote to a regular say().
+      // Nothing to update - promote to a regular say().
       uint8_t next_head = (r.head + 1) % RING_DEPTH;
       r.head = next_head;
       r.count = 1;

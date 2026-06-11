@@ -6,14 +6,14 @@
 # Symbol names are IDF v5.x (verified against framework-espidf 5.5.1
 # bundled with pioarduino 55.03.32).
 #
-# Only list overrides — anything not here inherits arduino-esp32's
+# Only list overrides - anything not here inherits arduino-esp32's
 # reference value (which already enables BT/NimBLE, Wi-Fi, correct
 # flash settings, partition table choice, etc.).
 
 # ---------------------------------------------------------------------------
 # PSRAM: T-Beam Supreme has 8 MB QUAD PSRAM @ 80 MHz (qio_qspi per the
 # board JSON; NOT octal). The arduino reference may default to a
-# different mode/speed for the generic esp32s3 board — override here.
+# different mode/speed for the generic esp32s3 board - override here.
 # ---------------------------------------------------------------------------
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_QUAD=y
@@ -49,8 +49,8 @@ CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 # Reticulum path table persistence) don't stall ISRs that touch PSRAM.
 # (Verified NOT the cause of the ~8.25s /api/storage/config stall: toggling
 # these off left the latency unchanged. That stall was LittleFS.usedBytes()
-# running lfs_fs_size() — a full-partition block scan, called twice per
-# request — now cached in Storage/FreeSpace.h.)
+# running lfs_fs_size() - a full-partition block scan, called twice per
+# request - now cached in Storage/FreeSpace.h.)
 CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
 CONFIG_SPIRAM_RODATA=y
 
@@ -71,12 +71,12 @@ CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=32
 # throughput ~= TCP_WND / RTT. With BT enabled, WiFi+BT coexistence forces
 # WiFi modem-sleep and pushes the RTT to ~1s+, so the old 4*MSS (5744) window
 # capped attachment uploads at ~4 KB/s (#93). The window was kept small to
-# limit the internal-SRAM pbuf peak — but lwIP buffers are now PSRAM-backed
+# limit the internal-SRAM pbuf peak - but lwIP buffers are now PSRAM-backed
 # (SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y), so raise it to 30*MSS (~43 KB) for
 # throughput without the SRAM cost (43080 < 65535, so no window-scaling
 # needed). RECVMBOX is bumped from the default 6 so the socket layer can queue
 # the larger window's packets instead of backpressuring to ~6*MSS.
-# TCP_SND_BUF (the send/download path) stays small for now — addressed
+# TCP_SND_BUF (the send/download path) stays small for now - addressed
 # separately if downloads need it.
 # ---------------------------------------------------------------------------
 CONFIG_LWIP_TCP_MSS=1436
@@ -84,11 +84,11 @@ CONFIG_LWIP_TCP_SND_BUF_DEFAULT=5744
 CONFIG_LWIP_TCP_WND_DEFAULT=43080
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
 
-# Socket count — keep the arduino-esp32 reference value of 16 (NOT a lowered
+# Socket count - keep the arduino-esp32 reference value of 16 (NOT a lowered
 # 7/8). A browser opens up to ~6 concurrent TCP connections to load the SPA,
 # and the device also holds the rmap TCP client + DNS/NTP/mDNS + the WebSocket
 # at once. At 7 sockets / 8 active-TCP those contend and the WS connection gets
-# starved — its hello frame (which carries outbound_caps) never lands, so the
+# starved - its hello frame (which carries outbound_caps) never lands, so the
 # composer silently falls back to its 64 KiB attachment cap. 16 is cheap (a few
 # hundred bytes of control structs) and the lwIP pbuf pools are PSRAM-backed.
 CONFIG_LWIP_MAX_SOCKETS=16
@@ -104,7 +104,7 @@ CONFIG_LWIP_MAX_ACTIVE_TCP=16
 # arduino-esp32's BLE library (libraries/BLE/) supports both stacks
 # behind a common header set, so the BLEDevice / BLEServer / BLE2902
 # class names still resolve. The `BLE2902` deprecation warning is
-# expected — NimBLE creates 2902 descriptors implicitly, but the class
+# expected - NimBLE creates 2902 descriptors implicitly, but the class
 # still works under Bluedroid (and we're on Bluedroid here anyway).
 # ---------------------------------------------------------------------------
 # CONFIG_BT_NIMBLE_ENABLED is not set
@@ -123,7 +123,7 @@ CONFIG_HEAP_TASK_TRACKING=y
 CONFIG_HEAP_USE_HOOKS=y
 
 # ---------------------------------------------------------------------------
-# LittleFS (joltwallet managed component) — disable its runtime asserts.
+# LittleFS (joltwallet managed component) - disable its runtime asserts.
 # The project's global build_flags carry -DLFS_NO_ASSERT (for microStore's
 # littlefs). In the arduino-as-component build that flag is a global compile
 # define, so it also reaches the managed joltwallet littlefs: it compiles out

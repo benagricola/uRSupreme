@@ -1,7 +1,7 @@
 // Cached LittleFS free-space.
 //
 // filesystem.storageAvailable() resolves to LittleFS.usedBytes(), which runs
-// lfs_fs_size() — a full-partition block scan that holds the esp_littlefs
+// lfs_fs_size() - a full-partition block scan that holds the esp_littlefs
 // per-instance semaphore for seconds on a populated partition (~5 s on the
 // 4.4 MB flash partition). The attachment-cap clamp (/api/storage/config)
 // reads it twice per request (send + receive caps) and the SPA polls it on
@@ -11,11 +11,11 @@
 // Two accessors, split so the expensive scan can NEVER run under the rns_lock
 // (where it would starve LoRa, mid-Resource-reception in the worst case):
 //
-//   flash_free()         — non-blocking; returns the last scanned value (0
+//   flash_free()         - non-blocking; returns the last scanned value (0
 //                          until the first scan). Safe to call from anywhere,
 //                          including the receive path and other rns_lock
 //                          holders. This is the default every caller should use.
-//   flash_free_refresh() — runs the block scan if the cache is stale, updates
+//   flash_free_refresh() - runs the block scan if the cache is stale, updates
 //                          it, and returns the value. MUST be called only from
 //                          a context that does NOT hold the rns_lock (it blocks
 //                          ~5 s): the lock-free /api/storage/config handler and
@@ -48,7 +48,7 @@ namespace _freespace {
   inline Cache& ref() { static Cache c; return c; }
 }
 
-// Last known bytes free on the flash filesystem. Never scans — returns 0 until
+// Last known bytes free on the flash filesystem. Never scans - returns 0 until
 // the first flash_free_refresh() (the boot warm-up) completes. Safe under any
 // lock.
 inline size_t flash_free() {
@@ -56,7 +56,7 @@ inline size_t flash_free() {
 }
 
 // Refresh the cache if older than `max_age_ms`, then return it. Blocks ~5 s on
-// a cold scan — call only off the rns_lock (web handler / boot). Single-flight:
+// a cold scan - call only off the rns_lock (web handler / boot). Single-flight:
 // while one caller scans, others get the last value (or 0 before the first).
 inline size_t flash_free_refresh(uint32_t max_age_ms = 30000) {
   _freespace::Cache& c = _freespace::ref();
@@ -74,7 +74,7 @@ inline size_t flash_free_refresh(uint32_t max_age_ms = 30000) {
   return v;
 }
 
-// Force the next flash_free_refresh() to rescan — call after a write/delete
+// Force the next flash_free_refresh() to rescan - call after a write/delete
 // that materially changes free space (e.g. the boot path-store purge).
 inline void invalidate_flash_free() {
   _freespace::ref().scanned_at.store(0, std::memory_order_release);

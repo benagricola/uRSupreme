@@ -5,7 +5,7 @@
 // Replaces the SSE short-poll pattern with a persistent push stream:
 // one TCP socket per browser tab, events delivered as JSON text frames
 // as they happen. The SSE endpoint is retained alongside this for
-// transitional compatibility — the SPA negotiates which to use.
+// transitional compatibility - the SPA negotiates which to use.
 //
 // Wire protocol:
 //   * Client connects to /api/ws?token=<bearer>&identity_id=<id>
@@ -70,7 +70,7 @@ namespace WS {
   }
 
   // True when at least one authed client is connected. Lets publishers
-  // skip work entirely when no SPA is listening — building JSON for a
+  // skip work entirely when no SPA is listening - building JSON for a
   // broadcast-to-zero is wasted main-loop time, and matters because
   // WebUI::loop runs at ~50 Hz on the same task as reticulum.loop().
   inline bool any_subscribers() {
@@ -91,12 +91,12 @@ namespace WS {
   //
   // Heap-fragmentation note: the previous form did
   //   String s; serializeJson(doc, s); for (...) srv.text(id, s);
-  // which churned the default heap twice per broadcast — once for the
+  // which churned the default heap twice per broadcast - once for the
   // Arduino String (resizing via repeated realloc) and once per client
   // for AsyncWebSocket's internal makeSharedBuffer std::vector copy.
   // Both landed in internal SRAM at the same size range
   // (~200–2 KiB) and at high frequency (sensors_update + system_update
-  // + message_progress) — exactly the size range the ESP-IDF WiFi
+  // + message_progress) - exactly the size range the ESP-IDF WiFi
   // driver's `esf_buf_alloc_dynamic` needs (1626 B for 802.11 TX frames),
   // so app-side churn fragmented region 1 of internal SRAM and starved
   // the WiFi MAC layer, dropping outbound frames and tearing down
@@ -105,7 +105,7 @@ namespace WS {
   // The new form does one allocation per broadcast: a SharedBuffer
   // sized exactly from measureJson(doc), serialised directly into via
   // serializeJson(doc, ptr, len). The shared_ptr is ref-counted across
-  // all targeted clients — srv.text(id, buf) does NOT copy.
+  // all targeted clients - srv.text(id, buf) does NOT copy.
   // PSRAM-backed AsyncWebSocketSharedBuffer construction.
   //
   // AsyncWebSocketSharedBuffer is `std::shared_ptr<std::vector<uint8_t>>`
@@ -150,7 +150,7 @@ namespace WS {
     // size; this does, and it turns "libstdc++ changed" from heap
     // corruption mid-broadcast into a one-line warning at first use
     // plus a safe fallback. (The probe reads through the same punned
-    // view it is validating — on a layout change the pointers simply
+    // view it is validating - on a layout change the pointers simply
     // fail to match; nothing is written through the view.)
     inline bool layout_ok() {
       static int ok = -1;
@@ -162,7 +162,7 @@ namespace WS {
               && g->finish == probe.data() + 2
               && g->end_of_storage >= g->finish) ? 1 : 0;
         if (!ok) {
-          WARNING("WS: std::vector layout mismatch — PSRAM WS buffers "
+          WARNING("WS: std::vector layout mismatch - PSRAM WS buffers "
                   "disabled, falling back to default-heap buffers");
         }
       }
@@ -173,7 +173,7 @@ namespace WS {
   // Build a PSRAM-backed AsyncWebSocketSharedBuffer of `n` bytes.
   // Returns an empty shared_ptr on PSRAM exhaustion (8 MB; unlikely).
   // The custom deleter frees both PSRAM allocations and crucially
-  // does NOT call ~vector() — which would try std::allocator::
+  // does NOT call ~vector() - which would try std::allocator::
   // deallocate on PSRAM memory and crash.
   inline AsyncWebSocketSharedBuffer make_psram_ws_buffer(size_t n) {
     if (!_psram_ws::layout_ok()) {
@@ -192,7 +192,7 @@ namespace WS {
     guts->finish         = data + n;
     guts->end_of_storage = data + n;
     auto deleter = [data, guts](std::vector<uint8_t>* /*v*/) {
-      // Deliberately do NOT call v->~vector() — the vector was never
+      // Deliberately do NOT call v->~vector() - the vector was never
       // constructed (we type-punned VecGuts onto it). Calling the dtor
       // would invoke std::allocator::deallocate on `data`, which lives
       // in PSRAM, not the default heap → crash.
@@ -221,7 +221,7 @@ namespace WS {
   }
 
   inline void broadcast(const JsonDocument& doc, const LXMF::IdentityId& scope = {}) {
-    // Early out when nobody's listening — covers the LR-rig boot case
+    // Early out when nobody's listening - covers the LR-rig boot case
     // where the SPA hasn't connected yet and 1 Hz emitters would
     // otherwise generate a steady stream of unwanted alloc/free
     // cycles. Even though our PSRAM-backed make_psram_ws_buffer
@@ -244,7 +244,7 @@ namespace WS {
     for (const auto& c : clients()) {
       if (!c.authed) continue;
       if (!scope.empty() && c.identity_id != scope) continue;
-      srv.text(c.client_id, buf);  // SharedBuffer overload — refcounted, no copy
+      srv.text(c.client_id, buf);  // SharedBuffer overload - refcounted, no copy
     }
   }
 
@@ -264,13 +264,13 @@ namespace WS {
     msg["title"]           = m.title;
     // Bodies are always inline now (capped at LXMF_MAX_BODY_BYTES on
     // the send path). The earlier body_on_disk spill + lazy /body
-    // fetch was dead infrastructure — the SPA never called the
+    // fetch was dead infrastructure - the SPA never called the
     // endpoint, so large bodies stayed unreadable from the UI even
     // though the bytes were on disk.
     msg["body"]            = m.content;
     msg["body_size"]       = m.body_size;
     msg["sig_ok"]          = m.signature_ok;
-    // Delivery-stamp verdict — present only when an inbound stamp
+    // Delivery-stamp verdict - present only when an inbound stamp
     // policy applied (cost configured on this identity).
     if (m.stamp_checked) {
       msg["stamp_ok"] = m.stamp_valid;
@@ -362,12 +362,12 @@ namespace WS {
     broadcast(doc, identity_id);
   }
 
-  // Same event, keyed by outbox seq instead of a packet/link hash — for a
+  // Same event, keyed by outbox seq instead of a packet/link hash - for a
   // queued send that has no packet hash yet (the "finding route" give-up,
   // or a deferred-stamp send still generating its proof-of-work). The SPA
   // matches the bubble by seq. A non-empty link_hash is included so the
   // bubble can adopt the packet hash a stamped send acquired at dispatch
-  // — later hash-keyed status frames (sent → delivered) then match it.
+  // - later hash-keyed status frames (sent → delivered) then match it.
   inline void publish_outbox_status_seq(const LXMF::IdentityId& identity_id,
                                         uint32_t seq,
                                         const char* status_name,
@@ -396,7 +396,7 @@ namespace WS {
     broadcast(doc);
   }
 
-  // Multi-kind sensor update — one frame carrying every sensor that
+  // Multi-kind sensor update - one frame carrying every sensor that
   // produced a fresh reading in the last drain window. The `fill`
   // callback receives the `values` object; it adds one nested object
   // per kind (gps, environment, magnetometer, imu, ...) shaped the
@@ -420,7 +420,7 @@ namespace WS {
   inline HelloExtras& hello_extras() { static HelloExtras fn; return fn; }
   inline void set_hello_extras(HelloExtras fn) { hello_extras() = std::move(fn); }
 
-  // Time-source update — fires when the active clock source changes
+  // Time-source update - fires when the active clock source changes
   // (GPS lock acquired, NTP sync completed, browser-set, RTC seed).
   inline void publish_time(const char* source, uint64_t unix_ms, bool calibrated) {
     Common::PsramJsonDocument doc;
@@ -437,7 +437,7 @@ namespace WS {
     broadcast(doc);
   }
 
-  // Generic system-block update — battery telemetry, storage usage,
+  // Generic system-block update - battery telemetry, storage usage,
   // outbound staging caps. The shape mirrors what /api/system_status
   // used to carry; the SPA replaces its cached block wholesale on
   // each event. Periodic (every 30 s from WebUI::loop) so the
@@ -469,11 +469,11 @@ namespace WS {
     broadcast(doc);
   }
 
-  // Radio telemetry — 1 Hz live sample of RSSI / channel util / CSMA
+  // Radio telemetry - 1 Hz live sample of RSSI / channel util / CSMA
   // state. Frame is intentionally small (~120 B JSON) because it ships
   // every second and shouldn't dominate WiFi/lwIP buffering. Fields are
   // emitted flat alongside `type` to match the wire shape of the other
-  // light WS frames (announce_seen, path_seen, time_update, etc.) —
+  // light WS frames (announce_seen, path_seen, time_update, etc.) -
   // the heavier frames (incoming, system_update) wrap under a semantic
   // sub-object (msg / payload / value) because they carry the type
   // plus their own meta; telemetry carries no meta beyond the sample
@@ -483,20 +483,20 @@ namespace WS {
     doc["type"] = "radio_telemetry";
     Telemetry::Radio::encode(s, doc.as<JsonObject>());
     // Cumulative packet counters tagged onto the live frame (not the
-    // history fill — those samples are frozen in time). Lets the
+    // history fill - those samples are frozen in time). Lets the
     // status popover update the "RX 686 / TX 662 pkt" line and the
     // chart simultaneously, without depending on the open-popover
     // /api/info refresh that previously gated those numbers.
     doc["rx_packets"] = (uint32_t)RNS::Transport::packets_received();
     doc["tx_packets"] = (uint32_t)RNS::Transport::packets_sent();
-    // Outbound packets dropped because the LoRa TX ring was full — the
+    // Outbound packets dropped because the LoRa TX ring was full - the
     // honest counterpart to tx_packets. Climbs when the radio can't keep
     // up (e.g. duty-cycle airtime lock holding the queue).
     doc["tx_dropped"] = (uint32_t)lora_tx_dropped;
     broadcast(doc);
   }
 
-  // Network (WiFi/transport) telemetry — aggregate tx/rx byte rate across the
+  // Network (WiFi/transport) telemetry - aggregate tx/rx byte rate across the
   // non-LoRa interfaces. Counterpart to the radio frame; carries no extra meta
   // beyond the sample itself.
   inline void publish_network_telemetry(const Telemetry::Network::Sample& s) {
@@ -519,7 +519,7 @@ namespace WS {
   // reuses (steals) the handshake request's AsyncClient, so request->client()
   // in on_handshake is the very same object as client->client() in
   // WS_EVT_CONNECT. The pointer is unique per live connection; remotePort() is
-  // not — it returns 0 under some load and is reused across rapid reconnects,
+  // not - it returns 0 under some load and is reused across rapid reconnects,
   // which mis-bound or silently dropped the auth.
   struct PendingAuth {
     AsyncClient*     client;
@@ -531,7 +531,7 @@ namespace WS {
     return v;
   }
 
-  // Handshake handler — returns true to allow the upgrade. Parses
+  // Handshake handler - returns true to allow the upgrade. Parses
   // ?token=... from the URL, validates against AuthTokens, and stashes
   // the resulting IdentityId so on_event can complete the binding.
   inline bool on_handshake(AsyncWebServerRequest* request) {
@@ -562,7 +562,7 @@ namespace WS {
     return true;
   }
 
-  // Internals — connect/disconnect/ping wiring. Auth is already done
+  // Internals - connect/disconnect/ping wiring. Auth is already done
   // in the handshake; here we just bind the IdentityId to the client.
   inline void on_event(AsyncWebSocket* /*srv*/, AsyncWebSocketClient* client,
                        AwsEventType type, void* arg, uint8_t* data, size_t len) {
@@ -570,7 +570,7 @@ namespace WS {
       ClientState st;
       st.client_id = client->id();
       st.authed    = false;
-      // Look up the pending auth by the AsyncClient pointer — the same object
+      // Look up the pending auth by the AsyncClient pointer - the same object
       // the handshake stashed (the upgrade steals and reuses it).
       AsyncClient* ac = client->client();
       auto& v = pending_auths();
@@ -588,7 +588,7 @@ namespace WS {
         client->close(1008, "auth");
         return;
       }
-      // Hello frame — gives the SPA the device time + identity it's
+      // Hello frame - gives the SPA the device time + identity it's
       // subscribed for, so it can drop any stale "connected as..." UI.
       // If WebUI installed an extras hook, let it inject a current
       // sensor / clock snapshot so the SPA has live data from frame
@@ -600,7 +600,7 @@ namespace WS {
       if (hello_extras()) {
         hello_extras()(hello.as<JsonObject>());
       }
-      // PSRAM-backed buffer — same allocation path as broadcast(). The hello
+      // PSRAM-backed buffer - same allocation path as broadcast(). The hello
       // is the largest WS frame (~1.8 KiB JSON from hello_extras) and fires on
       // every client connect. Allocating it from the default heap (internal
       // SRAM) failed intermittently once region-1 SRAM fragmented under WiFi +
@@ -628,7 +628,7 @@ namespace WS {
     else if (type == WS_EVT_DATA) {
       AwsFrameInfo* info = (AwsFrameInfo*)arg;
       if (!info || !info->final || info->opcode != WS_TEXT) return;
-      // Tiny client→server protocol — just ping for keepalive.
+      // Tiny client→server protocol - just ping for keepalive.
       if (len == 0 || !data) return;
       std::string s((const char*)data, len);
       if (s.find("\"ping\"") != std::string::npos) {

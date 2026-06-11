@@ -1,5 +1,5 @@
 // Auto-extracted from Web/WebUI.h on the SPA-migration branch.
-// Included from inside the class body of Web::WebUI in WebUI.h —
+// Included from inside the class body of Web::WebUI in WebUI.h -
 // this file has NO include guard, NO `#pragma once`, and is not a
 // standalone translation unit. The static method definitions below
 // remain implicit-inline because they sit inside a class body via
@@ -159,8 +159,8 @@
     // state, and the SD writer's orphan-reclaim would force-abort the healthy
     // first transfer. Ownership is the request pointer; a disconnect releases
     // it (the staging GC reclaims the orphaned buffer separately). Rejected
-    // requests are marked via _tempObject — heap-allocated because the
-    // request destructor free()s a non-null _tempObject — so their remaining
+    // requests are marked via _tempObject - heap-allocated because the
+    // request destructor free()s a non-null _tempObject - so their remaining
     // chunk/final callbacks never touch the owner's shared state.
     static AsyncWebServerRequest*& _upload_owner() { static AsyncWebServerRequest* v = nullptr; return v; }
 
@@ -189,7 +189,7 @@
         err        = nullptr;
         _current_upload_chunks()    = 0;
         _current_upload_min_chunk() = 0xFFFFFFFFu;
-        // Total size is the X-Total-Length header — query args are
+        // Total size is the X-Total-Length header - query args are
         // not reliable during multipart parsing. strtoull lets us
         // reject >4 GiB values before narrowing to size_t.
         if (!req->hasHeader("X-Total-Length")) {
@@ -239,7 +239,7 @@
         // append() failed (overrun, or the SD card stopped accepting bytes
         // after retries). The device serial log drops characters under the
         // upload's concurrent load, so carry the exact figures back in the
-        // response message — the SPA toast is the reliable channel here.
+        // response message - the SPA toast is the reliable channel here.
         static String msg;
         msg = String("Chunk write failed: ") + Storage::OutboundStaging::fail_detail();
         err = msg.c_str();
@@ -350,7 +350,7 @@
       send_upload_success(r.get(), id);
     }
 
-    // Final handler — runs once after the upload completes (or fails).
+    // Final handler - runs once after the upload completes (or fails).
     // Reports the staging_id the client should hand to /send.
     static void handle_outbound_upload_final(AsyncWebServerRequest* req) {
       if (req->_tempObject) {
@@ -368,7 +368,7 @@
         LXMF::IdentityId caller = require_auth(req);
         if (caller.empty()) {
           // Auth fail. Drop any staging buffer the chunk path may have
-          // built up — we shouldn't keep bytes for an unauthorized peer.
+          // built up - we shouldn't keep bytes for an unauthorized peer.
           uint32_t bad = _current_upload_staging_id();
           if (bad) Storage::OutboundStaging::release(bad);
           _current_upload_staging_id() = 0;
@@ -402,14 +402,14 @@
     static void handle_attachment_get(AsyncWebServerRequest* req) {
       // Auth + identity lookup needs the RNS lock because require_auth
       // walks the token table that LXMFGateway also mutates. EVERYTHING
-      // ELSE in this handler — file open, size(), the streaming
-      // producer — runs OUTSIDE the lock so a concurrent inbound
+      // ELSE in this handler - file open, size(), the streaming
+      // producer - runs OUTSIDE the lock so a concurrent inbound
       // Resource transfer (which holds the lock heavily for its own
       // packet/link/resource state) can't block attachment downloads.
       //
       // Before this scoping: holding RnsLockGuard for the whole
       // setup caused the SX webserver to wedge entirely when a
-      // background Resource transfer was inbound — the radio task
+      // background Resource transfer was inbound - the radio task
       // owned the lock continuously, the HTTP handler queued behind
       // it on `SD.open() + sd_f.size()`, and AsyncTCP backed up to
       // the point of being unrecoverable without a reboot.
@@ -425,7 +425,7 @@
         identity_dir = a->dir();
       }
       // Out of the lock from here on. Validation + I/O on the locals
-      // captured above — no further state lookups against the RNS
+      // captured above - no further state lookups against the RNS
       // gateway are needed.
       // [ATTDBG] Log the raw filename (full hex dump) so we can pin-point
       // any URL-decode quirks or stray whitespace.
@@ -472,7 +472,7 @@
         return;
       }
       const std::string full = identity_dir + "/attachments/" + fname;
-      // Backend dispatch. Try SD first if a card is mounted —
+      // Backend dispatch. Try SD first if a card is mounted -
       // big attachments live there; small/pre-SD ones on LittleFS. If
       // neither has the file, return 404.
       const bool on_sd    = Storage::SDCard::present() && Storage::SDCard::exists(full.c_str());
@@ -496,7 +496,7 @@
       //   - Use-after-free on lambda re-entry. The previous code did
       //     `delete st` when read returned 0, then returned 0. AsyncTCP
       //     can (and sometimes does) call the lambda again after a 0
-      //     return — at which point st is freed and any access is UB.
+      //     return - at which point st is freed and any access is UB.
       //     This is the root of the "request never returns + webserver
       //     wedges" crash that survived earlier attempts at fixing the
       //     lock scope and the FATFS mutex contention.
@@ -504,7 +504,7 @@
       // Fix: own StreamState by std::shared_ptr captured by VALUE into
       // the lambda. The lambda holds a refcount for as long as
       // AsyncWebServer retains it; when the response is destroyed (for
-      // any reason — completion, client disconnect, internal abort)
+      // any reason - completion, client disconnect, internal abort)
       // the lambda is destroyed and the last refcount drops. The
       // StreamState destructor closes the file handle and frees the
       // scratch. Idempotent and crash-safe regardless of how many
@@ -613,7 +613,7 @@
         obj["body_size"]   = m.body_size;
         obj["sig_ok"]      = m.signature_ok;
         obj["status"]      = LXMF::outbox_status_name(m.status);
-        // Delivery-stamp verdict — only present when a stamp policy
+        // Delivery-stamp verdict - only present when a stamp policy
         // applied to this message (inbound validation, or an outbound
         // send that generated a stamp). stamp_value is the recorded
         // proof-of-work score; absent for a missing/invalid stamp.
@@ -697,7 +697,7 @@
       send_json(req, 200, doc);
     }
 
-    // POST /api/identities/{id}/outbox/{seq}/retry — manually re-queue
+    // POST /api/identities/{id}/outbox/{seq}/retry - manually re-queue
     // a Failed outbox entry whose auto-retry budget was exhausted. The
     // outbox seq -> MessageRecord -> packet_hash (== PendingLinkSend
     // record_hash) lookup gives us the entry; LXMFMinimal::manual_retry
@@ -710,7 +710,7 @@
       const LXMF::LXMFIdentity* a = LXMF::LXMFGateway::identity_by_id(requested);
       if (!a || !a->outbox) { send_error(req, 404, "unknown_identity"); return; }
       const uint32_t seq = (uint32_t)atoi(req->pathArg(0).c_str());
-      // Direct seq lookup into the deque — no copy, no window guess.
+      // Direct seq lookup into the deque - no copy, no window guess.
       const LXMF::MessageRecord* rec = a->outbox->find_by_seq(seq);
       if (!rec) {
         send_error_with_message(req, 404, "outbox_seq_not_found",
@@ -732,7 +732,7 @@
       }
       if (!LXMF::LXMFMinimal::manual_retry(rec->packet_hash)) {
         // Wire bytes were dropped (server reboot or stale_failed prune)
-        // — the user has to re-send the message manually.
+        // - the user has to re-send the message manually.
         send_error_with_message(req, 410, "outbox_state_gone",
           "The original send-state is no longer available (likely after a reboot). Send the message again.");
         return;
@@ -745,7 +745,7 @@
 
     static void handle_send(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
-      // Big-body diagnostic — log heap state on entry / exit of large
+      // Big-body diagnostic - log heap state on entry / exit of large
       // POSTs so we can see whether the wedge happens during the HTTP
       // ingest (this handler), during outbox write (later in this
       // function), or only later in the LXMF gateway loop's encrypt.
@@ -812,7 +812,7 @@
         return;
       }
 
-      // Attachments are referenced by `staging_id` only — bytes were
+      // Attachments are referenced by `staging_id` only - bytes were
       // uploaded ahead of time via /attachment/upload. This keeps
       // the JSON body tiny regardless of attachment size, and lets the
       // backing buffer live in PSRAM (or SD when present) rather than
@@ -900,7 +900,7 @@
           return;
         }
         // Accepted into the auto-send queue (no route yet). `rec` is the
-        // optimistic "finding route" record — fall through to the 202 builder
+        // optimistic "finding route" record - fall through to the 202 builder
         // so the SPA shows a live bubble keyed by rec.seq that the eventual
         // auto-send (same seq) or the give-up outbox_status event resolves.
       }

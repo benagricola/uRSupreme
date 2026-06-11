@@ -32,7 +32,7 @@ LR_URL  = 'http://192.168.1.118'
 def _discover(url: str, pw: str):
     info = requests.get(f'{url}/api/info', timeout=5).json()
     if not info.get('identities'):
-        raise RuntimeError(f'no identity on {url} — provision it first')
+        raise RuntimeError(f'no identity on {url} - provision it first')
     iden = info['identities'][0]['id']
     addr = info['identities'][0]['address']
     tok = requests.post(f'{url}/api/auth/login',
@@ -155,7 +155,7 @@ def run_leg(label, send, recv, body, image_bytes, timeout_s):
     if hashlib.sha256(received).digest() != hashlib.sha256(image_bytes).digest():
         print(f'    [FAIL] sha256 mismatch (sent={len(image_bytes)} B, got={len(received)} B)')
         return False
-    print(f'    [PASS] receiver bytes verified ({len(received)} B match) — total elapsed {time.time()-t0:.1f}s')
+    print(f'    [PASS] receiver bytes verified ({len(received)} B match) - total elapsed {time.time()-t0:.1f}s')
 
     # Sender-side persistence check: the sender's own outbox should now
     # carry a filename pointing at a persisted blob, and downloading it
@@ -164,7 +164,7 @@ def run_leg(label, send, recv, body, image_bytes, timeout_s):
     sender_meta = wait_for_outbound_attachment(send['url'], send['iden'], send['tok'],
                                                recv['addr'], len(image_bytes), timeout_s=10)
     if not sender_meta or not sender_meta.get('filename'):
-        print('    [WARN] sender outbox has no persisted filename — toggle off, or persist failed')
+        print('    [WARN] sender outbox has no persisted filename - toggle off, or persist failed')
         return True
     print(f'    sender stored as {sender_meta["filename"]} (backend={sender_meta.get("backend")})')
     sent_back = fetch_attachment(send['url'], send['iden'], send['tok'], sender_meta['filename'])

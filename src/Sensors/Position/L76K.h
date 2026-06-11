@@ -1,4 +1,4 @@
-// GPS driver — minimal NMEA-0183 parser for the L76K-class module on
+// GPS driver - minimal NMEA-0183 parser for the L76K-class module on
 // the T-Beam Supreme (UART1 on GPIO 8/9 at 9600 baud).
 //
 // Responsibilities:
@@ -21,10 +21,10 @@
 //   GPS time-source enabled  + interval_s >= PULSE_THRESHOLD_S → pulsed
 //                              (power up, acquire fix, report, power down)
 //   GPS time-source disabled                                    → powered off
-//   Position tracking follows the same gating as time reports —
+//   Position tracking follows the same gating as time reports -
 //   if the user disables GPS, the chip is off and position is stale.
 //
-// The parser is line-based — calls into `pump()` from loopTask drain
+// The parser is line-based - calls into `pump()` from loopTask drain
 // up to a few hundred bytes per pass, accumulate one line in a
 // fixed-size buffer, dispatch when '\n' arrives or the buffer fills.
 // No dynamic allocation in the hot path.
@@ -54,7 +54,7 @@ struct Fix {
   double   latitude_deg    = 0.0;    // signed decimal degrees
   double   longitude_deg   = 0.0;    // signed decimal degrees
   double   altitude_m      = 0.0;    // Mean-sea-level altitude in metres (from GGA).
-                                     // Updated independently from lat/lon — GGA arrives
+                                     // Updated independently from lat/lon - GGA arrives
                                      // separately from RMC each second.
   bool     altitude_valid  = false;  // True once we've seen at least one GGA with
                                      // fix_quality >= 1 since boot (or since last fix lost).
@@ -68,7 +68,7 @@ struct Fix {
 
 // If the user's GPS poll interval is at or above this, run the chip
 // in pulsed mode: power on, hunt for a fix, report, power off. Below
-// it, keep the chip continuously powered — frequent cycling would
+// it, keep the chip continuously powered - frequent cycling would
 // shred the cold-start budget.
 inline constexpr uint32_t PULSE_THRESHOLD_S    = 5 * 60;     // 5 min
 inline constexpr uint32_t PULSE_ACQUIRE_TIMEOUT_MS = 120000; // give up after 2 min hunting
@@ -76,7 +76,7 @@ inline constexpr uint32_t PULSE_RETRY_BACKOFF_MS   = 60000;  // try again 60 s l
 // Exponential-backoff cap: after enough consecutive timeouts (cold
 // indoors, antenna shielded, no sky), stop retrying every minute and
 // fall back to ~once an hour. The user's nominal interval still wins
-// once we successfully acquire — backoff only modulates the
+// once we successfully acquire - backoff only modulates the
 // failure-side retry cadence so we don't burn power hunting forever.
 inline constexpr uint32_t PULSE_RETRY_BACKOFF_MAX_MS = 30UL * 60UL * 1000UL;
 // Cap the doubling at 9 (60s · 2^9 = ~30 min) so the shift doesn't
@@ -97,7 +97,7 @@ namespace _detail {
   // Last time we reported a time to TimeManager (millis()). 0 = never.
   inline uint32_t&       last_report_ms_ref() { static uint32_t v = 0; return v; }
   // Power-mode state. `pulse_last_rep_snapshot` is the value of
-  // last_report_ms_ref() at the moment the current pulse started —
+  // last_report_ms_ref() at the moment the current pulse started -
   // we use it to detect "did a fresh report happen *during this
   // pulse*" without confusing the retry-backoff path (which writes
   // an old timestamp into last_report_ms_ref() to schedule the next
@@ -199,8 +199,8 @@ namespace _detail {
     if (!checksum_ok(p - 1, len + 1) && !checksum_ok(p, len)) return;
     // Talker IDs vary by constellation (GP, GN, GL, GA, BD); match
     // the suffix three chars. Two sentence types are handled here:
-    //   RMC — time + lat/lon + speed + heading
-    //   GGA — altitude (and a redundant lat/lon we ignore)
+    //   RMC - time + lat/lon + speed + heading
+    //   GGA - altitude (and a redundant lat/lon we ignore)
     if (len < 5) return;
     const bool is_rmc = (p[2] == 'R' && p[3] == 'M' && p[4] == 'C');
     const bool is_gga = (p[2] == 'G' && p[3] == 'G' && p[4] == 'A');
@@ -252,7 +252,7 @@ namespace _detail {
     f.fix_received_ms = millis();
     f.last_valid_fix_ms = millis();   // reached only on a valid fix (invalid RMCs return above)
 
-    // Time reporting — respect the user's GPS interval.
+    // Time reporting - respect the user's GPS interval.
     // interval_s = 0  → "at boot" only: report once, never repoll
     // interval_s > 0  → seconds between repolls
     if (f.unix_epoch > 0.0) {
@@ -289,7 +289,7 @@ inline void begin(HardwareSerial& serial, const Pins& pins) {
           pins.rx, pins.tx, pins.en, (unsigned long)pins.baud);
 }
 
-// Bring the GPS chip back up — ALDO4 on, GPS_EN high. Idempotent.
+// Bring the GPS chip back up - ALDO4 on, GPS_EN high. Idempotent.
 inline void power_on() {
   if (PMU && !PMU->isPowerChannelEnable(XPOWERS_ALDO4)) {
     PMU->setPowerChannelVoltage(XPOWERS_ALDO4, 3300);
@@ -383,14 +383,14 @@ inline void pump() {
                 (unsigned long)cfg.interval_s,
                 (unsigned long)(first_time ? 0 : (now - last_rep)));
       } else {
-        // Idle between polls — make sure power is off.
+        // Idle between polls - make sure power is off.
         if (_detail::hw_powered_ref()) power_off();
       }
     } else /* Acquiring */ {
       // A fresh report happened *during this pulse* iff handle_line
       // bumped last_report_ms_ref above its pre-pulse snapshot. This
       // avoids the trap where retry-backoff sets last_rep to a value
-      // numerically larger than pulse_started_ms — which would otherwise
+      // numerically larger than pulse_started_ms - which would otherwise
       // make the previous `last_rep >= pulse_started_ms` check fire
       // immediately and ping-pong the pulse state.
       const bool acquired = (last_rep != _detail::pulse_last_rep_snapshot());
@@ -411,7 +411,7 @@ inline void pump() {
         // minute to once every ~30 min, which saves substantial power.
         // Motion through the IMU calls Gps::reset_backoff() to drop
         // back to base whenever the device gets carried somewhere
-        // new — a likely sign of a new sky view.
+        // new - a likely sign of a new sky view.
         uint8_t& n = _detail::backoff_count_ref();
         const uint8_t shift = (n < PULSE_RETRY_BACKOFF_SHIFT_MAX) ? n : PULSE_RETRY_BACKOFF_SHIFT_MAX;
         uint32_t delay_ms = PULSE_RETRY_BACKOFF_MS << shift;
@@ -451,7 +451,7 @@ inline void pump() {
       buf[blen++] = (char)c;
     }
     else {
-      // Overrun — drop the line, resync on next \n.
+      // Overrun - drop the line, resync on next \n.
       blen = 0;
     }
   }

@@ -39,7 +39,7 @@ namespace Web {
     }
 
     // Derive a 32-byte hash from password + salt. Iteration count fixed
-    // at ITERATIONS — change requires re-hashing every identity, so it's
+    // at ITERATIONS - change requires re-hashing every identity, so it's
     // effectively a one-shot decision.
     static RNS::Bytes derive(const std::string& password, const RNS::Bytes& salt) {
       RNS::Bytes pw_bytes((const uint8_t*)password.c_str(), password.length());

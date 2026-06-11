@@ -26,7 +26,7 @@
      x-data
      x-show="$store.net && !$store.net.connected"
      x-cloak>Reconnecting…</div>
-<!-- Offscreen utility nodes — never user-visible. Created in markup
+<!-- Offscreen utility nodes - never user-visible. Created in markup
      once instead of via document.createElement on every Save-As /
      image-resize call. -->
 <a id="dl-link" hidden></a>
@@ -171,7 +171,7 @@
   </div>
 </div>
 
-<!-- (radio config lives inside #modal-settings under the Radio tab —
+<!-- (radio config lives inside #modal-settings under the Radio tab -
      see below. The first-run wizard opens that modal with the Radio
      tab pre-selected and "locked" so other tabs are hidden.) -->
 
@@ -316,7 +316,7 @@
       </template>
 
       <!-- Chats section. Rows are keyed by peer hash so Alpine reuses
-           DOM across reactive updates — keeps focus + in-flight
+           DOM across reactive updates - keeps focus + in-flight
            progress bars stable while a transfer ticks. -->
       <template x-if="convListData().length > 0">
         <div class="list-section">Chats</div>
@@ -432,7 +432,7 @@
           <template x-if="m.title">
             <div class="font-bold mb-mini" x-text="m.title"></div>
           </template>
-          <!-- Only render the body container when there's text — an
+          <!-- Only render the body container when there's text - an
                empty <div> still takes ~line-height worth of vertical
                space, which on attachment-only messages shows up as a
                wide gap above the chip. -->
@@ -584,7 +584,7 @@
                   x-model="$store.s.forms.compose.text"
                   @keydown="onComposeKeydown($event)"
                   @input="onComposeInput($event)"></textarea>
-        <!-- Live character counter — appears only when the user is
+        <!-- Live character counter - appears only when the user is
              approaching the cap. The firmware rejects >4096 with 413,
              so we surface the limit visually before they hit send. -->
         <div id="compose-counter" class="muted text-xs text-right mt-mini"
@@ -1051,7 +1051,7 @@
      fit-to-viewport and natural size (pan via scroll when zoomed).
      Tap the backdrop or hit Escape to close. -->
 <div id="modal-image" class="modal-bg z-280 bg-image-backdrop" x-data x-show="$store.s.modals.image" x-cloak >
-  <!-- 100dvh, not 100vh — Firefox Android's bottom address bar
+  <!-- 100dvh, not 100vh - Firefox Android's bottom address bar
        otherwise hides the bottom of the image (and the close/save
        buttons by reducing the usable area). Same fix as the modals. -->
   <div class="w-viewport h-viewport overflow-y-auto flex items-center justify-center cursor-zoom-out" id="mi-wrap">
@@ -1135,10 +1135,10 @@
   <div class="modal">
     <h3 id="id-code-modal-title" x-text="$store.s.ui.idCodeModalTitle">Identity code required</h3>
     <!-- Two opening paths: (1) the device button was pressed and the
-         firmware fired identity_code_available — we got here from the
+         firmware fired identity_code_available - we got here from the
          WS event handler, so a code is already on the OLED; (2) the
          SPA needs a code to authorise a privileged action and opened
-         this modal itself — the user may need to press the button
+         this modal itself - the user may need to press the button
          first. id-code-modal-hint carries whichever context applies;
          the .id-code-hint span below has the full "how to generate"
          instructions. -->
@@ -1716,7 +1716,7 @@ const API = {
 //      templates can use `$store.s.foo` directly. The store and
 //      `state` are the same proxy; mutating either path triggers
 //      reactivity.
-//   3. Register a separate `net` store for connection state — kept
+//   3. Register a separate `net` store for connection state - kept
 //      out of the main state object because the WS code mutates it
 //      from below the Alpine boundary (timer callbacks etc.) and
 //      having it isolated makes the network-down condition trivial
@@ -1744,7 +1744,7 @@ document.addEventListener('alpine:init', () => {
       if (durationMs == null) {
         durationMs = (kind === 'error') ? 7000 : (kind === 'success') ? 3000 : 4000;
       }
-      // Split "Title: body" into separate lines — same heuristic as
+      // Split "Title: body" into separate lines - same heuristic as
       // the old imperative path.
       let title = message, body = '';
       const idx = message.indexOf(':');
@@ -1878,7 +1878,7 @@ let state = {
   // Live confirm-modal config. Populated by showConfirm(opts) and
   // mutated by confirmOk / confirmCancel. Null when no confirm modal
   // is open. The _resolve fn isn't enumerated reactively but Alpine
-  // doesn't care — it just lives on the object.
+  // doesn't care - it just lives on the object.
   confirm: {
     title: 'Confirm', body: '', okLabel: 'OK', destructive: false,
     needsCode: false, needsInput: false,
@@ -1893,7 +1893,7 @@ let state = {
   identities: [],
   self: null,                       // current identity object {id, display_name, address, ...}
   // Plain objects (not Maps) so Alpine 3's reactive proxy can observe
-  // mutations — Alpine doesn't track Map/Set internals.
+  // mutations - Alpine doesn't track Map/Set internals.
   conversations: {},                // peer_hex → {peer, display_name, last_ts, last_body, last_in, msgs:[]}
   openPeer: null,
   announces: {},                    // dest_hex → record
@@ -1907,7 +1907,7 @@ let state = {
   prefs: loadPrefs(),
   pendingIdCode: false,
   pendingIdCodeAction: null,        // function called with the 6-char code
-  announcedThisBoot: false,         // local flag — yellow announce dot when
+  announcedThisBoot: false,         // local flag - yellow announce dot when
                                     // auto-announce is off but user has fired
                                     // at least one manual announce since SPA load
   pendingAttachments: [],           // [{ tag, bytes:Uint8Array, filename, mime, eta_ms }]
@@ -1936,11 +1936,11 @@ let state = {
   // it for trimming to keep client + firmware aligned. Each sample is
   // { ts, rssi, noise, util:{own, others}, cw, dcd, lock, rx, tx }.
   // `util.others` is the fraction of recent DCD samples where the
-  // modem detected non-self activity — aggregate, not per-peer.
+  // modem detected non-self activity - aggregate, not per-peer.
   // `noise` is the measured ambient RSSI when DCD is off; rssi-noise
   // = effective SNR.
   // `smoothing` is a sample-count for a trailing moving average applied
-  // at render time. Firmware emits 1Hz raw — 1 leaves the data
+  // at render time. Firmware emits 1Hz raw - 1 leaves the data
   // unsmoothed (sharp announce spikes), 3-5 gives gentler humps.
   // Server-side raw is preserved either way; this is purely a render
   // knob the SPA controls.
@@ -2042,7 +2042,7 @@ let state = {
     cnLoraCfgStatus: '',             // saved/error/reboot caption under LoRa mode+IFAC save
     storageMaxSendMax: 1048576,      // live max bytes for the send slider
     storageMaxRecvMax: 1048576,      // live max bytes for the recv slider
-    showRadioSection: true,          // Connectivity tab — toggled by
+    showRadioSection: true,          // Connectivity tab - toggled by
     showTcpSection:   true,          //   applyTransportCapabilities()
     showBtSection:    true,          //   based on /api/info → transports
     btnStatus: { state: 'unknown', title: 'Loading…' },  // top-bar radio button
@@ -2094,8 +2094,8 @@ function nameFor(peerHex) {
 
 // ============================== BUSY ==============================
 // Generic async-button wrapper. Any click handler whose action waits
-// on the device — POST, multi-step setup, anything that takes more
-// than ~100 ms to surface a visible result — should run through this.
+// on the device - POST, multi-step setup, anything that takes more
+// than ~100 ms to surface a visible result - should run through this.
 // Pattern:
 //
 //   $('btn-foo').addEventListener('click', () => withBusy($('btn-foo'),
@@ -2110,7 +2110,7 @@ function nameFor(peerHex) {
 // optionally swapped, and it is disabled along with any peer inputs
 // in `alsoDisable`. Re-entry is suppressed via a busy data attribute
 // so double-clicks during the in-flight request are no-ops. The
-// finally block restores everything — safe even if the async fn
+// finally block restores everything - safe even if the async fn
 // triggers a view transition or full-page replacement (the original
 // button is just detached at that point and the restoration is a
 // no-op on dead nodes).
@@ -2137,7 +2137,7 @@ async function withBusy(btn, asyncFn, opts = {}) {
     .map(sel => (typeof sel === 'string') ? document.querySelector(sel) : sel)
     .filter(Boolean);
   for (const el of peers) el.disabled = true;
-  // Top-bar progress strip — opt-in via opts.bgTaskLabel so we only
+  // Top-bar progress strip - opt-in via opts.bgTaskLabel so we only
   // signal genuine long-running tasks (reboot, factory reset, big
   // saves), not every <100 ms click.
   let bgId = null;
@@ -2164,7 +2164,7 @@ async function withBusy(btn, asyncFn, opts = {}) {
 // of input feed it:
 //   - In-flight transfers (state.transfers Map, populated by
 //     message_progress / message_complete WS events).
-//   - bgTasks registry (this module) — anything calling startBgTask
+//   - bgTasks registry (this module) - anything calling startBgTask
 //     / endBgTask, used by withBusy when opts.bgTaskLabel is set
 //     and by long-running explicit operations (upload progress,
 //     factory reset, etc.).
@@ -2204,7 +2204,7 @@ function topbarProgressData() {
       const tfs = this.$store.s.transfers || {};
       for (const k of Object.keys(tfs)) {
         const t = tfs[k];
-        // Aggregate BOTH directions — the strip is the mobile-thread fallback
+        // Aggregate BOTH directions - the strip is the mobile-thread fallback
         // (gated to the mobile thread view in CSS), where neither the inbound
         // nor outbound conversation-list row is on screen.
         any = true;
@@ -2237,7 +2237,7 @@ function renderTopbarProgress() { /* no-op */ }
 // Non-blocking notification. Replaces alert() throughout. Kinds:
 //   'info' (default), 'success', 'warn', 'error'.
 // Defaults: errors live ~7s (long enough to read), success ~3s, info ~4s.
-// Legacy global `toast()` — kept as a thin shim that delegates to the
+// Legacy global `toast()` - kept as a thin shim that delegates to the
 // Alpine store. ~50+ callsites across the SPA still call toast(msg, …);
 // rewriting them in this commit would balloon the diff. Cleanup wave
 // can rename them to $store.toasts.push directly.
@@ -2249,7 +2249,7 @@ function toast(message, kind = 'info', durationMs) {
 }
 
 // ============================== CONFIRM MODAL ==============================
-// In-app replacement for window.confirm / window.prompt — see the
+// In-app replacement for window.confirm / window.prompt - see the
 // no-alerts-use-modals memory. Returns a Promise that resolves to:
 //   - false                 when user cancels / closes the modal
 //   - true                  when user confirms (no extra fields)
@@ -2294,7 +2294,7 @@ function confirmOk() {
   if (c.needsCode) {
     const code = (c.codeValue || '').trim();
     if (!code) {
-      // Bump the refocus tick — #mc-code's x-effect picks it up as a
+      // Bump the refocus tick - #mc-code's x-effect picks it up as a
       // reactive dependency and re-runs the focus call. Lets us drive
       // an imperative-feeling "snap back to the code field" through
       // the same Alpine declaration as the initial open.
@@ -2568,7 +2568,7 @@ class UReticulumHTTPTransport extends Transport {
                      { method: 'POST', body });
   }
   subscribe(identityId, onEvent) {
-    // Persistent WebSocket — one TCP connection that lives as long as
+    // Persistent WebSocket - one TCP connection that lives as long as
     // the SPA tab does, with backoff reconnect on close. Replaces the
     // EventSource short-poll, which churned a fresh TCP connection
     // every 500 ms and was the dominant source of PSRAM allocation
@@ -2630,7 +2630,7 @@ class UReticulumHTTPTransport extends Transport {
     open();
     // A backgrounded tab freezes timers (Chrome throttles setTimeout to ~1/min
     // and fully suspends after a few minutes), so a socket dropped while hidden
-    // leaves the backoff reconnect timer stalled — the "Reconnecting…" toast
+    // leaves the backoff reconnect timer stalled - the "Reconnecting…" toast
     // then sits there until the throttled timer eventually fires (the ctrl-F5
     // symptom). When the tab becomes visible/focused or the network returns,
     // reconnect immediately: detach the stale socket so its late onclose can't
@@ -2701,7 +2701,7 @@ class UReticulumHTTPTransport extends Transport {
 
 // ============================== RENDER ==============================
 // Legacy DOM-cache + state-preservation helpers. Both are obsolete now
-// that conv-list / thread / settings lists are rendered by Alpine —
+// that conv-list / thread / settings lists are rendered by Alpine -
 // Alpine's template diffing preserves scroll / focus / details
 // open-state natively. Kept and exported because a few legacy
 // render-via-rebuild paths (settings tabs, popovers) still call them
@@ -2747,7 +2747,7 @@ function withPreservedState(container, fn, opts = {}) {
     }
   }
   // Restore scroll position (the container's clientHeight may have
-  // changed — clamp to new scrollHeight so we don't overshoot).
+  // changed - clamp to new scrollHeight so we don't overshoot).
   container.scrollTop  = Math.min(scrollTop,  container.scrollHeight  - container.clientHeight);
   container.scrollLeft = Math.min(scrollLeft, container.scrollWidth   - container.clientWidth);
 }
@@ -2762,7 +2762,7 @@ function renderSelf() {}
 // `window.foo(...)`. They also stayed referenced from any still-legacy
 // renderXxx paths until those are deleted in Wave 7.
 
-// Sorted conversations ordered by (boot_epoch, received_ms) — newest
+// Sorted conversations ordered by (boot_epoch, received_ms) - newest
 // activity first. ts is a fallback for legacy records.
 function convListData() {
   return Object.values(state.conversations).sort((a, b) => {
@@ -2789,7 +2789,7 @@ function pendingInboundList() {
   return Object.values(state.transfers).filter(t => t.incoming && !t.peer);
 }
 
-// Outbound attachment transfers in flight — rendered as an "Outgoing"
+// Outbound attachment transfers in flight - rendered as an "Outgoing"
 // section at the top of the contact list, mirroring pendingInboundList's
 // "Incoming" so a send is as visible as a receive even when the recipient's
 // row is scrolled out of view. Outbound transfers always have a known peer
@@ -2799,7 +2799,7 @@ function pendingOutboundList() {
   return Object.values(state.transfers).filter(t => !t.incoming && t.peer);
 }
 
-// "last seen N ago" / "online now" — coarsens with age.
+// "last seen N ago" / "online now" - coarsens with age.
 function announceSeenString(rec) {
   if (!rec || !rec.seenAt) return '';
   const ageMs = Math.max(0, Date.now() - rec.seenAt);
@@ -2855,7 +2855,7 @@ function activeInboundTransferFor(peer) {
 
 // Type word for the contact-list preview of a captionless attachment message
 // (image / audio / file with no text body). The icon itself is rendered as an
-// inline SVG in the conv-row markup — no emoji.
+// inline SVG in the conv-row markup - no emoji.
 function convAttachmentLabel(atts) {
   if (!Array.isArray(atts) || atts.length === 0) return '';
   if (atts.length > 1) return atts.length + ' attachments';
@@ -2877,7 +2877,7 @@ function convSubText(c) {
   return arrow + formatBytes(xfer.bytes_done) + ' / ' + formatBytes(xfer.bytes_total) + ' (' + pct + '%)';
 }
 
-// Percentage helper — caps at [2, 100] so a fresh-start 0% bar still
+// Percentage helper - caps at [2, 100] so a fresh-start 0% bar still
 // shows a hairline.
 function transferPct(t) {
   if (!t || !t.bytes_total) return 0;
@@ -2886,7 +2886,7 @@ function transferPct(t) {
 
 // The in-flight transfer for a specific outbound message bubble, or null.
 // The device keys message_progress on the message's record hash, which is
-// the same value the bubble carries as packet_hash — so the bar binds to
+// the same value the bubble carries as packet_hash - so the bar binds to
 // exactly the message being sent and vanishes when its entry is cleared.
 function transferForMsg(m) {
   if (m.in || !m.packet_hash || !state.transfers) return null;
@@ -2896,7 +2896,7 @@ function transferForMsg(m) {
 // Caption for the global top-bar progress strip. The strip is a single
 // aggregate bar shown only where the contact list isn't on screen (mobile
 // thread view), so it can't convey direction/identity the way a list row
-// does. This names what it represents — and because several transfers can
+// does. This names what it represents - and because several transfers can
 // run at once in both directions under one bar, it lists them (up to two,
 // then "+N more"), plus any labelled background task the bar also folds in.
 function transfersCaption() {
@@ -2929,7 +2929,7 @@ function outgoingSubText(t) {
 
 function renderConversations() {
   // Conv-list is now rendered by Alpine declaratively. Touch the
-  // store so reactive subscribers re-evaluate — this is the bridge
+  // store so reactive subscribers re-evaluate - this is the bridge
   // for callers (WS dispatcher, etc.) that still call renderXxx().
   // No-op once Wave 7 cleans up callers.
   if (window.Alpine && state) {
@@ -2944,7 +2944,7 @@ function renderConversations() {
 // ============== THREAD HELPERS (Alpine template support) ==============
 // The conversation currently open. null when state.openPeer is unset
 // (templates show empty-state). Returns the live store reference so
-// `currentConv().msgs.push(...)` would actually mutate the store —
+// `currentConv().msgs.push(...)` would actually mutate the store -
 // not that any template needs to do that.
 function currentConv() {
   const p = state && state.openPeer;
@@ -2956,7 +2956,7 @@ function bubbleClass(m) {
        + (m.sig_ok === false && m.in ? ' bad' : '');
 }
 
-// Metadata footer of a bubble — wall-clock time, outbound status,
+// Metadata footer of a bubble - wall-clock time, outbound status,
 // optional stamp verdict, optional bad-signature warning. Empty string
 // when nothing to show (the template renders that as no footer).
 function msgMeta(m) {
@@ -2965,7 +2965,7 @@ function msgMeta(m) {
   if (!m.in && m.status) {
     // While a Resource transfer is in flight for this message, the status
     // word is the live "sending N%" (the thin bar under this line shows the
-    // same) — the raw lifecycle status (queued/sent) would otherwise read
+    // same) - the raw lifecycle status (queued/sent) would otherwise read
     // as stale next to an actively-moving bar.
     const xfer = transferForMsg(m);
     parts.push(xfer                              ? 'sending ' + transferPct(xfer) + '%'
@@ -2973,7 +2973,7 @@ function msgMeta(m) {
              : m.status === 'finding_route'      ? 'finding route'
              : m.status);
   }
-  // Stamp verdict — present only when a stamp policy applied to this
+  // Stamp verdict - present only when a stamp policy applied to this
   // message (the device omits the field otherwise). stamp_value is the
   // effort the sender attached; it only exists for a valid stamp.
   if (m.stamp_ok === true) {
@@ -2993,7 +2993,7 @@ function msgMeta(m) {
 // = 'loading' / blobUrl / { failed: true, error }.
 
 // Is this attachment renderable at all? Outbound attachments with no
-// on-disk filename AND no display_name AND no size are skipped — they
+// on-disk filename AND no display_name AND no size are skipped - they
 // carried no actionable content. Mirrors attachmentNode's old check.
 function attachmentVisible(a) {
   return !!a && (!!a.filename || !!a.display_name || (a.size > 0));
@@ -3010,15 +3010,15 @@ function attachmentLabel(a) {
 
 // Picks the variant template (the <template x-if> in the bubble
 // markup) that should render for this attachment. Variants:
-//   'sd_unreachable'      — blob lives on SD that's been ejected
-//   'inline-image'        — auto-rendered image (auto-download pref or cached)
-//   'inline-audio'        — auto-rendered audio player
-//   'click-to-load'       — image/audio chip awaiting a click to fetch
-//   'click-to-download'   — generic-file chip (no inline preview)
-//   'static'              — info-only chip (no on-disk blob exists)
+//   'sd_unreachable'      - blob lives on SD that's been ejected
+//   'inline-image'        - auto-rendered image (auto-download pref or cached)
+//   'inline-audio'        - auto-rendered audio player
+//   'click-to-load'       - image/audio chip awaiting a click to fetch
+//   'click-to-download'   - generic-file chip (no inline preview)
+//   'static'              - info-only chip (no on-disk blob exists)
 function attachmentMode(a) {
   // A persisted on-disk blob (hash filename we can fetch back), OR a
-  // locally-cached preview blob — an optimistic just-sent image previews
+  // locally-cached preview blob - an optimistic just-sent image previews
   // from the bytes we still hold, before the device has persisted it under
   // a hash filename.
   const hasBlob = /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename || '')
@@ -3088,7 +3088,7 @@ function maybeScrollThreadToBottom() {
   });
 }
 
-// Thread rendering is declarative now — the header / message list /
+// Thread rendering is declarative now - the header / message list /
 // compose row are all bound to $store.s via x-show / x-text / x-for.
 // renderThread() is kept as a no-op so callers like selectConversation()
 // and the WS dispatcher remain unchanged; Wave 7 deletes them.
@@ -3117,18 +3117,18 @@ function formatBytesVU(n) {
 // most common LXMF voice-note format).
 function sniffAudioMime(bytes) {
   if (bytes.length < 4) return 'audio/ogg';
-  // "OggS" — Ogg container (Vorbis or Opus)
+  // "OggS" - Ogg container (Vorbis or Opus)
   if (bytes[0] === 0x4F && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) return 'audio/ogg';
-  // "RIFF" + "WAVE" — WAV
+  // "RIFF" + "WAVE" - WAV
   if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
       && bytes.length >= 12
       && bytes[8] === 0x57 && bytes[9] === 0x41 && bytes[10] === 0x56 && bytes[11] === 0x45) return 'audio/wav';
   // "ID3" tag or MPEG audio sync 0xFFFB / 0xFFFA / 0xFFE3 etc.
   if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return 'audio/mpeg';
   if (bytes[0] === 0xFF && (bytes[1] & 0xE0) === 0xE0) return 'audio/mpeg';
-  // "fLaC" — FLAC
+  // "fLaC" - FLAC
   if (bytes[0] === 0x66 && bytes[1] === 0x4C && bytes[2] === 0x61 && bytes[3] === 0x43) return 'audio/flac';
-  // ftyp box + "M4A " — AAC in MP4
+  // ftyp box + "M4A " - AAC in MP4
   if (bytes.length >= 12
       && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) return 'audio/mp4';
   return 'audio/ogg';
@@ -3136,11 +3136,11 @@ function sniffAudioMime(bytes) {
 
 
 // Fetch the attachment blob from the device. Image (tag 6) / audio
-// (tag 7): cache the blob URL in state.attachmentBlobs — the bubble
+// (tag 7): cache the blob URL in state.attachmentBlobs - the bubble
 // template observes that and re-evaluates attachmentMode() to swap
 // from chip → inline preview automatically.
 // Everything else (tag 5 / unknown): trigger a browser Save-As.
-async function downloadAttachment(identityId, meta, chipEl /*unused — kept for backward compat*/ ) {
+async function downloadAttachment(identityId, meta, chipEl /*unused - kept for backward compat*/ ) {
   if (!meta || !meta.filename) return;
   if (state.attachmentBlobs[meta.filename] === 'loading') return;
   state.attachmentBlobs[meta.filename] = 'loading';
@@ -3162,7 +3162,7 @@ async function downloadAttachment(identityId, meta, chipEl /*unused — kept for
       a.download = meta.display_name || meta.filename;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 30000);
-      // Don't cache non-media in attachmentBlobs — there's no inline
+      // Don't cache non-media in attachmentBlobs - there's no inline
       // preview, so caching just wastes memory. Clear the placeholder.
       delete state.attachmentBlobs[meta.filename];
       toast('Saved ' + (meta.display_name || meta.filename), 'success');
@@ -3185,7 +3185,7 @@ async function downloadAttachment(identityId, meta, chipEl /*unused — kept for
 // Why tiebreak on (boot_epoch, received_ms): two messages can share
 // a ts (1 s resolution, or sender's clock drifting backwards). The
 // receive-side tuple is monotonic within a boot, and boot_epoch
-// disambiguates across reboots — so the tiebreak orders by the
+// disambiguates across reboots - so the tiebreak orders by the
 // order WE received them, which preserves causal sense for the
 // receiver's view.
 function msgCmp(a, b) {
@@ -3205,9 +3205,9 @@ function upsertMessage(m) {
     state.conversations[peer] = c;
   }
   // Dedup by seq + direction (inbox and outbox have independent seq
-  // counters). When we already have this message — e.g. an optimistic
+  // counters). When we already have this message - e.g. an optimistic
   // outbox record inserted by sendMessage before the device's
-  // authoritative copy lands via /state refresh — merge the incoming
+  // authoritative copy lands via /state refresh - merge the incoming
   // fields in rather than discarding them. Optimistic records may have
   // boot_epoch/received_ms = 0 if the clockAnchor wasn't set yet at
   // send time, which would mis-sort them to the top of the thread.
@@ -3232,7 +3232,7 @@ function upsertMessage(m) {
     if (m.packet_hash && !existing.packet_hash) {
       existing.packet_hash = m.packet_hash;
     }
-    // Adopt a stamp verdict the existing record lacked — e.g. a stamped
+    // Adopt a stamp verdict the existing record lacked - e.g. a stamped
     // send whose authoritative outbox record lands after dispatch.
     if (typeof m.stamp_ok === 'boolean' && typeof existing.stamp_ok !== 'boolean') {
       existing.stamp_ok = m.stamp_ok;
@@ -3275,7 +3275,7 @@ function renderContacts() {}
 // ============================== INTERACTIONS ==============================
 async function selectConversation(peer) {
   if (state.openPeer !== peer && state.pendingAttachments.length > 0) {
-    // Dropping staged attachments quietly — they belonged to the
+    // Dropping staged attachments quietly - they belonged to the
     // previous chat. Surface a toast so the user notices.
     toast(state.pendingAttachments.length + ' attachment(s) dropped from previous chat.', 'info');
     state.pendingAttachments = [];
@@ -3430,7 +3430,7 @@ async function sendMessage() {
   }
 }
 
-// Manual retry of a Failed outbox message — calls POST .../outbox/{seq}/retry
+// Manual retry of a Failed outbox message - calls POST .../outbox/{seq}/retry
 // on the device, which resets the auto-retry budget and re-schedules
 // the send. Flip the message back to "queued" optimistically so the
 // bubble updates immediately; the device's outbox-status SSE event
@@ -3458,7 +3458,7 @@ async function retryFailedMessage(msg) {
 // ============================== ATTACHMENTS ==============================
 // LXMF fields-dict tag numbers (canonical, see LXMF::FIELD_* in
 // LXMFTypes.h). Per-attachment cap is the device-reported outbound
-// staging max — PSRAM (~4 MB) or SD card free space, whichever
+// staging max - PSRAM (~4 MB) or SD card free space, whichever
 // backend the device chose. Falls back to a conservative 64 KB when
 // /api/info hasn't reported caps yet.
 const FIELD_FILE_ATTACHMENTS = 0x05;
@@ -3522,7 +3522,7 @@ async function blobImageDimensions(blob) {
 // Returns just the duration string (e.g. "≈2.4 s") or null when the
 // device couldn't compute one (no path, local destination, etc).
 // Callers prefix "ETA: " themselves and pick their own unknown-state
-// text — keeps display copy consistent everywhere.
+// text - keeps display copy consistent everywhere.
 function formatEta(ms) {
   if (ms == null) return null;
   if (ms < 1000) return '~' + ms + ' ms';
@@ -3538,7 +3538,7 @@ function formatEta(ms) {
 
 
 // ----- audio capture -----
-// getUserMedia is blocked on plain HTTP except localhost — browsers
+// getUserMedia is blocked on plain HTTP except localhost - browsers
 // require a "secure context". When the user accesses the device at
 // http://192.168.x.x/ the call will fail; we surface a clear toast
 // rather than a cryptic permission error.
@@ -3573,7 +3573,7 @@ async function startRecording() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
     // The classic case here is the secure-context block on
-    // http://192.168.x.x — pin that error explicitly so the user
+    // http://192.168.x.x - pin that error explicitly so the user
     // knows what to do.
     if (!window.isSecureContext) {
       toast('Mic blocked: browsers only allow recording over HTTPS or on localhost. Try installing the SPA as a PWA, or connect to the device via localhost.', 'error', 9000);
@@ -3644,7 +3644,7 @@ function onClickMic() {
 async function onChangeAttachFile(ev) {
   const file = ev.target.files && ev.target.files[0];
   if (!file) return;
-  // Refresh the cap in the background (it changes only on SD insert/eject) —
+  // Refresh the cap in the background (it changes only on SD insert/eject) -
   // never block the attach on it. On the SRAM-tight device an HTTP request can
   // stall for seconds, and awaiting it here froze the composer outright. This
   // attach validates against the last-known cap (loaded at boot by
@@ -3757,7 +3757,7 @@ function openImageModal(url, meta) {
 
   const onImgClick = (e) => {
     e.stopPropagation();         // don't bubble to onBackdrop and close
-    if (drag) return;            // a drag just completed — ignore click
+    if (drag) return;            // a drag just completed - ignore click
     if (!zoomAvailable) return;  // image already fits naturally, no zoom
     if (zoomed) applyFit(); else applyZoom();
   };
@@ -3836,7 +3836,7 @@ async function openImageResizePicker(file) {
   // pixel dimensions (which proportionally shrinks the encoded JPEG);
   // "original" sends the user's file bytes as-is. Each client-side re-encode
   // takes a beat on a phone, so doing all three up-front froze the picker until
-  // they finished — now each variant appears as it's ready.
+  // they finished - now each variant appears as it's ready.
   Object.assign(state.imageResize, {
     sourceLine, cap, thumbBox: 200, prepared: [], chosen: null,
     etaByKey: {}, _file: file, preparing: true,
@@ -3850,7 +3850,7 @@ async function openImageResizePicker(file) {
   ];
   for (const c of candidates) {
     // Bail if the user closed the picker (or started a different attach) while
-    // we were encoding — revoke any URLs created for this aborted run.
+    // we were encoding - revoke any URLs created for this aborted run.
     if (!state.modals.imageResize || state.imageResize._file !== file) {
       for (const p of state.imageResize.prepared) URL.revokeObjectURL(p.objectUrl);
       return;
@@ -3893,7 +3893,7 @@ async function openImageResizePicker(file) {
   })();
 }
 
-// Card style binding — outlines + background match selection state,
+// Card style binding - outlines + background match selection state,
 // dim + not-allowed for over-cap options.
 function imageResizeCardStyle(p) {
   const ir = state.imageResize;
@@ -3907,7 +3907,7 @@ function imageResizeCardStyle(p) {
        + 'align-items:flex-start';
 }
 
-// Selection click — accept only when the variant fits the cap.
+// Selection click - accept only when the variant fits the cap.
 function imageResizePick(p) {
   if (p.size > state.imageResize.cap) return;
   state.imageResize.chosen = p;
@@ -3923,7 +3923,7 @@ function imageResizeCancel() {
   state.modals.imageResize = false;
 }
 
-// Attach button — stage the chosen variant and close.
+// Attach button - stage the chosen variant and close.
 async function imageResizeAttach(_btn) {
   const ir = state.imageResize;
   const c = ir.chosen;
@@ -4021,7 +4021,7 @@ function attachTrayData() {
     nowMs: Date.now(),
     _tick: null,
     init() {
-      // Lazy elapsed-time tick — runs only while recording. Watching
+      // Lazy elapsed-time tick - runs only while recording. Watching
       // $store.s.recorder lets us start/stop the interval reactively.
       this.$watch(() => !!this.$store.s.recorder, (rec) => {
         if (rec) {
@@ -4043,13 +4043,13 @@ function attachTrayData() {
   };
 }
 
-// Backwards-compat shim — pendingAttachments / recorder are reactive
+// Backwards-compat shim - pendingAttachments / recorder are reactive
 // now, so callers no longer need to re-render. Stub so existing call
 // sites don't trip.
 function renderAttachTray() { /* no-op */ }
 
 // Shared dismiss predicate for topbar popovers. Returns true when the
-// click should close the popover — i.e. it landed outside both the
+// click should close the popover - i.e. it landed outside both the
 // popover content AND any button that should KEEP the popover open.
 //
 // "Keep open" list:
@@ -4059,7 +4059,7 @@ function renderAttachTray() { /* no-op */ }
 //     context)
 //
 // Sibling popover anchors (e.g. btn-system while popover-status is
-// open) are NOT in the keep-open list — clicking them legitimately
+// open) are NOT in the keep-open list - clicking them legitimately
 // wants to swap which popover is visible.
 function popoverDismissibleClick(ev, popoverId, anchorBtnId) {
   const pop    = document.getElementById(popoverId);
@@ -4079,7 +4079,7 @@ async function forceAnnounce() {
     // Flip the dot to yellow ("sent this boot") for the case where
     // auto-announce is off; refreshAnnounceCountdown picks this up.
     state.announcedThisBoot = true;
-    // Optimistically reset the countdown to a full interval — server
+    // Optimistically reset the countdown to a full interval - server
     // does the same on its end after a successful send_announce.
     const ms = Number(state.self && state.self.announce_interval_ms) || 0;
     seedAnnounceCountdown(ms, ms);
@@ -4134,7 +4134,7 @@ async function refreshStatus() {
     // actual compile-time IDENTITY_CODE_TTL_MS (currently 60 s) rather
     // than whatever number the SPA happened to ship with. The hint
     // paragraphs bind `x-html="idCodeHintHtml()"`, so writing the
-    // reactive state.idCodeTtlMs is all that's needed — Alpine
+    // reactive state.idCodeTtlMs is all that's needed - Alpine
     // re-renders every placement automatically.
     if (typeof info.identity_code_ttl_ms === 'number'
         && info.identity_code_ttl_ms !== state.idCodeTtlMs) {
@@ -4142,7 +4142,7 @@ async function refreshStatus() {
     }
     applyStatusToButton(info);
     // Battery icon is reactive on state.lastInfo / state.system.
-    // Popover content is fully reactive against $store.s.lastInfo —
+    // Popover content is fully reactive against $store.s.lastInfo -
     // no imperative render call.
   } catch (e) {
     state.radioStatus.state = 'unknown';
@@ -4325,20 +4325,20 @@ function openStatusPopover() {
   // Backfill the radio-telemetry ring once per session so the chart
   // shows ~2 min of history right away. Subsequent updates arrive via
   // the WS `radio_telemetry` push and are appended in dispatchEvent.
-  // Re-seed each open is wasteful — the local ring is already correct
-  // once seeded — so the guard prevents that.
+  // Re-seed each open is wasteful - the local ring is already correct
+  // once seeded - so the guard prevents that.
   refreshRadioTelemetry();
   refreshNetworkTelemetry();
-  // Chart + CSMA line are reactive — Alpine bindings repaint them
+  // Chart + CSMA line are reactive - Alpine bindings repaint them
   // automatically as $store.s.radioTlm.samples grows from WS pushes.
   state.popovers.status = true;
   // Close on outside click; defer one tick so this click doesn't fire it.
-  // Announce button is excluded — it's a momentary action button users
+  // Announce button is excluded - it's a momentary action button users
   // may legitimately want to hit while reading the popover (e.g. open
   // radio status, see online + no recent announce, tap announce, see
   // the popover update without losing context). Other topbar buttons
   // (settings / logout / system / power) are popover-toggles that
-  // SHOULD dismiss this one — their own click handlers close us before
+  // SHOULD dismiss this one - their own click handlers close us before
   // opening their target.
   setTimeout(() => {
     const dismiss = (ev) => {
@@ -4364,7 +4364,7 @@ async function onClickStatusBtn() {
 
 // ============================== RADIO TELEMETRY ==============================
 // One-shot fetch of /api/radio/telemetry to seed the local ring. Idempotent
-// — once seeded we trust the WS push to keep it fresh. Re-seeds on
+// - once seeded we trust the WS push to keep it fresh. Re-seeds on
 // reconnect (state.radioTlm.seeded is cleared by the _reconnect handler).
 async function refreshRadioTelemetry() {
   const rt = state.radioTlm;
@@ -4490,7 +4490,7 @@ function radioCsmaLineText() {
 // Render the inline chart into #status-radio-chart. Two y-axes:
 //   left  = 0..100 % for own / peer / total channel utilisation
 //   right = -120..-40 dBm for RSSI
-// Time axis is sample-index — 1 px-per-sample at the popover's width.
+// Time axis is sample-index - 1 px-per-sample at the popover's width.
 // Re-renders in place; safe to call on every WS push while open.
 // Build the inline radio-telemetry SVG chart as an HTML string. Called
 // from the popover's x-html binding so Alpine reactivity drives the
@@ -4511,7 +4511,7 @@ function radioChartHTMLBuild() {
   const dx = plotW / Math.max(1, (rt.cap - 1));
   const xOf = (i) => padL + (rt.cap - n + i) * dx;
   // Util y: 0 at bottom, snapped-max at top. Auto-scaling so low
-  // activity stays visible — when everything is <5%, the lines would
+  // activity stays visible - when everything is <5%, the lines would
   // otherwise hug the bottom of a fixed 0-100 axis. Snap to a small
   // set of nice round values so the scale "feels" stable across
   // adjacent renders (otherwise the lines jitter as the absolute max
@@ -4519,7 +4519,7 @@ function radioChartHTMLBuild() {
   // Auto-scale max uses the same smoothing window as the rendered
   // lines so the y-axis tracks what's actually drawn (not the raw
   // spike peak that gets averaged away). Computed inline since
-  // `path()` below defines its own smoothing logic — refactoring into
+  // `path()` below defines its own smoothing logic - refactoring into
   // a shared helper would require passing the smoothing window twice.
   const UTIL_BUCKETS = [5, 10, 25, 50, 100];
   let utilMax = 0;
@@ -4590,7 +4590,7 @@ function radioChartHTMLBuild() {
   const utilGrid =
     `<line class="radio-chart-grid" x1="${padL}" x2="${W - padR}" y1="${yUtil(yMax / 2)}" y2="${yUtil(yMax / 2)}"/>`;
   // Y-axis tick labels: left = util %, right = RSSI dBm. The util-top
-  // label is dynamic — it tracks the auto-scaled yMax so the user
+  // label is dynamic - it tracks the auto-scaled yMax so the user
   // knows whether they're looking at a 5% or 100% axis.
   const labels = `
     <text x="2"           y="${padT + 6}"        font-size="8" fill="#888">${yMax}%</text>
@@ -4649,7 +4649,7 @@ function fmtWallClock(ms) {
 
 // Format a numeric value + its unit as HTML, with the unit wrapped
 // in <span class="unit"> so the popover CSS can render it slightly
-// smaller and dimmer. No whitespace between value and unit — matches
+// smaller and dimmer. No whitespace between value and unit - matches
 // the "23.4°C" convention rather than the "23.4 °C" one.
 function vu(value, unit) {
   return value + '<span class="unit">' + unit + '</span>';
@@ -4855,7 +4855,7 @@ function onClickStorageMigrate(btn) {
 }
 
 // Build / refresh the per-sensor enable+interval config rows whenever
-// the system snapshot changes — declarative bindings handle the sensor
+// the system snapshot changes - declarative bindings handle the sensor
 // values but the config inputs are still imperatively constructed
 // inside updateSensorConfigUI. The Alpine x-effect wiring on the
 // system popover dispatches this for us.
@@ -4871,7 +4871,7 @@ function tickSystemClock() {
   if (!state.popovers.system) return;
   // Device clock. Tick both the primary wall-clock display and the
   // "Last calibrated Xs ago" subline so the age advances live.
-  // Project the live wall-clock from the WS-pinned anchor (state.clockAnchor) —
+  // Project the live wall-clock from the WS-pinned anchor (state.clockAnchor) -
   // the same source the calibrated-age subline below uses. The old
   // sysPopover.clockAnchor was orphaned by the WS clock-anchor refactor, which
   // left this current-time line blank.
@@ -4893,11 +4893,11 @@ function tickSystemClock() {
     }
   }
   // Per-sensor age labels. Same ageLine helper renderSystemPopover
-  // uses on initial open — now at module scope so this can call it.
+  // uses on initial open - now at module scope so this can call it.
   const s = (state.system && state.system.sensors) || {};
   const g = s.gps || {};
   if (g.available) {
-    // Report the last *fix*, not the last NMEA byte — the L76K keeps emitting
+    // Report the last *fix*, not the last NMEA byte - the L76K keeps emitting
     // sentences (and ticking last_byte_ms) while only acquiring, so a "last
     // read 1s ago" was misleading. last_valid_fix_ms is the device-millis of
     // the last valid fix (-1/absent = never fixed since boot).
@@ -4944,18 +4944,18 @@ function stopSystemTicker() {
 }
 
 async function openSystemPopover() {
-  // System snapshot is WS-pushed — render from cache. If the WS hasn't
+  // System snapshot is WS-pushed - render from cache. If the WS hasn't
   // delivered the first frame yet (rare; hello fires immediately on
   // auth), defer until it has.
   if (!state.system) {
     toast('System snapshot still loading…', 'info');
     return;
   }
-  // Popover content is reactive — no imperative render call.
+  // Popover content is reactive - no imperative render call.
   state.popovers.status = false;
   state.popovers.system = true;
   startSystemTicker();
-  // GPS enable/duty-cycle lives in /api/time/sources, not the WS snapshot —
+  // GPS enable/duty-cycle lives in /api/time/sources, not the WS snapshot -
   // load it so the GPS section's config row reflects the real schedule.
   loadGpsSource();
   setTimeout(() => {
@@ -4979,7 +4979,7 @@ function onClickSystemBtn() {
   openSystemPopover();
 }
 
-// Power popover — anchored to #btn-power. Battery detail data flows
+// Power popover - anchored to #btn-power. Battery detail data flows
 // through reactive getters; the template in #popover-power binds to
 // stateClass / stateLabel / valuesHTML / slopeHTML.
 function powerPopoverData() {
@@ -5039,7 +5039,7 @@ async function openPowerPopover() {
     // The WS `system_update` keeps state.system fresh every 30 s; this
     // ticker is a noop now that the template is reactive. Kept for
     // future force-refresh hooks.
-    // No-op tick — template binds reactively to state.system.
+    // No-op tick - template binds reactively to state.system.
     _pwTicker = setInterval(() => {}, 5000);
   }
   setTimeout(() => {
@@ -5065,10 +5065,10 @@ function onClickPowerBtn() {
 // points at it. Popover content auto-rerenders from the reactive
 // $store.s.system snapshot.
 
-// ============================== SYSTEM POPOVER — sensor config ==============================
+// ============================== SYSTEM POPOVER - sensor config ==============================
 // Each sensor section (Environment / Compass / Motion) has a click-
 // to-expand row revealing an enable checkbox + interval dropdown.
-// Save fires immediately on change — small enough payload that the
+// Save fires immediately on change - small enough payload that the
 // user expects instant feedback. GPS has its own enable + duty-cycle
 // row (onGpsConfigChange) wired to /api/time/sources, since it's a time
 // source (Clock::Manager) rather than a /api/sensors/config sensor.
@@ -5100,7 +5100,7 @@ function sensorIntervalCurrent(key) {
   return String(sensorIntervalSnap(Math.round(((s && s.interval_ms) || 60000) / 1000)));
 }
 
-// GPS duty-cycle presets. GPS isn't a /api/sensors/config sensor — it's a time
+// GPS duty-cycle presets. GPS isn't a /api/sensors/config sensor - it's a time
 // source (Clock::Manager). Its interval_s drives the L76K power schedule:
 //   0 .. <300s  -> chip stays powered (continuous)
 //   >= 300s     -> pulsed: power on, hunt for a fix, report, power off, sleep
@@ -5181,7 +5181,7 @@ function attachSensorConfigToggle(_section) { /* declarative */ }
 // Each sensor section's .popover-config block now renders its
 // checkbox + interval select declaratively against state.system.
 // updateSensorConfigUI just wires the expander toggle on each
-// section header — that's a one-shot setup that survives reactive
+// section header - that's a one-shot setup that survives reactive
 // rerenders.
 function updateSensorConfigUI(_s) {
   const map = {
@@ -5290,7 +5290,7 @@ function persistContacts() { localStorage.setItem(LS.CONTACTS, JSON.stringify(st
 // ============================== WS EVENT DISPATCH ==============================
 function dispatchEvent(ev) {
   if (ev.type === '_reconnect') {
-    // We've been disconnected long enough — re-fetch /state to resync.
+    // We've been disconnected long enough - re-fetch /state to resync.
     refreshState();
     // Drop the local radio-telemetry seed marker so the next popover
     // open re-seeds from /api/radio/telemetry rather than trusting a
@@ -5337,7 +5337,7 @@ function dispatchEvent(ev) {
     return;
   }
   if (ev.type === 'system_update') {
-    // Periodic system refresh — replace cached snapshot wholesale. The
+    // Periodic system refresh - replace cached snapshot wholesale. The
     // payload mirrors the hello shape, just nested under .payload.
     const p = ev.payload || {};
     state.system = {
@@ -5352,12 +5352,12 @@ function dispatchEvent(ev) {
     // The element ID is `popover-system` (set by the HTML); the
     // earlier `sys-popover` lookup was a typo, making this branch a
     // permanent no-op. Result: system_update WS frames silently
-    // updated state.system but never repainted the open popover —
+    // updated state.system but never repainted the open popover -
     // so any optimistic-patched value the SPA wrote (e.g. a sensor
     // interval just changed by the user) appeared correct, and a
     // later snapshot couldn't correct it because the render path
     // was unreachable.
-    // System popover + topbar battery are reactive on state.system —
+    // System popover + topbar battery are reactive on state.system -
     // no explicit re-render needed.
     return;
   }
@@ -5379,7 +5379,7 @@ function dispatchEvent(ev) {
         if (typeof rx_packets === 'number') state.lastInfo.radio.stats.rx_packets = rx_packets;
         if (typeof tx_packets === 'number') state.lastInfo.radio.stats.tx_packets = tx_packets;
       }
-      // Chart / CSMA / status text now reactive — the radioTlm push
+      // Chart / CSMA / status text now reactive - the radioTlm push
       // mutation above is observed by the Alpine bindings.
     }
     return;
@@ -5436,7 +5436,7 @@ function dispatchEvent(ev) {
     const m = ev.msg || {};
     upsertMessage({
       peer: m.peer, seq: m.seq, ts: m.ts,
-      // boot_epoch + received_ms are required for correct sort order —
+      // boot_epoch + received_ms are required for correct sort order -
       // without them new messages land at the bottom of the conversation
       // because msgCmp treats missing values as 0.
       boot_epoch: m.boot_epoch || 0,
@@ -5451,7 +5451,7 @@ function dispatchEvent(ev) {
     renderConversations();
     if (state.openPeer === m.peer) renderThread();
   } else if (ev.type === 'outbox_new') {
-    // An outbound message hit the outbox — from the HTTP API, another
+    // An outbound message hit the outbox - from the HTTP API, another
     // browser tab, or our own send. upsertMessage dedups on seq +
     // direction, so a bubble this tab already added optimistically
     // (sendMessage uses the same queued seq) is merged in place rather
@@ -5488,7 +5488,7 @@ function dispatchEvent(ev) {
   } else if (ev.type === 'identity_code_available') {
     state.pendingIdCode = true;
     if (state.pendingIdCodeAction) {
-      // Already waiting to consume — code is fresh on the OLED.
+      // Already waiting to consume - code is fresh on the OLED.
       openIdCodeModal({ codePresent: true });
     }
   } else if (ev.type === 'outbox_status') {
@@ -5507,7 +5507,7 @@ function dispatchEvent(ev) {
           m.status = ev.status;
           // A seq-keyed frame can also carry the packet hash the send
           // acquired at dispatch (a stamped send spends its generation
-          // phase hashless) — adopt it so the later hash-keyed frames
+          // phase hashless) - adopt it so the later hash-keyed frames
           // (sent → delivered) match this bubble.
           if (seq !== undefined && m.seq === seq && link && !m.packet_hash) {
             m.packet_hash = link;
@@ -5520,8 +5520,8 @@ function dispatchEvent(ev) {
     // drop any transfer entry still keyed on its hash. message_complete
     // normally clears it, but if that event is missed (or the device
     // advanced status without a final progress frame) the entry would
-    // otherwise strand every progress surface — contact-list row, global
-    // bar, and the on-bubble bar — at its last percentage, and a later
+    // otherwise strand every progress surface - contact-list row, global
+    // bar, and the on-bubble bar - at its last percentage, and a later
     // send to the same peer would show the stale one. Keyed on `link`
     // (the packet hash), which equals the transfer key for outbound.
     if (link && state.transfers && state.transfers[link] &&
@@ -5535,7 +5535,7 @@ function dispatchEvent(ev) {
       renderThread();
     }
   } else if (ev.type === 'time_update') {
-    // Source adopted a fresh epoch — re-pin the clock anchor against
+    // Source adopted a fresh epoch - re-pin the clock anchor against
     // the current browser wall-clock moment so the popover ticker and
     // any new received_ms calculation use the post-sync mapping.
     if (typeof ev.unix_ms === 'number' && state.clockAnchor) {
@@ -5551,7 +5551,7 @@ function dispatchEvent(ev) {
     if (!state.transfers) state.transfers = new Map();
     const key = ev.link_hash;
     if (!key) return;
-    // The terminal message_complete event carries peer="" — the device
+    // The terminal message_complete event carries peer="" - the device
     // doesn't have the peer hash at outbox-status callback time, only the
     // link hash. So look up the peer we already cached from the earlier
     // progress events keyed by link_hash, BEFORE deleting the entry.
@@ -5560,7 +5560,7 @@ function dispatchEvent(ev) {
     if (ev.finished) {
       delete state.transfers[key];
     } else {
-      // Inbound Resource progress arrives with peer="" — the Reticulum
+      // Inbound Resource progress arrives with peer="" - the Reticulum
       // responder side doesn't know who initiated the link until the
       // LXMF wire payload finishes decrypting on resource-complete
       // (LXMF doesn't send LINKIDENTIFY). Store the entry anyway with
@@ -5587,7 +5587,7 @@ async function refreshState() {
     const r = await state.transport.getState(state.identityId);
     state.self = r.identity;
     // Clear by deleting own keys (NOT reassigning to {}) so Alpine's
-    // reactive proxy on `state` keeps observing the same object — a
+    // reactive proxy on `state` keeps observing the same object - a
     // reassignment would orphan the proxy and silently break templates.
     for (const k of Object.keys(state.announces)) delete state.announces[k];
     for (const a of (r.announces || [])) {
@@ -5600,7 +5600,7 @@ async function refreshState() {
       state.paths[p.dest] = p;
     }
     // The clock anchor is set from the WS `hello` frame (see
-    // dispatchEvent). /state no longer carries `clock` — the WS path
+    // dispatchEvent). /state no longer carries `clock` - the WS path
     // is canonical now. If a refresh fires before the WS opens, the
     // anchor stays null and relative-time labels fall back to
     // "earlier" until the first hello arrives.
@@ -5664,7 +5664,7 @@ async function boot() {
       enterApp();
       return;
     } catch (e) {
-      // Token bad — fall through to identity picker.
+      // Token bad - fall through to identity picker.
       console.warn('token validation failed:', e);
       state.token = null;
       localStorage.removeItem(LS.TOKEN);
@@ -5699,7 +5699,7 @@ function enterLogin(identity) {
   state.forms.login.pw = '';
   // #login-pw has x-effect bound to $store.s.view === 'view-login' that
   // calls $el.focus() inside $nextTick, so flipping the view above is
-  // enough — no imperative focus needed here.
+  // enough - no imperative focus needed here.
 }
 async function enterApp() {
   show('view-app');
@@ -5758,11 +5758,11 @@ function onClickBsSave(btn) {
       const r = await state.transport.wifiConfigure(ssid, f.psk, code);
       // Two response shapes:
       //   - { status: 'connected', sta_ip, hostname, sta_url, mdns_url }
-      //     — inline transition, no reboot. Device joined the new
+      //     - inline transition, no reboot. Device joined the new
       //       network while we were holding the softAP. Show the
       //       URLs; the AP will be deauthed by the device within
       //       a second so this page goes unreachable shortly after.
-      //   - { restart: true } — legacy reboot path. Use the polling
+      //   - { restart: true } - legacy reboot path. Use the polling
       //     screen as before.
       if (r && r.restart) {
         waitForDeviceAndReload('Saving WiFi & rebooting…');
@@ -5774,7 +5774,7 @@ function onClickBsSave(btn) {
     }
   }, { label: 'Saving WiFi…', alsoDisable: ['#bs-ssid', '#bs-psk', '#bs-code', '#bs-rescan', '#bs-skip'] });
 }
-// Skip — let the user proceed into the chat UI without configuring a home
+// Skip - let the user proceed into the chat UI without configuring a home
 // WiFi network. Useful for standalone / off-grid operation from the softAP
 // itself. Routes the same way as a normal boot (identity picker if no
 // identities, login if some exist).
@@ -5904,7 +5904,7 @@ $('conv-list').addEventListener('click', (ev) => {
   const peer = row.getAttribute('data-peer');
   // Synthetic "Incoming attachment …" rows carry data-peer="" because
   // the sender isn't decrypted yet. Treat them as non-interactive
-  // until the LXMF message arrives — clicking would otherwise
+  // until the LXMF message arrives - clicking would otherwise
   // selectConversation('') and unload whatever chat the user was on.
   if (!peer) return;
   selectConversation(peer);
@@ -5916,7 +5916,7 @@ $('conv-list').addEventListener('click', (ev) => {
 // click and long-press also open it on any viewport so touch-screen
 // laptops + Surface-style devices have a usable entry point even when
 // the icon isn't rendered. Discovered rows (data-discovered="1") are
-// excluded — they have nothing to retain or clear.
+// excluded - they have nothing to retain or clear.
 function closeRowMenu() { state.rowMenu = null; }
 function openRowMenu(peer, anchor) {
   if (!peer) { state.rowMenu = null; return; }
@@ -5927,7 +5927,7 @@ function openRowMenu(peer, anchor) {
   ];
   // Position near the anchor. anchor is either a DOM element (the ⋮
   // button) or a {x, y} for cursor / touch-point. Clamp to viewport.
-  // Sizes are estimates — the rendered menu may differ; the clamp
+  // Sizes are estimates - the rendered menu may differ; the clamp
   // tolerates that.
   const rect = (anchor && anchor.getBoundingClientRect)
       ? anchor.getBoundingClientRect()
@@ -5940,7 +5940,7 @@ function openRowMenu(peer, anchor) {
   state.rowMenu = { items, x: left, y: top };
 }
 // Close on outside click / Esc / scroll. Captured at the document
-// level so any tap outside the menu — including taps on a conv-row —
+// level so any tap outside the menu - including taps on a conv-row -
 // dismisses it before the row's own click handler runs.
 document.addEventListener('mousedown', (ev) => {
   if (!state.rowMenu) return;
@@ -5972,7 +5972,7 @@ $('conv-list').addEventListener('contextmenu', (ev) => {
 
 // Long-press on touch: 500ms hold opens the menu at the touch point.
 // Cancelled on touchmove / touchend / scroll. Only fires for non-
-// discovered rows — same rule as right-click.
+// discovered rows - same rule as right-click.
 (() => {
   let timer = null;
   let cancelled = false;
@@ -5989,7 +5989,7 @@ $('conv-list').addEventListener('contextmenu', (ev) => {
     const x = t.clientX, y = t.clientY;
     timer = setTimeout(() => {
       if (cancelled) return;
-      // Suppress the click that the touchend will fire — we don't want
+      // Suppress the click that the touchend will fire - we don't want
       // selectConversation to run alongside the menu open.
       row._suppressNextClick = true;
       openRowMenu(peer, { x, y });
@@ -6016,7 +6016,7 @@ $('conv-list').addEventListener('click', (ev) => {
 // store as the Identity → Contacts list in Settings.
 // Reusable rename/clear flows so the per-row context menu (landscape
 // mobile + tablet) and the thread-header buttons (desktop) share one
-// implementation. Both take an explicit peer arg — neither reaches
+// implementation. Both take an explicit peer arg - neither reaches
 // for state.openPeer, since the row menu acts on the row's peer which
 // may not be the currently-open conversation.
 async function renamePeerFlow(peer) {
@@ -6169,7 +6169,7 @@ async function retentionSave(btn) {
 function onClickRadioSave(btn) {
   return withBusy(btn, async () => {
     try {
-      // Single save path — /api/radio now persists airtime caps alongside
+      // Single save path - /api/radio now persists airtime caps alongside
       // the band params so a region preset's regulatory limits survive a
       // reboot. Old separate /api/radio/airtime endpoint remains for live
       // tweaks without a reboot but isn't part of the user-driven save.
@@ -6189,7 +6189,7 @@ function onClickRadioSave(btn) {
     }
   }, { label: 'Saving radio…' });
 }
-// Connectivity tab: accordion exclusivity — close every other section
+// Connectivity tab: accordion exclusivity - close every other section
 // when one opens, so the tab never grows taller than the modal.
 for (const det of document.querySelectorAll('#modal-settings .cn-section')) {
   det.addEventListener('toggle', () => {
@@ -6230,7 +6230,7 @@ async function openAddWifiModal() {
 }
 
 async function scanIntoWifiModal() {
-  // Same scan store as the bootstrap view — both <select>s bind to it.
+  // Same scan store as the bootstrap view - both <select>s bind to it.
   state.wifiScanState = 'scanning';
   state.wifiScanList  = [];
   try {
@@ -6271,7 +6271,7 @@ function onClickEmoji(ev) {
   ev.stopPropagation();
   openEmojiPicker(ev.currentTarget, (e) => {
     // Splicing into a textarea needs the live caret positions, which only
-    // the DOM has — Alpine state mirrors .value but not selectionStart.
+    // the DOM has - Alpine state mirrors .value but not selectionStart.
     const ta = $('compose-text');
     const start = ta.selectionStart || ta.value.length;
     const end   = ta.selectionEnd   || ta.value.length;
@@ -6284,7 +6284,7 @@ function onClickEmoji(ev) {
   });
 }
 
-// Search field — writes state.searchQuery; conv-row entries x-show
+// Search field - writes state.searchQuery; conv-row entries x-show
 // against convRowMatchesSearch() so filtering is declarative. Per-row
 // match keeps the typeahead snappy without rebuilding the list each
 // keystroke.
@@ -6369,7 +6369,7 @@ function findMatchingPreset() {
 // Called from @change on #rd-preset. If the user picks a region, copy its
 // params into state.forms.radio so the (hidden) raw fields stay in sync if
 // they later switch to Custom. If they pick Custom, the existing values
-// stay — the form just becomes visible. The "saved" notebook is shown
+// stay - the form just becomes visible. The "saved" notebook is shown
 // declaratively via x-text on $store.s.ui.rdPresetNote.
 function applyRadioPreset() {
   const id = state.forms.radio.preset;
@@ -6425,7 +6425,7 @@ async function populateRadioTab() {
   } catch { /* leave toggle in last state */ }
   await populateLoraConfig();
   // Header dot reflects the radio's live state, not the discoverable
-  // flag — "is the LoRa interface up and able to send/receive?", not
+  // flag - "is the LoRa interface up and able to send/receive?", not
   // "are we advertising it?".
   const radio = (state.lastInfo && state.lastInfo.radio) || {};
   setConnectivityDot('cn-dot-radio',
@@ -6435,7 +6435,7 @@ async function populateRadioTab() {
 
 // ============== INFO ICON / CLICK TOOLTIP ==============
 // Generic explainer popover. Click an `.info-icon` button to set
-// state.infoTip = { html, x, y } — the declarative .info-tooltip
+// state.infoTip = { html, x, y } - the declarative .info-tooltip
 // element in body markup picks up the position + content.
 function _closeInfoTooltip() { state.infoTip = null; }
 document.addEventListener('click', (ev) => {
@@ -6450,7 +6450,7 @@ document.addEventListener('click', (ev) => {
       return;
     }
     const r = btn.getBoundingClientRect();
-    // Tooltip width/height are unknown until rendered — guess 280×60
+    // Tooltip width/height are unknown until rendered - guess 280×60
     // (matches CSS max-width); the position adjusts on next frame
     // when the actual rect is known via x-effect inside the tooltip
     // ... we skip that and just clamp generously. Browsers honor the
@@ -6662,7 +6662,7 @@ function populateDiagTab() {
 // /api/info → transports.{lora,tcp_client,tcp_server,udp,bluetooth}.
 // Sections for absent transports are hidden so users can't open
 // configuration that can't take effect. Visibility is driven through
-// reactive state — the <details> elements bind x-show against these.
+// reactive state - the <details> elements bind x-show against these.
 function applyTransportCapabilities() {
   const t = (state.lastInfo && state.lastInfo.transports) || {};
   state.ui.showRadioSection = t.lora !== false;
@@ -6685,7 +6685,7 @@ async function populateTcpClientsList() {
     state.tcpClientsLive = r.live_count ?? 0;
     // grey: none configured · green: all connected · yellow: some but not
     // all · red: configured but none connected. ('idle' has no colour rule,
-    // so it falls back to the base grey dot — and stays visible, unlike '').
+    // so it falls back to the base grey dot - and stays visible, unlike '').
     let headerCls = 'idle';
     if (state.tcpClients.length > 0) {
       headerCls = state.tcpClientsLive === state.tcpClients.length ? 'ok'
@@ -6764,7 +6764,7 @@ async function onClickTcpSave(_btn) {
 // clock at boot but isn't a user-visible source. (#111, #113)
 //
 // User reorders sources by dragging rows. The displayed order IS the
-// priority order — index 0 = priority 0 (highest), etc.
+// priority order - index 0 = priority 0 (highest), etc.
 const TIME_SOURCE_LABELS = {
   gps:     ['GPS',      'UTC from a GPS fix; works without internet.'],
   ntp:     ['NTP',      'pool.ntp.org sync when WiFi has an internet route.'],
@@ -6832,7 +6832,7 @@ function renderTimeStatus(t) {
 function renderTimeSources(sources) {
   // Canonical fallback order when priorities tie. NTP comes first
   // because it's the cheapest, most-reliable source when WiFi has an
-  // internet route — see TimeManager::default_config. GPS sits a step
+  // internet route - see TimeManager::default_config. GPS sits a step
   // behind for offline-only deployments.
   const order = ['ntp', 'gps', 'browser', 'rns'];
   const rows = order.map(key => ({ key, cfg: sources[key] || { enabled: true, priority: 99, interval_s: 0 } }));
@@ -6897,7 +6897,7 @@ function attachTimeSourceDnD(row) {
     if (!src || src === dst) return;
     const rect = row.getBoundingClientRect();
     const above = (ev.clientY - rect.top) < (rect.height / 2);
-    // Reorder state.timeSources — Alpine x-for repaints from the new
+    // Reorder state.timeSources - Alpine x-for repaints from the new
     // array order, so the visual move matches without a manual DOM
     // insertBefore (which Alpine could undo on its next render pass).
     const list = state.timeSources;
@@ -6934,7 +6934,7 @@ function onClickTmBrowserSync(btn) {
 // Bound via @click on #btn-tm-save in the Time tab.
 function onClickTmSave(btn) {
   return withBusy(btn, async () => {
-  // Walk state.timeSources in its current order — that's the user's
+  // Walk state.timeSources in its current order - that's the user's
   // preferred priority sequence (drag-and-drop mutates the array).
   // Index = priority (0 = highest).
   const body = { sources: {} };
@@ -7010,7 +7010,7 @@ async function openSettingsModal(initialTab, firstRun) {
   // firstRun into state so the binding picks it up.
   state.ui.showCloseSettings = !firstRun;
   // Treat the legacy 'radio' tab name as a synonym for 'connectivity'
-  // — callers that open the radio gate still work.
+  // - callers that open the radio gate still work.
   if (initialTab === 'radio') initialTab = 'connectivity';
   // First-run lock: while the device is in its initial radio-setup
   // gate, only the Connectivity tab is reachable. Stored on state so
@@ -7029,13 +7029,13 @@ function closeSettingsModal() {
 
 // Tab-bar click → switch panel. Wiring lives on the Alpine
 // <template x-for> @click in markup.
-// Close button + backdrop click both dismiss (when not first-run) —
+// Close button + backdrop click both dismiss (when not first-run) -
 // both bound declaratively now (@click on #btn-close-settings + the
 // backdrop's @click.self on #modal-settings below in the markup).
 
-// ============================== SETTINGS — auto-announce interval ==============================
+// ============================== SETTINGS - auto-announce interval ==============================
 // Sensible auto-announce intervals. 0 disables. The min the server
-// will accept is 10s — anything below silently rounds up. The default
+// will accept is 10s - anything below silently rounds up. The default
 // is 5 minutes (LXMF_DEFAULT_ANNOUNCE_INTERVAL_MS server-side).
 const ANNOUNCE_INTERVALS = [
   { ms: 0,        label: 'Off: manual only' },
@@ -7054,7 +7054,7 @@ function populateIntervalSelect() { /* declarative */ }
 
 // Settings → Identity tab change handlers, all bound via @change /
 // @blur on the markup. They write straight to the server and surface a
-// toast on completion — reading the new values back into state on the
+// toast on completion - reading the new values back into state on the
 // next populateIdentityTab() pass is what keeps form state in sync.
 async function onChangeAnnounceInterval() {
   const ms = Number(state.forms.identity.announceInterval);
@@ -7068,7 +7068,7 @@ async function onChangeAnnounceInterval() {
 }
 
 // Save the display name on blur (or Enter). No save on every keystroke
-// — peers don't see the new label until the next announce anyway, so
+// - peers don't see the new label until the next announce anyway, so
 // per-keystroke API calls would just churn the meta.json write. The
 // input's @keydown.enter blurs the field, which triggers this.
 async function onBlurIdName() {
@@ -7112,7 +7112,7 @@ async function onChangeStampCost() {
   const cost = Number(raw);
   const last = String(state.self && state.self.stamp_cost != null ? state.self.stamp_cost : 0);
   if (raw === '') {
-    // Cleared field is ambiguous — restore rather than silently saving
+    // Cleared field is ambiguous - restore rather than silently saving
     // "off" (0 spelled out is the explicit way to disable).
     state.forms.identity.stampCost = last;
     return;
@@ -7145,7 +7145,7 @@ async function onChangeEnforceStamps() {
   }
 }
 
-// App-tab preference checkboxes — both bound @change="savePrefs()" in
+// App-tab preference checkboxes - both bound @change="savePrefs()" in
 // markup. This wrapper merges the live form values into the persisted
 // prefs and triggers a thread re-render for the auto-download flip.
 function savePrefs() {
@@ -7158,7 +7158,7 @@ function savePrefs() {
   if (state.openPeer) renderThread();
 }
 
-// Inbox capacity + TTL — populated lazily when the UI tab opens and
+// Inbox capacity + TTL - populated lazily when the UI tab opens and
 // saved on each change. Server applies + persists in one round-trip.
 async function populateInboxConfig() {
   state.ui.inboxConfigStatus = '';
@@ -7190,7 +7190,7 @@ async function onChangeInboxDefaultRetention() {
   }
 }
 
-// Storage transfer caps — two sliders bound to the device's current
+// Storage transfer caps - two sliders bound to the device's current
 // effective_max_* (clamped to backing-store free space + protocol
 // ceiling). The slider's max is the largest cap the device can
 // currently accept; the value is the user's saved preference. Both
@@ -7210,7 +7210,7 @@ function _renderStorageLabels() {
 }
 // Single source of truth for the device's storage limits, fetched over plain
 // HTTP. state._storageConfig feeds attachMaxBytes() (the composer's hard cap),
-// so callers refresh it on demand — e.g. just before validating an attachment —
+// so callers refresh it on demand - e.g. just before validating an attachment -
 // rather than depending on a WS push that can be dropped under load.
 async function refreshStorageCaps() {
   state._storageConfig = await state.transport._req(API.STORAGE_CONFIG);
@@ -7262,7 +7262,7 @@ function refreshStorageSliders() {
 }
 
 // Escape dismisses whichever overlay is open. Order matters when more
-// than one is somehow open — close the topmost / most-recently-opened
+// than one is somehow open - close the topmost / most-recently-opened
 // first. Popups before transient modals before the big settings modal.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
@@ -7380,7 +7380,7 @@ async function saveDiscoveryField(body) {
     throw e;
   }
 }
-// Master toggle (#disc-enabled) — bound @change in markup.
+// Master toggle (#disc-enabled) - bound @change in markup.
 async function onChangeDiscEnabled() {
   const wantOn = state.forms.discovery.enabled;
   if (!wantOn) {
@@ -7440,7 +7440,7 @@ function openIdCodeModal(opts) {
   state.modals.idCode = true;
   // #idc-input has x-effect bound to $store.s.modals.idCode that calls
   // $el.focus() inside $nextTick, so flipping the modal flag above is
-  // enough — no imperative focus needed here.
+  // enough - no imperative focus needed here.
 }
 // Bound @click on #btn-idc-ok and @keydown.enter on #idc-input.
 function onClickIdcOk() {
@@ -7477,15 +7477,15 @@ function showWifiProvisionedPanel(resp) {
 function waitForDeviceAndReload(message) {
   // Replace the page contents with a status div and poll the device
   // for a successful /api/info. Two paths:
-  //   1. Same origin (default) — the device kept the same IP, so we
+  //   1. Same origin (default) - the device kept the same IP, so we
   //      reload the current URL once /api/info responds.
-  //   2. Origin switch — we were in softAP and just configured STA.
+  //   2. Origin switch - we were in softAP and just configured STA.
   //      The device now lives at a different IP, and the SPA's current
   //      origin (the softAP IP) won't resolve once the device drops
   //      its softAP. Use the mDNS hostname captured before reload and
   //      jump to http://<host>.local/ as soon as it answers.
   // Replace the body with a small reboot-in-progress card. innerHTML
-  // is fine here because we're nuking the whole SPA state anyway —
+  // is fine here because we're nuking the whole SPA state anyway -
   // a fresh page load is incoming.
   document.body.innerHTML =
     '<div class="page"><div class="card"><h2>Rebooting</h2>' +
@@ -7501,7 +7501,7 @@ function waitForDeviceAndReload(message) {
   const mdns = (state.info && state.info.mdns_hostname) || null;
   const wasAp = (state.info && state.info.wifi_mode === 'ap');
   const candidates = [];
-  // Always try same origin first — covers the case where the device
+  // Always try same origin first - covers the case where the device
   // is on a fixed IP or the user is already on the LAN it'll come
   // back on. If we were in softAP and have a hostname, also try
   // http://<host>.local/ in parallel.

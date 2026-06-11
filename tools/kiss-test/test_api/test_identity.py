@@ -7,7 +7,7 @@
 from conftest import assert_has_keys, assert_type
 
 
-# NOTE: GET /api/identities (no id, list-all) is not currently exposed —
+# NOTE: GET /api/identities (no id, list-all) is not currently exposed -
 # only POST (create) and GET /{id}. Migration is a good time to add it
 # if the SPA grows multi-identity awareness.
 

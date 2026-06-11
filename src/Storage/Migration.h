@@ -78,7 +78,7 @@ inline Result run() {
       const size_t flash_size = probe.size();
       probe.close();
       if (Storage::SDCard::exists(full.c_str())) {
-        // Already on SD — drop the flash copy and count it as a skip.
+        // Already on SD - drop the flash copy and count it as a skip.
         // (If the SD copy size disagrees, leave flash alone and flag
         // it as a failure for the user to investigate.)
         File sd_probe = SD.open(full.c_str(), FILE_READ);

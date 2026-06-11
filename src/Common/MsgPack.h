@@ -8,19 +8,19 @@
 // Why hand-rolled, not the hideakitai/MsgPack library we pull in
 // via platformio.ini: Packer writes to a std::vector with the
 // default allocator (internal heap). LXMF's encoder needs the
-// buffer routed through PSRAM for large attachment sends — without
+// buffer routed through PSRAM for large attachment sends - without
 // that, attachment encoding lands in internal SRAM and reintroduces
 // the WiFi/lwIP fragmentation we worked to clear. Until the library
 // supports a custom allocator (or we fork+patch one), the
 // hand-rolled encoder lets us pre-allocate the destination buffer
 // in PSRAM and pack into it directly.
 //
-// Single source of truth for msgpack encoding across the project —
+// Single source of truth for msgpack encoding across the project -
 // used by LXMF wire-format builders and by Discovery announces.
 //
 // What's here:
-//   reads  — read_bin_or_str, skip_element
-//   writes — pack_uint8, pack_str, pack_bin, pack_bin_str,
+//   reads  - read_bin_or_str, skip_element
+//   writes - pack_uint8, pack_str, pack_bin, pack_bin_str,
 //            pack_bin_header, pack_float64, pack_int, pack_bool,
 //            pack_array_header, pack_map_header
 //

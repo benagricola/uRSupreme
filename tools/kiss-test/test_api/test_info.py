@@ -1,8 +1,8 @@
-"""GET /api/info — lightweight always-polled endpoint covering
+"""GET /api/info - lightweight always-polled endpoint covering
 radio + transport + WiFi + a battery summary for the topbar icon.
 
 Storage / sensors / outbound_caps / battery detail must NOT appear
-here — those belong to /api/system/status. Each datum has one home.
+here - those belong to /api/system/status. Each datum has one home.
 """
 from conftest import assert_has_keys, assert_type
 
@@ -20,7 +20,7 @@ def test_info_top_level_keys(sx):
 def test_info_does_not_duplicate_system_status(sx):
     s, d = sx
     body = s.get(f"{d.url}/api/info", timeout=15).json()
-    # These live on /api/system/status — must NOT be duplicated here.
+    # These live on /api/system/status - must NOT be duplicated here.
     for k in ("storage", "outbound_caps", "sensors"):
         assert k not in body, f"/api/info should not carry {k!r} (lives on system_status)"
 
@@ -44,7 +44,7 @@ def test_info_battery_summary_shape(sx):
     s, d = sx
     body = s.get(f"{d.url}/api/info", timeout=15).json()
     if "battery" not in body:
-        # Non-PMU board build — acceptable.
+        # Non-PMU board build - acceptable.
         return
     b = body["battery"]
     # Summary surface only: percent + state. Voltage / slope / vbus
@@ -64,7 +64,7 @@ def test_info_transport_shape(sx):
 
 
 def test_info_unauthenticated_ok(sx):
-    """The status indicator polls /api/info before login — must succeed
+    """The status indicator polls /api/info before login - must succeed
     without a token."""
     s, d = sx
     r = s.get(f"{d.url}/api/info",

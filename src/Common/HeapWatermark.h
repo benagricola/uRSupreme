@@ -8,10 +8,10 @@
 // One heap read per tick, no allocation, no lock held by us.
 //
 // Two distinct numbers are exposed over /api/diag/mem:
-//   * min_free_internal  — heap_caps_get_minimum_free_size(), the EXACT
+//   * min_free_internal  - heap_caps_get_minimum_free_size(), the EXACT
 //     since-boot trough. IDF updates it inside the allocator at the
 //     moment of each allocation, so it never misses a transient dip.
-//   * window_low          — the lowest free-internal this sampler has
+//   * window_low          - the lowest free-internal this sampler has
 //     observed since the last mark(). Resettable (POST /api/diag/mem),
 //     so a measurement window can be compared without rebooting. It is
 //     sample-rate-limited (a sub-interval spike can be missed), which is

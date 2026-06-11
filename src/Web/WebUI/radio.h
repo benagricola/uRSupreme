@@ -1,5 +1,5 @@
 // Auto-extracted from Web/WebUI.h on the SPA-migration branch.
-// Included from inside the class body of Web::WebUI in WebUI.h —
+// Included from inside the class body of Web::WebUI in WebUI.h -
 // this file has NO include guard, NO `#pragma once`, and is not a
 // standalone translation unit. The static method definitions below
 // remain implicit-inline because they sit inside a class body via
@@ -23,7 +23,7 @@
       doc["have_conf"]    = eeprom_have_conf();
       doc["radio_online"] = radio_online;
       doc["op_mode"]      = (op_mode == MODE_TNC) ? "tnc" : "host";
-      // Soft limits — actual modem-side validation happens on the next boot.
+      // Soft limits - actual modem-side validation happens on the next boot.
       doc["limits"]["sf_min"]  = 5;
       doc["limits"]["sf_max"]  = 12;
       doc["limits"]["cr_min"]  = 5;
@@ -46,13 +46,13 @@
       doc["size"]      = Telemetry::Radio::history_size();
       // Echo cw_min/cw_max alongside the history so the SPA can colour
       // the CW-band line against its valid range without a second call.
-      doc["cw_max_band"] = 4;  // CSMA_CW_BANDS — matches firmware Misc
+      doc["cw_max_band"] = 4;  // CSMA_CW_BANDS - matches firmware Misc
       JsonArray arr = doc["samples"].to<JsonArray>();
       Telemetry::Radio::fill_history(arr);
       send_json(req, 200, doc);
     }
 
-    // Network (WiFi/transport) telemetry history — aggregate tx/rx byte rate
+    // Network (WiFi/transport) telemetry history - aggregate tx/rx byte rate
     // across the non-LoRa interfaces. Same shape as the radio history so the
     // SPA can reuse its chart for backbone traffic.
     static void handle_network_telemetry(AsyncWebServerRequest* req) {
@@ -70,8 +70,8 @@
       RnsLockGuard _g;
       if (!require_physical_auth(req, body)) return;
       // Accept the long field names the SPA uses. (Earlier versions used
-      // short names freq_hz/bw_hz/sf/cr/txp — those are gone.)
-      // airtime_limit_pct + longterm_airtime_limit_pct are optional —
+      // short names freq_hz/bw_hz/sf/cr/txp - those are gone.)
+      // airtime_limit_pct + longterm_airtime_limit_pct are optional -
       // when present they're persisted to EEPROM alongside the band
       // params and applied in-RAM immediately. Missing fields keep the
       // current (loaded-or-default) values.
@@ -118,7 +118,7 @@
       eeprom_update(eeprom_addr(ADDR_CONF_FREQ)+1, (uint8_t)(freq >> 16));
       eeprom_update(eeprom_addr(ADDR_CONF_FREQ)+2, (uint8_t)(freq >> 8));
       eeprom_update(eeprom_addr(ADDR_CONF_FREQ)+3, (uint8_t)freq);
-      // Optional airtime fields — only touch EEPROM when caller sent them
+      // Optional airtime fields - only touch EEPROM when caller sent them
       // (vs no-op). Stored as integer percentage (0..99) and converted to
       // fraction on load. 0xFF sentinel is reserved for "never set".
       if (body["airtime_limit_pct"].is<int>()) {
@@ -159,13 +159,13 @@
       respond_and_reboot(req, doc);
     }
 
-    // POST /api/radio/airtime — set short / long airtime duty-cycle caps
+    // POST /api/radio/airtime - set short / long airtime duty-cycle caps
     // at runtime. Body: { "airtime_limit_pct": <int>,
     //                     "longterm_airtime_limit_pct": <int>,
     //                     "identity_code": "abc123" (only if no bearer) }
     // Either or both limit fields can be omitted to leave that one alone.
     // Setting a field to 0 disables that limit (which is illegal in
-    // regulated bands — caller's responsibility). Values are NOT persisted
+    // regulated bands - caller's responsibility). Values are NOT persisted
     // across reboots yet; the firmware default in Config.h applies on next
     // boot. (EEPROM persistence is a future addition.)
     static void handle_radio_airtime(AsyncWebServerRequest* req, JsonVariant& body) {

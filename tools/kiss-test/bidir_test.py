@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bidirectional Resource-protocol test sweep between two firmware-mode
 devices (SX1262 and LR1121, both running our LXMF gateway). Each side
-is driven entirely via the device's HTTP API — no Python RNS involved.
+is driven entirely via the device's HTTP API - no Python RNS involved.
 
 Each test sends a body of a chosen size from one device to the other,
 then polls the receiver's /state until the message appears (or a

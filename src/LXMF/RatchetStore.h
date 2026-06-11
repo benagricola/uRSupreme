@@ -14,7 +14,7 @@
 //
 // All cryptography goes through RNS::Cryptography::X25519PrivateKey so the
 // same X25519 implementation that the rest of microReticulum uses is in
-// effect here — no separate code paths.
+// effect here - no separate code paths.
 
 #include <Bytes.h>
 #include <Cryptography/X25519.h>

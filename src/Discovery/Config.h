@@ -3,12 +3,12 @@
 // One JSON file keyed by interface name. Each entry carries the
 // interface's type (lora / tcp_client / udp) + its discoverable
 // flag + type-specific config (host/port for tcp_client, port +
-// enabled for udp; lora has no per-row config here — its hardware
+// enabled for udp; lora has no per-row config here - its hardware
 // params live in EEPROM and are read before the filesystem is
 // mounted, so only the name + discoverable bit live in this file).
 //
 // Each user-creatable interface has its definition AND its
-// discoverable bit in the same entry — deleting an entry removes
+// discoverable bit in the same entry - deleting an entry removes
 // both atomically. No stale flags to clean up after an interface
 // is removed. LoRa is the special case: always-present, params
 // elsewhere, so its entry just records the discoverable flag.
@@ -129,7 +129,7 @@ namespace _detail {
 }
 
 // Reload the file from disk into the in-memory map. Safe to call
-// before the file exists — leaves the map empty in that case.
+// before the file exists - leaves the map empty in that case.
 // Idempotent on its own; callers can re-load to pick up out-of-band
 // edits (e.g. after a CRUD endpoint writes).
 inline void load() {
@@ -152,7 +152,7 @@ inline void load() {
   }
   Common::PsramJsonDocument doc;
   if (deserializeJson(doc, buf.data(), sz) != DeserializationError::Ok) {
-    WARNINGF("Discovery::Config: %s did not parse as JSON — ignoring",
+    WARNINGF("Discovery::Config: %s did not parse as JSON - ignoring",
              PERSIST_PATH);
     return;
   }
@@ -184,7 +184,7 @@ inline bool save() {
     o["type"]         = _detail::type_to_str(kv.second.type);
     o["discoverable"] = kv.second.discoverable;
     // Interface mode is meaningful for every interface type, so persist
-    // it generically (only when set — an unset mode falls back to the
+    // it generically (only when set - an unset mode falls back to the
     // registration-site default).
     if (kv.second.mode != 0) o["mode"] = _detail::mode_to_str(kv.second.mode);
     if (kv.second.type == Type::TcpClient) o["host"] = kv.second.host;
@@ -275,7 +275,7 @@ inline const std::map<std::string, Entry>& all() {
 // Every interface-registration site (LoRa / TCP / UDP) routes through
 // here so the mode/IFAC plumbing lives in one place. `default_mode` is
 // used when the entry leaves mode unset. Safe to call with a
-// default-constructed Entry (no mode, no IFAC) — it just applies the
+// default-constructed Entry (no mode, no IFAC) - it just applies the
 // default mode, which is exactly what an interface with no config row
 // should get.
 inline void apply_mode_ifac(RNS::Interface& iface, const Entry& e,
@@ -291,11 +291,11 @@ inline void apply_mode_ifac(RNS::Interface& iface, const Entry& e,
 // Convenience: "is the interface named X currently set to discoverable?"
 // Returns false when no entry exists for the name (privacy-by-design).
 // This is the read path the upcoming Discovery::Announcer will hit
-// when deciding which interfaces to emit announces on — it iterates
+// when deciding which interfaces to emit announces on - it iterates
 // RNS::Transport::get_interfaces() and consults this for each.
 //
 // We deliberately do NOT mirror the flag onto InterfaceImpl /
-// Interface — that would invade upstream microReticulum to carry a
+// Interface - that would invade upstream microReticulum to carry a
 // flag whose only consumer is our application-layer announcer, and
 // keeps two sources of truth in sync forever. Single source of truth:
 // the JSON-backed map here.
@@ -307,7 +307,7 @@ inline bool is_discoverable(const std::string& name) {
 }
 
 // Log a one-line summary of which interfaces (by name) are currently
-// configured as discoverable — useful for boot diagnostics. Doesn't
+// configured as discoverable - useful for boot diagnostics. Doesn't
 // mutate anything.
 inline void log_summary() {
   if (!_detail::loaded_ref()) load();

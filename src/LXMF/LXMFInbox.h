@@ -20,7 +20,7 @@ namespace LXMF {
 
   // Bounded per-identity ring with JSONL spool persistence.
   // One instance per LXMFIdentity. Used for both inbox (incoming=true) and
-  // outbox (incoming=false) — the on-disk schema is identical, only the
+  // outbox (incoming=false) - the on-disk schema is identical, only the
   // file name differs.
   //
   // Persistence: each append() writes one line to <dir>/<filename>. On boot
@@ -35,7 +35,7 @@ namespace LXMF {
   public:
     // Per-identity per-mailbox cap. At ~300 B per JSONL line for a
     // typical chat-sized message, 200 entries = ~60 KB / identity /
-    // mailbox — comfortable on the LittleFS partition.
+    // mailbox - comfortable on the LittleFS partition.
     //
     // Retention model:
     //   * _ram_capacity is the per-identity-per-mailbox SAFETY bound on
@@ -50,7 +50,7 @@ namespace LXMF {
     //     so subsequent default changes cascade.
     //
     // TTL/Time pruning uses the LXMF `ts` field (sender wall-clock);
-    // requires a calibrated local clock — the prune is a no-op while
+    // requires a calibrated local clock - the prune is a no-op while
     // uncalibrated.
     static constexpr size_t DEFAULT_RAM_CAPACITY = 200;
     static constexpr size_t UNLIMITED_CAPACITY   = SIZE_MAX;
@@ -181,7 +181,7 @@ namespace LXMF {
         }
       }
 
-      // Outer safety bound — always enforced.
+      // Outer safety bound - always enforced.
       while (_ring.size() > _ram_capacity) _ring.pop_front();
       if (_ring.size() != before) rewrite_spool();
     }
@@ -197,7 +197,7 @@ namespace LXMF {
     // usage at ~32 records per identity per mailbox.
     //
     // Stopgap until proper wall-clock-anchored TTL eviction (which
-    // needs a persistent RTC or a synced device clock — neither exists
+    // needs a persistent RTC or a synced device clock - neither exists
     // yet). For now, "the last 32 messages" is what a sane device
     // keeps. Increase ram_capacity via the ctor if more history is
     // needed.
@@ -209,7 +209,7 @@ namespace LXMF {
 
       // microStore::File inherits from Arduino's Stream, which means
       // ArduinoJson can read one self-delimited JSON document at a
-      // time directly from the file — JSON's matching braces tell
+      // time directly from the file - JSON's matching braces tell
       // it when one record ends. No manual line accumulator, no
       // per-line size cap. Records are bounded purely by the field-
       // level caps applied at the trust boundary (title, body,
@@ -231,7 +231,7 @@ namespace LXMF {
         Common::PsramJsonDocument doc;
         DeserializationError err = deserializeJson(doc, f);
         if (err) {
-          // Malformed record — scan to the next newline and resume.
+          // Malformed record - scan to the next newline and resume.
           // Doesn't drop subsequent records, just the corrupt one.
           errors++;
           int c;
@@ -243,7 +243,7 @@ namespace LXMF {
       }
       f.close();
       if (errors) {
-        WARNINGF("LXMFInbox: %u parse error(s) in %s — corrupt records skipped",
+        WARNINGF("LXMFInbox: %u parse error(s) in %s - corrupt records skipped",
                  (unsigned)errors, _path.c_str());
       }
 
@@ -257,10 +257,10 @@ namespace LXMF {
 
     // Append a new record. Allocates a seq if rec.seq == 0. Writes one
     // JSONL line; trims the RAM ring to ram_capacity. If rec.received_ms
-    // is 0 the caller has not stamped it — leave it 0 here too rather than
+    // is 0 the caller has not stamped it - leave it 0 here too rather than
     // stamping a millis() that's unrelated to receipt time (this code path
     // also runs during JSONL load() via parse_line, which uses its own
-    // route — see below).
+    // route - see below).
     bool append(MessageRecord& rec) {
       if (rec.seq == 0) rec.seq = ++_next_seq;
       else if (rec.seq > _next_seq) _next_seq = rec.seq;
@@ -276,7 +276,7 @@ namespace LXMF {
       }
       // Stream the JSON directly to the file via Arduino's Print
       // interface (microStore::File : public Stream). No intermediate
-      // contiguous buffer — record size is bounded by the field caps
+      // contiguous buffer - record size is bounded by the field caps
       // already enforced at the trust boundary.
       const size_t n = serializeJson(doc, f);
       const size_t nl = f.write((uint8_t)'\n');
@@ -322,7 +322,7 @@ namespace LXMF {
     // Apply an arbitrary mutation to the record with this seq and
     // persist by rewriting the spool. Used by the stamped-send path to
     // flip a generating_stamp record into its dispatched form (status,
-    // packet_hash, stamp value) in place — the record was appended
+    // packet_hash, stamp value) in place - the record was appended
     // before generation so it survives a reboot, so dispatch must
     // update rather than append a duplicate.
     bool mutate_by_seq(uint32_t seq, const std::function<void(MessageRecord&)>& fn) {
@@ -374,13 +374,13 @@ namespace LXMF {
     // Read-only access to the in-memory ring. Callers iterate
     // directly + apply their own filter without forcing a vector copy.
     // The previous recent()/since() accessors returned vectors by
-    // value — each call to /api/identities/{}/inbox or /outbox copied
+    // value - each call to /api/identities/{}/inbox or /outbox copied
     // up to ~200 MessageRecords (each with std::string title +
     // attachments vector) on the default heap, ~10-20 KiB transient
     // per request on an ESP32 with constrained internal SRAM.
     const MessageRing& ring() const { return _ring; }
 
-    // Direct seq lookup — returns nullptr if not in the ring. Used by
+    // Direct seq lookup - returns nullptr if not in the ring. Used by
     // the outbox-retry endpoint to find one record by seq without
     // walking a copy of the entire ring.
     const MessageRecord* find_by_seq(uint32_t seq) const {
@@ -399,7 +399,7 @@ namespace LXMF {
 
     // Fired for every record about to be evicted (capacity, TTL, or
     // peer-purge). Used by LXMFGateway to delete the on-disk attachment
-    // files that hang off the record — without this, the JSONL line goes
+    // files that hang off the record - without this, the JSONL line goes
     // away but `/lxmf/identities/<id>/attachments/<filename>` stays
     // forever and flash fills up.
     void set_on_remove(std::function<void(const MessageRecord&)> fn) {
@@ -427,7 +427,7 @@ namespace LXMF {
       else if (strcmp(status_str, "sent") == 0) rec.status = OutboxStatus::Sent;
       else if (strcmp(status_str, "failed") == 0) rec.status = OutboxStatus::Failed;
       else if (strcmp(status_str, "generating_stamp") == 0) rec.status = OutboxStatus::GeneratingStamp;
-      // Delivery-stamp state — present only when a stamp policy applied.
+      // Delivery-stamp state - present only when a stamp policy applied.
       if (doc["stamp_ok"].is<bool>()) {
         rec.stamp_checked = true;
         rec.stamp_valid   = (bool)doc["stamp_ok"];

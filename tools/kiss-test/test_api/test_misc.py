@@ -7,7 +7,7 @@ import websocket
 
 
 def _ws_hello(d, token: str) -> dict:
-    """Fetch the WS hello frame — single round-trip for the system
+    """Fetch the WS hello frame - single round-trip for the system
     snapshot the SPA renders pre-popover."""
     base = d.url.replace("http://", "ws://")
     sock = websocket.create_connection(
@@ -20,11 +20,11 @@ def _ws_hello(d, token: str) -> dict:
 
 def test_storage_migrate_sd_absent_returns_409(sx, tokens):
     """When no SD card is present, the migration endpoint must refuse
-    with a structured error — not a 500."""
+    with a structured error - not a 500."""
     s, d = sx
     h = _ws_hello(d, tokens["sx"])
     if h["storage"]["sd"]["present"]:
-        pytest.skip("SD card is inserted on the bench device — skip the absent-path test")
+        pytest.skip("SD card is inserted on the bench device - skip the absent-path test")
     r = s.post(f"{d.url}/api/storage/migrate_flash_to_sd", timeout=10)
     assert r.status_code == 409
     body = r.json()
@@ -99,9 +99,9 @@ def test_paths_estimate(sx, lr):
     body = r.json()
     assert "kind" in body
     # Canonical kind values, per handle_path_estimate:
-    #   local   — destination matches an identity on this device
-    #   path    — known route via Transport
-    #   unknown — no path table entry
+    #   local   - destination matches an identity on this device
+    #   path    - known route via Transport
+    #   unknown - no path table entry
     assert body["kind"] in ("local", "path", "unknown")
 
 
@@ -110,5 +110,5 @@ def test_radio_get(sx):
     r = s.get(f"{d.url}/api/radio", timeout=15)
     assert r.status_code == 200
     body = r.json()
-    # have_conf may be false on a fresh device — that's still a 200.
+    # have_conf may be false on a fresh device - that's still a 200.
     assert "have_conf" in body

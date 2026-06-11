@@ -1,5 +1,5 @@
 // Auto-extracted from Web/WebUI.h on the SPA-migration branch.
-// Included from inside the class body of Web::WebUI in WebUI.h —
+// Included from inside the class body of Web::WebUI in WebUI.h -
 // this file has NO include guard, NO `#pragma once`, and is not a
 // standalone translation unit. The static method definitions below
 // remain implicit-inline because they sit inside a class body via
@@ -35,7 +35,7 @@
         return;
       }
       // Refuse mid-flight provisioning if a previous request is still
-      // parked — otherwise we'd race two concurrent /api/wifi/configure
+      // parked - otherwise we'd race two concurrent /api/wifi/configure
       // calls trying to drive the same phase machine.
       if (wr_pending.parked || wr_pending.pending) {
         send_error(req, 409, "provision_in_progress");
@@ -43,7 +43,7 @@
       }
       // Write SSID, PSK, and STA mode to EEPROM. Shared with the Improv
       // serial provisioning path so both end up with identical EEPROM
-      // layout — the helper lives in Remote.h.
+      // layout - the helper lives in Remote.h.
       wifi_remote_eeprom_write_sta_creds(ssid.c_str(), psk.c_str());
 
       // Two cases:
@@ -54,7 +54,7 @@
       //   - STA only (wifi_mode == STA): the SPA reached us over the
       //     current STA network; if we change SSID inline the socket
       //     dies and the response never lands. Save EEPROM and
-      //     reboot — boot policy lifts us back into APSTA, so the
+      //     reboot - boot policy lifts us back into APSTA, so the
       //     user's recovery channel is restored automatically.
       const bool ap_up = (wifi_mode == WR_WIFI_AP || wifi_mode == WR_WIFI_APSTA);
       if (ap_up) {
@@ -66,7 +66,7 @@
         // ~999), which both killed the parked response and left a
         // dangling pointer. pause() suppresses the 501, disables the
         // 3 s client rx-timeout, and hands back a weak_ptr that expires
-        // if the client disconnects — the drain in Web::WebUI::loop()
+        // if the client disconnects - the drain in Web::WebUI::loop()
         // lock()s it and answers, or skips if the client is gone (the
         // phase machine still completes the STA transition either way).
         wr_pending.req           = req->pause();
@@ -81,7 +81,7 @@
       }
     }
 
-    // GET /api/wifi/saved — list the WiFi networks the device has
+    // GET /api/wifi/saved - list the WiFi networks the device has
     // credentials for. Today the EEPROM layout holds only one entry
     // (ADDR_CONF_SSID/PSK), so this returns a 0- or 1-element array.
     // The endpoint exists so the SPA can render a stable "Saved
@@ -114,7 +114,7 @@
       send_json(req, 200, doc);
     }
 
-    // POST /api/wifi/forget — zero the saved SSID + PSK in EEPROM and
+    // POST /api/wifi/forget - zero the saved SSID + PSK in EEPROM and
     // reboot. The device comes up with wifi unconfigured, which the
     // existing bootstrap path turns into the softAP captive-portal
     // for first-time setup. Identity-code auth required because this
@@ -157,7 +157,7 @@
       respond_and_reboot(req, doc);
     }
 
-    // POST /api/wifi/softap — switch the live WiFi stack from STA to
+    // POST /api/wifi/softap - switch the live WiFi stack from STA to
     // softAP without rebooting. EEPROM is untouched, so a reboot goes
     // back to whatever SSID is configured. Useful when the user has
     // lost the device on the LAN (router moved, address changed) and
@@ -172,7 +172,7 @@
           "Device is already in softAP mode.");
         return;
       }
-      // Defer the actual switch to the main loop — calling
+      // Defer the actual switch to the main loop - calling
       // wifi_remote_init() from the WebServer task races against
       // in-flight requests and any other WiFi-touching code.
       wr_force_softap_pending = true;

@@ -80,7 +80,7 @@ def embed_spa(env):
     body = ", ".join("0x{:02x}".format(b) for b in gz)
     header = (
         "// Auto-generated from src/Web/spa/{index.html, styles.css, alpine.min.js}\n"
-        "// — do not edit by hand.\n"
+        "// - do not edit by hand.\n"
         "#pragma once\n"
         "#include <pgmspace.h>\n"
         "namespace Web {\n"
@@ -307,12 +307,12 @@ def compute_firmware_version(env):
     """Inject a FW_VERSION_STRING preprocessor macro from `git describe`.
 
     Shapes:
-      v0.2.0                    — exactly on a tag
-      v0.2.0-3-g5f3a92e         — 3 commits past v0.2.0
-      v0.2.0-3-g5f3a92e-dirty   — uncommitted changes in the tree
-      5f3a92e                   — no tags yet (only the short hash)
-      5f3a92e-dirty             — no tags, dirty tree
-      unknown                   — git not available / not a repo
+      v0.2.0                    - exactly on a tag
+      v0.2.0-3-g5f3a92e         - 3 commits past v0.2.0
+      v0.2.0-3-g5f3a92e-dirty   - uncommitted changes in the tree
+      5f3a92e                   - no tags yet (only the short hash)
+      5f3a92e-dirty             - no tags, dirty tree
+      unknown                   - git not available / not a repo
 
     CI must fetch tags (fetch-depth: 0 in the checkout step) for tag
     names to be visible.
@@ -328,7 +328,7 @@ def compute_firmware_version(env):
     except Exception:
         version = "unknown"
     print("Firmware version:", version)
-    # CPPDEFINES tuple form with manually-escaped embedded quotes — the
+    # CPPDEFINES tuple form with manually-escaped embedded quotes - the
     # compiler ends up seeing `-DFW_VERSION_STRING="v0.2.0"` and the
     # source sees a literal const-char* string.
     env.Append(CPPDEFINES=[("FW_VERSION_STRING", '\\"%s\\"' % version)])
@@ -384,7 +384,7 @@ def regenerate_sdkconfig_defaults(env):
     with open(target, "wb") as f:
         f.write(new)
     # IDF generates the effective sdkconfig (sdkconfig.<env>) from these
-    # defaults ONCE, then preserves it across builds — changing a default for
+    # defaults ONCE, then preserves it across builds - changing a default for
     # an already-set symbol does NOT flip it. So whenever the defaults change
     # (an edit to sdkconfig.overrides or a new arduino reference), drop the
     # stale effective sdkconfig to force a clean regeneration; otherwise the
@@ -404,7 +404,7 @@ def ensure_idf_component_manager(env):
 
     PlatformIO bundles Python 3.14 for the ESP-IDF virtualenv, but its
     install_python_deps() pins `pydantic~=2.11.10`, whose pydantic-core has no
-    cp314 wheel — pip falls back to a Rust source build that fails (PyO3 caps at
+    cp314 wheel - pip falls back to a Rust source build that fails (PyO3 caps at
     3.13). The install dies, the IDF venv is left with only pip, and the espidf
     build then fails at config with "No module named 'idf_component_manager'".
 
@@ -440,7 +440,7 @@ def ensure_idf_component_manager(env):
 
         if has_module():
             return
-        print("*** IDF venv: installing idf_component_manager — PlatformIO's "
+        print("*** IDF venv: installing idf_component_manager - PlatformIO's "
               "pydantic pin won't build on its bundled Python 3.14 ...")
         if not os.path.isfile(py):
             subprocess.check_call([env.subst("$PYTHONEXE"), "-m", "venv", "--clear", venv_dir])
@@ -457,7 +457,7 @@ def ensure_idf_component_manager(env):
         # PlatformIO's venv marker. "1.0.0" mirrors espidf.py's IDF_ENV_VERSION;
         # if pioarduino bumps it our marker is rejected, PlatformIO recreates the
         # venv, and the original install failure resurfaces loudly (not silently)
-        # — bump this string to match when that happens.
+        # - bump this string to match when that happens.
         pyver = subprocess.check_output([py, "-c",
             "import sys;print('{0}.{1}.{2}-{3}.{4}'.format(*list(sys.version_info)))"],
             text=True).strip()

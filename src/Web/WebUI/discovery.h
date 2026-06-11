@@ -1,5 +1,5 @@
 // Auto-extracted from Web/WebUI.h on the SPA-migration branch.
-// Included from inside the class body of Web::WebUI in WebUI.h —
+// Included from inside the class body of Web::WebUI in WebUI.h -
 // this file has NO include guard, NO `#pragma once`, and is not a
 // standalone translation unit. The static method definitions below
 // remain implicit-inline because they sit inside a class body via
@@ -24,7 +24,7 @@
 
     // Bulk migration: walk every active identity's attachment dir on
     // flash, copy each file to SD, delete the flash copy, and flip the
-    // backend field on the matching inbox/outbox records. Idempotent —
+    // backend field on the matching inbox/outbox records. Idempotent -
     // running it twice in a row produces all-skipped on the second pass.
     static void handle_announce(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
@@ -73,7 +73,7 @@
       const Discovery::State::Master& cur = Discovery::State::current();
       // Identity-code gate on the only direction that puts the device
       // ON-AIR: turning enabled false→true. Disabling, interval change,
-      // and stamp cost change are bearer-only — they can never broaden
+      // and stamp cost change are bearer-only - they can never broaden
       // emission.
       bool wants_enable = false;
       if (body["enabled"].is<bool>()) {
@@ -238,7 +238,7 @@
       Discovery::Config::Entry e;
       const bool have = Discovery::Config::get(UDP_IFACE_NAME, &e);
       doc["name"] = UDP_IFACE_NAME;
-      // UDP registers with the FULL default (see RNode_Firmware.ino) — a
+      // UDP registers with the FULL default (see RNode_Firmware.ino) - a
       // DISCOVER_PATHS_FOR mode here would rebroadcast path requests onto LoRa.
       const uint8_t eff = (have && e.mode) ? e.mode
                                            : RNS::Type::Interface::MODE_FULL;

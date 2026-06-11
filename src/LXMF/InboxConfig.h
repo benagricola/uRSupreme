@@ -1,7 +1,7 @@
 // Global default retention. Persisted at /lxmf/inbox_config.json.
 //
 // Every peer without an explicit override in conversation_config.json
-// inherits this default at every prune pass — i.e. changing this
+// inherits this default at every prune pass - i.e. changing this
 // cascades immediately to all inheriting chats. Per-chat overrides
 // stay pinned until the user clears them ("Use identity default").
 

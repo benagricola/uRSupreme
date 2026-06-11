@@ -8,7 +8,7 @@ Pair with the SX's WebUI API to drive end-to-end SX → LR tests:
          body: {"to": "<our-address>", "content": "hello"}
 
 Re-uses tools/kiss-test/test_identity so our address is stable across
-runs — that way the receiver (this script) and the sender (the SX's
+runs - that way the receiver (this script) and the sender (the SX's
 contact list) don't need re-pairing every restart.
 """
 import os
@@ -66,7 +66,7 @@ def main():
             time.sleep(0.3); continue
         break
     local.announce()
-    print("[announce] sent — listening forever; Ctrl-C to stop")
+    print("[announce] sent - listening forever; Ctrl-C to stop")
 
     # Re-announce every couple of minutes so the SX keeps a fresh ratchet
     # and path.

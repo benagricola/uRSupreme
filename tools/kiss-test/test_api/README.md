@@ -24,17 +24,17 @@ inherit the same auth state.
 
 ## What's covered
 
-- `test_auth.py` — login / 401 paths, bad-token handling
-- `test_info.py` — `/api/info` lightweight surface; asserts the
+- `test_auth.py` - login / 401 paths, bad-token handling
+- `test_info.py` - `/api/info` lightweight surface; asserts the
   storage / outbound_caps / battery-detail blocks **don't** leak in
-- `test_system_status.py` — `/api/system_status` detailed surface;
+- `test_system_status.py` - `/api/system_status` detailed surface;
   asserts radio / wifi / transport / battery-summary **don't** appear
-- `test_identity.py` — identity CRUD + settings round-trips
-- `test_inbox_outbox.py` — state / messages / outbox shape
-- `test_attachments.py` — upload (X-Total-Length header, bound checks)
+- `test_identity.py` - identity CRUD + settings round-trips
+- `test_inbox_outbox.py` - state / messages / outbox shape
+- `test_attachments.py` - upload (X-Total-Length header, bound checks)
   + send-with-staging-id + download 404
-- `test_sse.py` — `/events` connects, emits, announces propagate
-- `test_misc.py` — storage migration absent-path, inbox/sensor config
+- `test_sse.py` - `/events` connects, emits, announces propagate
+- `test_misc.py` - storage migration absent-path, inbox/sensor config
   round-trips, paths lookup + estimate, radio shape
 
 The full bidirectional attachment send-receive-verify path is covered
@@ -46,7 +46,7 @@ this suite assumes that script passes and focuses on contract checks.
 1. Run `pytest test_api/` against the current `WebServer.h`-based
    firmware. Save the run as the baseline (all pass).
 2. Land the ESPAsyncWebServer port; re-run the suite. **All tests
-   must still pass** before merging — that's the migration's
+   must still pass** before merging - that's the migration's
    correctness gate.
 3. Path-consistency renames (e.g. `/api/system_status` →
    `/api/system/status`) update both server + SPA + this suite in

@@ -1,5 +1,5 @@
 // Auto-extracted from Web/WebUI.h on the SPA-migration branch.
-// Included from inside the class body of Web::WebUI in WebUI.h —
+// Included from inside the class body of Web::WebUI in WebUI.h -
 // this file has NO include guard, NO `#pragma once`, and is not a
 // standalone translation unit. The static method definitions below
 // remain implicit-inline because they sit inside a class body via
@@ -27,7 +27,7 @@
       send_json(req, 200, doc);
     }
 
-    // POST /api/time {unix_ms} — adopt a browser-supplied time. Subject
+    // POST /api/time {unix_ms} - adopt a browser-supplied time. Subject
     // to the Browser source's enabled+priority config; if a higher-
     // priority source has already set the time, the report is
     // recorded but not adopted, and the response indicates that.
@@ -61,7 +61,7 @@
     }
 
     // POST /api/time/sources {sources: {gps: {enabled, priority}, …}}
-    // — update which time sources are enabled and their priority
+    // - update which time sources are enabled and their priority
     // ordering. Persisted to EEPROM. Sources not mentioned in the body
     // keep their existing config.
     static void handle_time_sources_set(AsyncWebServerRequest* req, JsonVariant& body) {
@@ -89,7 +89,7 @@
       handle_time_get(req);
     }
 
-    // GET /api/rtc — diagnostic snapshot of the on-board PCF8563.
+    // GET /api/rtc - diagnostic snapshot of the on-board PCF8563.
     // Live I2C read; surfaces VL flag + raw regs so we can confirm
     // the hardware is wired and persisting.
     static void handle_rtc_get(AsyncWebServerRequest* req) {
@@ -151,7 +151,7 @@
       }
       if (strcmp(kind, "environment") == 0) {
         const Sensors::BME280::Reading r = Sensors::BME280::last_reading();
-        // Driver supplies the chip name — so swapping for a BMP280 /
+        // Driver supplies the chip name - so swapping for a BMP280 /
         // BME680 variant in the future is a one-line driver change.
         o["model"]       = Sensors::BME280::model_name();
         o["available"]   = Sensors::BME280::present();
@@ -210,7 +210,7 @@
     // outbound_caps / battery) into `root`. Single source of truth
     // shared between the WS `hello` frame and the periodic
     // `system_update` event. /api/system_status used to call this too
-    // but the REST endpoint is retired — WS delivery is canonical.
+    // but the REST endpoint is retired - WS delivery is canonical.
     static void handle_gps_get(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;

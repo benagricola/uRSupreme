@@ -3,7 +3,7 @@
 // worker so the main loop never blocks while a stamp is searched or
 // validated.
 //
-// Algorithm — mirrors upstream LXMF/LXStamper.py + RNS/Discovery.py:
+// Algorithm - mirrors upstream LXMF/LXStamper.py + RNS/Discovery.py:
 //
 //   workblock = concat( HKDF(material,                 // ROUNDS × LEN
 //                            salt    = SHA256(material || msgpack(n)),
@@ -27,7 +27,7 @@
 // and then, per candidate, copying the ~100-byte midstate struct and
 // hashing only the 32-byte stamp. Identical output to upstream's
 // full_hash(workblock+stamp) per attempt, but the per-candidate cost
-// drops from ~110 ms (768 KB re-hash at ~7 MB/s) to microseconds —
+// drops from ~110 ms (768 KB re-hash at ~7 MB/s) to microseconds -
 // without this, a cost-8 LXMF stamp would take ~30 s and cost-14 ~30
 // minutes on this CPU. The workblock expansion (3000 HKDF rounds)
 // then dominates at roughly one to a few seconds.
@@ -41,7 +41,7 @@
 //     (the worker task must not touch RNS, the outbox spool, or the
 //     WebSocket directly).
 //   - submit*() returns false if the worker is busy with a different
-//     job — callers defer to their next tick (FIFO order is the
+//     job - callers defer to their next tick (FIFO order is the
 //     caller's queue, not ours).
 //   - cancel(key) aborts an in-flight or pending job; an aborted job
 //     posts an ok=false result so pollers always see a terminal state.
@@ -72,7 +72,7 @@
 #include <Identity.h>
 #include <Cryptography/Hashes.h>
 #include <Cryptography/HKDF.h>
-#include <SHA256.h>   // rweather Crypto — same impl behind RNS full_hash; copyable for midstate
+#include <SHA256.h>   // rweather Crypto - same impl behind RNS full_hash; copyable for midstate
 
 #include "../Common/MsgPack.h"
 
@@ -131,7 +131,7 @@ inline RNS::Bytes build_workblock(const RNS::Bytes& material,
   return wb;
 }
 
-// Leading-zero-bit count of a 32-byte digest — upstream
+// Leading-zero-bit count of a 32-byte digest - upstream
 // LXStamper.stamp_value (LXStamper.py:62-71).
 inline uint32_t digest_value(const uint8_t* digest32) {
   uint32_t zeros = 0;
@@ -145,7 +145,7 @@ inline uint32_t digest_value(const uint8_t* digest32) {
 }
 
 // Upstream LXStamper.stamp_valid (LXStamper.py:73-77): valid iff
-// int(digest) <= (1 << (256 - cost)). Note the <= — a digest equal to
+// int(digest) <= (1 << (256 - cost)). Note the <= - a digest equal to
 // the target exactly (one set bit, cost-1 leading zeros) is accepted
 // upstream, so it is here too.
 inline bool digest_valid(const uint8_t* digest32, uint32_t cost) {
@@ -164,7 +164,7 @@ inline bool digest_valid(const uint8_t* digest32, uint32_t cost) {
 }
 
 // SHA256(workblock || stamp) without concatenating into a fresh
-// buffer (the LXMF workblock is 768 KB — an append-copy would double
+// buffer (the LXMF workblock is 768 KB - an append-copy would double
 // the PSRAM footprint per call).
 inline void hash_workblock_stamp(const RNS::Bytes& workblock,
                                  const uint8_t* stamp, size_t stamp_len,
@@ -183,7 +183,7 @@ inline void hash_workblock_stamp(const RNS::Bytes& workblock,
   h.finalize(out_digest, 32);
 }
 
-// stamp_value / stamp_valid over a workblock — the upstream-named
+// stamp_value / stamp_valid over a workblock - the upstream-named
 // helpers, used for validation of a received stamp.
 inline uint32_t stamp_value(const RNS::Bytes& workblock, const RNS::Bytes& stamp) {
   uint8_t digest[32];
@@ -203,7 +203,7 @@ inline bool stamp_valid(const RNS::Bytes& stamp, uint32_t cost, const RNS::Bytes
 // Sequential search via a 64-bit counter encoded into the trailing
 // 8 bytes of the stamp. Upstream uses random candidates, but for a
 // memoryless target function (SHA-256) the two are equivalent on
-// expectation — sequential is simpler, deterministic for tests, and
+// expectation - sequential is simpler, deterministic for tests, and
 // avoids an RNG-state hot loop.
 inline bool generate_search(const RNS::Bytes& workblock,
                             uint32_t cost,
@@ -212,7 +212,7 @@ inline bool generate_search(const RNS::Bytes& workblock,
                             const std::function<bool()>& should_abort) {
   // Midstate: hash the workblock once, then per candidate copy the
   // small SHA256 state and hash only the 32-byte stamp. See header
-  // comment — same digest as full_hash(workblock+stamp), ~10^4× less
+  // comment - same digest as full_hash(workblock+stamp), ~10^4× less
   // hashing per candidate on the LXMF-sized workblock.
   SHA256 base;
   base.reset();
@@ -253,7 +253,7 @@ inline bool generate_search(const RNS::Bytes& workblock,
 // ------------------------- async worker --------------------------
 
 // Discovery jobs hand their result back through this callback (runs
-// on the worker task once the search finishes — guard any shared
+// on the worker task once the search finishes - guard any shared
 // state inside it). LXMF jobs are poll-based instead: see JobResult /
 // take_result_if below.
 using DoneCb = std::function<void(const RNS::Bytes& stamp32)>;
@@ -278,7 +278,7 @@ namespace _detail {
   struct Job {
     JobKind    kind = JobKind::DiscoveryGenerate;
     RNS::Bytes input;       // packed dict (discovery) or raw material (LXMF)
-    RNS::Bytes stamp;       // LxmfValue only — the stamp to score
+    RNS::Bytes stamp;       // LxmfValue only - the stamp to score
     uint32_t   cost = 0;
     uint32_t   rounds = WORKBLOCK_EXPAND_ROUNDS;
     size_t     hkdf_len = HKDF_LEN_DISCOVERY;
@@ -292,18 +292,18 @@ namespace _detail {
   inline bool&              is_busy()       { static bool b = false; return b; }
   // Cancellation state for the in-flight job. current_key is the
   // job's material; cancel() sets the flag when keys match. The flag
-  // is a plain volatile read in the worker's hot loop — a benign race
+  // is a plain volatile read in the worker's hot loop - a benign race
   // (worst case one extra 256-candidate chunk before the abort lands).
   inline RNS::Bytes&        current_key()   { static RNS::Bytes b; return b; }
   inline volatile bool&     cancel_flag()   { static volatile bool b = false; return b; }
-  // Result cache — one entry, discovery jobs only. Keyed by
+  // Result cache - one entry, discovery jobs only. Keyed by
   // SHA-256(packed) so resubmits with the same dict return immediately.
   // LXMF message_ids are unique per message, so caching them would only
   // evict the (useful) discovery entry.
   inline RNS::Bytes&        cache_key()     { static RNS::Bytes b; return b; }
   inline RNS::Bytes&        cache_stamp()   { static RNS::Bytes b; return b; }
   // LXMF result mailbox: (material, result) pairs the main-loop ticks
-  // poll with take_result_if(). Bounded — jobs run for seconds while
+  // poll with take_result_if(). Bounded - jobs run for seconds while
   // pollers run every loop pass, so the queue should never exceed 1;
   // the cap is a leak guard if a poller dies.
   inline std::deque<std::pair<RNS::Bytes, JobResult>>& results() {
@@ -349,7 +349,7 @@ namespace _detail {
       auto aborted = []() { return (bool)cancel_flag(); };
 
       if (job.kind == JobKind::DiscoveryGenerate) {
-        // Cache check, then search — original discovery flow.
+        // Cache check, then search - original discovery flow.
         RNS::Bytes stamp_out;
         bool from_cache = false;
         if (xSemaphoreTake(mutex(), portMAX_DELAY) == pdTRUE) {
@@ -411,7 +411,7 @@ namespace _detail {
         }
         post_result(material, std::move(res));
       }
-      else {  // JobKind::LxmfValue — score a received stamp
+      else {  // JobKind::LxmfValue - score a received stamp
         const uint32_t t0 = millis();
         JobResult res;
         const RNS::Bytes wb = build_workblock(material, job.rounds, job.hkdf_len, aborted);
@@ -464,7 +464,7 @@ inline void start() {
   _detail::signal() = sig;
   _detail::mutex()  = mtx;
   // Pin to core 0 (PRO_CPU); APP_CPU runs Arduino's loop + AsyncTCP
-  // — leaving the announcer's compute side off the app core means
+  // - leaving the announcer's compute side off the app core means
   // a long-running stamp search can't starve the WebSocket / loop.
   // Priority 1: just above the IDLE task, well below the radio /
   // AsyncTCP tasks so we never preempt time-critical work.
@@ -480,7 +480,7 @@ inline void start() {
 }
 
 // Submit a discovery-announce job. Returns true if accepted. Returns
-// false if the worker is currently busy with a different material —
+// false if the worker is currently busy with a different material -
 // caller should retry on the next tick. A resubmit of the same
 // material that's already cached will succeed and fire the callback
 // synchronously here (no task hop) so the Announcer doesn't wait an
@@ -513,7 +513,7 @@ inline bool submit(const RNS::Bytes& packed_dict, uint32_t cost, DoneCb on_done)
 // Submit an LXMF delivery-stamp generation (LXStamper.generate_stamp:
 // material = message_id, 3000-round workblock). Result arrives via
 // take_result_if(message_id, ...). Returns false when the worker is
-// busy — retry next tick.
+// busy - retry next tick.
 inline bool submit_lxmf_generate(const RNS::Bytes& message_id, uint32_t cost) {
   if (!_detail::task_handle()) start();
   if (!_detail::mutex()) return false;
@@ -568,7 +568,7 @@ inline void cancel(const RNS::Bytes& material) {
 }
 
 // Collect a completed LXMF job result, but only if it belongs to `key`
-// — two independent pollers (outbound generation, inbound validation)
+// - two independent pollers (outbound generation, inbound validation)
 // share the mailbox and must not steal each other's results.
 inline bool take_result_if(const RNS::Bytes& key, JobResult& out) {
   if (!_detail::mutex()) return false;

@@ -1,5 +1,5 @@
 // Auto-extracted from Web/WebUI.h on the SPA-migration branch.
-// Included from inside the class body of Web::WebUI in WebUI.h —
+// Included from inside the class body of Web::WebUI in WebUI.h -
 // this file has NO include guard, NO `#pragma once`, and is not a
 // standalone translation unit. The static method definitions below
 // remain implicit-inline because they sit inside a class body via
@@ -54,7 +54,7 @@
       };
       // Iterate the deques directly + take the trailing 64-record
       // window. Tail slice rather than a vector copy of the entire
-      // ring — the conversations endpoint fires on every page load.
+      // ring - the conversations endpoint fires on every page load.
       auto take_tail = [](const LXMF::MessageRing& ring,
                            const std::function<void(const LXMF::MessageRecord&)>& fn) {
         constexpr size_t W = 64;
@@ -67,7 +67,7 @@
       };
       if (a->inbox)  take_tail(a->inbox->ring(),  upsert);
       if (a->outbox) take_tail(a->outbox->ring(), upsert);
-      // Order by (boot_epoch, received_ms) — see LXMFTypes.h. boot_epoch
+      // Order by (boot_epoch, received_ms) - see LXMFTypes.h. boot_epoch
       // makes the tuple monotonic across reboots; received_ms breaks
       // ties within a boot. ts is for display only.
       auto less_key = [](const LXMF::MessageRecord& x, const LXMF::MessageRecord& y){
@@ -106,7 +106,7 @@
           mo["in"]          = m.incoming;
           mo["sig_ok"]      = m.signature_ok;
           mo["status"]      = LXMF::outbox_status_name(m.status);
-          // Delivery-stamp verdict — present only when a stamp policy
+          // Delivery-stamp verdict - present only when a stamp policy
           // applied to this message. See emit_messages_array.
           if (m.stamp_checked) {
             mo["stamp_ok"] = m.stamp_valid;
@@ -127,7 +127,7 @@
       }
 
       // Announce ring snapshot. Realtime updates flow via WebSocket
-      // (announce_seen / path_seen events) — this is just the initial
+      // (announce_seen / path_seen events) - this is just the initial
       // catch-up at SPA load.
       JsonArray announces = doc["announces"].to<JsonArray>();
       for (const auto& rec : LXMF::AnnounceLog::announces()) {
@@ -151,12 +151,12 @@
 
       // Display-time clock anchor is delivered via the WS `hello` frame
       // (see Web::WS::set_hello_extras in WebUI::start). No need to ship
-      // it on every /state fetch — the SPA only ever sets state.clockAnchor
+      // it on every /state fetch - the SPA only ever sets state.clockAnchor
       // once per WS session, and `hello` lands before the SPA mounts the
       // conversation list.
       send_json(req, 200, doc);
     }
 
-    // Verify that this request has physical-presence authority — either a
+    // Verify that this request has physical-presence authority - either a
     // valid bearer token (which required a button press to obtain) or a
     // current identity_code in the request body.

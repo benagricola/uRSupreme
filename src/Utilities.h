@@ -855,7 +855,7 @@ void kiss_indicate_error(uint8_t error_code) {
 // that don't care about logs just discard frames with this command
 // byte; KISS itself reserves anything outside CMD_DATA for the radio.
 //
-// Caps the body at 240 bytes — anything longer gets truncated, matching
+// Caps the body at 240 bytes - anything longer gets truncated, matching
 // the LoRa MTU we're already constrained by. Log lines that long are
 // almost always a sign of an oversized dump that shouldn't be logged.
 void kiss_indicate_log(uint8_t level, const char* msg) {
@@ -1677,7 +1677,7 @@ void eeprom_erase() {
 
 // Auto-provision the EEPROM provisioning bytes when the chip is
 // completely blank (post-`pio run -t erase`). Lets the bench come up
-// without the RNode signing toolchain — we just bake in the values
+// without the RNode signing toolchain - we just bake in the values
 // rnodeconf would have written, derived from the compile-time
 // BOARD_MODEL define. Production / signed RNodes write these via
 // rnodeconf at the factory, so this path only fires on dev hardware.
@@ -1685,10 +1685,10 @@ void auto_provision_eeprom_if_blank() {
   #if MCU_VARIANT != MCU_ESP32
     return;
   #else
-  // Already provisioned — nothing to do.
+  // Already provisioned - nothing to do.
   if (EEPROM.read(eeprom_addr(ADDR_INFO_LOCK)) == INFO_LOCK_BYTE) return;
   // Detect blank flash: every byte in the checksummed region must be
-  // 0xFF or 0x00. If even one looks "real," don't clobber — the device
+  // 0xFF or 0x00. If even one looks "real," don't clobber - the device
   // has partial provisioning we shouldn't second-guess.
   bool blank = true;
   for (uint8_t i = 0; i < CHECKSUMMED_SIZE; i++) {
@@ -1705,12 +1705,12 @@ void auto_provision_eeprom_if_blank() {
     product = PRODUCT_TBEAM_S_V1;
     model   = MODEL_D7;                       // 868 MHz LR1121 variant
   #else
-    // Unknown board — skip auto-provisioning. User can still drive the
+    // Unknown board - skip auto-provisioning. User can still drive the
     // device via rnodeconf if they want this path to fire.
     return;
   #endif
 
-  Serial.println("EEPROM blank — auto-provisioning from compile-time board defaults");
+  Serial.println("EEPROM blank - auto-provisioning from compile-time board defaults");
   eeprom_update(eeprom_addr(ADDR_PRODUCT), product);
   eeprom_update(eeprom_addr(ADDR_MODEL),   model);
   eeprom_update(eeprom_addr(ADDR_HW_REV),  0x01);

@@ -5,7 +5,7 @@
 // bus with BME280 and the OLED. Each device has its
 // own address so coexistence is automatic.
 //
-// We use Lewis He's SensorLib wrapper (lewisxhe/SensorLib) — the
+// We use Lewis He's SensorLib wrapper (lewisxhe/SensorLib) - the
 // same library LilyGo's factory firmware uses, so the calibration
 // + configuration paths are well-trodden.
 //
@@ -58,7 +58,7 @@ inline bool begin(TwoWire& wire) {
           SensorQMC6310::DATARATE_10HZ,
           SensorQMC6310::OSR_8,
           SensorQMC6310::DSR_1);
-      // Declination defaults to 0 — fine for relative readings; the
+      // Declination defaults to 0 - fine for relative readings; the
       // user can override per-location in a follow-up if needed.
       _detail::sensor().setDeclination(0.0f);
       NOTICEF("QMC6310: found at 0x%02x", a);

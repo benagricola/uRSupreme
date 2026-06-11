@@ -1,5 +1,5 @@
 // Auto-extracted from Web/WebUI.h on the SPA-migration branch.
-// Included from inside the class body of Web::WebUI in WebUI.h —
+// Included from inside the class body of Web::WebUI in WebUI.h -
 // this file has NO include guard, NO `#pragma once`, and is not a
 // standalone translation unit. The static method definitions below
 // remain implicit-inline because they sit inside a class body via
@@ -38,7 +38,7 @@
                        : (wifi_mode == WR_WIFI_APSTA) ? (sta_up ? "apsta" : "apsta_wait")
                        : (sta_up ? "sta" : "sta_wait");
       // Convenience boolean for "the softAP at 10.0.0.1 is also reachable
-      // right now" — true in any APSTA phase, false elsewhere.
+      // right now" - true in any APSTA phase, false elsewhere.
       doc["ap_active"] = (wifi_mode == WR_WIFI_AP || wifi_mode == WR_WIFI_APSTA);
       // Heap diagnostics deliberately do NOT live here. /api/info is the
       // unauthed bootstrap endpoint (login screen + redirect probe), so
@@ -54,7 +54,7 @@
           doc["last_status"] = status_buf;
         }
       }
-      // Time state lives on the WS `hello` frame now — the login
+      // Time state lives on the WS `hello` frame now - the login
       // screen doesn't show it, and post-login the SPA only consumes
       // the WS-pinned clock anchor. Removed from /api/info.
       JsonArray accts = doc["identities"].to<JsonArray>();
@@ -71,7 +71,7 @@
       radio["online"]           = radio_online;
       // Compile-time radio-chip identity. The MODEM macro is set per
       // PIO env (SX1262 for ttgo-t-beam-supreme, LR11XX for the LR1121
-      // variant, etc.) — surfacing it here lets the SPA show "this is
+      // variant, etc.) - surfacing it here lets the SPA show "this is
       // the LR1121 device" so the user can tell two co-located T-Beams
       // apart at a glance without checking IPs.
       #if MODEM == SX1262
@@ -94,7 +94,7 @@
       radio["coding_rate"]      = lora_cr;
       radio["tx_power"]         = lora_txp;
       // Surface radio-init failure cause when it happened. Most common
-      // cause is a wrong-variant flash — see startRadio() in
+      // cause is a wrong-variant flash - see startRadio() in
       // RNode_Firmware.ino. The SPA can show a banner / settings panel
       // warning when error_reason is present.
       if (radio_error_reason) {
@@ -105,11 +105,11 @@
       }
       // Activity counters so callers can verify the radio is actually
       // doing work (not just "online"). stat_rx / stat_tx are packet
-      // counts since boot — poll twice with a delta to see if the
+      // counts since boot - poll twice with a delta to see if the
       // radio is actively transmitting/receiving. airtime is the
       // short-term channel utilisation fraction (0..1).
       JsonObject stats = radio["stats"].to<JsonObject>();
-      // Reticulum stack counts — these get incremented on every packet
+      // Reticulum stack counts - these get incremented on every packet
       // through Transport::outbound / Transport::inbound and are the most
       // accurate "is the radio doing work" signal. The legacy stat_rx /
       // stat_tx variables from the upstream RNode firmware are unused
@@ -126,7 +126,7 @@
       // The default at boot is 0.01 (1%) to stay within ETSI 868 MHz limits.
       stats["airtime_limit_pct"]    = (int)(st_airtime_limit * 100);
       stats["longterm_airtime_limit_pct"] = (int)(lt_airtime_limit * 100);
-      // True iff TX is currently being blocked by the airtime lock —
+      // True iff TX is currently being blocked by the airtime lock -
       // useful for "why isn't my message going out" diagnostics.
       stats["airtime_locked"]       = (bool)airtime_lock;
       // LoRa egress pressure diagnostics. queue_* is the hardware TX
@@ -140,7 +140,7 @@
       stats["tx_dropped_ring_full"] = (uint32_t)lora_tx_dropped;
       // WiFi state. Lets the SPA show the current mode (STA / softAP)
       // in the connection popover, and decide whether to expose the
-      // "switch to softAP" button — that button has no point when
+      // "switch to softAP" button - that button has no point when
       // already in AP mode.
       JsonObject wifi = doc["wifi"].to<JsonObject>();
       wifi["mode"]          = (wifi_mode == WR_WIFI_AP) ? "ap"
@@ -175,7 +175,7 @@
         wifi["ssid"]        = (const char*)bt_devname;
         wifi["ap_ip"]       = WiFi.softAPIP().toString().c_str();
         // The bootstrap softAP is brought up open (no PSK) in
-        // wifi_remote_start_ap — surface that so the SPA can warn
+        // wifi_remote_start_ap - surface that so the SPA can warn
         // anyone seeing the bootstrap network on their phone.
         wifi["auth"]        = "open";
       }
@@ -242,7 +242,7 @@
           "No identity with that ID exists on this device.");
         return;
       }
-      // Knowledge-factor only — physical-presence button gesture is
+      // Knowledge-factor only - physical-presence button gesture is
       // explicitly NOT a path to login because a stolen device could
       // otherwise be unlocked by anyone with hands on it.
       if (!LXMF::LXMFGateway::check_password(iden_id, pw_str, PasswordHash::verify)) {
@@ -294,7 +294,7 @@
         send_error(req, 400, "password_mismatch");
         return;
       }
-      // Physical-presence proof required for identity creation —
+      // Physical-presence proof required for identity creation -
       // the password becomes the login factor afterwards, but creating
       // identities on a stolen / network-reachable device should not be
       // possible without someone physically present at the device.
@@ -362,7 +362,7 @@
 
     // Toggle Reticulum transport mode on or off at runtime. Persists
     // the choice to /lxmf/transport.json so it survives reboots.
-    // Requires an authenticated session — anyone with a token can flip
+    // Requires an authenticated session - anyone with a token can flip
     // it for now, since we don't have per-identity admin yet.
     static void handle_identity_settings(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
@@ -389,7 +389,7 @@
         }
       }
       if (body["stamp_cost"].is<JsonVariant>()) {
-        // 0 (or null) disables. Valid required costs are 1-254 — the
+        // 0 (or null) disables. Valid required costs are 1-254 - the
         // same range upstream's set_inbound_stamp_cost accepts. Reject
         // out-of-range instead of silently clamping so a typo'd "2540"
         // doesn't quietly become something else.

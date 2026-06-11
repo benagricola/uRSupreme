@@ -1,14 +1,14 @@
 // SD card driver for the T-Beam Supreme.
 //
 // The board exposes a microSD slot wired to a dedicated SPI bus
-// (SD_MISO=37, SD_MOSI=35, SD_CLK=36, SD_CS=47) — separate from the
+// (SD_MISO=37, SD_MOSI=35, SD_CLK=36, SD_CS=47) - separate from the
 // LoRa modem's SPI on pins 11-13, so we can mount the card without
 // stepping on the radio. The bus is shared with nothing else on this
 // platform, so we own SPIClass(HSPI) for it.
 //
 // Self-detecting: begin() probes for a card and sets `_present` to
 // the result. If no card is inserted at boot, the driver stays inert
-// — no errors, just present=false. We don't currently hot-detect a
+// - no errors, just present=false. We don't currently hot-detect a
 // card inserted later; the user reboots after inserting a card.
 //
 // Responsibilities for now (first slice):
@@ -35,7 +35,7 @@ namespace SDCard {
 // HSPI bus arbitration. The SD card and the QMI8658 IMU share the HSPI
 // bus on this hardware. SD I/O issued from the AsyncTCP web task
 // (attachment upload / download) would otherwise interleave on the bus
-// with the IMU pump run from the main loop — a long upload spans many
+// with the IMU pump run from the main loop - a long upload spans many
 // pump ticks, so the two drive the bus at once and corrupt the SD write
 // (a short write that surfaces as "Chunk write failed"). Every bus
 // access, SD op or IMU read, holds this recursive mutex for its
@@ -63,13 +63,13 @@ namespace _detail {
   inline bool&     present_ref()    { static bool v = false; return v; }
   inline SPIClass*& spi_ref()       { static SPIClass* v = nullptr; return v; }
   inline uint8_t&  card_type_ref()  { static uint8_t v = CARD_NONE; return v; }
-  // Last diagnostic line from begin() — surfaced via the API when
+  // Last diagnostic line from begin() - surfaced via the API when
   // probe fails so the user can tell "no card in slot" from
   // "card present, mount failed" from "wrong filesystem", etc.
   inline String& last_status_ref()  { static String v = "not_probed"; return v; }
   // Edge flag flipped by verify_or_disable on an ejection trip.
   // WebUI::loop drains this and fires the storage_changed WS event
-  // — keeps the SD-aware code free of the WebSocket dependency.
+  // - keeps the SD-aware code free of the WebSocket dependency.
   inline bool&    eject_flag_ref()  { static bool v = false; return v; }
 }
 
@@ -130,8 +130,8 @@ inline bool begin() {
   // latched-handle recovery); re-swept on the rig against the current path
   // (2026-06-10, SanDisk Ultra 64 GB FAT32, rmap detached): 10 MHz ran
   // 7/7 uploads with 0 write errors, SHA-verified, 10 MiB at ~540 KB/s
-  // (~1.9x the 4 MHz rate). 20 MHz was also error-free but no faster —
-  // above ~10 MHz the WiFi/multipart ingest is the ceiling — so 10 MHz
+  // (~1.9x the 4 MHz rate). 20 MHz was also error-free but no faster -
+  // above ~10 MHz the WiFi/multipart ingest is the ceiling - so 10 MHz
   // keeps double the signal margin on the shared IMU bus for the same
   // throughput. URTN_SD_SPI_HZ overrides for sweep builds.
 #ifndef URTN_SD_SPI_HZ
@@ -139,7 +139,7 @@ inline bool begin() {
 #endif
   if (!SD.begin(SD_CS, *bus, URTN_SD_SPI_HZ)) {
     _detail::last_status_ref() = "sd_begin_failed";
-    NOTICE("SDCard: SD.begin() failed — card absent, wrong pinout, or unsupported FS (try FAT32)");
+    NOTICE("SDCard: SD.begin() failed - card absent, wrong pinout, or unsupported FS (try FAT32)");
     _detail::present_ref() = false;
     return false;
   }
@@ -147,7 +147,7 @@ inline bool begin() {
   _detail::card_type_ref() = ct;
   if (ct == CARD_NONE) {
     _detail::last_status_ref() = "card_type_none";
-    NOTICE("SDCard: SD.begin succeeded but cardType == CARD_NONE — slot empty");
+    NOTICE("SDCard: SD.begin succeeded but cardType == CARD_NONE - slot empty");
     SD.end();
     _detail::present_ref() = false;
     return false;
@@ -170,7 +170,7 @@ inline bool begin() {
 #endif
 }
 
-// Diagnostic string from the most recent begin() — values:
+// Diagnostic string from the most recent begin() - values:
 // "not_probed", "sd_begin_failed", "card_type_none", "mounted",
 // "no_slot_on_board".
 inline const char* last_status() { return _detail::last_status_ref().c_str(); }
@@ -197,7 +197,7 @@ inline const RailState& rail_state() { return _detail::rail_state_ref(); }
 inline bool      present()      { return _detail::present_ref(); }
 
 // Verify the card is still responsive. Called from write/open
-// failure paths — if the underlying SD op fails AND a free-space
+// failure paths - if the underlying SD op fails AND a free-space
 // query also fails, the card has been ejected; we tear down the
 // mount and return true so the caller knows to fall back to flash.
 // On a healthy card this is one SDMMC query (1-10 ms). On no-card
@@ -213,7 +213,7 @@ inline bool verify_or_disable() {
   if (!_detail::present_ref()) return true;
   BusGuard _bg;                        // SD.totalBytes() touches the shared HSPI bus
   if (SD.totalBytes() > 0) return false;
-  NOTICE("SDCard: ejection detected on write failure — disabling");
+  NOTICE("SDCard: ejection detected on write failure - disabling");
   SD.end();
   _detail::present_ref()    = false;
   _detail::card_type_ref()  = CARD_NONE;
@@ -224,14 +224,14 @@ inline bool verify_or_disable() {
   return false;
 #endif
 }
-// SD.usedBytes() walks the FAT to count free clusters — slow (observed multi-
+// SD.usedBytes() walks the FAT to count free clusters - slow (observed multi-
 // second on a 64 GB card) AND on the shared HSPI bus. Calling it from
 // current_caps() at every upload's allocate() froze the AsyncTCP task for
 // seconds (measured /api/info spikes to 4 s), which dropped connections.
 // total/used are cached instead: total is constant (cached at mount); used is
 // refreshed off the AsyncTCP task (by the SD writer task after each job, see
 // OutboundStaging::_sdwriter) so the value the upload path reads is bus-free.
-// Approximate is fine — this only gates backend selection and the card has GB
+// Approximate is fine - this only gates backend selection and the card has GB
 // of headroom. cached_used starts 0 (optimistic: empty) until first refreshed;
 // a genuinely-full card is still caught by the writer's checked ENOSPC.
 inline uint64_t& _cached_total()    { static uint64_t v = 0; return v; }
@@ -248,7 +248,7 @@ inline void init_space_cache() {
   _cached_space_ms() = now ? now : 1;
 }
 
-// SLOW (FAT scan) — MUST only run off the AsyncTCP task. Called by the SD
+// SLOW (FAT scan) - MUST only run off the AsyncTCP task. Called by the SD
 // writer task after a job; throttled to at most once per 30 s so it doesn't
 // add the scan cost to every upload.
 inline void refresh_used_cache() {
@@ -265,7 +265,7 @@ inline uint64_t  used_bytes()   { return _detail::present_ref() ? _cached_used()
 // Negative exists()/open_read() results are routine (path probes for
 // records that were never spilled, attachment misses), and each
 // verify_or_disable() costs an SD-bus hardware query even on a healthy
-// card, so a burst of misses used to pay that query per miss — the
+// card, so a burst of misses used to pay that query per miss - the
 // same starvation class dfbae86 gated out of the microStore failure
 // callback. Throttle the lazy eject probe to one hardware query per
 // window: a pulled card is still caught by the first probe after the
@@ -304,7 +304,7 @@ inline bool ensure_parent_dirs(const char* path) {
 // Write `data` to `path` atomically-ish. Returns bytes written, or
 // Path existence. Returns false uniformly whether the file is
 // genuinely absent or the card has been pulled, so the caller can't
-// tell those cases apart from the bool alone — but on a negative
+// tell those cases apart from the bool alone - but on a negative
 // result we run the throttled eject probe so the presence state
 // catches up within one throttle window of a pull.
 inline bool exists(const char* path) {
@@ -320,7 +320,7 @@ inline bool exists(const char* path) {
 // endpoint to stream big blobs without loading them into RAM. On
 // open-failure (file not found OR card ejected) we run the throttled
 // eject probe so the presence flag flips when the card has genuinely
-// gone — preventing the SPA from showing SD as mounted long after a
+// gone - preventing the SPA from showing SD as mounted long after a
 // mid-read eject.
 inline File open_read(const char* path) {
   if (!_detail::present_ref()) return File();

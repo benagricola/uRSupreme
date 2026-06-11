@@ -1,16 +1,16 @@
 // Hardware RTC driver for the PCF8563 (T-Beam Supreme).
 //
 // The PCF8563 sits on the PMU I2C bus on this hardware (Wire1,
-// SDA=42 SCL=41 — NOT the user/sensor bus on 17/18), sharing the
+// SDA=42 SCL=41 - NOT the user/sensor bus on 17/18), sharing the
 // bus with the AXP2101 PMU at 0x34. The RTC's own address is 0x51.
 // It has a coin-cell backup so its time survives ESP32 power-off
 // and reboot. We use it as a cold-boot seed for Clock::Manager
 // and write back to it whenever a higher-trust source (GPS, NTP,
 // Browser) reports a new time. The RTC is NOT a user-configurable
-// source — see TimeManager.h for the rationale.
+// source - see TimeManager.h for the rationale.
 //
 // Wire format on the bus, addr 0x51:
-//   reg 0x00: control_status_1 (bit 5 = STOP — must be 0 for clock to run)
+//   reg 0x00: control_status_1 (bit 5 = STOP - must be 0 for clock to run)
 //   reg 0x01: control_status_2
 //   reg 0x02: VL_seconds   (bit 7 = VL: voltage-low flag; 0 = clock is valid)
 //   reg 0x03: minutes      (BCD, 7 bits)
@@ -91,7 +91,7 @@ inline bool probe() {
 inline void debug_bus_scan() {
   TwoWire* w = _detail::wire_ref();
   if (!w) return;
-  NOTICE("RtcPCF8563: bus scan — probing 0x03..0x77");
+  NOTICE("RtcPCF8563: bus scan - probing 0x03..0x77");
   for (uint8_t a = 0x03; a < 0x78; ++a) {
     w->beginTransmission(a);
     if (w->endTransmission(true) == 0) {
@@ -102,12 +102,12 @@ inline void debug_bus_scan() {
 }
 
 // Read the current RTC time as a Unix epoch (seconds). Returns 0 if
-// the RTC reports VL (voltage-low — clock invalid) or the read
+// the RTC reports VL (voltage-low - clock invalid) or the read
 // fails. Does NOT call TimeManager.
 inline double read_epoch() {
   uint8_t b[7] = {0};
   if (!_detail::read_regs(0x02, b, 7)) return 0.0;
-  if (b[0] & 0x80) return 0.0;   // VL flag — chip says time is invalid
+  if (b[0] & 0x80) return 0.0;   // VL flag - chip says time is invalid
   struct tm t{};
   t.tm_sec   = _detail::bcd_to_bin(b[0] & 0x7F);
   t.tm_min   = _detail::bcd_to_bin(b[1] & 0x7F);
@@ -148,7 +148,7 @@ inline bool init_and_seed(TwoWire& wire, const Pins& pins) {
   _detail::wire_ref() = &wire;
   wire.begin(pins.sda, pins.scl, pins.hz);
   if (!probe()) {
-    NOTICE("RtcPCF8563: no chip at 0x51 — RTC features disabled");
+    NOTICE("RtcPCF8563: no chip at 0x51 - RTC features disabled");
     debug_bus_scan();
     _detail::available_ref() = false;
     return false;
@@ -159,11 +159,11 @@ inline bool init_and_seed(TwoWire& wire, const Pins& pins) {
   if (_detail::read_regs(0x00, &cs1, 1) && (cs1 & 0x20)) {
     cs1 &= (uint8_t)~0x20;
     _detail::write_regs(0x00, &cs1, 1);
-    NOTICE("RtcPCF8563: cleared STOP bit — clock now running");
+    NOTICE("RtcPCF8563: cleared STOP bit - clock now running");
   }
   const double epoch = read_epoch();
   if (epoch <= 0.0) {
-    NOTICE("RtcPCF8563: present but no valid time stored (VL set) — waiting for a live source to seed it");
+    NOTICE("RtcPCF8563: present but no valid time stored (VL set) - waiting for a live source to seed it");
     return false;
   }
   Clock::Manager::seed_from_rtc(epoch);
@@ -179,7 +179,7 @@ inline bool available() { return _detail::available_ref(); }
 // dragging serial logs around.
 struct DebugSnapshot {
   bool     present;
-  bool     vl_set;             // bit 7 of reg 0x02 — clock-invalid flag
+  bool     vl_set;             // bit 7 of reg 0x02 - clock-invalid flag
   uint8_t  regs[7];            // 0x02..0x08
   double   epoch;              // 0 if VL or read failed
 };

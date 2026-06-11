@@ -31,7 +31,7 @@ namespace Web {
     static constexpr size_t      TOKEN_BYTES     = 16;
     static constexpr size_t      TOKEN_HEX_LEN   = 32;
     static constexpr uint32_t    DEFAULT_TTL_S   = 30 * 24 * 60 * 60;  // 30 days inactivity
-    // Total active tokens cap. Bumped from 16 to 64 — bench testing
+    // Total active tokens cap. Bumped from 16 to 64 - bench testing
     // with the WS migration uncovered the 4-tokens-per-identity cap
     // evicting parallel test sessions. The headline cap defends
     // against unbounded growth from a malicious / buggy client; the
@@ -82,7 +82,7 @@ namespace Web {
       // and every token-cleanup pass; at MAX_TOKENS=16 the JSON is ~2 KB,
       // and the previous String-grow-by-doubling pattern allocated up
       // to 4 KiB transient (final 2 KiB + intermediate 2 KiB during the
-      // last realloc) on the default heap — exactly the size range the
+      // last realloc) on the default heap - exactly the size range the
       // ESP-IDF WiFi driver needs for its esf_buf TX envelopes.
       // measureJson + one-shot alloc removes the realloc churn.
       const size_t n = measureJson(doc);
@@ -105,14 +105,14 @@ namespace Web {
 
     // Issue a fresh token for an identity. Returns the hex token. The
     // total-tokens cap evicts the globally-oldest entry, regardless of
-    // identity — fair share is enforced implicitly by recency, not by
+    // identity - fair share is enforced implicitly by recency, not by
     // a per-identity quota. (The old 4-per-identity quota was breaking
     // multi-tab / multi-device workflows.)
     static std::string issue(const LXMF::IdentityId& identity_id) {
       if (identity_id.empty()) return {};
       auto& store = _tokens();
 
-      // Cap total — evict the oldest entry by last_seen_ms.
+      // Cap total - evict the oldest entry by last_seen_ms.
       while (store.size() >= MAX_TOKENS) {
         auto oldest = store.begin();
         for (auto it = store.begin(); it != store.end(); ++it) {

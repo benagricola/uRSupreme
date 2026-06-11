@@ -2,7 +2,7 @@
 //
 // Uses ESP-IDF's bundled SNTP client (lwip/apps/sntp.c) to fetch UTC
 // epoch from pool.ntp.org whenever the device is on WiFi STA with
-// internet access. Adoption follows TimeManager's priority rules —
+// internet access. Adoption follows TimeManager's priority rules -
 // the GPS source still wins by default, but NTP overrides Browser
 // and RNS unless the user reordered them.
 //
@@ -18,7 +18,7 @@
 //
 // The SNTP system itself calls settimeofday() automatically when an
 // answer arrives, so the device's internal clock is also set as a
-// side effect — useful for any code that calls time(NULL) directly.
+// side effect - useful for any code that calls time(NULL) directly.
 
 #pragma once
 
@@ -49,7 +49,7 @@ namespace _detail {
 }
 
 // One-shot init: configure pool.ntp.org and start SNTP. Safe to call
-// before WiFi is up — SNTP will sit idle until DHCP/DNS becomes
+// before WiFi is up - SNTP will sit idle until DHCP/DNS becomes
 // available. Subsequent calls are no-ops.
 inline void begin() {
   if (_detail::started_ref()) return;
@@ -59,7 +59,7 @@ inline void begin() {
   esp_sntp_setservername(0, (char*)"pool.ntp.org");
   esp_sntp_init();
   _detail::started_ref() = true;
-  NOTICE("NTP: SNTP client initialised — will sync against pool.ntp.org when WiFi STA has internet");
+  NOTICE("NTP: SNTP client initialised - will sync against pool.ntp.org when WiFi STA has internet");
 }
 
 // Called from the main loop. Cheap on most ticks: checks sntp status
@@ -99,7 +99,7 @@ inline void pump() {
     if (elapsed >= cfg.interval_s * 1000UL) {
       sntp_restart();
       // Force the next COMPLETED transition to be observed by
-      // clearing our cached status — sntp_restart resets the lwip
+      // clearing our cached status - sntp_restart resets the lwip
       // side to RESET, but a fast LAN could land COMPLETED before
       // our next pump() and skip the transition guard above.
       _detail::last_status_ref() = SNTP_SYNC_STATUS_RESET;

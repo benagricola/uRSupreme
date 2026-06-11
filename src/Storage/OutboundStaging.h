@@ -1,29 +1,29 @@
-// Outbound attachment staging — holds the raw bytes between the
+// Outbound attachment staging - holds the raw bytes between the
 // chunked-HTTP upload and the LXMF Resource send.
 //
 // Three backends, chosen at allocate-time based on what's available:
 //
-//   * SdBuffer    — file at /sd/lxmf/staging/<id>.bin. Preferred when a
+//   * SdBuffer    - file at /sd/lxmf/staging/<id>.bin. Preferred when a
 //                   card is mounted: zero RAM cost, multi-GB headroom,
 //                   no impact on PSRAM availability for RNS state.
-//   * FlashBuffer — file at /lxmf/staging/<id>.bin on LittleFS. Used
+//   * FlashBuffer - file at /lxmf/staging/<id>.bin on LittleFS. Used
 //                   when no SD is mounted and the requested size is
 //                   larger than a comfortable PSRAM fraction, so the
 //                   upload doesn't tip RNS containers into PSRAM
 //                   exhaustion. Slower than PSRAM but slow + working
 //                   beats fast + OOMing.
-//   * PsramBuffer — ps_malloc'd buffer in PSRAM. Fastest, used when
+//   * PsramBuffer - ps_malloc'd buffer in PSRAM. Fastest, used when
 //                   the upload comfortably fits.
 //
 // Lifecycle:
-//   1. allocate(total_size) — picks backend, reserves space, returns
+//   1. allocate(total_size) - picks backend, reserves space, returns
 //      a Buffer ID the upload handler appends chunks to.
-//   2. append(id, chunk_data, chunk_len) — multiple calls until total.
-//   3. read(id, offset, len, dst) — used by LXMFMinimal during the
+//   2. append(id, chunk_data, chunk_len) - multiple calls until total.
+//   3. read(id, offset, len, dst) - used by LXMFMinimal during the
 //      Resource hashmap computation + per-chunk send.
-//   4. release(id) — drops the buffer, frees PSRAM / removes file.
+//   4. release(id) - drops the buffer, frees PSRAM / removes file.
 //
-// IDs are simple monotonic counters scoped to this boot — a buffer
+// IDs are simple monotonic counters scoped to this boot - a buffer
 // not released by send-completion / failure / browser-disconnect is
 // garbage-collected after STAGING_TIMEOUT_MS to bound leakage.
 
@@ -92,7 +92,7 @@ enum class Backend : uint8_t { Psram, Sd, Flash };
 // Durability is committed once, at finalize: staging data is transient,
 // re-uploadable, and SHA-verified by the caller, so per-block fsync bought
 // nothing but extra card stalls. On any checked failure the upload is rejected
-// cleanly — a partial file is never trusted.
+// cleanly - a partial file is never trusted.
 //
 // One job at a time: uploads are serialised by the multipart handler
 // (_current_upload_staging_id is a single slot), so a single global writer +
@@ -121,7 +121,7 @@ namespace _sdwriter {
     // Single active job. Plain fields: the start/done semaphores fence all
     // access (web writes them only before give(start)/after take(done); the
     // writer only between take(start) and give(done)), so no extra mutex.
-    // The fencing assumes begin_job never overlaps a still-running writer —
+    // The fencing assumes begin_job never overlaps a still-running writer -
     // enforced by waiting for `idle` (see begin_job), which closes the
     // join-timeout zombie-writer race.
     char                 path[96]  = {0};         // POSIX path, e.g. /sd/lxmf/staging/7.bin
@@ -132,7 +132,7 @@ namespace _sdwriter {
     volatile bool        error     = false;
     char                 errbuf[160] = {0};
     volatile size_t      written   = 0;           // bytes write()'n to the card this job
-    // SHA-256 of the upload, computed incrementally as bytes are written —
+    // SHA-256 of the upload, computed incrementally as bytes are written -
     // off the AsyncTCP task, no read-back. digest_hex is valid after a clean
     // finish() (digest_ready true). Lets the upload handler verify byte
     // integrity against a client-supplied X-SHA256 without re-reading the file.
@@ -187,7 +187,7 @@ namespace _sdwriter {
         s.error = true; s.active = false; xSemaphoreGive(s.done_sig); continue;
       }
       // Drain loop: pull from the ring, write to the card. All blocking SD I/O
-      // happens here, on this task — never on the web/AsyncTCP task.
+      // happens here, on this task - never on the web/AsyncTCP task.
       uint32_t idle_ms = 0;   // time with no data and no finalize: abandoned upload?
       for (;;) {
         if (s.aborting) break;
@@ -246,7 +246,7 @@ namespace _sdwriter {
       }
       // Finalize the incremental hash on a clean job: the written bytes are now
       // durable, and sha covers exactly them, so digest_hex is the SHA-256 of
-      // the staged file — no read-back needed.
+      // the staged file - no read-back needed.
       if (!s.error && !s.aborting) {
         uint8_t d[32];
         s.sha.finalize(d, sizeof(d));
@@ -286,7 +286,7 @@ namespace _sdwriter {
     }
     // Priority 1 == loopTask, deliberately: SPI-mode SD writes poll the CPU,
     // and a higher-priority writer would preempt the main loop (which still
-    // services LoRa) in back-to-back slices for the length of an upload — the
+    // services LoRa) in back-to-back slices for the length of an upload - the
     // #84 starvation class. Equal priority round-robins the core; throughput
     // is bounded by the SD bus either way, not CPU share. Re-tune only with
     // /api/diag/loop max-iteration numbers from a sustained large upload.
@@ -301,7 +301,7 @@ namespace _sdwriter {
 
   // Begin a job writing to `posix_path`. Reclaims the writer first: uploads are
   // serialised, so if the writer is NOT parked (idle) here, its previous job was
-  // orphaned — the client dropped mid-transfer and AsyncWebServer called neither
+  // orphaned - the client dropped mid-transfer and AsyncWebServer called neither
   // finalize nor release, leaving the writer looping in its drain loop forever.
   // Force-abort it so this upload can proceed; without this one dropped
   // connection wedges every subsequent upload.
@@ -309,7 +309,7 @@ namespace _sdwriter {
     State& s = st();
     if (!ensure()) return false;
     if (s.active) s.aborting = true;   // orphaned prior job: kick the writer out of its drain loop
-    // Wait for the writer to park (idle) — either it just abandoned the orphan,
+    // Wait for the writer to park (idle) - either it just abandoned the orphan,
     // or it is starting up for the first time.
     uint32_t waited = 0;
     while (!s.idle && waited < READY_TIMEOUT_MS) { vTaskDelay(pdMS_TO_TICKS(10)); waited += 10; }
@@ -411,7 +411,7 @@ struct Buffer {
   // PSRAM backend
   uint8_t*   psram_ptr   = nullptr;
   // SD or Flash backend (path semantics differ; underlying FS doesn't).
-  // For Backend::Sd the file handle lives in the writer task, not here — this
+  // For Backend::Sd the file handle lives in the writer task, not here - this
   // Buffer only records the path (used to read the file back after finalize
   // and to remove it on release/GC).
   String     disk_path;
@@ -446,8 +446,8 @@ namespace _detail {
   //   * completed + 5*STAGING_TIMEOUT_MS old:  /send was never called
   //     (page closed, validation error the user gave up on, etc).
   //     Completed buffers normally live only as long as the /send call
-  //     itself takes — the StagingReleaser in LXMFMinimal::send_message
-  //     drops them right after the wire bytes are built — so anything
+  //     itself takes - the StagingReleaser in LXMFMinimal::send_message
+  //     drops them right after the wire bytes are built - so anything
   //     that's still around minutes later is leaked.
   inline void gc(uint32_t now) {
     auto& v = buffers();
@@ -481,9 +481,9 @@ namespace _detail {
 // options + recorder duration to whatever the device can actually
 // accept. Backend selection priority follows the storage-hierarchy
 // rule (SD → PSRAM → Flash):
-//   1. SD    if mounted — multi-GB headroom, replaceable wear medium
-//   2. PSRAM if request fits — fastest, no flash wear
-//   3. Flash last resort   — LittleFS partition, internal flash wear
+//   1. SD    if mounted - multi-GB headroom, replaceable wear medium
+//   2. PSRAM if request fits - fastest, no flash wear
+//   3. Flash last resort   - LittleFS partition, internal flash wear
 // `max_bytes` is the largest single allocation the largest available
 // backend can hold; `chosen_backend` indicates which backend that is
 // for SPA display. The actual per-request backend pick happens in
@@ -552,7 +552,7 @@ inline uint32_t allocate(size_t total_bytes) {
   if (total_bytes == 0) return 0;
   const Caps c = current_caps();
   if (total_bytes > c.max_bytes) {
-    WARNINGF("OutboundStaging: refusing alloc — %u bytes > dynamic cap %u",
+    WARNINGF("OutboundStaging: refusing alloc - %u bytes > dynamic cap %u",
              (unsigned)total_bytes, (unsigned)c.max_bytes);
     return 0;
   }
@@ -563,7 +563,7 @@ inline uint32_t allocate(size_t total_bytes) {
   // Storage hierarchy: SD → PSRAM → Flash. SD wins whenever
   // mounted and large enough; else PSRAM if the request fits;
   // else Flash. Internal flash is last resort because its write
-  // cycles wear the device — SD wear is replaceable for £5.
+  // cycles wear the device - SD wear is replaceable for £5.
   if (c.sd_max >= total_bytes) {
     b.backend = Backend::Sd;
   } else if (c.psram_max >= total_bytes) {
@@ -614,7 +614,7 @@ inline uint32_t allocate(size_t total_bytes) {
 
 // Append a chunk. Returns true on success, false on overrun / unknown id.
 // The overrun check uses subtraction (not addition) so we can't get
-// fooled by a wrap-around on attacker-supplied `len` — the bound check
+// fooled by a wrap-around on attacker-supplied `len` - the bound check
 // stays correct for any size_t input.
 // Human-readable detail of the most recent append() failure, surfaced to
 // the SPA in the upload error response (the device serial log is garbled
@@ -636,7 +636,7 @@ inline bool append(uint32_t id, const uint8_t* data, size_t len) {
     memcpy(b->psram_ptr + b->written, data, len);
   } else if (b->backend == Backend::Sd) {
     // Hand the bytes to the SD writer task's ring. This is a fast memcpy into
-    // PSRAM with a bounded wait if the ring is full — it never blocks on the
+    // PSRAM with a bounded wait if the ring is full - it never blocks on the
     // card, so a stall can't drop the upload's TCP connection.
     if (!_sdwriter::feed(data, len)) {
       snprintf(fail_detail(), 192, "%s", _sdwriter::last_error());
@@ -663,7 +663,7 @@ inline bool complete(uint32_t id) {
 // incomplete and the caller must reject the upload). No-op for PSRAM.
 // Begin finalize. Non-SD backends complete synchronously (returns 1). SD
 // returns 0 after signalling the writer: the caller must poll
-// finalize_poll() from OFF the AsyncTCP task until it reports done —
+// finalize_poll() from OFF the AsyncTCP task until it reports done -
 // blocking the web task for the drain+fsync is what dropped connections.
 inline int finalize_begin(uint32_t id) {
   Buffer* b = _detail::find(id);

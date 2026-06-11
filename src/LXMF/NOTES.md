@@ -2,7 +2,7 @@
 
 ## Step 1: multi-identity feasibility probe
 
-The gateway's multi-tenancy premise is that each browser-bound account holds its own RNS identity, and packets sent from that account's `Destination` are encrypted and signed with that identity's keys — not with `Transport::identity()`. Verified statically; runtime probe checked into `LXMF/Probe.h` for empirical confirmation when hardware is available.
+The gateway's multi-tenancy premise is that each browser-bound account holds its own RNS identity, and packets sent from that account's `Destination` are encrypted and signed with that identity's keys - not with `Transport::identity()`. Verified statically; runtime probe checked into `LXMF/Probe.h` for empirical confirmation when hardware is available.
 
 ### Static analysis result: PASS
 
@@ -10,12 +10,12 @@ Library source paths are under `.pio/libdeps/ttgo-t-beam-supreme-lr1121/microRet
 
 | Operation | Code path | Uses |
 |---|---|---|
-| Destination hash | `Destination.cpp:61` — `_object->_hash = hash(_object->_identity, app_name, ...)` | per-destination `_identity` |
-| Destination encryption | `Destination.cpp:447-456` — `_object->_identity.encrypt(data)` | per-destination `_identity` |
-| Destination signing | `Destination.cpp:518-521` — `_object->_identity.sign(message)` | per-destination `_identity` |
-| Announce signature | `Destination.cpp:300` — `_object->_identity.sign(signed_data)` | per-destination `_identity` |
-| Packet destination_hash | `Packet.cpp:289` — `_destination_hash = _destination.hash()` | the destination's own hash |
-| Packet encryption | `Packet.cpp:350` — `_destination.encrypt(_data)` | the destination, transitively the identity |
+| Destination hash | `Destination.cpp:61` - `_object->_hash = hash(_object->_identity, app_name, ...)` | per-destination `_identity` |
+| Destination encryption | `Destination.cpp:447-456` - `_object->_identity.encrypt(data)` | per-destination `_identity` |
+| Destination signing | `Destination.cpp:518-521` - `_object->_identity.sign(message)` | per-destination `_identity` |
+| Announce signature | `Destination.cpp:300` - `_object->_identity.sign(signed_data)` | per-destination `_identity` |
+| Packet destination_hash | `Packet.cpp:289` - `_destination_hash = _destination.hash()` | the destination's own hash |
+| Packet encryption | `Packet.cpp:350` - `_destination.encrypt(_data)` | the destination, transitively the identity |
 
 `Transport::_identity` (Transport.h:448) is a singleton, but the only thing it gates is the transport-layer announce role (the node announcing itself as a routing relay). It is **not** consulted in any of the application-layer packet operations above.
 
@@ -34,7 +34,7 @@ Output appears at `RNS::LOG_NOTICE` with `LXMF-PROBE:` prefix. Search serial out
 
 Once empirically confirmed on hardware, remove `-DLXMF_PROBE_MULTI_IDENTITY=1` from `platformio.ini` and (optionally) delete `LXMF/Probe.h`.
 
-### Verification — PASS (hardware confirmed, 2026-05-13)
+### Verification - PASS (hardware confirmed, 2026-05-13)
 
 Flashed to T-Beam Supreme SX1262 variant via `pio run -e ttgo-t-beam-supreme -t upload`. Probe boot output:
 
@@ -65,10 +65,10 @@ bool Identity::validate(const Bytes& signature, const Bytes& message) const {
 }
 ```
 
-`Ed25519PublicKey::verify` returns a `bool` and does not throw on signature mismatch. So `validate()` always returned `true` regardless of signature validity — turning signature verification into a no-op everywhere, including the library's own `Identity::validate_announce` path (Identity.cpp:451), which means **any malformed announce was being accepted upstream**.
+`Ed25519PublicKey::verify` returns a `bool` and does not throw on signature mismatch. So `validate()` always returned `true` regardless of signature validity - turning signature verification into a no-op everywhere, including the library's own `Identity::validate_announce` path (Identity.cpp:451), which means **any malformed announce was being accepted upstream**.
 
 Fix (one line): `return _object->_sig_pub->verify(signature, message);`.
 
-Applied as a build-time patch in `extra_script.py::patch_microreticulum_validate()` — runs on every build and is idempotent. It detects either the buggy or the patched form and only writes when the buggy form is found. Survives a fresh `.pio/libdeps/.../microReticulum/` install.
+Applied as a build-time patch in `extra_script.py::patch_microreticulum_validate()` - runs on every build and is idempotent. It detects either the buggy or the patched form and only writes when the buggy form is found. Survives a fresh `.pio/libdeps/.../microReticulum/` install.
 
 **TODO:** file an upstream issue / PR against attermann/microReticulum referencing Identity.cpp:652. Until merged, the local patch in `extra_script.py` is load-bearing.

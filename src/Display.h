@@ -45,7 +45,7 @@
 
 #include "Fonts/Org_01.h"
 // Picopixel is a 4x6 *monospace* font from Adafruit_GFX. Used for the
-// 6-char identity code render — Org_01 (the SMALL_FONT default) is
+// 6-char identity code render - Org_01 (the SMALL_FONT default) is
 // variable-width, so different hex digits produce different total
 // widths, causing the code to overflow the 64-px disp_area on some
 // glyph combinations.
@@ -577,7 +577,7 @@ void draw_cable_icon(int px, int py) {
       // relevant link the device is using) and overlay a tiny "A"
       // glyph so a power-user can see the AP is also live. If STA is
       // still negotiating, AP is the channel the user is reaching the
-      // device on — draw the AP icon.
+      // device on - draw the AP icon.
       bool is_apsta = (wifi_mode == WR_WIFI_APSTA);
       if (wifi_mode == WR_WIFI_STA || (is_apsta && wifi_is_connected())) {
         if (wifi_is_connected()) {
@@ -814,7 +814,7 @@ bool stat_area_intialised = false;
 // update_display() tick (~30 Hz → ~30 px/s), with a 16 px pause at
 // the start and a wrap-around when the tail clears the left edge.
 // Reset to position 0 whenever the message text changes (FNV-1a hash
-// over the bytes — cheap and good enough for "did the string change").
+// over the bytes - cheap and good enough for "did the string change").
 // Returns true if a live status message was drawn (so the caller knows the
 // strip is the marquee's this frame and must NOT also draw the signal bars),
 // false if there was nothing to show.
@@ -823,7 +823,7 @@ static bool draw_status_marquee(int px, int py, int width, int height) {
   if (!Common::Status::latest(buf, sizeof(buf))) return false;
   if (buf[0] == '\0') return false;
 
-  // Hash for change detection — FNV-1a 32-bit. Any change in the
+  // Hash for change detection - FNV-1a 32-bit. Any change in the
   // message text resets the scroll position and re-introduces the
   // head-pause.
   uint32_t h = 2166136261u;
@@ -846,7 +846,7 @@ static bool draw_status_marquee(int px, int py, int width, int height) {
   uint16_t bw, bh;
   stat_area.getTextBounds(buf, 0, 0, &bx, &by, &bw, &bh);
 
-  // Clear the marquee strip — black background, full-width.
+  // Clear the marquee strip - black background, full-width.
   stat_area.fillRect(px, py, width, height, SSD1306_BLACK);
   stat_area.setTextColor(SSD1306_WHITE);
 
@@ -855,7 +855,7 @@ static bool draw_status_marquee(int px, int py, int width, int height) {
   const int baseline_y = py + 6;
 
   if ((int)bw <= width) {
-    // Fits — centre it, no scroll.
+    // Fits - centre it, no scroll.
     const int cx = px + (width - (int)bw) / 2;
     stat_area.setCursor(cx, baseline_y);
     stat_area.print(buf);
@@ -863,7 +863,7 @@ static bool draw_status_marquee(int px, int py, int width, int height) {
     // Scroll at ~80 px/s, derived from elapsed wall-clock time rather
     // than per-frame stepping. That keeps the speed predictable even
     // if frames are skipped (e.g. during a busy serial burst). 80 px/s
-    // ≈ 20 Picopixel chars / s — fast enough to read a 60-char line in
+    // ≈ 20 Picopixel chars / s - fast enough to read a 60-char line in
     // under 4 s, slow enough to actually read it.
     constexpr int SCROLL_PX_PER_SEC = 80;
     constexpr int GAP_PX            = 12;
@@ -905,7 +905,7 @@ void draw_stat_area() {
     // Bottom strip (rows 56-63): the battery/quality/signal indicators and the
     // status marquee share this band but are mutually exclusive. Each bar
     // widget clears only its own narrow rect, so a marquee that stops drawing
-    // would leave stale text pixels in the gaps between the bars — and the bars
+    // would leave stale text pixels in the gaps between the bars - and the bars
     // would show through a live marquee. Render exactly one: the marquee if a
     // status message is live, otherwise clear the whole strip and draw the bars.
     if (!draw_status_marquee(0, 56, 64, 8)) {
@@ -951,7 +951,7 @@ extern char bt_dh[16];
 void draw_disp_area() {
   #if defined(HAS_LXMF_GATEWAY)
     // Override the normal display when an identity code is active.
-    // Single-use, 60 s TTL — readable from across the room is the point.
+    // Single-use, 60 s TTL - readable from across the room is the point.
     const std::string& id_code = Web::WebUI::identity_code_for_display();
     if (!id_code.empty() && device_init_done && !firmware_update_mode) {
       uint32_t remaining_ms = Web::WebUI::identity_code_remaining_ms();
@@ -963,7 +963,7 @@ void draw_disp_area() {
       disp_area.setCursor(8, 9);
       disp_area.print("ID CODE");
       // Switch to the monospace Picopixel font for the code itself. Org_01
-      // is variable-width — at setTextSize(2) a 6-char hex code can be
+      // is variable-width - at setTextSize(2) a 6-char hex code can be
       // anywhere from ~60 px ('1's) to ~96 px ('0','8','B') wide, which
       // overflows the 64-px disp_area on wide-glyph runs. Picopixel is
       // 4×6 monospace; at setTextSize(2) every glyph is exactly 8×12 px,

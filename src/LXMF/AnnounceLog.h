@@ -1,10 +1,10 @@
 #pragma once
 
-// AnnounceLog — two parallel RAM rings of recent Reticulum announces:
+// AnnounceLog - two parallel RAM rings of recent Reticulum announces:
 //
-//   * `announces` — only lxmf.delivery destinations, with decoded
+//   * `announces` - only lxmf.delivery destinations, with decoded
 //     display_name. Drives the "Recent announces" UI.
-//   * `paths` — every announce regardless of aspect. Drives the "Known
+//   * `paths` - every announce regardless of aspect. Drives the "Known
 //     paths" UI. We need our own ring because microReticulum's
 //     in-memory `_path_table` is dead code (see Transport.cpp:2204
 //     and its surrounding CBA-microStore migration comments); the live
@@ -48,7 +48,7 @@ namespace LXMF {
     // Subscribers invoked synchronously after each new announce has been
     // appended to the rings. is_lxmf=true for lxmf.delivery announces
     // (the "announces" ring), false for the everything-ring "paths".
-    // Subscribers must not block — they run on the LoRa RX thread.
+    // Subscribers must not block - they run on the LoRa RX thread.
     using AnnounceCallback = std::function<void(const AnnounceRecord&, bool is_lxmf)>;
     static void on_new_announce(AnnounceCallback cb) {
       callbacks().push_back(std::move(cb));
@@ -68,13 +68,13 @@ namespace LXMF {
       NOTICE("LXMF::AnnounceLog: registered handlers (lxmf.delivery + all)");
     }
 
-    // Lxmf-only ring — feeds /api/announces.
+    // Lxmf-only ring - feeds /api/announces.
     static std::deque<AnnounceRecord>& announces() {
       static std::deque<AnnounceRecord> r;
       return r;
     }
 
-    // All-aspect ring — feeds /api/paths.
+    // All-aspect ring - feeds /api/paths.
     static std::deque<AnnounceRecord>& paths() {
       static std::deque<AnnounceRecord> r;
       return r;

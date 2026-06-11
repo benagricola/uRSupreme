@@ -4,13 +4,13 @@
 // race against concurrent access from the WebServer task (core 0) and
 // the main loop (core 1). The same lock is taken by WebUI handlers,
 // the LXMFGateway loop, Discovery::Announcer's stamp callbacks, and
-// the main loop's reticulum.loop() invocation — every code path that
+// the main loop's reticulum.loop() invocation - every code path that
 // touches RNS state goes through this guard.
 //
 // Recursive so a handler that holds it can call any number of nested
 // RNS helpers without deadlocking itself. Lives in Common/ (rather
 // than Web/) because it's used from Discovery/, LXMF/, and the main
-// loop — not just from the web layer.
+// loop - not just from the web layer.
 
 #pragma once
 

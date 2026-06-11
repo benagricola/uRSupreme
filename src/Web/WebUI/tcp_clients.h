@@ -1,5 +1,5 @@
 // Auto-extracted from Web/WebUI.h on the SPA-migration branch.
-// Included from inside the class body of Web::WebUI in WebUI.h —
+// Included from inside the class body of Web::WebUI in WebUI.h -
 // this file has NO include guard, NO `#pragma once`, and is not a
 // standalone translation unit. The static method definitions below
 // remain implicit-inline because they sit inside a class body via
@@ -8,7 +8,7 @@
 #if HAS_WIFI && defined(TCP_TRANSPORT)
     // /reticulum/interfaces.json (managed by Discovery::Config) is the
     // source of truth for outbound TCP client interface definitions.
-    // TCPTransport keeps the live runtime — its add_client / remove_client
+    // TCPTransport keeps the live runtime - its add_client / remove_client
     // construct or tear down the actual TCPClientInterface and register
     // it with RNS::Transport. These endpoints coordinate both: every
     // write to a tcp_client entry here also adjusts the runtime, and
@@ -116,7 +116,7 @@
           "No TCP client with that name is configured.");
         return;
       }
-      // TCP clients can't be advertised — see handle_tcp_clients_add.
+      // TCP clients can't be advertised - see handle_tcp_clients_add.
       if ((bool)(body["discoverable"] | false)) {
         send_error_with_message(req, 400, "not_discoverable",
           "TCP clients can't be advertised: peers can't connect to an outbound-only link.");
@@ -132,7 +132,7 @@
         if (np > 0 && np <= 65535 && np != e.port) { e.port = np; host_port_changed = true; }
       }
       // Always clamp discoverable to false on TCP clients regardless
-      // of what's in the body — defensive against legacy persisted
+      // of what's in the body - defensive against legacy persisted
       // entries that have it set to true from before this restriction.
       e.discoverable = false;
       if (!Discovery::Config::upsert(name, e)) {

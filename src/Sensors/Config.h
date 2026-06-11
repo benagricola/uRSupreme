@@ -15,7 +15,7 @@
 //   }
 //
 // GPS reuses Clock::Manager's GPS source config rather than this
-// store — its enable/interval are bound to the time source priority
+// store - its enable/interval are bound to the time source priority
 // list. Surfaced here read-only so the popover UI can show it
 // alongside the other sensors.
 
@@ -41,7 +41,7 @@ inline constexpr const char* CONFIG_PATH = "/lxmf/sensors.json";
 
 // Apply the JSON at /lxmf/sensors.json on top of the drivers'
 // compiled defaults. Safe to call whether or not the file exists.
-// GPS is intentionally not touched here — see TimeManager.
+// GPS is intentionally not touched here - see TimeManager.
 inline void load(microStore::FileSystem& fs) {
   if (!fs.exists(CONFIG_PATH)) return;
   std::vector<uint8_t> data;
@@ -84,7 +84,7 @@ inline void persist(microStore::FileSystem& fs) {
 // / "imu" / "gps". Returns true if applied.
 //
 // GPS bridges through to TimeManager: GPS lives in the sensor
-// popover (it *is* a sensor — fix age, position, etc.) but its
+// popover (it *is* a sensor - fix age, position, etc.) but its
 // time-side enable / poll interval are owned by TimeManager's GPS
 // source config. Persisting the GPS update therefore writes through
 // to /lxmf/time.json, not /lxmf/sensors.json. The SPA's view is the

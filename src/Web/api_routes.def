@@ -1,6 +1,6 @@
 // Single source of truth for the device's web API surface.
 //
-// Grammar (rigid, machine-consumed — keep one entry per line):
+// Grammar (rigid, machine-consumed - keep one entry per line):
 //   ROUTE(NAME, "/api/path")        always registered
 //   ROUTE_OPT(NAME, "/api/path")    registered only under a build flag
 // `{}` marks a one-segment path parameter.

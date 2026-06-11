@@ -5,7 +5,7 @@ the cached IPs in .token / .lr-token sibling files, refreshes the
 bearer tokens at session start, exposes per-device `requests.Session`
 fixtures with the Authorization header pre-set.
 
-Each test should be tolerant of empty inboxes / fresh boots — the
+Each test should be tolerant of empty inboxes / fresh boots - the
 fixtures don't pre-stage any state. Tests that need state (an inbound
 message, a sent attachment) should set it up themselves.
 
@@ -37,7 +37,7 @@ class Device:
 
 
 # Bench layout. Identity id/address are auto-discovered from /api/info at
-# session start so the suite survives full flash wipes — the user just
+# session start so the suite survives full flash wipes - the user just
 # keeps the display_name + password stable.
 _DEVICES = [
     Device(
@@ -154,7 +154,7 @@ def lr(session_factory, devices):
 def assert_has_keys(obj: dict, keys: list[str], path: str = "<root>"):
     """Assert every key in `keys` is present in `obj` and not None."""
     for k in keys:
-        assert k in obj, f"{path}: missing key {k!r} — got {list(obj.keys())}"
+        assert k in obj, f"{path}: missing key {k!r} - got {list(obj.keys())}"
         assert obj[k] is not None, f"{path}.{k} is None"
 
 

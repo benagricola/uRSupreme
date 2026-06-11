@@ -61,7 +61,7 @@ jobs:
           fetch-depth: 0   # need full history for the release-notes step
 
       # microReticulum and microStore both carry local ur-patches branches
-      # on top of attermann's master — frequently-rebasing patch series
+      # on top of attermann's master - frequently-rebasing patch series
       # that haven't (yet) landed upstream. The forks under benagricola/
       # mirror attermann's repos with the patches applied on `ur-patches`.
       - name: Checkout microReticulum
@@ -197,7 +197,7 @@ jobs:
         run: ls -la artifacts/
 
       # GitHub's own "auto-generated release notes" use the same engine
-      # as the web UI's "Generate release notes" button — it lists
+      # as the web UI's "Generate release notes" button - it lists
       # merged PRs since the previous tag plus first-time contributors.
       # We fall back to a raw `git log` if no PRs are found (e.g. all
       # commits landed straight to master without going through a PR),
@@ -215,13 +215,13 @@ jobs:
             echo
             echo "### Supreme SX1262"
             echo
-            echo "- \`urSupreme-sx1262-${tag}.factory.bin\` — full image (bootloader + partitions + app); flash with \`esptool.py --chip esp32s3 -p /dev/ttyACMx write-flash 0x0 urSupreme-sx1262-${tag}.factory.bin\`"
-            echo "- \`urSupreme-sx1262-${tag}.bin\` — app-only image for OTA-style upgrades; flash at offset \`0x10000\`"
+            echo "- \`urSupreme-sx1262-${tag}.factory.bin\` - full image (bootloader + partitions + app); flash with \`esptool.py --chip esp32s3 -p /dev/ttyACMx write-flash 0x0 urSupreme-sx1262-${tag}.factory.bin\`"
+            echo "- \`urSupreme-sx1262-${tag}.bin\` - app-only image for OTA-style upgrades; flash at offset \`0x10000\`"
             echo
             echo "### Supreme LR1121"
             echo
-            echo "- \`urSupreme-lr1121-${tag}.factory.bin\` — full image (bootloader + partitions + app); flash with \`esptool.py --chip esp32s3 -p /dev/ttyACMx write-flash 0x0 urSupreme-lr1121-${tag}.factory.bin\`"
-            echo "- \`urSupreme-lr1121-${tag}.bin\` — app-only image for OTA-style upgrades; flash at offset \`0x10000\`"
+            echo "- \`urSupreme-lr1121-${tag}.factory.bin\` - full image (bootloader + partitions + app); flash with \`esptool.py --chip esp32s3 -p /dev/ttyACMx write-flash 0x0 urSupreme-lr1121-${tag}.factory.bin\`"
+            echo "- \`urSupreme-lr1121-${tag}.bin\` - app-only image for OTA-style upgrades; flash at offset \`0x10000\`"
             echo
             echo "\`.elf\` files for each variant are also attached for symbolicated crash-dump analysis."
             echo

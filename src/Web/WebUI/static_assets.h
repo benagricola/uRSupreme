@@ -1,5 +1,5 @@
 // Auto-extracted from Web/WebUI.h on the SPA-migration branch.
-// Included from inside the class body of Web::WebUI in WebUI.h —
+// Included from inside the class body of Web::WebUI in WebUI.h -
 // this file has NO include guard, NO `#pragma once`, and is not a
 // standalone translation unit. The static method definitions below
 // remain implicit-inline because they sit inside a class body via
@@ -25,7 +25,7 @@
           Web::SPA_ALPINE_JS_GZ, Web::SPA_ALPINE_JS_GZ_LEN);
       resp->addHeader("Content-Encoding", "gzip");
       // Alpine doesn't change between SPA versions, so let the browser
-      // cache it indefinitely — largest asset by far.
+      // cache it indefinitely - largest asset by far.
       resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
       req->send(resp);
     }

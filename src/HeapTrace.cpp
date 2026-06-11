@@ -12,7 +12,7 @@ extern "C" {
   void* __real_heap_caps_aligned_alloc(size_t alignment, size_t size, uint32_t caps);
   void  __real_heap_caps_aligned_free(void* ptr);
   // newlib entry points (external to libheap.a, so app/lib references to them
-  // ARE redirected — unlike intra-libheap calls to heap_caps_malloc).
+  // ARE redirected - unlike intra-libheap calls to heap_caps_malloc).
   void* __real_malloc(size_t size);
   void* __real_calloc(size_t n, size_t size);
   void* __real_realloc(void* ptr, size_t size);

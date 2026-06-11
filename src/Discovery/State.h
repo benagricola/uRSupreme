@@ -1,4 +1,4 @@
-// Master discovery state — /reticulum/discovery.json.
+// Master discovery state - /reticulum/discovery.json.
 //
 // Three knobs:
 //   master_enabled:        global on/off for the announcer (default false)
@@ -49,7 +49,7 @@ struct Master {
   uint32_t    default_interval_min = DEFAULT_INTERVAL_MIN;
   uint32_t    default_stamp_cost   = DEFAULT_STAMP_COST;
   // User-set label included in every announce. Empty string means
-  // "use the interface name" — the default fallback the Announcer
+  // "use the interface name" - the default fallback the Announcer
   // applies when this is unset.
   std::string advertised_name;
 };

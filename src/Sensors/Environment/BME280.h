@@ -1,4 +1,4 @@
-// BME280 driver — temperature / humidity / pressure on the T-Beam
+// BME280 driver - temperature / humidity / pressure on the T-Beam
 // Supreme's user I2C bus (Wire, SDA=17, SCL=18, addr 0x77 fallback
 // 0x76). Shares the bus with the OLED display and the QMC6310
 // magnetometer; cheap to coexist since each device has its own
@@ -9,15 +9,15 @@
 // accidentally collide with Wire1 (PMU + RTC at 41/42).
 //
 // API surface kept narrow:
-//   begin(wire, addr=0x77)  — probe + init. Returns true if a chip
+//   begin(wire, addr=0x77)  - probe + init. Returns true if a chip
 //                             answered at the given address; auto-
 //                             falls back to 0x76 if 0x77 missed.
-//   pump()                  — called from the main loop. Re-reads
+//   pump()                  - called from the main loop. Re-reads
 //                             the sensor at most once per
 //                             interval_ms (default 60_000).
-//   last_reading()          — cached struct {ts_ms, temp_c,
+//   last_reading()          - cached struct {ts_ms, temp_c,
 //                             humidity_pct, pressure_pa, valid}.
-//   present()               — true once begin() succeeded.
+//   present()               - true once begin() succeeded.
 
 #pragma once
 
@@ -70,7 +70,7 @@ inline bool begin(TwoWire& wire, uint8_t primary_addr = 0x77) {
   return false;
 }
 
-// Drive a periodic read. Cheap — only touches the bus once per
+// Drive a periodic read. Cheap - only touches the bus once per
 // interval_ms. Call from the main loop; gated on `enabled` so the
 // user can stop monitoring entirely without unmounting the chip.
 inline void pump() {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Raw KISS sniffer — opens the RNode at /dev/ttyACM0, flips it into TNC
+"""Raw KISS sniffer - opens the RNode at /dev/ttyACM0, flips it into TNC
 mode by sending CMD_DETECT, configures the radio, and then dumps every
 CMD_DATA / CMD_LOG / CMD_RADIO_STATE / CMD_ERROR frame it receives until
 Ctrl-C. Sidesteps the python RNS stack so we can see what the firmware
@@ -61,7 +61,7 @@ def main():
     s.write(kiss_frame(CMD_TXPOWER,    [14]))
     s.write(kiss_frame(CMD_RADIO_STATE, [0x01]))  # bring radio online
     time.sleep(0.5)
-    print("config sent — listening for incoming frames (Ctrl-C to stop)")
+    print("config sent - listening for incoming frames (Ctrl-C to stop)")
 
     buf = bytearray()
     in_frame = False

@@ -1,6 +1,6 @@
 #pragma once
 
-// LXMFMinimal — embedded LXMF parser/sender for microReticulum.
+// LXMFMinimal - embedded LXMF parser/sender for microReticulum.
 //
 // Refactored from PR #17 on attermann/microReticulum_Firmware
 // (varna9000's LXMF_Minimal.h, 641 lines). Key changes from the original:
@@ -16,7 +16,7 @@
 //     signature is verified against the sender's recalled identity.
 //     Result reported via MessageRecord::signature_ok rather than silently
 //     skipped.
-//   - Delivery callback is std::function<void(const MessageRecord&)> —
+//   - Delivery callback is std::function<void(const MessageRecord&)> -
 //     a notification, not a reply generator (PR #17 returned a string from
 //     the handler to auto-reply, which makes sense for GPIO control but
 //     not for a generic messaging gateway).
@@ -47,7 +47,7 @@
 #include "../Web/BootCounter.h"
 #include "../Clock/Manager.h"
 #include "../Storage/OutboundStaging.h"
-#include "../Discovery/Stamp.h"   // shared PoW engine — LXMF delivery stamps
+#include "../Discovery/Stamp.h"   // shared PoW engine - LXMF delivery stamps
 #include <esp_heap_caps.h>
 
 namespace LXMF {
@@ -74,7 +74,7 @@ namespace LXMF {
   static constexpr double LINK_MAX_INACTIVITY      = 600.0;
 
   // Per-message body-content cap. Matches the WhatsApp/Telegram
-  // convention (4 KiB / ~4096 chars) — comfortably above the
+  // convention (4 KiB / ~4096 chars) - comfortably above the
   // longest text someone would reasonably type into a chat, well
   // below anything that'd stress LoRa airtime or the on-device
   // ring. Anything beyond opportunistic-max triggers a Link+Resource
@@ -85,7 +85,7 @@ namespace LXMF {
   // either the SPA→firmware boundary or the peer→firmware boundary
   // gets a length cap so a single malicious or buggy peer can't
   // exhaust RAM with a multi-MB title or mime string. The on-disk
-  // JSONL line size is bounded as a *consequence* of these caps —
+  // JSONL line size is bounded as a *consequence* of these caps -
   // there is no separate line-length cap any more.
   //
   // Exposed to the SPA via /api/info → `limits` so the compose UI
@@ -111,7 +111,7 @@ namespace LXMF {
     // Per-Resource progress: fires repeatedly as parts are sent (outbound)
     // or received (inbound) during a DIRECT-mode transfer. Lets the SPA
     // show a progress bar on a message that's mid-flight. Resolution is
-    // per-part — sub-second granularity at SF7/BW250k, slower at high SF.
+    // per-part - sub-second granularity at SF7/BW250k, slower at high SF.
     using ProgressCallback = std::function<void(
         const RNS::Bytes& /*peer_hash*/,
         const RNS::Bytes& /*link_hash*/,
@@ -119,12 +119,12 @@ namespace LXMF {
         uint32_t          /*bytes_done*/,
         uint32_t          /*bytes_total*/)>;
 
-    // Inbound Resource completion — fires once when the receiving end's
+    // Inbound Resource completion - fires once when the receiving end's
     // Resource finishes streaming bytes, BEFORE the LXMF decrypt /
     // signature-verify step. Distinct from DeliveryCallback (which fires
     // only on successful decrypt) so the gateway can emit a symmetric
     // message_complete event even when decryption fails or the payload
-    // is malformed — the SPA-side "Incoming attachment …" row would
+    // is malformed - the SPA-side "Incoming attachment …" row would
     // otherwise stick at 100% forever. `ok` mirrors the Resource's
     // COMPLETE-vs-FAILED status so the SPA can distinguish "received
     // and decoded" from "received but unreadable" in future UX.
@@ -166,7 +166,7 @@ namespace LXMF {
       LXMFMinimal* owner = nullptr;
       // Outbox-record handle: the link_hash we stamped onto the
       // MessageRecord at send_message time. Stays stable across
-      // retries — even when we open a *new* Link with a new hash, the
+      // retries - even when we open a *new* Link with a new hash, the
       // outbox still keys updates off this original value, so the SPA
       // bubble survives the retry without going dark.
       RNS::Bytes   record_hash;
@@ -179,7 +179,7 @@ namespace LXMF {
       uint64_t     next_retry_at_ms = 0;
       // Status drives the outbox transition (queued -> sent / delivered /
       // failed) reported via _on_outbox_status. We deliberately do NOT
-      // keep the full MessageRecord here — its title/content strings are
+      // keep the full MessageRecord here - its title/content strings are
       // duplicated in the outbox already, and storing them again caused
       // a heap-corruption canary trip during map-erase teardown.
       OutboxStatus status = OutboxStatus::Queued;
@@ -201,7 +201,7 @@ namespace LXMF {
     // Destination+Packet from the stored `wire` bytes, so encryption and
     // path resolution re-run each attempt (mirrors lxmessage.send() ->
     // __as_packet re-creating the packet). The wire is the same
-    // src_hash || sig || payload blob the first send built — small (<=
+    // src_hash || sig || payload blob the first send built - small (<=
     // ~LXMF_OPPORTUNISTIC_MAX + sig/hash overhead), so it stays in the
     // PSRAM-backed RNS::Bytes, never spilled to disk.
     struct PendingOppSend {
@@ -219,11 +219,11 @@ namespace LXMF {
       uint64_t           next_attempt_at_ms = 0;
       OutboxStatus       status = OutboxStatus::Sent;
     };
-    // Outbox-retry tuning. Static for now — wire to per-identity
+    // Outbox-retry tuning. Static for now - wire to per-identity
     // settings later. A failed send is retried at a flat interval, matching
     // upstream LXMF (MAX_DELIVERY_ATTEMPTS=5, DELIVERY_RETRY_WAIT=10s). After
     // the budget exhausts the entry stays Failed for manual re-send from the
-    // SPA. (Was 3 attempts at an escalating 30/60/90s backoff — slower and
+    // SPA. (Was 3 attempts at an escalating 30/60/90s backoff - slower and
     // fewer than upstream.)
     static constexpr uint8_t  DEFAULT_OUTBOX_RETRIES   = 5;
     static constexpr uint32_t DELIVERY_RETRY_WAIT_MS   = 10 * 1000;
@@ -240,7 +240,7 @@ namespace LXMF {
 
     // --- Incoming dedup (upstream LXMRouter.locally_delivered_transient_ids) ---
     // A message the sender's LXMF layer retries after a lost return-proof
-    // (DEFAULT_OUTBOX_RETRIES, re-sending the identical wire bytes — see
+    // (DEFAULT_OUTBOX_RETRIES, re-sending the identical wire bytes - see
     // tick_retries) arrives a second time and would otherwise append a
     // duplicate inbox record. Suppress re-delivery keyed by the message hash
     // (full_hash(dest || src || payload), == upstream's transient_id). Upstream
@@ -275,7 +275,7 @@ namespace LXMF {
         _display_name("LXMF Node"),
         _on_delivery(nullptr) {}
 
-    // Register this instance under the given identity. Does NOT announce —
+    // Register this instance under the given identity. Does NOT announce -
     // call announce() explicitly when ready.
     bool init(RNS::Identity& identity, const char* display_name = "LXMF Node") {
       _identity = identity;
@@ -353,7 +353,7 @@ namespace LXMF {
     // messages to us. Without this, stock LXMF peers would auto-bz2
     // long messages and we'd reject them with RESOURCE_RCL.
     // Update the announcement label. Takes effect on the next announce()
-    // call — does NOT trigger one. Callers (e.g. LXMFGateway) typically
+    // call - does NOT trigger one. Callers (e.g. LXMFGateway) typically
     // emit one immediately after a rename so peers re-learn the label.
     void set_display_name(const char* name) {
       if (name) _display_name = name;
@@ -413,7 +413,7 @@ namespace LXMF {
     // holds exactly the latest announce per destination and survives
     // reboots, so a duplicate in-RAM cost map would only burn RAM. The
     // practical difference is that a peer silent for >45 days still gets
-    // stamped sends here (upstream would forget the cost) — strictly more
+    // stamped sends here (upstream would forget the cost) - strictly more
     // deliverable, never less.
     static uint8_t peer_stamp_cost(const RNS::Bytes& dest_hash) {
       const RNS::Bytes app_data = RNS::Identity::recall_app_data(dest_hash);
@@ -424,7 +424,7 @@ namespace LXMF {
       size_t arr_n = 0;
       if (d[0] >= 0x90 && d[0] <= 0x9F) { arr_n = d[0] & 0x0F; off = 1; }
       else if (d[0] == 0xDC && len >= 3) { arr_n = ((size_t)d[1] << 8) | d[2]; off = 3; }
-      else return 0;  // original (pre-0.5.0) announce format — no cost field
+      else return 0;  // original (pre-0.5.0) announce format - no cost field
       if (arr_n < 2) return 0;
       if (!Common::MsgPack::skip_element(d, len, off)) return 0;  // [0] display_name
       if (off >= len) return 0;
@@ -433,14 +433,14 @@ namespace LXMF {
       if (t <= 0x7F)                     { v = t; }
       else if (t == 0xCC && off + 1 < len) { v = d[off + 1]; }
       else if (t == 0xCD && off + 2 < len) { v = ((uint32_t)d[off + 1] << 8) | d[off + 2]; }
-      else return 0;  // nil or a non-int shape — no stamp cost
+      else return 0;  // nil or a non-int shape - no stamp cost
       return (v >= 1 && v <= 254) ? (uint8_t)v : 0;
     }
 
     // Send an LXMF message to a remote destination hash. Returns false if
     // the recipient identity isn't yet known (no announce seen) or pack/sign
     // failed. Status reporting on delivery is left to the caller via the
-    // returned MessageRecord — for now just sets status=Sent after send().
+    // returned MessageRecord - for now just sets status=Sent after send().
     // Caller-owned attachment blob. `tag` is one of the FIELD_* values
     // (0x05 file / 0x06 image / 0x07 audio); `data` is the raw payload.
     // Wire encoding follows the Sideband convention:
@@ -450,7 +450,7 @@ namespace LXMF {
     // `mime` is local metadata only, mirrored onto the outbox record.
     struct OutgoingAttachment {
       uint8_t              tag;
-      // Byte source — exactly one of these is populated:
+      // Byte source - exactly one of these is populated:
       //   * staging_id != 0: bytes live in OutboundStaging (PSRAM or
       //     SD-backed). Read via Storage::OutboundStaging::read() during
       //     encoding. This is the only path the SPA exercises today
@@ -479,7 +479,7 @@ namespace LXMF {
     // deferred-stamp flow (LXMRouter.pending_deferred_stamps →
     // LXMessage.pack(payload_updated=True)).
     struct PreparedMessage {
-      RNS::Bytes payload;     // msgpack [ts, title, content, fields] — PSRAM-backed
+      RNS::Bytes payload;     // msgpack [ts, title, content, fields] - PSRAM-backed
       RNS::Bytes message_id;  // full_hash(dest || src || payload); the stamp material
       double     ts = 0.0;
     };
@@ -506,7 +506,7 @@ namespace LXMF {
     }
 
     // Pack the payload, compute the message id, and fill the outbox record
-    // (including outbound attachment persistence). Does NOT sign or send —
+    // (including outbound attachment persistence). Does NOT sign or send -
     // see PreparedMessage. Takes ownership of any staging buffers in
     // `attachments` (released on every exit path).
     bool prepare_message(const RNS::Bytes& dest_hash,
@@ -518,7 +518,7 @@ namespace LXMF {
                          const char** out_err = nullptr) {
       auto fail = [&](const char* msg) { if (out_err) *out_err = msg; return false; };
       // prepare_message takes ownership of any staging buffers referenced
-      // in `attachments` — they get released on every exit path so the
+      // in `attachments` - they get released on every exit path so the
       // caller doesn't have to track them across success/failure. (By the
       // time we return, the bytes are embedded in pm.payload and, when
       // outbound persistence is on, copied to disk.)
@@ -542,7 +542,7 @@ namespace LXMF {
       if (!remote_identity || !have_path) {
         // No route to the recipient yet: either no transport PATH or no cached
         // public key. Upstream LXMF requests the path whenever has_path() is
-        // false (LXMRouter.py:1675), regardless of the key cache — under load
+        // false (LXMRouter.py:1675), regardless of the key cache - under load
         // the path table evicts an active contact while its key stays cached,
         // and building a pathless packet just gets it dropped. The path
         // response re-populates the key too, so one request covers both misses.
@@ -551,7 +551,7 @@ namespace LXMF {
         // messages; attachment sends are caller-resend for now, since the
         // staged buffer can't be held across the retry window.)
         RNS::Transport::request_path(dest_hash);
-        WARNINGF("LXMF: no route to %s yet (path=%d key=%d) — issued path request",
+        WARNINGF("LXMF: no route to %s yet (path=%d key=%d) - issued path request",
                  dest_hash.toHex().c_str(), (int)have_path, (int)(bool)remote_identity);
         return fail("Finding a route to the recipient (sent a path request). Resend in a few seconds.");
       }
@@ -699,11 +699,11 @@ namespace LXMF {
 
       // Freeze the payload + message id. The message id (== upstream
       // message_id == transient hash basis) is full_hash(dest || src ||
-      // packed_payload) over the FOUR-element payload — it is also the
+      // packed_payload) over the FOUR-element payload - it is also the
       // material a delivery stamp binds to, so it must be computed before
       // any stamp generation. Signing happens later in send_prepared
       // (upstream signs at pack() time too, after a deferred stamp
-      // resolves — LXMessage.py:352-377).
+      // resolves - LXMessage.py:352-377).
       const RNS::Bytes& src_hash = _destination.hash();
       {
         RNS::Bytes hashed_part;
@@ -722,7 +722,7 @@ namespace LXMF {
 
       out_rec.ts           = ts;
       // (boot_epoch, received_ms) is the monotonic-across-reboots
-      // sort key for inbox/outbox records — see LXMFTypes.h.
+      // sort key for inbox/outbox records - see LXMFTypes.h.
       out_rec.boot_epoch   = Web::BootCounter::current();
       out_rec.received_ms  = millis();
       out_rec.peer_hash    = dest_hash;
@@ -733,7 +733,7 @@ namespace LXMF {
       // Outbox attachments. When the gateway has registered an
       // outbound-persist callback (and the per-identity toggle is on),
       // each attachment's bytes are copied to disk and the resulting
-      // filename + backend land on AttachmentMeta — same shape the
+      // filename + backend land on AttachmentMeta - same shape the
       // inbox uses, so the SPA can render an inline preview of what
       // we sent. With persistence off, we fall back to metadata-only
       // entries: tag + size + display_name + mime, no filename.
@@ -761,7 +761,7 @@ namespace LXMF {
     }
 
     // Sign + dispatch a prepared message, optionally carrying a delivery
-    // stamp. The hash and signature cover the FOUR-element payload only —
+    // stamp. The hash and signature cover the FOUR-element payload only -
     // the stamp is covered by NEITHER (LXMessage.pack, LXMessage.py:
     // 352-377: hashed_part/signed_part are built from msgpack(payload[:4]);
     // the stamp is appended to the payload afterwards and only the wire
@@ -821,7 +821,7 @@ namespace LXMF {
         return fail("Internal error: signature was not the expected length.");
       }
 
-      // Wire payload: with a stamp, it rides as the 5th msgpack element —
+      // Wire payload: with a stamp, it rides as the 5th msgpack element -
       // bump the fixarray(4) header to fixarray(5) and append the bin-8
       // packed stamp, leaving elements 0-3 byte-identical to what was
       // hashed and signed. Mirrors umsgpack.packb of upstream's
@@ -847,8 +847,8 @@ namespace LXMF {
       // STRUCT_OVERHEAD(8) (LXMessage.py:385), where packed_payload includes the
       // stamp when one is present (upstream re-packs after deferred stamping).
       // LXMF_OPPORTUNISTIC_MAX(295) and LXMF_LINK_PACKET_MAX(319) ARE upstream's
-      // ENCRYPTED_PACKET_MAX_CONTENT / LINK_PACKET_MAX_CONTENT — content
-      // ceilings — so they must be compared against content_size.
+      // ENCRYPTED_PACKET_MAX_CONTENT / LINK_PACKET_MAX_CONTENT - content
+      // ceilings - so they must be compared against content_size.
       const size_t content_size = (payload_wire.size() > 16) ? (payload_wire.size() - 16) : 0;
       RNS::Bytes wire;
       wire.append(src_hash.data(), HASH_LEN);
@@ -865,7 +865,7 @@ namespace LXMF {
       // 2566-2592): up to MAX_DELIVERY_ATTEMPTS re-sends, with a path
       // re-request / drop+rediscover on the early attempts, and FAILED once
       // the budget is spent. The retry lives in process_outbound, NOT in a
-      // receipt-timeout callback — upstream registers none for opportunistic,
+      // receipt-timeout callback - upstream registers none for opportunistic,
       // which is why earlier notes here read "upstream never fails
       // opportunistic". That conflated "no timeout callback" with "no
       // retry": the re-send + fail logic is in process_outbound. We store
@@ -892,10 +892,10 @@ namespace LXMF {
           NOTICEF("LXMF: sent OPPORTUNISTIC to %s (%u bytes), awaiting proof",
                   dest_hash.toHex().c_str(), (unsigned)total);
         } else {
-          // No interface accepted the packet — a genuine transmit failure
+          // No interface accepted the packet - a genuine transmit failure
           // (no path / no interface), distinct from a missing proof.
           out_rec.status = OutboxStatus::Failed;
-          WARNINGF("LXMF: OPPORTUNISTIC send to %s failed — no interface accepted the packet",
+          WARNINGF("LXMF: OPPORTUNISTIC send to %s failed - no interface accepted the packet",
                    dest_hash.toHex().c_str());
         }
         return true;
@@ -926,7 +926,7 @@ namespace LXMF {
             reuse_active = true;
           }
           else if (st == RNS::Type::Link::CLOSED) {
-            cache.erase(cit);  // stale entry — drop it, open fresh below
+            cache.erase(cit);  // stale entry - drop it, open fresh below
           }
           // else PENDING/HANDSHAKE/STALE, or ACTIVE-but-busy: open a fresh link.
         }
@@ -946,8 +946,8 @@ namespace LXMF {
       // single packet on link-established and the file round-trip
       // would dwarf the in-RAM cost.
       // DIRECT delivery hands the bytes straight to LXMF's
-      // unpack_from_bytes — delivery_packet() for an in-link packet,
-      // delivery_resource_concluded() for a resource — and neither prepends
+      // unpack_from_bytes - delivery_packet() for an in-link packet,
+      // delivery_resource_concluded() for a resource - and neither prepends
       // the destination hash the way the opportunistic packet path does
       // (RNS LXMRouter.py:1829 prepends only for non-LINK packets; :1833 and
       // :1884 pass the data raw). So the full LXMF blob,
@@ -980,7 +980,7 @@ namespace LXMF {
       ps.dest_hash   = dest_hash;
       ps.owner       = this;
       ps.status      = OutboxStatus::Queued;
-      // record_hash is the outbox key — stays stable across
+      // record_hash is the outbox key - stays stable across
       // retries so the SPA bubble doesn't lose track when we open a
       // new Link with a new link_hash on retry.
       ps.record_hash = link_hash;
@@ -988,7 +988,7 @@ namespace LXMF {
       out_rec.status      = OutboxStatus::Queued;
       out_rec.packet_hash = link_hash;  // placeholder; real packet hash once sent
       if (reuse_active) {
-        // The cached link is already ACTIVE — its established callback won't fire
+        // The cached link is already ACTIVE - its established callback won't fire
         // again, so dispatch the queued send now rather than waiting for one.
         ++link_reuses;
         NOTICEF("LXMF: reusing ACTIVE link to %s for %u-byte DIRECT send",
@@ -1005,7 +1005,7 @@ namespace LXMF {
 
     // LXMF timestamps are Unix-epoch seconds as float64. Defer to the
     // shared TimeManager (Web/TimeManager.h) which arbitrates
-    // across all time sources — GPS, NTP, Browser, RNS peer, RTC.
+    // across all time sources - GPS, NTP, Browser, RNS peer, RTC.
     // Falls back to a compile-time-epoch + millis() guess until the
     // manager is calibrated, so outbound messages don't carry ts=0.
     double get_timestamp() {
@@ -1055,7 +1055,7 @@ namespace LXMF {
     // the cache reference is what keeps the link alive after the send's pending
     // entry is erased (a Link is otherwise destroyed with its PendingLinkSend).
     // Shared static, same lifetime as the two maps above. NB: never index with
-    // operator[] — that default-constructs RNS::Link(), which crashes deriving
+    // operator[] - that default-constructs RNS::Link(), which crashes deriving
     // keys from a NONE destination; use find()/insert_or_assign().
     static std::map<RNS::Bytes, RNS::Link>& direct_links() {
       static std::map<RNS::Bytes, RNS::Link> p;
@@ -1207,7 +1207,7 @@ namespace LXMF {
       }
       PendingLinkSend& ps = it->second;
 
-      // Materialise the wire — either it's already in PSRAM (small
+      // Materialise the wire - either it's already in PSRAM (small
       // send) or we spilled it to disk in send_message and need to
       // read it back for the Resource constructor.
       RNS::Bytes wire_for_send;
@@ -1251,7 +1251,7 @@ namespace LXMF {
           // Schedule retry (or give up if exhausted).
           _schedule_retry_or_fail(it, m, "in-link packet send threw");
         }
-        // No manual link.teardown() — calling it from inside the
+        // No manual link.teardown() - calling it from inside the
         // inbound-callback chain leaves dangling references that trip
         // the heap-poisoning canary when the pending entry is erased.
         // The link's own state machine will close after timeout.
@@ -1282,8 +1282,8 @@ namespace LXMF {
         if (ps.total_bytes == 0) ps.total_bytes = (uint32_t)wire_len;
         // Release the in-RAM wire copy now that the Resource owns the
         // ciphertext (on disk if it spilled). The on-disk wire file
-        // stays around — see _release_wire_file in the concluded /
-        // closed / cancel paths — so a retry can rebuild the Resource
+        // stays around - see _release_wire_file in the concluded /
+        // closed / cancel paths - so a retry can rebuild the Resource
         // from the same payload without re-msgpacking.
         ps.wire = RNS::Bytes();
         DEBUGF("LXMF: outbound resource advertised %s",
@@ -1291,7 +1291,7 @@ namespace LXMF {
       }
     }
 
-    // Progress trampoline for outbound Resources — fires as parts are
+    // Progress trampoline for outbound Resources - fires as parts are
     // sent. Looks up the matching pending entry by resource hash, then
     // dispatches to the owning LXMFMinimal's _on_progress callback if
     // any. Cheap; called once per outbound part.
@@ -1322,7 +1322,7 @@ namespace LXMF {
     }
 
     static void _static_outbound_link_closed(RNS::Link& link) {
-      // Evict this link from the reuse cache up front — a closed link must never
+      // Evict this link from the reuse cache up front - a closed link must never
       // be handed to the reuse branch. The cache is keyed by dest hash, not link
       // hash, so scan by identity (Link operator== compares the impl pointer).
       {
@@ -1336,7 +1336,7 @@ namespace LXMF {
       if (it == m.end()) return;
       PendingLinkSend& ps = it->second;
       // Successful sends already concluded and erased themselves.
-      // Getting here means an abnormal close — schedule a retry (or
+      // Getting here means an abnormal close - schedule a retry (or
       // give up, depending on the budget).
       if (ps.status != OutboxStatus::Sent &&
           ps.status != OutboxStatus::Delivered) {
@@ -1368,7 +1368,7 @@ namespace LXMF {
             // Retain-on-delivery: pin the peer against known-destinations churn,
             // mirroring upstream LXMRouter.process_outbound (LXMRouter.py:2516).
             RNS::Identity::retain_destination(ps.dest_hash);
-            // Deliberately *not* firing a final _on_progress here — the
+            // Deliberately *not* firing a final _on_progress here - the
             // gateway's outbox-status callback already publishes
             // message_complete (finished=true) which the SPA treats as
             // the canonical end-of-transfer signal.
@@ -1376,7 +1376,7 @@ namespace LXMF {
             it = m.erase(it);
           }
           else {
-            // Resource failed — schedule retry or give up.
+            // Resource failed - schedule retry or give up.
             WARNINGF("LXMF: outbound resource FAILED for %s (status=%d)",
                      ps.dest_hash.toHex().c_str(), (int)st);
             _schedule_retry_or_fail(it, m, "resource transfer failed");
@@ -1406,7 +1406,7 @@ namespace LXMF {
       if (ps.retries_left == 0) {
         // Auto-retries exhausted. Mark Failed and fire the status
         // callback so the SPA shows the bubble as failed. Do NOT erase
-        // — the entry stays so a manual /retry from the SPA can revive
+        // - the entry stays so a manual /retry from the SPA can revive
         // it (the wire bytes are still here). Bound the surviving
         // entries via prune_stale_failed() so this isn't a leak.
         ps.status        = OutboxStatus::Failed;
@@ -1415,7 +1415,7 @@ namespace LXMF {
         if (ps.owner && ps.owner->_on_outbox_status) {
           try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
         }
-        WARNINGF("LXMF: outbox send to %s failed permanently (%s) — auto-retry budget exhausted; manual retry available",
+        WARNINGF("LXMF: outbox send to %s failed permanently (%s) - auto-retry budget exhausted; manual retry available",
                  ps.dest_hash.toHex().c_str(), reason);
         return;
       }
@@ -1425,7 +1425,7 @@ namespace LXMF {
       ps.next_retry_at_ms = (uint64_t)millis() + (uint64_t)DELIVERY_RETRY_WAIT_MS;
       ps.status           = OutboxStatus::Queued;
       ps.resource_hash    = RNS::Bytes{};  // stale; new Link will rebuild Resource
-      NOTICEF("LXMF: outbox send to %s failed (%s) — retry %u/%u scheduled in %us",
+      NOTICEF("LXMF: outbox send to %s failed (%s) - retry %u/%u scheduled in %us",
               ps.dest_hash.toHex().c_str(), reason,
               (unsigned)attempts_done, (unsigned)DEFAULT_OUTBOX_RETRIES,
               (unsigned)(DELIVERY_RETRY_WAIT_MS / 1000));
@@ -1447,7 +1447,7 @@ namespace LXMF {
         if (ps.retry_pending && ps.dest_hash == dest_hash &&
             ps.next_retry_at_ms > now) {
           ps.next_retry_at_ms = now;
-          NOTICEF("LXMF: announce from %s — accelerating pending retry",
+          NOTICEF("LXMF: announce from %s - accelerating pending retry",
                   dest_hash.toHex().c_str());
         }
       }
@@ -1471,7 +1471,7 @@ namespace LXMF {
             op.status != OutboxStatus::Failed &&
             op.next_attempt_at_ms > now) {
           op.next_attempt_at_ms = now;
-          NOTICEF("LXMF: announce from %s — accelerating opportunistic re-send",
+          NOTICEF("LXMF: announce from %s - accelerating opportunistic re-send",
                   dest_hash.toHex().c_str());
         }
       }
@@ -1489,7 +1489,7 @@ namespace LXMF {
         if (kv.second.record_hash != record_hash) continue;
         PendingLinkSend& ps = kv.second;
         if (ps.status != OutboxStatus::Failed) {
-          // Only Failed entries are eligible — a Queued/Sent record
+          // Only Failed entries are eligible - a Queued/Sent record
           // is either in flight or already done.
           return false;
         }
@@ -1535,7 +1535,7 @@ namespace LXMF {
     static void tick_retries() {
       auto& m = pending_link_sends();
       const uint64_t now = (uint64_t)millis();
-      // Snapshot keys whose entries are due — re-keying mid-iteration
+      // Snapshot keys whose entries are due - re-keying mid-iteration
       // would invalidate the iterator.
       std::vector<RNS::Bytes> due;
       for (auto& kv : m) {
@@ -1552,7 +1552,7 @@ namespace LXMF {
 
         RNS::Identity remote_identity = RNS::Identity::recall(ps.dest_hash);
         if (!remote_identity) {
-          // The recipient's identity isn't cached right now — evicted under
+          // The recipient's identity isn't cached right now - evicted under
           // churn, or the peer rebooted and hasn't re-announced yet. Don't
           // destroy the send: that drops the wire bytes, so a later manual
           // /retry from the SPA finds nothing and reports "send-state gone"
@@ -1562,7 +1562,7 @@ namespace LXMF {
           // mark it Failed-but-kept once the budget is spent). Either way the
           // wire survives so the send can still be revived once the peer is
           // known again.
-          WARNINGF("LXMF: retry — identity for %s not cached; requesting path + rescheduling",
+          WARNINGF("LXMF: retry - identity for %s not cached; requesting path + rescheduling",
                    ps.dest_hash.toHex().c_str());
           RNS::Transport::request_path(ps.dest_hash);
           auto ins = m.insert({old_key, std::move(ps)});
@@ -1583,14 +1583,14 @@ namespace LXMF {
           ps.link       = new_link;
           ps.started_ms = now;
           direct_links().insert_or_assign(ps.dest_hash, new_link);  // re-cache on retry
-          NOTICEF("LXMF: retry — new link %s for outbox record %s (peer %s)",
+          NOTICEF("LXMF: retry - new link %s for outbox record %s (peer %s)",
                   new_link_hash.toHex().c_str(),
                   ps.record_hash.toHex().c_str(),
                   ps.dest_hash.toHex().c_str());
           m[new_link_hash] = std::move(ps);
         }
         catch (const std::exception& e) {
-          ERRORF("LXMF: retry — open Link threw: %s; marking failed", e.what());
+          ERRORF("LXMF: retry - open Link threw: %s; marking failed", e.what());
           ps.status = OutboxStatus::Failed;
           if (ps.owner && ps.owner->_on_outbox_status) {
             try { ps.owner->_on_outbox_status(ps.record_hash, ps.status); } catch (...) {}
@@ -1601,7 +1601,7 @@ namespace LXMF {
     }
 
     // Tear down + evict cached reuse Links that have closed, or have carried no
-    // payload data (keepalives excluded — see no_data_for) for longer than
+    // payload data (keepalives excluded - see no_data_for) for longer than
     // LINK_MAX_INACTIVITY. Mirrors upstream LXMRouter.clean_links
     // (LXMRouter.py:913-927): bounds the direct_links cache and stops keeping
     // links alive that nobody is using. Call from the gateway tick alongside
@@ -1654,7 +1654,7 @@ namespace LXMF {
     // fast loop can't over-send (upstream is paced by process_outbound's
     // 4s PROCESSING_INTERVAL; here the gate plays that role). A receipt
     // that has FAILED/CULLED before the deadline is treated the same as a
-    // still-pending one — the deadline, not the receipt-table state, drives
+    // still-pending one - the deadline, not the receipt-table state, drives
     // the next attempt. Shared static map -> one call covers every
     // identity; called from LXMFGateway::loop.
     static void tick_opportunistic_receipts() {
@@ -1678,7 +1678,7 @@ namespace LXMF {
           continue;
         }
 
-        // Already exhausted and left Failed for manual retry — don't keep
+        // Already exhausted and left Failed for manual retry - don't keep
         // re-running the machine. manual_retry() re-arms it if the user asks.
         if (op.status == OutboxStatus::Failed) { ++it; continue; }
 
@@ -1688,13 +1688,13 @@ namespace LXMF {
 
         if (op.delivery_attempts > MAX_DELIVERY_ATTEMPTS) {
           // Budget spent. Mark Failed and keep the entry (wire intact) so
-          // the SPA's manual retry can re-arm it — matches the link path's
+          // the SPA's manual retry can re-arm it - matches the link path's
           // _schedule_retry_or_fail (LXMRouter.py:2590-2592 fail_message).
           op.status = OutboxStatus::Failed;
           if (op.owner && op.owner->_on_outbox_status) {
             try { op.owner->_on_outbox_status(op.record_hash, OutboxStatus::Failed); } catch (...) {}
           }
-          WARNINGF("LXMF: OPPORTUNISTIC delivery to %s failed after %u attempts — manual retry available",
+          WARNINGF("LXMF: OPPORTUNISTIC delivery to %s failed after %u attempts - manual retry available",
                    op.dest_hash.toHex().c_str(), (unsigned)MAX_DELIVERY_ATTEMPTS);
           ++it;
           continue;
@@ -1703,23 +1703,23 @@ namespace LXMF {
         const bool path_known = RNS::Transport::has_path(op.dest_hash);
 
         if (op.delivery_attempts >= MAX_PATHLESS_TRIES && !path_known) {
-          // Still no path after the pathless allowance — request one and
+          // Still no path after the pathless allowance - request one and
           // wait the longer path-request window (LXMRouter.py:2568-2573).
           op.delivery_attempts++;
           RNS::Transport::request_path(op.dest_hash);
           op.next_attempt_at_ms = now + PATH_REQUEST_WAIT_MS;
-          NOTICEF("LXMF: OPPORTUNISTIC to %s — requesting path after %u pathless tries",
+          NOTICEF("LXMF: OPPORTUNISTIC to %s - requesting path after %u pathless tries",
                   op.dest_hash.toHex().c_str(), (unsigned)(op.delivery_attempts - 1));
         }
         else if (op.delivery_attempts == MAX_PATHLESS_TRIES + 1 && path_known) {
-          // Have a path but still no proof — assume it's stale; drop it and
+          // Have a path but still no proof - assume it's stale; drop it and
           // re-request to rediscover (LXMRouter.py:2574-2583). expire_path
           // is this library's drop_path equivalent (Transport.cpp:3422).
           op.delivery_attempts++;
           RNS::Transport::expire_path(op.dest_hash);
           RNS::Transport::request_path(op.dest_hash);
           op.next_attempt_at_ms = now + PATH_REQUEST_WAIT_MS;
-          NOTICEF("LXMF: OPPORTUNISTIC to %s still unproven after %u attempts — rediscovering path",
+          NOTICEF("LXMF: OPPORTUNISTIC to %s still unproven after %u attempts - rediscovering path",
                   op.dest_hash.toHex().c_str(), (unsigned)(op.delivery_attempts - 1));
         }
         else {
@@ -1733,9 +1733,9 @@ namespace LXMF {
             // Recipient identity not cached (evicted, or peer rebooted and
             // hasn't re-announced). Nudge the path so the announce comes
             // back; the receipt stays unresolved and the next attempt
-            // retries. Don't drop the entry — the wire must survive.
+            // retries. Don't drop the entry - the wire must survive.
             RNS::Transport::request_path(op.dest_hash);
-            WARNINGF("LXMF: OPPORTUNISTIC retry to %s — identity not cached; requested path",
+            WARNINGF("LXMF: OPPORTUNISTIC retry to %s - identity not cached; requested path",
                      op.dest_hash.toHex().c_str());
             ++it;
             continue;
@@ -1757,7 +1757,7 @@ namespace LXMF {
             } else {
               // No interface accepted it this time; the deadline above will
               // bring us back for another attempt within the budget.
-              WARNINGF("LXMF: OPPORTUNISTIC re-send to %s — no interface accepted the packet",
+              WARNINGF("LXMF: OPPORTUNISTIC re-send to %s - no interface accepted the packet",
                        op.dest_hash.toHex().c_str());
             }
           }
@@ -1775,15 +1775,15 @@ namespace LXMF {
     // erases its PendingLinkSend, but the chain has several hops
     // (Resource::concluded → outbound_resource_concluded → erase, or
     // Link::closed_callback → outbound_link_closed → erase, etc.). If
-    // any callback is dropped — radio dies mid-transfer, async-server
-    // event loop falls behind, etc. — the entry could leak. Catch
+    // any callback is dropped - radio dies mid-transfer, async-server
+    // event loop falls behind, etc. - the entry could leak. Catch
     // anything > PENDING_SEND_ORPHAN_MS old that's neither in flight
     // (Queued/Sent waiting for a callback that's reasonably timely)
     // nor scheduled for retry. Conservative threshold so big-payload
     // transfers don't get accidentally killed.
     //
     // Called from tick_retries() so it shares the same periodic cadence
-    // as the existing retry-scheduler — no new timer needed.
+    // as the existing retry-scheduler - no new timer needed.
     static constexpr uint64_t PENDING_SEND_ORPHAN_MS = 30ULL * 60ULL * 1000ULL; // 30 min
     static void sweep_orphaned_pending() {
       auto& m = pending_link_sends();
@@ -1796,7 +1796,7 @@ namespace LXMF {
                               (ps.status == OutboxStatus::Failed);
         if (stale && !ps.retry_pending && !terminal) {
           WARNINGF("LXMF: sweeping orphaned pending_link_send for %s "
-                   "(record %s, age %lus, status=%s) — no callback ever "
+                   "(record %s, age %lus, status=%s) - no callback ever "
                    "completed the send",
                    ps.dest_hash.toHex().c_str(),
                    ps.record_hash.toHex().c_str(),
@@ -1842,7 +1842,7 @@ namespace LXMF {
       link.set_resource_progress_callback(_static_inbound_resource_progress);
     }
 
-    // Progress trampoline for inbound Resources — fires as parts arrive.
+    // Progress trampoline for inbound Resources - fires as parts arrive.
     // Resolves the owning LXMFMinimal by the link's destination hash.
     // peer_hash is left empty: the Reticulum responder side has no way
     // to know who opened an anonymous inbound link until the LXMF wire
@@ -1893,13 +1893,13 @@ namespace LXMF {
       if (it == reg.end() || it->second == nullptr) return;
       const uint32_t total = (uint32_t)res.size();
       const bool ok = (res.status() == RNS::Type::Resource::COMPLETE);
-      // Symmetric receive-complete event — fires regardless of whether
+      // Symmetric receive-complete event - fires regardless of whether
       // the LXMF decrypt step that follows succeeds. The SPA uses this
       // to clear synthetic "Incoming attachment …" rows + the topbar
       // progress strip, mirroring the outbound message_complete path.
       // Done BEFORE delivery so the conv list updates ahead of the
       // new-message insertion. peer hash is unknown here (the LXMF
-      // payload hasn't been decrypted yet — that's why this exists);
+      // payload hasn't been decrypted yet - that's why this exists);
       // the SPA keys the clear off the link hash.
       if (it->second->_on_receive_complete) {
         try {
@@ -1920,7 +1920,7 @@ namespace LXMF {
     // Locate the optional delivery stamp in a packed payload. Mirrors
     // LXMessage.unpack_from_bytes (LXMessage.py:743-749): when the
     // payload array carries a 5th element, that element is the stamp and
-    // the message hash / signature cover msgpack(payload[:4]) — i.e. a
+    // the message hash / signature cover msgpack(payload[:4]) - i.e. a
     // fixarray(4) header plus the original bytes of elements 0-3, never
     // the stamp. Element encodings are unchanged between the sender's
     // 4-element hash pack and the 5-element wire pack, so slicing the
@@ -1930,8 +1930,8 @@ namespace LXMF {
     // *out_core_end = offset just past element 3, *out_stamp = the stamp
     // bytes (empty when there is no 5th element / it isn't bin or str),
     // *out_stripped = the payload HAD a 5th element. The hash must be
-    // re-derived over payload[:4] whenever out_stripped is set — even
-    // when the 5th element wasn't a usable stamp — because upstream
+    // re-derived over payload[:4] whenever out_stripped is set - even
+    // when the 5th element wasn't a usable stamp - because upstream
     // strips unpacked_payload[4] by position, not by type.
     // Returns false on malformed framing.
     static bool _split_payload_stamp(const uint8_t* payload, size_t len,
@@ -1969,7 +1969,7 @@ namespace LXMF {
   public:
     // An inbound message parked while the background worker scores its
     // delivery stamp (the 3000-round workblock expansion is a one-to-few-
-    // second job — see tick_stamp_validations). `wire` is a shared
+    // second job - see tick_stamp_validations). `wire` is a shared
     // RNS::Bytes ref (PSRAM, copy-on-write), so the parked entry costs a
     // refcount, not a payload copy.
     struct PendingStampValidation {
@@ -2003,7 +2003,7 @@ namespace LXMF {
       auto& f = q.front();
       if (!f.owner || !f.owner->_initialized) { q.pop_front(); return; }
       if (!f.submitted) {
-        // Worker may be busy with an outbound generation — retry next tick.
+        // Worker may be busy with an outbound generation - retry next tick.
         f.submitted = Discovery::Stamp::submit_lxmf_value(f.message_hash, f.stamp, f.cost);
         return;
       }
@@ -2017,7 +2017,7 @@ namespace LXMF {
         // posture as the queue-overflow valve: unchecked delivery unless
         // enforcement is on.
         if (e.owner->_enforce_stamps) {
-          NOTICEF("LXMF: dropping message %s — stamp could not be validated and enforcement is on",
+          NOTICEF("LXMF: dropping message %s - stamp could not be validated and enforcement is on",
                   e.message_hash.toHex().c_str());
           return;
         }
@@ -2029,12 +2029,12 @@ namespace LXMF {
         // Upstream LXMRouter.lxmf_delivery (LXMRouter.py:1767-1775):
         // enforcement drops with a NOTICE naming the message; otherwise
         // log-and-allow.
-        NOTICEF("LXMF: dropping message %s — invalid stamp (required cost %u)",
+        NOTICEF("LXMF: dropping message %s - invalid stamp (required cost %u)",
                 e.message_hash.toHex().c_str(), (unsigned)e.cost);
         return;
       }
       if (!r.valid) {
-        NOTICEF("LXMF: message %s carries an invalid stamp (required cost %u), allowing — stamp enforcement is disabled",
+        NOTICEF("LXMF: message %s carries an invalid stamp (required cost %u), allowing - stamp enforcement is disabled",
                 e.message_hash.toHex().c_str(), (unsigned)e.cost);
       }
       // Mirror upstream's data model: stamp_value is only recorded for a
@@ -2053,7 +2053,7 @@ namespace LXMF {
       size_t raw_len = wire.size();
 
       // DIRECT delivery (in-link packet / resource) carries the full LXMF
-      // blob: dest_hash || src_hash || signature || payload — RNS hands it
+      // blob: dest_hash || src_hash || signature || payload - RNS hands it
       // straight to unpack_from_bytes (LXMRouter.py:1833 for in-link packets,
       // :1884 for resources). The opportunistic packet path omits the dest
       // hash (it is the packet's destination, prepended by the receiver at
@@ -2079,7 +2079,7 @@ namespace LXMF {
       size_t payload_len = raw_len - HEADER_LEN;
 
       // Shape check + clock calibration. Title/content/fields are decoded
-      // again in _complete_delivery — for stamped messages that happens
+      // again in _complete_delivery - for stamped messages that happens
       // after an async validation hop, and the fields' raw pointers can't
       // outlive this stack frame, so the parse runs there for every path.
       double msg_ts = 0;
@@ -2120,7 +2120,7 @@ namespace LXMF {
       // Drop a duplicate: the sender's LXMF retry re-sends identical bytes
       // after a lost return-proof. The proof/ack was already sent on the
       // transport layer (prove() for packets, resource proof on assembly),
-      // so the sender still sees delivery and stops retrying — we just
+      // so the sender still sees delivery and stops retrying - we just
       // avoid a duplicate record.
       if (_seen_delivery(message_hash)) {
         DEBUGF("LXMF: ignoring duplicate message %s from %s",
@@ -2137,7 +2137,7 @@ namespace LXMF {
         sig_ok = sender.validate(signature, signed_part);
       }
       else {
-        WARNINGF("LXMF: sender %s identity not known — signature cannot be verified",
+        WARNINGF("LXMF: sender %s identity not known - signature cannot be verified",
                  source_hash.toHex().c_str());
       }
 
@@ -2146,24 +2146,24 @@ namespace LXMF {
               sig_ok ? "ok" : "BAD",
               stamp.size() > 0 ? ", stamped" : "");
 
-      // Inbound stamp policy — upstream LXMRouter.lxmf_delivery
+      // Inbound stamp policy - upstream LXMRouter.lxmf_delivery
       // (LXMRouter.py:1755-1777): validation runs only when WE have an
       // inbound stamp cost configured. A missing stamp needs no PoW to
       // score (validate_stamp returns False before building a workblock),
       // so only the stamped case defers to the worker. Scoring a stamp
       // means expanding the 3000-round / 768 KB workblock (one to a few
-      // seconds of HKDF-SHA256) — far beyond the ~50 ms budget of the
+      // seconds of HKDF-SHA256) - far beyond the ~50 ms budget of the
       // RNS-loop-adjacent task this callback runs on, hence the async hop
       // through pending_stamp_validations + the background worker.
       if (_stamp_cost >= 1) {
         if (stamp.size() == 0) {
           if (_enforce_stamps) {
-            NOTICEF("LXMF: dropping message %s from %s — no stamp (required cost %u)",
+            NOTICEF("LXMF: dropping message %s from %s - no stamp (required cost %u)",
                     message_hash.toHex().c_str(), source_hash.toHex().c_str(),
                     (unsigned)_stamp_cost);
             return;
           }
-          NOTICEF("LXMF: message %s from %s has no stamp (required cost %u), allowing — stamp enforcement is disabled",
+          NOTICEF("LXMF: message %s from %s has no stamp (required cost %u), allowing - stamp enforcement is disabled",
                   message_hash.toHex().c_str(), source_hash.toHex().c_str(),
                   (unsigned)_stamp_cost);
           _complete_delivery(wire, packet_or_resource_hash, has_dest_prefix,
@@ -2175,12 +2175,12 @@ namespace LXMF {
           // Overload valve: don't pin unbounded wire bytes behind a
           // seconds-per-message validator.
           if (_enforce_stamps) {
-            NOTICEF("LXMF: dropping message %s from %s — stamp validation queue full (required cost %u)",
+            NOTICEF("LXMF: dropping message %s from %s - stamp validation queue full (required cost %u)",
                     message_hash.toHex().c_str(), source_hash.toHex().c_str(),
                     (unsigned)_stamp_cost);
             return;
           }
-          WARNINGF("LXMF: stamp validation queue full — delivering %s unchecked",
+          WARNINGF("LXMF: stamp validation queue full - delivering %s unchecked",
                    message_hash.toHex().c_str());
           _complete_delivery(wire, packet_or_resource_hash, has_dest_prefix,
                              sig_ok, /*checked=*/false, false, -1);
@@ -2211,7 +2211,7 @@ namespace LXMF {
     // attachments, build the MessageRecord and hand it to the delivery
     // callback. Split from _deliver_lxmf_payload so stamped messages can
     // resume here after their async validation hop (the parse re-runs
-    // because FieldBlob raw pointers can't be parked across that hop —
+    // because FieldBlob raw pointers can't be parked across that hop -
     // CPU-only cost, no extra buffering).
     void _complete_delivery(const RNS::Bytes& wire,
                             const RNS::Bytes& packet_or_resource_hash,
@@ -2274,7 +2274,7 @@ namespace LXMF {
     void _on_packet(const RNS::Bytes& data, const RNS::Packet& packet) {
       // Acknowledge delivery to the sender (Reticulum proof).
       const_cast<RNS::Packet&>(packet).prove();
-      // Opportunistic packets carry src_hash || sig || payload — no dest
+      // Opportunistic packets carry src_hash || sig || payload - no dest
       // prefix (the receiver derives it from the packet itself). The rest
       // of the parse / verify / stamp flow is identical to the DIRECT
       // modes, so delegate to the common path.
@@ -2291,7 +2291,7 @@ namespace LXMF {
       uint8_t        tag;
       const uint8_t* raw;
       size_t         raw_len;
-      // Sender-supplied filename (Sideband convention) — empty for legacy
+      // Sender-supplied filename (Sideband convention) - empty for legacy
       // peers or fields that don't carry one. For FIELD_IMAGE this holds
       // the bare extension ("webp", "png"); for FIELD_FILE_ATTACHMENTS
       // it's the original filename. FIELD_AUDIO doesn't use this.
@@ -2337,7 +2337,7 @@ namespace LXMF {
         capped_fields.resize(LXMF_MAX_ATTACHMENTS);
       }
       if (!_persist_attachments_fn) {
-        // No persist hook wired — surface metadata without on-disk
+        // No persist hook wired - surface metadata without on-disk
         // storage so the SPA at least knows attachments arrived. The
         // bytes are dropped on the floor; this only happens before
         // LXMFGateway::activate runs (i.e. never in normal operation).
@@ -2377,7 +2377,7 @@ namespace LXMF {
       }
       if (!Common::MsgPack::skip_element(data, len, off)) return false;
 
-      // Element 1: title. Truncate at the trust boundary — a peer
+      // Element 1: title. Truncate at the trust boundary - a peer
       // could send a multi-MB title and we'd otherwise carry it
       // through into the inbox spool, the WS broadcast, and the SPA.
       std::string title = Common::MsgPack::read_bin_or_str(data, len, off);
@@ -2392,7 +2392,7 @@ namespace LXMF {
       // Empty content is valid and must NOT be rejected: an attachment-only
       // message (image/audio/file with no caption) carries its whole payload
       // in the fields dict below. Rejecting empty content here dropped every
-      // captionless image — the Resource transferred and proofed back, so the
+      // captionless image - the Resource transferred and proofed back, so the
       // sender saw "delivered", but the receiver discarded it at parse and it
       // never reached the inbox. read_bin_or_str consumes the (empty) element
       // either way, so field parsing below stays in sync.
@@ -2404,7 +2404,7 @@ namespace LXMF {
       }
       if (out_content) *out_content = content;
 
-      // Element 3: fields dict (optional — may be nil, may be omitted).
+      // Element 3: fields dict (optional - may be nil, may be omitted).
       // LXMF wire format: [ts, title, content, fields, stamp?]
       // We only persist tags 0x05/0x06/0x07 (file / image / audio
       // attachments); other tags pass through unparsed. The caller
@@ -2414,7 +2414,7 @@ namespace LXMF {
       if (arr_len >= 4 && off < len && out_fields) {
         const uint8_t ftag = data[off];
         if (ftag == 0xC0) {
-          // nil — no fields. Done.
+          // nil - no fields. Done.
         } else if ((ftag & 0xF0) == 0x80 || ftag == 0xDE || ftag == 0xDF) {
           size_t map_len = 0;
           if ((ftag & 0xF0) == 0x80) {
@@ -2439,7 +2439,7 @@ namespace LXMF {
             } else if (kt == 0xCC && off < len) {  // uint8
               key_tag = data[off++];
             } else {
-              // Unsupported key shape — abort field parsing so we
+              // Unsupported key shape - abort field parsing so we
               // don't desync on the rest of the payload.
               return true;
             }
@@ -2449,7 +2449,7 @@ namespace LXMF {
             //        FIELD_AUDIO             = [mode_int, bytes]
             //        FIELD_FILE_ATTACHMENTS  = [[name_str, bytes], ...]
             //   2. Bare-bytes legacy (what this firmware sent previously).
-            // Detect by peeking the value tag — array means Sideband.
+            // Detect by peeking the value tag - array means Sideband.
             const size_t value_start = off;
             if (!Common::MsgPack::skip_element(data, len, off)) return true;
             const size_t value_end = off;
@@ -2469,7 +2469,7 @@ namespace LXMF {
               if (p >= value_end) return 0;
               FieldBlob blob;
               blob.tag = tag;
-              // Element 0 — name (str), ext (str), or mode (uint8).
+              // Element 0 - name (str), ext (str), or mode (uint8).
               const uint8_t et = data[p];
               if (tag == FIELD_AUDIO) {
                 if (et <= 0x7F)            { blob.audio_mode = et; p += 1; }
@@ -2482,7 +2482,7 @@ namespace LXMF {
                 if (name_off == p) return 0;   // read failed
                 p = name_off;
               }
-              // Element 1 — bin payload.
+              // Element 1 - bin payload.
               if (p >= value_end) return 0;
               const uint8_t bt = data[p];
               size_t hdr = 0, dlen = 0;

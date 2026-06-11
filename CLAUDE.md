@@ -81,7 +81,8 @@ is the source of truth.
 - Non-technical and minimal. State the outcome and the numbers, not the
   mechanism ("Message too long. 1200/1024", never an explanation of
   UTF-8). Mechanism explanations live in code comments.
-- No em dashes anywhere in user-facing copy. Short sentences. It is a
+- No em dashes anywhere in the repo - not in copy, not in comments,
+  not in docs (CI enforces this tree-wide). Short sentences. It is a
   "web app", not an "SPA", in user-facing text.
 - Surface failures: any user-triggered action that can fail shows a
   toast or status with the server's message. A silent 404 hid a broken

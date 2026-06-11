@@ -1,5 +1,5 @@
 // Auto-extracted from Web/WebUI.h on the SPA-migration branch.
-// Included from inside the class body of Web::WebUI in WebUI.h —
+// Included from inside the class body of Web::WebUI in WebUI.h -
 // this file has NO include guard, NO `#pragma once`, and is not a
 // standalone translation unit. The static method definitions below
 // remain implicit-inline because they sit inside a class body via
@@ -28,11 +28,11 @@
     // GET /api/paths/estimate?to=<32 hex>&bytes=<N>
     // Returns transmit-time estimate components for the destination,
     // letting the SPA render an ETA before the user hits send.
-    //   kind: "local"   — destination is one of our own identities;
+    //   kind: "local"   - destination is one of our own identities;
     //                     traffic loops in-device, ETA ≈ 0
-    //         "path"    — we have a path table entry; eta_ms is
+    //         "path"    - we have a path table entry; eta_ms is
     //                     ((bytes*8 / bitrate)*(hops+1) + first_hop)*1000
-    //         "unknown" — no path yet; SPA should request_path or
+    //         "unknown" - no path yet; SPA should request_path or
     //                     show "ETA unknown"
     //
     // Bytes is the total LXMF wire size, which the SPA computes from
@@ -75,7 +75,7 @@
       // the cached announce packet doesn't unpack). In that state
       // `has_path` is still true (the row exists) but `hops_to`
       // returns PATHFINDER_M and `next_hop_interface_bitrate` returns
-      // 0 — leaving the SPA stuck at "ETA: pending path estimate"
+      // 0 - leaving the SPA stuck at "ETA: pending path estimate"
       // even though we have everything we need locally to estimate.
       //
       // Workaround: when the Transport doesn't have a usable bitrate

@@ -7,7 +7,7 @@ Usage:
     python3 kiss_send.py --to <32-hex-dest> --body "hello"
     python3 kiss_send.py --announce-only
 
-The RNode interface params come from tools/kiss-test/rnsconfig — change
+The RNode interface params come from tools/kiss-test/rnsconfig - change
 them there (frequency, BW, SF, CR, TX power) and re-run, no edit needed
 to this script.
 """
@@ -81,7 +81,7 @@ def main():
     storage = os.path.join(HERE, "lxmf-storage")
     os.makedirs(storage, exist_ok=True)
 
-    # Persistent identity so the address is stable across reruns —
+    # Persistent identity so the address is stable across reruns -
     # otherwise every invocation announces a brand-new identity and the
     # receiver has no chance to remember us.
     identity_path = os.path.join(HERE, "test_identity")
@@ -142,7 +142,7 @@ def main():
     if recipient_identity is None or not RNS.Transport.has_path(dest_hash):
         sys.exit(f"[fail] identity={'Y' if recipient_identity else 'n'} "
                  f"path={'Y' if RNS.Transport.has_path(dest_hash) else 'n'} "
-                 "after 45s — radio link may be down or announce isn't being parsed.")
+                 "after 45s - radio link may be down or announce isn't being parsed.")
     recipient = RNS.Destination(recipient_identity, RNS.Destination.OUT,
                                 RNS.Destination.SINGLE, "lxmf", "delivery")
     print(f"[recipient] identity hash = {recipient_identity.hash.hex()}")
@@ -163,7 +163,7 @@ def main():
                          desired_method=method)
     print(f"[send] method={args.method}  body={len(args.body)} bytes")
 
-    def on_delivered(m):  print(f"[delivery] PROOF received — message delivered")
+    def on_delivered(m):  print(f"[delivery] PROOF received - message delivered")
     def on_failed(m):     print(f"[delivery] FAILED")
     msg.register_delivery_callback(on_delivered)
     msg.register_failed_callback(on_failed)

@@ -1,4 +1,4 @@
-"""GET /api/diag/routes — the running device's registered route table
+"""GET /api/diag/routes - the running device's registered route table
 must match src/Web/api_routes.def (the declared API surface).
 
 This is the runtime half of the API-parity contract: the static check

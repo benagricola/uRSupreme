@@ -62,7 +62,7 @@ def main():
         # 3. Open the sx-tester conversation; wait for bubbles + image to load.
         # Flip the auto-download-attachments pref first so the image
         # attachment renders inline rather than as a "click to load"
-        # chip — the inline render is what we want both for shot 3 and
+        # chip - the inline render is what we want both for shot 3 and
         # for the image-viewer (shot 3b).
         print("[3/8] conversation in progress")
         page.evaluate("""() => {
@@ -77,7 +77,7 @@ def main():
         shot(page, "03-conversation")
 
         # 3b. Image viewer (modal-image). The inline image's click handler
-        # is `openImageModal(blob, attachment)` — open the modal directly
+        # is `openImageModal(blob, attachment)` - open the modal directly
         # via the Alpine store, using the blob URL the inline <img> is
         # already showing. Avoids racing the click-handler's argument
         # resolution.
@@ -93,7 +93,7 @@ def main():
           return true;
         }""")
         if not opened:
-            print("  (no inline image found — skipping)")
+            print("  (no inline image found - skipping)")
         else:
             time.sleep(0.8)
             shot(page, "03b-image-viewer")

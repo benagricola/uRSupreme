@@ -180,6 +180,15 @@
       if (index == 0) {
         if (_upload_owner() != nullptr && _upload_owner() != req) {
           req->_tempObject = malloc(1);   // freed by the request destructor
+          // A large rejected body is pure inbound overload during the
+          // owner's transfer, and concurrent full-window TCP streams are
+          // exactly what exhausts the WiFi driver's RX buffer pool (see
+          // WifiRxWatchdog). Cut the connection instead of reading it
+          // all; small bodies still get the clean 409 from the final
+          // handler.
+          const unsigned long long rej_total = req->hasHeader("X-Total-Length")
+              ? strtoull(req->header("X-Total-Length").c_str(), nullptr, 10) : 0;
+          if (rej_total > 128ULL * 1024) req->abort();
           return;
         }
         _upload_owner() = req;

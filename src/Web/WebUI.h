@@ -45,7 +45,7 @@ extern char             wr_hostname[10];
 #include "../Clock/Manager.h"
 #include "ApiRoutes.h"
 #include "WebSocket.h"
-#include "../Sensors/Position/L76K.h"
+#include "../Sensors/Position/Gnss.h"
 #include "../Sensors/Clock/PCF8563.h"
 #include "../Storage/SDCard.h"
 #include "../Sensors/Environment/BME280.h"
@@ -314,7 +314,7 @@ namespace Web {
     // (~50 Hz), so we must not allocate. Returns 0 for kinds whose
     // last reading hasn't lit up yet.
     static uint32_t sensor_taken_ms(const char* kind) {
-      if (strcmp(kind, "gps")          == 0) return Sensors::L76K::last_fix().fix_received_ms;
+      if (strcmp(kind, "gps")          == 0) return Sensors::Gnss::last_fix().fix_received_ms;
       if (strcmp(kind, "environment")  == 0) return Sensors::BME280::last_reading().taken_ms;
       if (strcmp(kind, "magnetometer") == 0) return Sensors::QMC6310::last_reading().taken_ms;
       if (strcmp(kind, "imu")          == 0) return Sensors::QMI8658::last_reading().taken_ms;

@@ -31,7 +31,7 @@
 
 #include "../Common/MsgPack.h"
 #include "Battery.h"
-#include "../Sensors/Position/L76K.h"
+#include "../Sensors/Position/Gnss.h"
 #include "../Sensors/Environment/BME280.h"
 
 namespace Telemetry {
@@ -85,7 +85,7 @@ inline size_t pack(uint8_t* buf, size_t cap, const Include& inc, double now_epoc
                             && batt.state != Telemetry::Battery::State::Absent
                             && batt.percent >= 0;
 
-  const Sensors::L76K::Fix fix = Sensors::L76K::last_fix();
+  const Sensors::Gnss::Fix fix = Sensors::Gnss::last_fix();
   const bool have_location = inc.location && fix.valid;
 
   const Sensors::BME280::Reading env = Sensors::BME280::last_reading();
@@ -133,12 +133,15 @@ inline size_t pack(uint8_t* buf, size_t cap, const Include& inc, double now_epoc
     // struct-packed ints in msgpack bin: !i lat*1e6, !i lon*1e6,
     // !i altitude*1e2, !I speed*1e2, !i bearing*1e2, !H accuracy*1e2.
     // Speed is km/h on the wire (sense.py:856 converts from m/s);
-    // the L76K reports knots. Accuracy is metres; the NMEA stream
-    // carries no direct accuracy estimate, so approximate from HDOP
-    // (HDOP x 5 m nominal user-range error), 10 m when HDOP is absent.
+    // NMEA reports knots. Accuracy is metres: the MAX-M10's real
+    // estimate (UBX-NAV-PVT hAcc) when present, else the HDOP
+    // approximation (HDOP x 5 m nominal user-range error), else a
+    // 10 m nominal.
     const double speed_kmh = fix.speed_knots * 1.852;
     const double alt_m     = fix.altitude_valid ? fix.altitude_m : 0.0;
-    double acc_m           = fix.hdop_valid ? (double)fix.hdop * 5.0 : 10.0;
+    double acc_m           = fix.acc_valid  ? (double)fix.hacc_m
+                           : fix.hdop_valid ? (double)fix.hdop * 5.0
+                           : 10.0;
     if (acc_m < 0.0)    acc_m = 0.0;
     if (acc_m > 655.35) acc_m = 655.35;   // !H ceiling
     const int64_t last_update =

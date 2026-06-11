@@ -74,10 +74,11 @@
       respond_and_reboot(req, doc, delay_ms);
     }
 
-    // GET /api/time - returns the current calibrated time, the source
-    // that set it, and the source-priority/enable config. Open to any
-    // authenticated session (the time itself is also exposed via
-    // /api/info → clock.now_ms, so this just adds source detail).
+    // Build the system-status payload (storage / rtc / sensors /
+    // outbound_caps / battery) into `root`. Single source of truth
+    // shared between the WS `hello` frame and the periodic
+    // `system_update` event. /api/system_status used to call this too
+    // but the REST endpoint is retired - WS delivery is canonical.
     static void fill_system_block(JsonObject root) {
       // ---- storage ----
       {

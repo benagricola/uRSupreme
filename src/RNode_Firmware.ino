@@ -43,7 +43,7 @@
 #endif
 #include "Web/WebUI.h"
 #include "Sensors/Clock/PCF8563.h"
-#include "Sensors/Position/L76K.h"
+#include "Sensors/Position/Gnss.h"
 #include "Clock/Ntp.h"
 #include "Storage/SDCard.h"
 #include "Storage/FreeSpace.h"
@@ -1110,12 +1110,13 @@ void setup() {
         }
       });
     }
-    // GPS - L76K on UART1, pins 8/9, EN on 7. Pumps NMEA into
-    // the parser; valid RMC fixes call TimeManager::report_time
-    // (Source::GPS) per the user-configured interval.
+    // GNSS - L76K or MAX-M10 (identified at runtime by Gnss::begin's
+    // probe) on UART1, pins 8/9, EN on 7. Pumps NMEA into the parser;
+    // valid RMC fixes call TimeManager::report_time (Source::GPS) per
+    // the user-configured interval.
     {
-      Sensors::L76K::Pins pins{ /*rx=*/9, /*tx=*/8, /*en=*/7, /*baud=*/9600 };
-      Sensors::L76K::begin(Serial1, pins);
+      Sensors::Gnss::Pins pins{ /*rx=*/9, /*tx=*/8, /*en=*/7, /*baud=*/9600 };
+      Sensors::Gnss::begin(Serial1, pins);
     }
     // NTP - non-blocking SNTP against pool.ntp.org. Sync
     // happens when WiFi STA becomes ready; pump() handles adoption.
@@ -3098,7 +3099,7 @@ void loop() {
   // parser only touches its own static state and TimeManager (whose
   // adopt path is reentrant-safe).
 #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
-  Sensors::L76K::pump();
+  Sensors::Gnss::pump();
   // NTP - cheap when no transition; checks SNTP sync status
   // and forwards to TimeManager when a fresh epoch lands. Gated on
   // WiFi STA connection internally.

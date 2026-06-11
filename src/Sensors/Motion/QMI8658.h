@@ -27,7 +27,7 @@
 #include <SensorQMI8658.hpp>
 #include "../../Boards.h"
 #include "../../Storage/SDCard.h"  // for ensure_shared_bus
-#include "../Position/L76K.h"      // for L76K::reset_backoff on motion events
+#include "../Position/Gnss.h"      // for Gnss::reset_backoff on motion events
 
 namespace Sensors {
 namespace QMI8658 {
@@ -166,7 +166,7 @@ inline void pump() {
       // Drop the GPS exponential-backoff counter: motion implies the
       // device may have a new sky view, so retry sooner rather than
       // sit out the (potentially 30-min) backoff window.
-      Sensors::L76K::reset_backoff();
+      Sensors::Gnss::reset_backoff();
     }
   }
   _detail::last_ref() = r;

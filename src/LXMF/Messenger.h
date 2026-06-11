@@ -41,7 +41,7 @@
 #include <microStore/FileSystem.h>
 #include "../Common/PsramAllocator.h"
 #include "../Common/RnsLock.h"
-#include "../Sensors/Position/L76K.h"
+#include "../Sensors/Position/Gnss.h"
 #include "LXMFTypes.h"
 #include "LXMFGateway.h"
 
@@ -366,7 +366,7 @@ inline void send_selected() {
 
   std::string content = p.content;
   if (p.gps) {
-    const Sensors::L76K::Fix fix = Sensors::L76K::last_fix();
+    const Sensors::Gnss::Fix fix = Sensors::Gnss::last_fix();
     if (fix.valid) {
       char buf[40];
       snprintf(buf, sizeof(buf), "\n@ %.5f,%.5f",

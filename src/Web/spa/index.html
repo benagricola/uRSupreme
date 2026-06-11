@@ -720,7 +720,7 @@
        :class="{ 'is-open': sectionOpen.gps }"
        x-show="gpsAvailable" x-cloak>
     <div class="popover-row clickable" data-role="header" @click="toggleSection('gps')">
-      <div class="popover-label">Position</div>
+      <div class="popover-label">Position <button type="button" class="info-icon" @click.stop data-info="Satellites: how many are used in the position fix and how many are visible in the sky. Signal: the strongest satellite, in dB. Noise: the receiver's own relative noise level (no unit, lower is better). Gain: how hard the receiver is amplifying, as a percentage of maximum. High noise with high gain explains a missing fix; low noise with low gain just means no sky view."></button></div>
       <div id="sys-gps-line">
         <span :class="gpsPillClass" x-text="gpsPillLabel"></span>
       </div>
@@ -728,6 +728,8 @@
     </div>
     <div class="popover-value" id="sys-gps-pos" x-text="gpsPosText"></div>
     <div class="popover-subline" id="sys-gps-speed" x-show="gpsHaveFix" x-text="gpsFixTimeText"></div>
+    <div class="popover-subline" id="sys-gps-extra" x-show="gpsExtraText" x-text="gpsExtraText"></div>
+    <div class="popover-subline" id="sys-gps-rf" x-show="gpsRfText" x-text="gpsRfText"></div>
     <div class="popover-subline" id="sys-gps-age" x-text="$store.s.ui.sysGpsAge"></div>
     <div class="popover-config" data-role="config" x-show="sectionOpen.gps" x-cloak>
       <label>
@@ -4907,11 +4909,38 @@ function systemPopoverData() {
       const g = this._g;
       return typeof g.unix_ms === 'number' && g.unix_ms > 0;
     },
+    // Satellites/signal line - the grayed extras row. CONSTANT format
+    // whether or not there is a fix (the radio popover's delta line
+    // taught us: lines must not jump into existence or restructure on
+    // the first reading): "used/visible satellites \u00b7 signal N dB",
+    // zeros and all. The module name is NOT repeated here - the age
+    // line below already carries it.
+    get gpsExtraText() {
+      const g = this._g;
+      if (!g.available) return '';
+      return (g.sats || 0) + ' used \u00b7 ' + (g.sats_visible || 0) + ' visible \u00b7 signal '
+             + (g.snr_db || 0) + ' dB';
+    },
+    // RF health - MAX-M10 only, and then always shown: noise floor and
+    // receiver gain say something useful even with zero satellites
+    // (e.g. high noise explaining why there is no fix), and
+    // interference state rides the same stable line.
+    get gpsRfText() {
+      const g = this._g;
+      if (g.noise == null) return '';
+      const jam = { unknown: 'unknown', none: 'none', warning: 'detected', critical: 'severe' };
+      return 'Noise ' + g.noise + ' \u00b7 gain ' + (g.agc_pct || 0) + '% \u00b7 interference '
+             + (jam[g.jamming] || 'unknown');
+    },
     get gpsPosText() {
       const g = this._g;
-      return this.gpsHaveFix
-        ? g.latitude.toFixed(5) + ', ' + g.longitude.toFixed(5)
-        : 'No fix';
+      if (!this.gpsHaveFix) return 'No fix';
+      let t = g.latitude.toFixed(5) + ', ' + g.longitude.toFixed(5);
+      // Real accuracy estimate (MAX-M10) rides the position value -
+      // it qualifies the coordinates, and this line's content varies
+      // by nature so it cannot cause layout jumps.
+      if (g.hacc_m != null) t += ' \u00b1' + Number(g.hacc_m).toFixed(1) + ' m';
+      return t;
     },
     get gpsFixTimeText() {
       return this.gpsHaveFix ? ('GPS fix ' + new Date(this._g.unix_ms).toLocaleString()) : '';
@@ -5319,10 +5348,10 @@ function sensorIntervalCurrent(key) {
 // "Always on" keeps it streaming.
 const GPS_INTERVALS = [
   { value: 0,    label: 'Always on' },
-  { value: 300,  label: 'Pulse every 5 min' },
-  { value: 900,  label: 'Pulse every 15 min' },
-  { value: 1800, label: 'Pulse every 30 min' },
-  { value: 3600, label: 'Pulse every hour' },
+  { value: 300,  label: 'Every 5 min' },
+  { value: 900,  label: 'Every 15 min' },
+  { value: 1800, label: 'Every 30 min' },
+  { value: 3600, label: 'Every hour' },
 ];
 function gpsIntervalSnap(secs) {
   const n = Number(secs) || 0;

@@ -1,5 +1,5 @@
 // Auto-generated from src/Web/spa/{index.html, styles.css, alpine.min.js}
-// — do not edit by hand.
+// - do not edit by hand.
 #pragma once
 #include <pgmspace.h>
 namespace Web {

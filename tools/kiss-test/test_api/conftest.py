@@ -160,3 +160,10 @@ def assert_has_keys(obj: dict, keys: list[str], path: str = "<root>"):
 
 def assert_type(obj, t, name: str):
     assert isinstance(obj, t), f"{name}: expected {t.__name__}, got {type(obj).__name__}"
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "lora: end-to-end tests that transmit over the shared LoRa radio "
+        "environment and take minutes; deselect with -m 'not lora'")

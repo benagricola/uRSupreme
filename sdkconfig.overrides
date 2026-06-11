@@ -134,3 +134,16 @@ CONFIG_HEAP_USE_HOOKS=y
 # Turning asserts off here makes LFS_ASSERT a no-op, matching the removed
 # definition (and our intent: littlefs asserts off everywhere).
 # CONFIG_LITTLEFS_ASSERTS is not set
+
+# ---------------------------------------------------------------------------
+# WiFi dynamic RX buffer pool. The default (32) is small enough that two
+# concurrent full-window inbound TCP streams (TCP_WND 43080 each, ~29
+# segments in flight per stream) exhaust it; on exhaustion under load the
+# driver's RX delivery can wedge permanently until reassociation (see
+# WifiRxWatchdog.h, which recovers that state). 64 measurably cuts the
+# wedge incidence on the bench. Memory note: these are per-frame heap
+# allocations capped by count, not a static reservation - the worst-case
+# transient draw is ~64 x 1.7 KB of internal SRAM under sustained inbound
+# overload, zero when idle.
+# ---------------------------------------------------------------------------
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=64

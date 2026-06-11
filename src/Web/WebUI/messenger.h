@@ -41,7 +41,13 @@
         o["label"]   = p.label;
         o["dest"]    = p.dest_hex;
         o["content"] = p.content;
-        o["gps"]     = p.gps;
+        JsonObject t = o["telemetry"].to<JsonObject>();
+        t["location"]    = p.tel_location;
+        t["environment"] = p.tel_environment;
+        t["battery"]     = p.tel_battery;
+        t["compass"]     = p.tel_compass;
+        t["share_s"]     = p.tel_share_s;
+        t["rate_s"]      = p.tel_rate_s;
       }
     }
 
@@ -72,7 +78,18 @@
         p.label    = (const char*)(o["label"]   | "");
         p.dest_hex = (const char*)(o["dest"]    | "");
         p.content  = (const char*)(o["content"] | "");
-        p.gps      = (bool)(o["gps"] | false);
+        if (o["telemetry"].is<JsonObjectConst>()) {
+          JsonObjectConst t = o["telemetry"];
+          p.tel_location    = (bool)(t["location"]    | false);
+          p.tel_environment = (bool)(t["environment"] | false);
+          p.tel_battery     = (bool)(t["battery"]     | false);
+          p.tel_compass     = (bool)(t["compass"]     | false);
+          p.tel_share_s     = (uint32_t)(t["share_s"] | 0);
+          p.tel_rate_s      = (uint32_t)(t["rate_s"]  | 60);
+          if (p.tel_share_s > 24 * 3600) p.tel_share_s = 24 * 3600;
+          if (p.tel_rate_s < 15)   p.tel_rate_s = 15;
+          if (p.tel_rate_s > 3600) p.tel_rate_s = 3600;
+        }
         if (p.label.empty() || p.label.size() > LXMF::Messenger::MAX_LABEL_LEN) {
           send_error_with_message(req, 400, "bad_label",
             "Each preset needs a label of 1 to 24 characters.");

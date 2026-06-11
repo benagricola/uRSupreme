@@ -22,8 +22,8 @@
 // enable seeds template messages (no recipient yet); the web editor
 // fills the recipients in, and the device list only offers presets
 // whose recipient is set. Bounds: MAX_PRESETS entries, 24-char
-// labels, 200-byte content (text + optional GPS suffix + LXMF framing
-// stays inside one opportunistic packet, ~295 B).
+// labels, 200-byte content (text + LXMF framing + an attached
+// telemetry blob stays inside one opportunistic packet, ~295 B).
 
 #pragma once
 
@@ -44,6 +44,7 @@
 #include "../Sensors/Position/Gnss.h"
 #include "LXMFTypes.h"
 #include "LXMFGateway.h"
+#include "TelemetryShare.h"
 
 extern microStore::FileSystem filesystem;
 // PMU charge-LED override for the message notification (Power.h).
@@ -60,8 +61,8 @@ inline constexpr const char* PRESETS_FILENAME    = "/messenger.json";
 inline constexpr size_t   MAX_PRESETS        = 8;
 inline constexpr size_t   MAX_LABEL_LEN      = 24;
 // Preset text cap. A full LXMF opportunistic payload must fit one
-// packet (~295 B); framing + timestamp + the "@ lat,lon" suffix
-// (~24 B) leave roughly this much room for the text itself.
+// packet (~295 B); framing + timestamp + an attached telemetry blob
+// leave roughly this much room for the text itself.
 inline constexpr size_t   MAX_CONTENT_LEN    = 200;
 inline constexpr uint32_t RESULT_PAGE_TTL_MS = 30000;
 inline constexpr uint32_t MESSAGE_VIEW_TTL_MS = 60000;
@@ -74,9 +75,24 @@ struct Preset {
   std::string dest_hex;  // 16-byte LXMF destination hash, hex; "" = template,
                          // shown in the web editor but not on the device
   std::string content;
-  bool        gps = false;  // append "@ lat,lon" when a fix is valid
+  // Telemetry attached to every send of this preset - the same options
+  // as the web compose popover. All items off = nothing attached.
+  // share_s > 0 makes the send live: the recipient is granted update
+  // requests for that window and offered the rate.
+  bool     tel_location    = false;
+  bool     tel_environment = false;
+  bool     tel_battery     = false;
+  bool     tel_compass     = false;
+  uint32_t tel_share_s     = 0;
+  uint32_t tel_rate_s      = 60;
 
   bool complete() const { return dest_hex.size() == 32; }
+  uint8_t telemetry_items() const {
+    return (tel_location    ? TelemetryShare::ITEM_LOCATION    : 0)
+         | (tel_environment ? TelemetryShare::ITEM_ENVIRONMENT : 0)
+         | (tel_battery     ? TelemetryShare::ITEM_BATTERY     : 0)
+         | (tel_compass     ? TelemetryShare::ITEM_COMPASS     : 0);
+  }
 };
 
 enum class Page : uint8_t { Hidden, NoIdentity, NoPresets, List, Confirm, Result, Message };
@@ -182,7 +198,13 @@ inline void persist(microStore::FileSystem& fs) {
     o["label"]   = p.label;
     o["dest"]    = p.dest_hex;
     o["content"] = p.content;
-    o["gps"]     = p.gps;
+    JsonObject t = o["tel"].to<JsonObject>();
+    t["location"]    = p.tel_location;
+    t["environment"] = p.tel_environment;
+    t["battery"]     = p.tel_battery;
+    t["compass"]     = p.tel_compass;
+    t["share_s"]     = p.tel_share_s;
+    t["rate_s"]      = p.tel_rate_s;
   }
   String out;
   serializeJson(doc, out);
@@ -195,11 +217,12 @@ inline void persist(microStore::FileSystem& fs) {
 // deliberately empty: the web editor fills them in, and the device
 // list only offers presets with a recipient set.
 inline std::vector<Preset> default_templates() {
-  return {
-    { "OK",          "", "All good here.",      false },
-    { "On my way",   "", "On my way.",          false },
-    { "Need pickup", "", "Please come get me.", true  },
-  };
+  std::vector<Preset> v(3);
+  v[0].label = "OK";          v[0].content = "All good here.";
+  v[1].label = "On my way";   v[1].content = "On my way.";
+  v[2].label = "Need pickup"; v[2].content = "Please come get me.";
+  v[2].tel_location = true;
+  return v;
 }
 
 inline void exit_mode() {
@@ -247,7 +270,18 @@ inline void on_screen_identity_changed(bool enabled, const std::string& identity
           p.label    = (const char*)(o["label"]   | "");
           p.dest_hex = (const char*)(o["dest"]    | "");
           p.content  = (const char*)(o["content"] | "");
-          p.gps      = (bool)(o["gps"] | false);
+          if (o["tel"].is<JsonObjectConst>()) {
+            JsonObjectConst t = o["tel"];
+            p.tel_location    = (bool)(t["location"]    | false);
+            p.tel_environment = (bool)(t["environment"] | false);
+            p.tel_battery     = (bool)(t["battery"]     | false);
+            p.tel_compass     = (bool)(t["compass"]     | false);
+            p.tel_share_s     = (uint32_t)(t["share_s"] | 0);
+            p.tel_rate_s      = (uint32_t)(t["rate_s"]  | 60);
+          } else {
+            // Pre-telemetry schema: "gps" meant attach the position.
+            p.tel_location = (bool)(o["gps"] | false);
+          }
           if (p.label.size() > MAX_LABEL_LEN)     p.label.resize(MAX_LABEL_LEN);
           if (p.content.size() > MAX_CONTENT_LEN) p.content.resize(MAX_CONTENT_LEN);
           if (p.label.empty() || p.content.empty()) continue;
@@ -310,9 +344,16 @@ inline void on_power_key() {
       }
       break;
     case Page::List:    _detail::page_ref() = Page::Confirm; break;
-    case Page::Confirm: send_selected();                     break;
+    case Page::Confirm: break;   // sending takes a HOLD (see below)
     default:            exit_mode();                         break;
   }
+}
+
+// Power-key hold (the PMU's 1 s IRQ level). Deliberate by design: the
+// send fires only from the confirm page, so a stray long press
+// elsewhere does nothing.
+inline void on_power_key_hold() {
+  if (_detail::page_ref() == Page::Confirm) send_selected();
 }
 
 // User button. Short press: next item (closes the read-only pages).
@@ -364,14 +405,20 @@ inline void send_selected() {
     return;
   }
 
-  std::string content = p.content;
-  if (p.gps) {
-    const Sensors::Gnss::Fix fix = Sensors::Gnss::last_fix();
-    if (fix.valid) {
-      char buf[40];
-      snprintf(buf, sizeof(buf), "\n@ %.5f,%.5f",
-               fix.latitude_deg, fix.longitude_deg);
-      content += buf;
+  // The preset's telemetry selection packs as a FIELD_TELEMETRY blob
+  // (the Sideband convention - receivers render it natively), exactly
+  // like the web compose popover. Empty when nothing it asked for is
+  // available (e.g. position-only without a fix); the message still
+  // sends without it. share_s > 0 also grants the recipient live
+  // updates and carries the offer (window + rate).
+  ExtraFields extra;
+  extra.visible = true;   // user-composed via the device buttons
+  const uint8_t tel_items = p.telemetry_items();
+  if (tel_items != 0) {
+    extra.telemetry = TelemetryShare::pack_items(a->id, tel_items);
+    if (extra.telemetry.size() > 0 && p.tel_share_s > 0) {
+      extra.custom_meta = TelemetryShare::pack_meta(
+          p.tel_share_s, p.tel_rate_s, /*mark_message=*/false);
     }
   }
 
@@ -383,8 +430,15 @@ inline void send_selected() {
   // gateway send touches RNS state the web task also uses - so take
   // the lock here, exactly like a web handler would.
   Common::RnsLock::Guard rns_guard;
-  const bool ok = LXMFGateway::send(a->id, dest, "", content, nullptr,
-                                    rec, &err, &queued);
+  const bool ok = LXMFGateway::send(a->id, dest, "", p.content, nullptr,
+                                    rec, &err, &queued, /*use_seq=*/0,
+                                    extra.empty() ? nullptr : &extra);
+  // Same rule as the web send path: the live-share grant records only
+  // once the send is accepted (sent or queued), and a one-shot
+  // telemetry send supersedes any previous grant for this recipient.
+  if ((ok || queued) && extra.telemetry.size() > 0) {
+    TelemetryShare::record_grant(a->id, dest, tel_items, p.tel_share_s);
+  }
   _detail::sent_hash_ref() = rec.packet_hash;
   if (ok)          _detail::result_ref() = "Sent";
   else if (queued) _detail::result_ref() = "Finding route";
@@ -516,7 +570,7 @@ inline void render(GFXcanvas1& area) {
     area.drawFastHLine(0, 10, area.width(), 1);
     const int body_rows = (h - 16 - 12) / 8;
     _wrap_classic(area, _detail::msg_text_ref(), 16, body_rows);
-    _hints(area, {"Any button closes"});
+    _hints(area, {"Tap ANY: close"});
     return;
   }
   if (pg == Page::NoIdentity) {
@@ -526,7 +580,7 @@ inline void render(GFXcanvas1& area) {
     _line(area, 27, "is set.");
     _line(area, 38, "Enable one in the");
     _line(area, 45, "web app.");
-    if (h > 64) _hints(area, {"Any button closes"});
+    if (h > 64) _hints(area, {"Tap ANY: close"});
     return;
   }
   if (pg == Page::NoPresets) {
@@ -536,7 +590,7 @@ inline void render(GFXcanvas1& area) {
     _line(area, 27, "set up.");
     _line(area, 38, "Add some in the");
     _line(area, 45, "web app.");
-    if (h > 64) _hints(area, {"Any button closes"});
+    if (h > 64) _hints(area, {"Tap ANY: close"});
     return;
   }
   if (pg == Page::List) {
@@ -576,17 +630,17 @@ inline void render(GFXcanvas1& area) {
     _line(area, 27, to.c_str());
     const int body_rows = (h - 33 - 19) / 8;
     if (body_rows > 0) _wrap_classic(area, p.content, 33, body_rows);
-    _hints(area, {"Tap PWR: send", "Hold BOOT: back"});
+    _hints(area, {"Hold PWR: send", "Hold BOOT: back"});
     return;
   }
   if (pg == Page::Result) {
     _line(area, 7, "STATUS");
     area.drawFastHLine(0, 10, area.width(), 1);
-    area.setFont(nullptr);
-    area.setCursor(2, 24);
-    area.print(_detail::result_ref().c_str());
-    area.setFont(&Picopixel);
-    _hints(area, {"Updates live", "Any button closes"});
+    // The status wraps in the reading font - "Finding route" is wider
+    // than the 64 px panel on one line.
+    const int body_rows = (h - 16 - 19) / 8;
+    _wrap_classic(area, _detail::result_ref(), 16, body_rows > 0 ? body_rows : 1);
+    _hints(area, {"Tap ANY: close"});
     return;
   }
 }

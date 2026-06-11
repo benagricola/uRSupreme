@@ -630,6 +630,11 @@
         // endpoint) and added complexity to every code path that
         // touched MessageRecord.
         obj["body"]        = m.content;
+        if (m.has_telemetry) obj["tel"] = true;
+        if (m.telemetry.size() > 0) {
+          Telemetry::Telemeter::decode_into(obj["tele"].to<JsonObject>(),
+                                            m.telemetry.data(), m.telemetry.size());
+        }
         obj["body_size"]   = m.body_size;
         obj["sig_ok"]      = m.signature_ok;
         obj["status"]      = LXMF::outbox_status_name(m.status);
@@ -903,17 +908,58 @@
         }
       }
 
-      if (content.empty() && attachments.empty()) {
+      // Per-message telemetry attach (opt-in, like attaching a file):
+      // body.telemetry = {location, environment, battery, compass,
+      // share_s, rate_s}. Packs the selected sensors as
+      // FIELD_TELEMETRY - the convention Sideband renders natively.
+      // share_s > 0 makes it live: the recipient is granted requests
+      // for that window (TelemetryShare) AND the message carries the
+      // offer (window + rate) so a receiver running this firmware
+      // polls automatically at rate_s. A newer telemetry send
+      // supersedes the grant.
+      LXMF::ExtraFields extra;
+      uint8_t telemetry_items = 0;
+      uint32_t telemetry_share_s = 0;
+      if (body["telemetry"].is<JsonObjectConst>()) {
+        JsonObjectConst t = body["telemetry"].as<JsonObjectConst>();
+        uint8_t items = 0;
+        if ((bool)(t["location"]    | false)) items |= LXMF::TelemetryShare::ITEM_LOCATION;
+        if ((bool)(t["environment"] | false)) items |= LXMF::TelemetryShare::ITEM_ENVIRONMENT;
+        if ((bool)(t["battery"]     | false)) items |= LXMF::TelemetryShare::ITEM_BATTERY;
+        if ((bool)(t["compass"]     | false)) items |= LXMF::TelemetryShare::ITEM_COMPASS;
+        if (items != 0) {
+          extra.telemetry = LXMF::TelemetryShare::pack_items(requested, items);
+          if (extra.telemetry.size() == 0) {
+            send_error_with_message(req, 409, "no_readings",
+              "None of the selected readings are available right now.");
+            return;
+          }
+          telemetry_items   = items;
+          telemetry_share_s = (uint32_t)(t["share_s"] | 0);
+          // The urtn_msg marker makes a text-less telemetry send show
+          // as a message on the receiving end (machinery telemetry
+          // never carries it).
+          extra.custom_meta = LXMF::TelemetryShare::pack_meta(
+              telemetry_share_s,
+              telemetry_share_s > 0 ? (uint32_t)(t["rate_s"] | 60) : 0,
+              content.empty() && attachments.empty());
+        }
+      }
+      // A message needs SOMETHING - text, a file, or telemetry. The
+      // telemetry-only case sends like an image-only message does.
+      if (content.empty() && attachments.empty() && extra.telemetry.size() == 0) {
         send_error_with_message(req, 400, "missing_content",
-            "Message body is empty. Type something or attach a file before sending.");
+            "Message body is empty. Type something or attach something before sending.");
         return;
       }
+      extra.visible = true;   // user-composed: gets an outbox record + bubble
       LXMF::MessageRecord rec;
       const char* err = nullptr;
       bool queued = false;
       if (!LXMF::LXMFGateway::send(requested, to, title, content,
                                    attachments.empty() ? nullptr : &attachments,
-                                   rec, &err, &queued)) {
+                                   rec, &err, &queued, /*use_seq=*/0,
+                                   extra.empty() ? nullptr : &extra)) {
         if (!queued) {
           send_error_with_message(req, 503, "send_failed",
                                   err ? err : "Send failed for an unknown reason.");
@@ -923,6 +969,14 @@
         // optimistic "finding route" record - fall through to the 202 builder
         // so the SPA shows a live bubble keyed by rec.seq that the eventual
         // auto-send (same seq) or the give-up outbox_status event resolves.
+      }
+      // Record the live-share grant only once the send is accepted
+      // (sent or queued) - a refused send must not leave the peer able
+      // to request updates. A newer telemetry send supersedes the
+      // grant; share_s 0 (one-shot) removes any previous one.
+      if (telemetry_items != 0) {
+        LXMF::TelemetryShare::record_grant(requested, to, telemetry_items,
+                                           telemetry_share_s);
       }
       // The 202 response returns the full server-authoritative shape
       // of the just-created outbox record so the SPA's optimistic
@@ -942,6 +996,11 @@
       doc["ts"]          = rec.ts;
       doc["boot_epoch"]  = rec.boot_epoch;
       doc["received_ms"] = rec.received_ms;
+      if (rec.has_telemetry) doc["tel"] = true;
+      if (rec.telemetry.size() > 0) {
+        Telemetry::Telemeter::decode_into(doc["tele"].to<JsonObject>(),
+                                          rec.telemetry.data(), rec.telemetry.size());
+      }
       if (rec.packet_hash.size() > 0) doc["packet_hash"] = rec.packet_hash.toHex();
       if (!rec.attachments.empty()) {
         JsonArray atts = doc["attachments"].to<JsonArray>();

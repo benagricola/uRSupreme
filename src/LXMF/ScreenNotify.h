@@ -41,6 +41,8 @@ inline void screen_notify_incoming(const MessageRecord& rec) {
     body.assign(rec.content.c_str(), rec.content.size());
   } else if (!rec.attachments.empty()) {
     body = "(attachment)";
+  } else if (rec.has_telemetry) {
+    body = "(telemetry)";
   }
   Messenger::show_incoming(name, body);
 }

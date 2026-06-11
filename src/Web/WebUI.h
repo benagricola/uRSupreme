@@ -67,6 +67,7 @@ extern char             wr_hostname[10];
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
 #include "../LXMF/TelemetrySender.h"
+#include "../LXMF/TelemetryShare.h"
 #include "../LXMF/Messenger.h"
 #include "../LXMF/AnnounceLog.h"
 #include "AuthTokens.h"
@@ -838,6 +839,8 @@ namespace Web {
       on_http(HTTP_GET, ApiRoutes::TELEMETRY_CONFIG, handle_telemetry_config_get);
       on_json_post(ApiRoutes::TELEMETRY_CONFIG,     handle_telemetry_config_post);
       on_json_post(ApiRoutes::TELEMETRY_SEND,       handle_telemetry_send);
+      on_http(HTTP_GET, ApiRoutes::TELEMETRY_SHARES, handle_telemetry_shares_get);
+      on_json_post(ApiRoutes::TELEMETRY_SHARES_STOP, handle_telemetry_shares_stop);
       // OLED messenger presets.
       on_http(HTTP_GET, ApiRoutes::MESSENGER_PRESETS, handle_messenger_presets_get);
       on_json_post(ApiRoutes::MESSENGER_PRESETS,   handle_messenger_presets_post);

@@ -437,6 +437,11 @@ namespace LXMF {
         std::string pkt_hex = doc["pkt"] | "";
         rec.packet_hash.assignHex(pkt_hex.c_str());
       }
+      rec.has_telemetry = (bool)(doc["tel"] | false);
+      if (doc["telb"].is<const char*>()) {
+        std::string hex = doc["telb"] | "";
+        rec.telemetry.assignHex(hex.c_str());
+      }
       if (doc["att"].is<JsonArrayConst>()) {
         for (JsonObjectConst o : doc["att"].as<JsonArrayConst>()) {
           AttachmentMeta m;
@@ -466,6 +471,10 @@ namespace LXMF {
       doc["sig"]       = rec.signature_ok;
       doc["status"]    = outbox_status_name(rec.status);
       if (rec.packet_hash.size() > 0) doc["pkt"] = rec.packet_hash.toHex();
+      if (rec.has_telemetry) doc["tel"] = true;
+      // The packed blob (bounded at MAX_TELEMETRY_BLOB) persists as
+      // hex so the readings still render after a reload / reboot.
+      if (rec.telemetry.size() > 0) doc["telb"] = rec.telemetry.toHex();
       if (rec.stamp_checked) {
         doc["stamp_ok"] = rec.stamp_valid;
         if (rec.stamp_value >= 0) doc["stampv"] = rec.stamp_value;

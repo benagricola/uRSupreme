@@ -160,7 +160,7 @@
     <p class="muted">Enter the password you set when this identity was created. No physical-presence proof is needed for login: the password is the only key.</p>
     <label>Password</label>
     <input class="mb-3" id="login-pw" type="password" x-model="$store.s.forms.login.pw"
-           x-effect="$store.s.view === 'view-login' && $nextTick(() => $el.focus())"
+           x-effect="$store.s.view === 'view-login' && $nextTick(() => setTimeout(() => $el.focus(), 0))"
            @keydown.enter.prevent="onClickLoginGo($refs.loginGo)">
     <div class="row">
       <button class="secondary" id="btn-login-back" @click="enterIdentityPicker()">Back</button>
@@ -418,6 +418,39 @@
     <div id="thread-empty" class="empty-state" x-data x-show="!$store.s.openPeer" x-cloak>
       <div>Select a conversation, or start a new one with <strong>＋</strong>.</div>
     </div>
+    <!-- Active live-telemetry shares with the open chat. Sending side:
+         this device is answering the peer's update requests. Receiving
+         side: this device is fetching the peer's readings; the line
+         shows the latest values. Stop ends that direction only. -->
+    <span class="display-contents" x-data>
+      <template x-if="$store.s.openPeer && (telemetryGrantForOpenPeer() || telemetryFeedForOpenPeer())">
+        <div class="live-strip">
+          <span class="live-dot"></span>
+          <span class="live-label">Live updates</span>
+          <template x-if="telemetryGrantForOpenPeer()">
+            <span class="live-seg">
+              <span class="seg-label">Sending</span>
+              <template x-for="ico in telemetryGrantIcons()" :key="ico">
+                <span :class="ico"></span>
+              </template>
+              <span class="muted" x-text="_leftText(_shareLeftS(telemetryGrantForOpenPeer()))"></span>
+              <button class="secondary" @click="stopTelemetryShare('grant')">Stop</button>
+            </span>
+          </template>
+          <template x-if="telemetryFeedForOpenPeer()">
+            <span class="live-seg">
+              <span class="seg-label">Receiving</span>
+              <template x-for="(l, li) in telemetryFeedLines()" :key="li">
+                <span :class="l.ico" x-text="l.txt"></span>
+              </template>
+              <span class="muted" x-text="telemetryFeedUpdatedText()"></span>
+              <span class="muted" x-text="_leftText(_shareLeftS(telemetryFeedForOpenPeer()))"></span>
+              <button class="secondary" @click="stopTelemetryShare('feed')">Stop</button>
+            </span>
+          </template>
+        </div>
+      </template>
+    </span>
     <div id="thread-msgs"
          x-data
          x-show="$store.s.openPeer"
@@ -450,35 +483,33 @@
             <template x-if="attachmentVisible(a)">
               <span class="display-contents" x-data="{ a: a }">
                 <template x-if="attachmentMode(a) === 'sd_unreachable'">
-                  <div class="chip bg-chip-warn color-inherit mt-6" 
+                  <div class="chip bg-chip-warn color-inherit mt-6" :class="attachmentIconClass(a)"
             :title="'This attachment was saved on the SD card. Re-insert the card and reboot the device to recover it.'"
             x-text="attachmentLabel(a) + ' (SD card unavailable)'"></div>
                 </template>
                 <template x-if="attachmentMode(a) === 'click-to-load'">
-                  <button class="attachment-chip chip chip-btn"
-                          
+                  <button class="attachment-chip chip chip-btn" :class="attachmentIconClass(a)"
                           @click="downloadAttachment(state.identityId, a, $event.currentTarget, $event.currentTarget.parentElement)"
                           x-text="attachmentLabel(a) + ' (click to load)'"></button>
                 </template>
                 <template x-if="attachmentMode(a) === 'click-to-download'">
-                  <button class="attachment-chip chip chip-btn"
-                          
+                  <button class="attachment-chip chip chip-btn" :class="attachmentIconClass(a)"
                           @click="downloadAttachment(state.identityId, a, $event.currentTarget, $event.currentTarget.parentElement)"
                           x-text="attachmentLabel(a) + ' (click to download)'"></button>
                 </template>
                 <template x-if="attachmentMode(a) === 'static'">
-                  <div class="chip mt-6" 
+                  <div class="chip mt-6" :class="attachmentIconClass(a)"
             x-text="attachmentLabel(a)"></div>
                 </template>
                 <template x-if="attachmentMode(a) === 'inline-image'">
                   <div class="mt-6" x-init="loadAttachmentBlob(a)">
                     <template x-if="$store.s.attachmentBlobs[a.filename] === 'loading'">
-                      <div class="muted chip" 
+                      <div class="muted chip" :class="attachmentIconClass(a)"
                            x-text="attachmentLabel(a) + ' (loading…)'"></div>
                     </template>
                     <template x-if="isBlobFailed($store.s.attachmentBlobs[a.filename])">
                       <div class="chip-error">
-                        <div x-text="attachmentLabel(a) + ' (load failed)'"></div>
+                        <div :class="attachmentIconClass(a)" x-text="attachmentLabel(a) + ' (load failed)'"></div>
                         <div class="muted text-tiny mt-mini" 
                              x-text="$store.s.attachmentBlobs[a.filename] && $store.s.attachmentBlobs[a.filename].error"></div>
                         <button class="ghost mt-6 text-xs" 
@@ -495,12 +526,12 @@
                 <template x-if="attachmentMode(a) === 'inline-audio'">
                   <div class="mt-6" x-init="loadAttachmentBlob(a)">
                     <template x-if="$store.s.attachmentBlobs[a.filename] === 'loading'">
-                      <div class="muted chip" 
+                      <div class="muted chip" :class="attachmentIconClass(a)"
                            x-text="attachmentLabel(a) + ' (loading…)'"></div>
                     </template>
                     <template x-if="isBlobFailed($store.s.attachmentBlobs[a.filename])">
                       <div class="chip-error">
-                        <div x-text="attachmentLabel(a) + ' (load failed)'"></div>
+                        <div :class="attachmentIconClass(a)" x-text="attachmentLabel(a) + ' (load failed)'"></div>
                         <div class="muted text-tiny mt-mini" 
                              x-text="$store.s.attachmentBlobs[a.filename] && $store.s.attachmentBlobs[a.filename].error"></div>
                         <button class="ghost mt-6 text-xs" 
@@ -515,6 +546,31 @@
                 </template>
               </span>
             </template>
+          </template>
+          <!-- Telemetry that rode along in this message - decoded
+               readings, one line per sensor group. Shown on BOTH ends
+               (the sender sees exactly what went out). The position
+               line links to the map. -->
+          <template x-if="telemetryLines(m).length > 0">
+            <div class="telemetry-block mt-6">
+              <template x-for="(l, li) in telemetryLines(m)" :key="li">
+                <span class="display-contents">
+                  <template x-if="l.href">
+                    <a class="tline" :class="l.ico" target="_blank" rel="noopener"
+                       :href="l.href" x-text="l.txt"></a>
+                  </template>
+                  <template x-if="!l.href">
+                    <div class="tline" :class="l.ico" x-text="l.txt"></div>
+                  </template>
+                </span>
+              </template>
+              <template x-if="telemetryBubbleAge(m)">
+                <div class="tline muted" x-text="telemetryBubbleAge(m)"></div>
+              </template>
+            </div>
+          </template>
+          <template x-if="m.tel && telemetryLines(m).length === 0">
+            <div class="chip mt-6 ico-activity">Sensor readings</div>
           </template>
           <template x-if="msgMeta(m)">
             <div class="bmeta" x-text="msgMeta(m)"></div>
@@ -556,26 +612,43 @@
         <!-- microphone -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
       </button>
+      <button class="icon" id="btn-telemetry" title="Attach position and sensor readings"
+              :class="{ 'telemetry-armed': telemetryAttachActive() }"
+              @click="toggleTelemetryPopover($event)">
+        <!-- map pin -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+      </button>
       <input id="attach-file" type="file" hidden x-ref="attachFile" @change="onChangeAttachFile($event)">
       <div id="compose-mid">
         <div id="attach-tray" x-data="attachTrayData()" x-show="visible" x-cloak>
           <template x-if="recording">
             <div class="record-chip">
-              <span>🔴</span>
+              <span class="record-dot"></span>
               <span class="elapsed" x-text="recordElapsedText"></span>
               <button class="secondary" @click="stopRecording(true)">Stop</button>
               <button class="ghost" @click="stopRecording(false)">Cancel</button>
             </div>
           </template>
           <template x-for="(a, idx) in $store.s.pendingAttachments" :key="idx + ':' + a.filename">
-            <div class="attach-chip">
-              <span x-text="a.tag === FIELD_IMAGE ? '🖼' : a.tag === FIELD_AUDIO ? '🎙' : '📎'"></span>
+            <div class="attach-chip" :class="attachmentIconClass(a)">
               <span class="label" x-text="a.filename + ' · ' + (a.bytes ? formatBytes(a.bytes.length) : '…')"></span>
               <template x-if="attachEtaText(a)">
                 <span class="eta" x-text="attachEtaText(a)"></span>
               </template>
               <span class="drop" title="Drop attachment"
                     @click="$store.s.pendingAttachments.splice(idx, 1)">×</span>
+            </div>
+          </template>
+          <template x-if="telemetryAttachActive()">
+            <div class="attach-chip" :title="telemetryChipTitle()">
+              <template x-for="ico in telemetryChipIcons()" :key="ico">
+                <span :class="ico"></span>
+              </template>
+              <template x-if="telemetryChipSuffix()">
+                <span class="label" x-text="telemetryChipSuffix()"></span>
+              </template>
+              <span class="drop" title="Remove telemetry"
+                    @click="$store.s.forms.compose.telemetry = null; $store.s.popovers.telemetry = false">×</span>
             </div>
           </template>
         </div>
@@ -690,7 +763,7 @@
      hosts device-side state: storage, clock + RTC, on-board sensors. -->
 <div id="popover-system" class="popover" x-data="systemPopoverData()"
      x-show="$store.s.popovers.system"
-     x-effect="$store.s.popovers.system && (refreshSensorConfigUI(), refreshTelemetry())"
+     x-effect="$store.s.popovers.system && (refreshSensorConfigUI(), populateCollectorConfig())"
      x-cloak>
   <div class="popover-section">
     <div class="popover-row">
@@ -728,7 +801,7 @@
     </div>
     <div class="popover-value" id="sys-gps-pos" x-text="gpsPosText"></div>
     <div class="popover-subline" id="sys-gps-speed" x-show="gpsHaveFix" x-text="gpsFixTimeText"></div>
-    <div class="popover-subline" id="sys-gps-extra" x-show="gpsExtraText" x-text="gpsExtraText"></div>
+    <div class="popover-subline" id="sys-gps-extra" x-show="gpsExtraHTML" x-html="gpsExtraHTML"></div>
     <div class="popover-subline" id="sys-gps-rf" x-show="gpsRfText" x-text="gpsRfText"></div>
     <div class="popover-subline" id="sys-gps-age" x-text="$store.s.ui.sysGpsAge"></div>
     <div class="popover-config" data-role="config" x-show="sectionOpen.gps" x-cloak>
@@ -824,51 +897,17 @@
       </select>
     </div>
   </div>
-  <div class="popover-section" id="sys-section-telemetry"
-       :class="{ 'is-open': sectionOpen.telemetry }">
-    <div class="popover-row clickable" data-role="header" @click="toggleSection('telemetry')">
+  <!-- Status only - the collector configuration lives in Settings ->
+       Identity. Same layout as the sensor sections above: a pill on
+       the header row and a "Last sent Xs ago (dest)" subline. -->
+  <div class="popover-section" id="sys-section-telemetry">
+    <div class="popover-row">
       <div class="popover-label">Telemetry</div>
       <div id="sys-tele-line">
-        <span :class="telePillClass" x-text="telePillLabel"></span>
+        <span :class="collectorPillClass()" x-text="collectorPillLabel()"></span>
       </div>
-      <span class="popover-chev" data-role="chev">▾</span>
     </div>
-    <div class="popover-subline" x-text="teleStatusText"></div>
-    <div class="popover-config" data-role="config" x-show="sectionOpen.telemetry" x-cloak>
-      <label>
-        <input type="checkbox" x-model="tele.enabled" @change="saveTelemetry()">
-        <span>Send readings to a collector</span>
-      </label>
-      <input type="text" placeholder="Collector address (32 hex)" maxlength="32"
-             spellcheck="false" autocomplete="off"
-             x-model.trim="tele.collector" @change="saveTelemetry()">
-      <select x-model="tele.identity" @change="saveTelemetry()">
-        <option value="">First identity</option>
-        <template x-for="i in $store.s.identities" :key="i.id">
-          <option :value="i.id" x-text="i.display_name || i.id"></option>
-        </template>
-      </select>
-      <select x-model.number="tele.interval_s" @change="saveTelemetry()">
-        <template x-for="p in TELEMETRY_INTERVALS" :key="p.value">
-          <option :value="p.value" x-text="p.label"></option>
-        </template>
-      </select>
-      <label>
-        <input type="checkbox" x-model="tele.battery" @change="saveTelemetry()">
-        <span>Battery</span>
-      </label>
-      <label>
-        <input type="checkbox" x-model="tele.location" @change="saveTelemetry()">
-        <span>Location</span>
-      </label>
-      <label>
-        <input type="checkbox" x-model="tele.environment" @change="saveTelemetry()">
-        <span>Environment</span>
-      </label>
-      <button class="secondary w-full mt-2" @click="telemetrySendNow($event.currentTarget)">
-        Send now
-      </button>
-    </div>
+    <div class="popover-subline" x-text="$store.s.ui.sysTeleStatus"></div>
   </div>
 </div>
 
@@ -889,6 +928,49 @@
 <div id="popup-emoji" x-data x-show="$store.s.popovers.emoji" x-cloak>
   <template x-for="e in EMOJI" :key="e">
     <div class="emoji-cell" x-text="e" @click="onEmojiPick(e)"></div>
+  </template>
+</div>
+
+<!-- Telemetry attach popover, anchored above the compose bar's pin
+     button. Toggles bind straight into forms.compose.telemetry; the
+     tray chip and the armed button state react live. -->
+<div id="popup-telemetry" x-data x-show="$store.s.popovers.telemetry" x-cloak>
+  <template x-if="$store.s.forms.compose.telemetry">
+    <div>
+      <div class="font-bold mb-2">Attach to this message</div>
+      <label class="toggle-row">
+        <input type="checkbox" x-model="$store.s.forms.compose.telemetry.location">
+        <span class="ico-pin">Position</span>
+      </label>
+      <label class="toggle-row mt-1">
+        <input type="checkbox" x-model="$store.s.forms.compose.telemetry.compass">
+        <span class="ico-compass">Heading</span>
+      </label>
+      <label class="toggle-row mt-1">
+        <input type="checkbox" x-model="$store.s.forms.compose.telemetry.environment">
+        <span class="ico-thermo">Environment</span>
+      </label>
+      <label class="toggle-row mt-1">
+        <input type="checkbox" x-model="$store.s.forms.compose.telemetry.battery">
+        <span class="ico-battery">Battery</span>
+      </label>
+      <label class="mt-3">Live updates
+        <button type="button" class="info-icon" @click.stop data-info="For this long after the message, the recipient's device fetches fresh readings of the same items. 'None' shares a single snapshot. Stop sharing at any time from the bar above the chat."></button>
+      </label>
+      <select class="w-full" x-model.number="$store.s.forms.compose.telemetry.share_s">
+        <template x-for="o in TELEMETRY_SHARE_OPTIONS" :key="o.s">
+          <option :value="o.s" x-text="o.label" :selected="o.s === $store.s.forms.compose.telemetry.share_s"></option>
+        </template>
+      </select>
+      <div x-show="$store.s.forms.compose.telemetry.share_s > 0" x-cloak>
+        <label class="mt-3">Live update rate</label>
+        <select class="w-full" x-model.number="$store.s.forms.compose.telemetry.rate_s">
+          <template x-for="o in TELEMETRY_RATE_OPTIONS" :key="o.s">
+            <option :value="o.s" x-text="o.label" :selected="o.s === $store.s.forms.compose.telemetry.rate_s"></option>
+          </template>
+        </select>
+      </div>
+    </div>
   </template>
 </div>
 
@@ -1197,7 +1279,7 @@
            x-effect="$store.s.modals.idCode && $nextTick(() => $el.focus())"
            @keydown.enter.prevent="onClickIdcOk()">
     <div class="row">
-      <button class="secondary" id="btn-idc-cancel" @click="state.modals.idCode = false">Dismiss</button>
+      <button class="secondary" id="btn-idc-cancel" @click="onClickIdcCancel()">Dismiss</button>
       <button id="btn-idc-ok" @click="onClickIdcOk()">OK</button>
     </div>
   </div>
@@ -1277,6 +1359,115 @@
             <span>Discard messages without a valid stamp</span>
             <button type="button" class="info-icon" @click.stop data-info="When on, messages that arrive without the required stamp are discarded before reaching your inbox. When off, they are still delivered, just marked in the conversation."></button>
           </label>
+          <details class="cn-section mt-4" data-cn="telemetry-defaults">
+            <summary><span class="cn-title">Telemetry attachments</span>
+              <button type="button" class="info-icon" @click.stop data-info="Defaults for the pin button next to the message box. Each message starts from this selection; you can change it per message before sending."></button>
+            </summary>
+            <div class="cn-section-body">
+              <label class="toggle-row">
+                <input type="checkbox"
+                       x-model="$store.s.forms.identity.telLocation"
+                       @change="onChangeTelemetryDefaults()">
+                <span class="ico-pin">Position</span>
+              </label>
+              <label class="toggle-row mt-1">
+                <input type="checkbox"
+                       x-model="$store.s.forms.identity.telCompass"
+                       @change="onChangeTelemetryDefaults()">
+                <span class="ico-compass">Heading</span>
+              </label>
+              <label class="toggle-row mt-1">
+                <input type="checkbox"
+                       x-model="$store.s.forms.identity.telEnvironment"
+                       @change="onChangeTelemetryDefaults()">
+                <span class="ico-thermo">Environment</span>
+                <button type="button" class="info-icon" @click.stop data-info="Temperature, humidity and air pressure from the onboard sensor."></button>
+              </label>
+              <label class="toggle-row mt-1">
+                <input type="checkbox"
+                       x-model="$store.s.forms.identity.telBattery"
+                       @change="onChangeTelemetryDefaults()">
+                <span class="ico-battery">Battery</span>
+              </label>
+              <label class="mt-3">Live updates
+                <button type="button" class="info-icon" @click.stop data-info="For this long after a message with telemetry, the recipient's device fetches fresh readings of the same items. 'None' shares a single snapshot."></button>
+              </label>
+              <select x-model="$store.s.forms.identity.telShare"
+                      @change="onChangeTelemetryDefaults()">
+                <template x-for="o in TELEMETRY_SHARE_OPTIONS" :key="o.s">
+                  <option :value="String(o.s)" x-text="o.label"
+                          :selected="String(o.s) === $store.s.forms.identity.telShare"></option>
+                </template>
+              </select>
+              <label class="mt-3">Live update rate</label>
+              <select x-model="$store.s.forms.identity.telRate"
+                      @change="onChangeTelemetryDefaults()">
+                <template x-for="o in TELEMETRY_RATE_OPTIONS" :key="o.s">
+                  <option :value="String(o.s)" x-text="o.label"
+                          :selected="String(o.s) === $store.s.forms.identity.telRate"></option>
+                </template>
+              </select>
+            </div>
+          </details>
+          <details class="cn-section mt-4" data-cn="collector">
+            <summary><span class="cn-title">Collector reports</span>
+              <button type="button" class="info-icon" @click.stop data-info="Sends this device's sensor readings to a Sideband collector on a schedule. Separate from the telemetry you attach to individual messages."></button>
+            </summary>
+            <div class="cn-section-body">
+              <label class="toggle-row">
+                <input type="checkbox"
+                       x-model="$store.s.forms.collector.enabled"
+                       @change="saveCollectorConfig()">
+                <span>Send readings to a collector</span>
+              </label>
+              <label class="mt-3">Collector address</label>
+              <input type="text" maxlength="32" class="font-mono-inline" placeholder="32 hex characters"
+                     spellcheck="false" autocomplete="off"
+                     x-model.trim="$store.s.forms.collector.collector"
+                     @change="saveCollectorConfig()">
+              <label class="mt-3">Send as
+                <button type="button" class="info-icon" @click.stop data-info="Which of this device's accounts the reports are sent from. The default uses the first account."></button>
+              </label>
+              <select x-model="$store.s.forms.collector.identity" @change="saveCollectorConfig()">
+                <option value="" :selected="!$store.s.forms.collector.identity">First account on this device</option>
+                <template x-for="i in $store.s.identities" :key="i.id">
+                  <option :value="i.id" x-text="i.display_name || i.id"
+                          :selected="i.id === $store.s.forms.collector.identity"></option>
+                </template>
+              </select>
+              <label class="mt-3">Send every</label>
+              <select x-model.number="$store.s.forms.collector.interval_s" @change="saveCollectorConfig()">
+                <template x-for="p in TELEMETRY_INTERVALS" :key="p.value">
+                  <option :value="p.value" x-text="p.label"
+                          :selected="p.value === $store.s.forms.collector.interval_s"></option>
+                </template>
+              </select>
+              <label class="toggle-row mt-3">
+                <input type="checkbox" x-model="$store.s.forms.collector.location"
+                       @change="saveCollectorConfig()">
+                <span class="ico-pin">Position</span>
+              </label>
+              <label class="toggle-row mt-1">
+                <input type="checkbox" x-model="$store.s.forms.collector.compass"
+                       @change="saveCollectorConfig()">
+                <span class="ico-compass">Heading</span>
+              </label>
+              <label class="toggle-row mt-1">
+                <input type="checkbox" x-model="$store.s.forms.collector.environment"
+                       @change="saveCollectorConfig()">
+                <span class="ico-thermo">Environment</span>
+              </label>
+              <label class="toggle-row mt-1">
+                <input type="checkbox" x-model="$store.s.forms.collector.battery"
+                       @change="saveCollectorConfig()">
+                <span class="ico-battery">Battery</span>
+              </label>
+              <div class="row mt-3">
+                <button type="button" class="secondary" @click="collectorSendNow($event.currentTarget)">Send now</button>
+              </div>
+              <div class="muted mt-1" x-text="collectorStatusText()"></div>
+            </div>
+          </details>
           <label class="toggle-row mt-4">
             <input class="input-inline" type="checkbox" id="id-screen"
                    x-model="$store.s.forms.identity.screen"
@@ -1287,7 +1478,7 @@
           <details class="cn-section mt-4" data-cn="messenger"
                    x-show="$store.s.forms.identity.screen" x-cloak>
             <summary><span class="cn-title">Device messages</span>
-              <button type="button" class="info-icon" @click.stop data-info="Preset messages you can send from the device with its buttons. Up to 8. Stored with this account only, and cleared when its screen toggle turns off. Position is added when there is a GPS fix."></button>
+              <button type="button" class="info-icon" @click.stop data-info="Preset messages you can send from the device with its buttons. Up to 8. Stored with this account only, and cleared when its screen toggle turns off. Each message can attach telemetry and live updates, like messages composed here."></button>
             </summary>
             <div class="cn-section-body">
               <p class="muted">Each message needs a recipient before it appears on the device.</p>
@@ -1296,10 +1487,6 @@
                   <div class="preset-head">
                     <input type="text" maxlength="24" placeholder="Label (shown on the device)"
                            x-model.trim="p.label">
-                    <label class="toggle-row">
-                      <input class="input-inline" type="checkbox" x-model="p.gps">
-                      <span>Attach position</span>
-                    </label>
                   </div>
                   <!-- :selected on each option (not just :value on the
                        select) because the option list renders after the
@@ -1322,6 +1509,47 @@
                          x-model.trim="p.dest">
                   <textarea maxlength="200" rows="2" placeholder="Message" class="mt-1"
                             x-model="p.content"></textarea>
+                  <!-- Per-preset telemetry: the same options as the
+                       compose popover, sent with every use of this
+                       preset. -->
+                  <div class="preset-tel mt-1">
+                    <label class="toggle-row">
+                      <input type="checkbox" x-model="p.telemetry.location">
+                      <span class="ico-pin">Position</span>
+                    </label>
+                    <label class="toggle-row">
+                      <input type="checkbox" x-model="p.telemetry.compass">
+                      <span class="ico-compass">Heading</span>
+                    </label>
+                    <label class="toggle-row">
+                      <input type="checkbox" x-model="p.telemetry.environment">
+                      <span class="ico-thermo">Environment</span>
+                    </label>
+                    <label class="toggle-row">
+                      <input type="checkbox" x-model="p.telemetry.battery">
+                      <span class="ico-battery">Battery</span>
+                    </label>
+                  </div>
+                  <div class="row mt-1">
+                    <div>
+                      <label>Live updates</label>
+                      <select x-model.number="p.telemetry.share_s">
+                        <template x-for="o in TELEMETRY_SHARE_OPTIONS" :key="o.s">
+                          <option :value="o.s" x-text="o.label"
+                                  :selected="o.s === p.telemetry.share_s"></option>
+                        </template>
+                      </select>
+                    </div>
+                    <div x-show="p.telemetry.share_s > 0">
+                      <label>Live update rate</label>
+                      <select x-model.number="p.telemetry.rate_s">
+                        <template x-for="o in TELEMETRY_RATE_OPTIONS" :key="o.s">
+                          <option :value="o.s" x-text="o.label"
+                                  :selected="o.s === p.telemetry.rate_s"></option>
+                        </template>
+                      </select>
+                    </div>
+                  </div>
                   <div class="preset-foot">
                     <button type="button" class="secondary"
                             @click="$store.s.forms.messenger.presets.splice(i, 1)">Remove</button>
@@ -1352,12 +1580,9 @@
             <label class="cn-row-toggle" @click.stop>
               <span>Discoverable</span>
               <button type="button" class="info-icon" data-info="When on, this interface periodically emits an <code>rnstransport.discovery.interface</code> announce over LoRa. The announce contains this device's identity hash, radio parameters (frequency, bandwidth, SF, coding rate), and approximate location (if GPS has a fix) so other Reticulum nodes hearing it can decide whether they're configured to reach this device, and apps like <a href='https://rmap.world/info.html' target='_blank' rel='noopener'>rmap.world</a> can plot the device on a map."></button>
-              <span class="switch">
-                <input type="checkbox" id="rd-discoverable"
-                       x-model="$store.s.forms.radio.discoverable"
-                       @change="onChangeRdDiscoverable()">
-                <span class="switch-slider"></span>
-              </span>
+              <input type="checkbox" id="rd-discoverable"
+                     :checked="$store.s.forms.radio.discoverable"
+                     @change="onChangeRdDiscoverable($event.target)">
             </label>
           </summary>
           <div class="cn-section-body">
@@ -1626,7 +1851,7 @@
           </div>
         </div>
         <div class="card mt-3" >
-          <strong>Time sources (drag to reorder) <button type="button" class="info-icon" data-info="Top of the list = highest priority. Disable a source to skip it entirely. Some sources expose an interval: how often their driver polls."></button></strong>
+          <div class="mb-6"><strong>Time sources (drag to reorder) <button type="button" class="info-icon" data-info="Top of the list = highest priority. Disable a source to skip it entirely. Some sources expose an interval: how often their driver polls."></button></strong></div>
           <div id="tm-sources" x-data>
             <template x-for="row in $store.s.timeSources" :key="row.key">
               <div class="tm-source-row mb-6 border-elev2 rounded-6 bg-elev user-select-none overflow-hidden" :data-source="row.key" draggable="true"
@@ -1634,9 +1859,8 @@
                    >
                 <div class="flex items-center gap-8 px-10 py-2 cursor-grab" 
            @click="row.expanded = !row.expanded">
-                  <div class="opacity-50 text-14 line-height-1 w-14 text-center flex-0">⋮⋮</div>
-                  <input class="w-auto min-h-auto flex-0 mr-6" type="checkbox" data-role="enable"
-             
+                  <div class="opacity-50 text-14 line-height-1 text-center flex-0">⋮⋮</div>
+                  <input class="flex-0" type="checkbox" data-role="enable"
              :checked="row.enabled"
              @change.stop="row.enabled = $event.target.checked"
              @click.stop>
@@ -1841,6 +2065,7 @@ document.addEventListener('alpine:init', () => {
   })();
   state = Alpine.reactive(state);
   window.state = state;            // expose for console debugging
+  setInterval(() => { state.ui.nowS = Math.floor(Date.now() / 1000); }, 1000);
   Alpine.store('s',   state);
   Alpine.store('net', { connected: true });
   Alpine.store('toasts', {
@@ -1928,10 +2153,11 @@ let state = {
   },
   // Per-popover visibility flags. Same pattern as modals.
   popovers: {
-    status:  false,
-    system:  false,
-    power:   false,
-    emoji:   false,
+    status:    false,
+    system:    false,
+    power:     false,
+    emoji:     false,
+    telemetry: false,
   },
   // Active tab in the Settings modal. Drives :class="{ active: ... }"
   // on every #settings-tabs > .tab and #modal-settings .tab-panel.
@@ -1946,6 +2172,9 @@ let state = {
   // Row-menu popover state. null = closed; { items, x, y } when open.
   // items: [{ label, fn, destructive? }, ...]
   rowMenu: null,
+  // Active live-telemetry shares for the session identity. grants =
+  // peers we answer; feeds = peers we poll (with latest readings).
+  telemetryShares: { grants: [], feeds: [], fetchedAt: 0 },
   // Time-source rows in priority order. Each: { key, label, desc,
   // enabled, interval_s, hasInterval, expanded }.
   timeSources: [],
@@ -2075,11 +2304,21 @@ let state = {
     factoryReset2:   { code: '' },
     diag:            { kissOut: false },           // settings → Reset tab
     newConv:         { addr: '', name: '' },
-    compose:         { text: '' },
+    // compose.telemetry is null until the user opens the telemetry
+    // popover; then { location, environment, battery, compass,
+    // share_s }. Cleared on send and on chat switch (an attach is
+    // aimed at one recipient).
+    compose:         { text: '', telemetry: null },
     idCode:          { input: '' },          // physical-presence modal
     contactRename:   { addr: '', name: '' },
-    identity:        { displayName: '', announceInterval: '', persistOutbound: false, stampCost: '0', enforceStamps: false, screen: false },
+    identity:        { displayName: '', announceInterval: '', persistOutbound: false, stampCost: '0', enforceStamps: false, screen: false,
+                       telLocation: true, telEnvironment: false, telBattery: false, telCompass: false, telShare: '0', telRate: '60' },
     messenger:       { presets: [] },        // OLED messenger preset editor
+    // Collector reporting (Settings -> Identity); also feeds the
+    // system popover's telemetry status line.
+    collector:       { enabled: false, collector: '', identity: '', interval_s: 900,
+                       location: true, compass: false, environment: true, battery: true,
+                       last_result: 'never', last_error: '', last_sent_epoch: 0 },
     wifiAdd:         { ssid: '', psk: '', code: '' },
     tcpAdd:          { name: '', host: '', port: 4242 },
     radio:           { discoverable: false, preset: '__empty',
@@ -2130,7 +2369,12 @@ let state = {
     announceTitle: 'Announce me',    // title attr on #btn-announce-top
     micRecording:  false,            // adds .recording class to #btn-mic
     showCloseSettings: true,         // x-show on the X button in #modal-settings
-    sysClockNow: '',                 // wall-clock display in system popover
+    sysClockNow: '',
+    sysTeleStatus: '',
+    // Global 1 Hz heartbeat. Bindings that show ageing text (live
+    // strips, bubble telemetry ages) read this so they re-render each
+    // second without their own timers.
+    nowS: Math.floor(Date.now() / 1000),                 // wall-clock display in system popover
     sysClockSource: '',              // "Source: X" / "Last calibrated …"
     sysGpsAge: '',                   // sensor-age strings in system popover
     sysBmeAge: '',
@@ -2499,6 +2743,218 @@ function onEmojiPick(e) {
   state.popovers.emoji = false;
 }
 
+// ============================== TELEMETRY ATTACH ==============================
+// Live-share windows offered for telemetry updates. 0 = one-shot.
+// The server clamps anything above 24 h.
+const TELEMETRY_SHARE_OPTIONS = [
+  { s: 0,     label: 'None' },
+  { s: 900,   label: '15 minutes' },
+  { s: 3600,  label: '1 hour' },
+  { s: 14400, label: '4 hours' },
+];
+// How often the receiver's device fetches fresh readings during the
+// live window. The sender picks this; the receiver's firmware honors
+// it (floor 15 s server-side).
+const TELEMETRY_RATE_OPTIONS = [
+  { s: 30,   label: 'Every 30 seconds' },
+  { s: 60,   label: 'Every minute' },
+  { s: 300,  label: 'Every 5 minutes' },
+  { s: 900,  label: 'Every 15 minutes' },
+];
+const TELEMETRY_ITEMS = [
+  { key: 'location',    ico: 'ico-pin',     label: 'Position' },
+  { key: 'compass',     ico: 'ico-compass', label: 'Heading' },
+  { key: 'environment', ico: 'ico-thermo',  label: 'Environment' },
+  { key: 'battery',     ico: 'ico-battery', label: 'Battery' },
+];
+
+// True when the compose box has a telemetry attach with at least one
+// item selected. All-off counts as detached (nothing would be sent).
+function telemetryAttachActive() {
+  const t = state.forms.compose.telemetry;
+  return !!(t && (t.location || t.environment || t.battery || t.compass));
+}
+
+// Tray-chip: the selected items as icon classes, plus the live window
+// as a text suffix.
+function telemetryChipIcons() {
+  const t = state.forms.compose.telemetry;
+  if (!t) return [];
+  return TELEMETRY_ITEMS.filter(i => t[i.key]).map(i => i.ico);
+}
+function telemetryChipSuffix() {
+  const t = state.forms.compose.telemetry;
+  if (!t || !(t.share_s > 0)) return '';
+  const o = TELEMETRY_SHARE_OPTIONS.find(o => o.s === t.share_s);
+  return 'live ' + (o ? o.label.toLowerCase() : Math.round(t.share_s / 60) + ' min');
+}
+function telemetryChipTitle() {
+  const t = state.forms.compose.telemetry;
+  if (!t) return '';
+  return TELEMETRY_ITEMS.filter(i => t[i.key]).map(i => i.label).join(', ');
+}
+
+// Pin-button click. First open seeds the selection from the identity's
+// saved defaults (Settings → Identity); after that the object persists
+// until sent, removed, or the chat switches.
+function toggleTelemetryPopover(ev) {
+  if (state.popovers.telemetry) { state.popovers.telemetry = false; return; }
+  if (!state.forms.compose.telemetry) {
+    const d = (state.self && state.self.telemetry) || {};
+    state.forms.compose.telemetry = {
+      location:    d.location !== false,
+      environment: !!d.environment,
+      battery:     !!d.battery,
+      compass:     !!d.compass,
+      share_s:     Number(d.share_s || 0),
+      rate_s:      Number(d.rate_s || 60),
+    };
+  }
+  const pop    = $('popup-telemetry');
+  const anchor = ev.currentTarget;
+  const rect   = anchor.getBoundingClientRect();
+  pop.style.left   = Math.max(8, rect.left) + 'px';
+  pop.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+  state.popovers.telemetry = true;
+  setTimeout(() => {
+    const dismiss = (e2) => {
+      if (!pop.contains(e2.target) && !anchor.contains(e2.target)) {
+        state.popovers.telemetry = false;
+        document.removeEventListener('click', dismiss);
+      }
+    };
+    document.addEventListener('click', dismiss);
+  }, 0);
+}
+
+// Decoded readings (`tele` from the device serializers) as display
+// lines for a message bubble: one line per sensor group.
+function telemetryLines(m) {
+  const t = m.tele;
+  if (!t) return [];
+  const L = [];
+  if (typeof t.lat === 'number') {
+    let txt = t.lat.toFixed(5) + ', ' + t.lon.toFixed(5);
+    if (typeof t.acc_m === 'number' && t.acc_m > 0) txt += ' ±' + Math.round(t.acc_m) + ' m';
+    if (typeof t.speed_kmh === 'number' && t.speed_kmh >= 1) txt += ' · ' + Math.round(t.speed_kmh) + ' km/h';
+    L.push({ ico: 'ico-pin', txt,
+             href: 'https://www.openstreetmap.org/?mlat=' + t.lat + '&mlon=' + t.lon
+                 + '#map=16/' + t.lat + '/' + t.lon });
+  }
+  if (typeof t.mag_x === 'number') {
+    // Uncompensated heading from the horizontal field components -
+    // accurate when the device sits flat.
+    const deg = Math.round((Math.atan2(t.mag_y, t.mag_x) * 180 / Math.PI + 360) % 360);
+    L.push({ ico: 'ico-compass', txt: deg + '° ' + cardinal(deg) });
+  }
+  const env = [];
+  if (typeof t.temp_c === 'number')  env.push(t.temp_c.toFixed(1) + ' °C');
+  if (typeof t.hum_pct === 'number') env.push(Math.round(t.hum_pct) + ' %');
+  if (typeof t.mbar === 'number')    env.push(Math.round(t.mbar) + ' mbar');
+  if (env.length) L.push({ ico: 'ico-thermo', txt: env.join(' · ') });
+  if (typeof t.bat_pct === 'number') {
+    L.push({ ico: 'ico-battery', txt: Math.round(t.bat_pct) + '%' + (t.bat_chg ? ' charging' : '') });
+  }
+  return L;
+}
+
+// --- Live shares (grants we answer, feeds we poll) -----------------
+// Refreshed when a conversation opens, after a send, and patched live
+// by WS telemetry_update events. left_s counts down client-side from
+// fetchedAt.
+async function refreshTelemetryShares() {
+  try {
+    const r = await state.transport.getTelemetryShares();
+    const now = Date.now();
+    for (const f of (r.feeds || [])) {
+      f.updatedAtMs = f.age_ms != null ? now - f.age_ms : 0;
+    }
+    state.telemetryShares = {
+      grants: r.grants || [],
+      feeds:  r.feeds  || [],
+      fetchedAt: now,
+    };
+  } catch (e) { /* strip just stays hidden */ }
+}
+
+function _shareLeftS(entry) {
+  const elapsed = state.ui.nowS - (state.telemetryShares.fetchedAt || 0) / 1000;
+  return Math.max(0, (entry.left_s || 0) - elapsed);
+}
+
+// "updated now" / "updated 49s ago" for a live feed's latest readings.
+function telemetryFeedUpdatedText() {
+  const f = telemetryFeedForOpenPeer();
+  if (!f || !f.updatedAtMs) return '';
+  const sec = Math.max(0, state.ui.nowS - Math.floor(f.updatedAtMs / 1000));
+  if (sec < 3)    return 'updated now';
+  if (sec < 60)   return 'updated ' + sec + 's ago';
+  if (sec < 3600) return 'updated ' + Math.round(sec / 60) + 'm ago';
+  return 'updated ' + Math.round(sec / 3600) + 'h ago';
+}
+
+// Age of the readings attached to a message bubble, from the packed
+// SID_TIME stamp (the sender's clock).
+function telemetryBubbleAge(m) {
+  const t = m.tele;
+  if (!t || !t.time) return '';
+  const sec = state.ui.nowS - t.time;
+  if (sec < 0 || sec > 7 * 86400) return '';   // skewed peer clock - say nothing
+  if (sec < 3)    return 'updated now';
+  if (sec < 60)   return 'updated ' + Math.round(sec) + 's ago';
+  if (sec < 3600) return 'updated ' + Math.round(sec / 60) + 'm ago';
+  if (sec < 86400) return 'updated ' + Math.round(sec / 3600) + 'h ago';
+  return 'updated ' + Math.round(sec / 86400) + 'd ago';
+}
+
+// 16-point compass rose for a bearing in degrees.
+function cardinal(deg) {
+  const pts = ['N','NNE','NE','ENE','E','ESE','SE','SSE',
+               'S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return pts[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
+}
+
+function telemetryGrantForOpenPeer() {
+  const g = (state.telemetryShares.grants || []).find(g => g.peer === state.openPeer);
+  return (g && _shareLeftS(g) > 0) ? g : null;
+}
+function telemetryFeedForOpenPeer() {
+  const f = (state.telemetryShares.feeds || []).find(f => f.peer === state.openPeer);
+  return (f && _shareLeftS(f) > 0) ? f : null;
+}
+
+function _leftText(s) {
+  if (s >= 3600) return Math.round(s / 3600) + ' h left';
+  if (s >= 60)   return Math.round(s / 60) + ' min left';
+  return Math.round(s) + ' s left';
+}
+
+// Strip pieces. Icons render as CSS classes; only the words are text.
+function telemetryGrantIcons() {
+  const g = telemetryGrantForOpenPeer();
+  if (!g) return [];
+  const masks = { location: 1, environment: 2, battery: 4, compass: 8 };
+  return TELEMETRY_ITEMS.filter(i => g.items & masks[i.key]).map(i => i.ico);
+}
+function telemetryFeedLines() {
+  const f = telemetryFeedForOpenPeer();
+  return (f && f.tele) ? telemetryLines({ tele: f.tele }) : [];
+}
+
+async function stopTelemetryShare(role) {
+  const peer = state.openPeer;
+  if (!peer) return;
+  try {
+    const r = await state.transport.stopTelemetryShare(peer, role);
+    state.telemetryShares = {
+      grants: r.grants || [], feeds: r.feeds || [], fetchedAt: Date.now(),
+    };
+    toast(role === 'grant' ? 'Live updates stopped' : 'Stopped fetching updates', 'info');
+  } catch (e) {
+    toast('Could not stop: ' + (e.message || e), 'error');
+  }
+}
+
 // ============================== TRANSPORT ABSTRACTION ==============================
 // All network I/O the SPA does flows through a Transport instance. The HTTP
 // implementation below talks to the uR device's /api/* endpoints; a future
@@ -2516,7 +2972,7 @@ class Transport {
   async deleteIdentity(identityId)                { throw new Error('unimplemented'); }
   async getIdentity(identityId)                   { throw new Error('unimplemented'); }
   async getState(identityId, markers)             { throw new Error('unimplemented'); }
-  async send(identityId, destHex, title, content, attachments) { throw new Error('unimplemented'); }
+  async send(identityId, destHex, title, content, attachments, telemetry) { throw new Error('unimplemented'); }
   async announceNow(identityId)                   { throw new Error('unimplemented'); }
   async lookupPath(destHex)                       { throw new Error('unimplemented'); }
   subscribe(identityId, markers, onEvent)         { throw new Error('unimplemented'); }
@@ -2610,12 +3066,25 @@ class UReticulumHTTPTransport extends Transport {
   async getState(identityId) {
     return this._req(API.STATE);
   }
-  async send(identityId, destHex, title, content, attachments) {
+  async send(identityId, destHex, title, content, attachments, telemetry) {
     // Wire format (post-#130): attachments reference pre-uploaded staging
     // buffers by id. Bytes must have been pushed to /outbound/upload first.
     const body = { to: destHex, title: title || '', content };
     if (attachments && attachments.length) body.attachments = attachments;
+    // Telemetry attach: { location, environment, battery, compass,
+    // share_s }. The device packs current readings and, when share_s
+    // is set, records a live-share grant for this peer.
+    if (telemetry) body.telemetry = telemetry;
     return this._req(API.SEND, { method: 'POST', body });
+  }
+  // Active live-telemetry shares (grants + feeds) for the session
+  // identity, and stopping one direction of one.
+  async getTelemetryShares() {
+    return this._req(API.TELEMETRY_SHARES);
+  }
+  async stopTelemetryShare(peerHex, role) {
+    return this._req(API.TELEMETRY_SHARES_STOP,
+                     { method: 'POST', body: { peer: peerHex, role } });
   }
   // Upload bytes for a single attachment. Resolves to { staging_id, total_bytes, backend }.
   // Uses XHR (not fetch) so we can surface upload progress to the SPA tray.
@@ -2704,6 +3173,32 @@ class UReticulumHTTPTransport extends Transport {
     let reconnectAttempts = 0;
     let reconnectTimer = null;
     let pingTimer = null;
+    let authProbeBusy = false;
+    // After a few straight failures, find out WHY the socket keeps
+    // dying: if the device answers /api/info but rejects our token,
+    // this session was ended (another login evicted the single token,
+    // or the device was wiped) - reconnecting can never succeed, so
+    // drop back to the login screen instead of sitting behind the
+    // "Reconnecting" bar forever.
+    const probeDeadSession = async () => {
+      if (authProbeBusy || stopped) return;
+      authProbeBusy = true;
+      try {
+        const inf = await fetch(API.INFO);
+        if (inf.ok) {
+          const me = await fetch(API.IDENTITY,
+            { headers: { 'Authorization': 'Bearer ' + (this.tokenGetter() || '') } });
+          if (me.status === 401) {
+            stopped = true;
+            state.token = null;
+            localStorage.removeItem(LS.TOKEN);
+            location.reload();
+            return;
+          }
+        }
+      } catch (e) { /* device still down - the backoff keeps retrying */ }
+      authProbeBusy = false;
+    };
     const wsUrl = () => {
       const proto = (location.protocol === 'https:') ? 'wss:' : 'ws:';
       return proto + '//' + location.host
@@ -2739,6 +3234,7 @@ class UReticulumHTTPTransport extends Transport {
       // any state that may have drifted while disconnected.
       const delay = Math.min(30000, 500 * Math.pow(2, Math.min(reconnectAttempts, 6)));
       reconnectAttempts++;
+      if (reconnectAttempts >= 3) probeDeadSession();
       if (onEvent) onEvent({ type: '_reconnect' });
       reconnectTimer = setTimeout(open, delay);
     };
@@ -3125,13 +3621,19 @@ function attachmentVisible(a) {
   return !!a && (!!a.filename || !!a.display_name || (a.size > 0));
 }
 
-// Compose icon + name + size label. Display name comes from the
-// sender (Sideband convention); blank → fallback to type word.
+// Name + size label (text only - the type icon is a CSS class from
+// attachmentIconClass on the chip element). Display name comes from
+// the sender (Sideband convention); blank → fallback to type word.
 function attachmentLabel(a) {
-  const icon = a.tag === 5 ? '📎' : a.tag === 6 ? '🖼' : a.tag === 7 ? '🎙' : '📎';
   const typeWord = a.tag === 5 ? 'file' : a.tag === 6 ? 'image' : a.tag === 7 ? 'audio' : 'attachment';
   const name = (a.display_name || '').trim();
-  return icon + ' ' + (name || typeWord) + ' (' + formatBytes(a.size || 0) + ')';
+  return (name || typeWord) + ' (' + formatBytes(a.size || 0) + ')';
+}
+
+// CSS-mask icon class for an attachment's type (see styles.css
+// .ico-*::before).
+function attachmentIconClass(a) {
+  return a.tag === 6 ? 'ico-image' : a.tag === 7 ? 'ico-mic' : 'ico-file';
 }
 
 // Picks the variant template (the <template x-if> in the bubble
@@ -3364,6 +3866,10 @@ function upsertMessage(m) {
       existing.stamp_ok = m.stamp_ok;
       if (typeof m.stamp_value === 'number') existing.stamp_value = m.stamp_value;
     }
+    // Adopt telemetry the existing record lacked (e.g. the
+    // authoritative copy of an optimistic send).
+    if (m.tel && !existing.tel) existing.tel = true;
+    if (m.tele && !existing.tele) existing.tele = m.tele;
     // Adopt the incoming attachments when they're more complete than what
     // the bubble already carries: either more of them, or the authoritative
     // persisted (hash-filename) versions replacing an optimistic record's
@@ -3407,7 +3913,15 @@ async function selectConversation(peer) {
     state.pendingAttachments = [];
     renderAttachTray();
   }
+  if (state.openPeer !== peer) {
+    // A telemetry attach is aimed at one recipient; never carry it
+    // into another chat.
+    state.forms.compose.telemetry = null;
+    state.popovers.telemetry = false;
+  }
   state.openPeer = peer;
+  // Pick up any active live share with this peer for the strip.
+  refreshTelemetryShares();
   // Make sure a record exists even if empty. The conv-row "active"
   // highlight is now driven by Alpine's :class binding against
   // $store.s.openPeer; no manual DOM toggling needed.
@@ -3427,7 +3941,9 @@ function sendBtnBusy() {
 async function sendMessage() {
   const text = (state.forms.compose.text || '').trim();
   if (!state.openPeer) return;
-  if (!text && state.pendingAttachments.length === 0) return;
+  // Text, files or telemetry - any one makes a sendable message
+  // (a telemetry-only send works like an image-only one).
+  if (!text && state.pendingAttachments.length === 0 && !telemetryAttachActive()) return;
   // The textarea's :maxlength counts UTF-16 code units but the device
   // cap (and the 413 it returns) is UTF-8 bytes, so multibyte text can
   // pass the input limit and still be over-cap. Check real bytes here
@@ -3457,6 +3973,12 @@ async function sendMessage() {
   // works off these snapshots, not the live state.
   const peer    = state.openPeer;
   const pending = state.pendingAttachments;
+  // Telemetry rides the same snapshot rules as attachments: detach
+  // from the compose state now so a chat switch mid-send can't aim it
+  // at the wrong peer.
+  const telemetry = telemetryAttachActive() ? state.forms.compose.telemetry : null;
+  state.forms.compose.telemetry = null;
+  state.popovers.telemetry = false;
   state.pendingAttachments = [];
   renderAttachTray();
   state.busyButtons['btn-send'] = true;
@@ -3496,7 +4018,7 @@ async function sendMessage() {
     // filenames). Plug those directly into the optimistic record so
     // it has identifiers matching what the firmware will broadcast
     // via subsequent outbox_status events.
-    const r = await state.transport.send(state.identityId, peer, '', text, attachments);
+    const r = await state.transport.send(state.identityId, peer, '', text, attachments, telemetry);
     // Prefer server-side attachments (hash filenames, persisted
     // backend, server-canonical display_name) so the bubble can
     // render an inline preview immediately. Fall back to local
@@ -3540,7 +4062,11 @@ async function sendMessage() {
       status: r.status || 'sent',
       packet_hash: r.packet_hash || '',
       attachments: optimisticAttachments,
+      ...(r.tel ? { tel: true } : {}),
+      ...(r.tele ? { tele: r.tele } : {}),
     });
+    // A telemetry send may have started/replaced/ended a live share.
+    if (telemetry) refreshTelemetryShares();
     // Clear the compose text only if the user is still on the chat we sent
     // from; if they switched, the new chat owns the compose box now.
     if (state.openPeer === peer) {
@@ -3557,6 +4083,9 @@ async function sendMessage() {
     if (state.openPeer === peer && state.pendingAttachments.length === 0) {
       state.pendingAttachments = pending;
       renderAttachTray();
+    }
+    if (telemetry && state.openPeer === peer && !state.forms.compose.telemetry) {
+      state.forms.compose.telemetry = telemetry;
     }
   } finally {
     state.busyButtons['btn-send'] = false;
@@ -4165,7 +4694,7 @@ function attachTrayData() {
         }
       });
     },
-    get visible()   { return this.recording || (this.$store.s.pendingAttachments && this.$store.s.pendingAttachments.length > 0); },
+    get visible()   { return this.recording || (this.$store.s.pendingAttachments && this.$store.s.pendingAttachments.length > 0) || telemetryAttachActive(); },
     get recording() { return !!this.$store.s.recorder; },
     get recordElapsedText() {
       const ms = this.nowMs - (this.$store.s.recorderStartMs || this.nowMs);
@@ -4915,11 +5444,12 @@ function systemPopoverData() {
     // the first reading): "used/visible satellites \u00b7 signal N dB",
     // zeros and all. The module name is NOT repeated here - the age
     // line below already carries it.
-    get gpsExtraText() {
+    // Same shape as the Motion lines: label, values, dimmed unit.
+    get gpsExtraHTML() {
       const g = this._g;
       if (!g.available) return '';
-      return (g.sats || 0) + ' used \u00b7 ' + (g.sats_visible || 0) + ' visible \u00b7 signal '
-             + (g.snr_db || 0) + ' dB';
+      return 'Satellites ' + (g.sats_visible || 0) + ' seen / ' + (g.sats || 0)
+           + ' used \u00b7 max ' + vu(g.snr_db || 0, 'dB');
     },
     // RF health - MAX-M10 only, and then always shown: noise floor and
     // receiver gain say something useful even with zero satellites
@@ -4996,67 +5526,6 @@ function systemPopoverData() {
       return ageLine(im.taken_ms, im.model || 'imu');
     },
 
-    // -------- telemetry to collector --------
-    tele: { loaded: false, enabled: false, collector: '', identity: '',
-            interval_s: 900, battery: true, location: true, environment: true,
-            last_result: 'never', last_sent_epoch: 0 },
-    _teleApply(r) {
-      this.tele.loaded      = true;
-      this.tele.enabled     = !!r.enabled;
-      this.tele.collector   = r.collector || '';
-      this.tele.identity    = r.identity || '';
-      this.tele.interval_s  = r.interval_s || 900;
-      this.tele.battery     = r.battery !== false;
-      this.tele.location    = r.location !== false;
-      this.tele.environment = r.environment !== false;
-      this.tele.last_result = r.last_result || 'never';
-      this.tele.last_sent_epoch = r.last_sent_epoch || 0;
-    },
-    async refreshTelemetry() {
-      try {
-        this._teleApply(await state.transport._req(API.TELEMETRY_CONFIG));
-      } catch (e) { /* popover stays on last-known values */ }
-    },
-    async saveTelemetry() {
-      const t = this.tele;
-      const body = { enabled: t.enabled, collector: t.collector,
-                     identity: t.identity, interval_s: t.interval_s,
-                     battery: t.battery, location: t.location,
-                     environment: t.environment };
-      try {
-        this._teleApply(await state.transport._req(API.TELEMETRY_CONFIG, { method: 'POST', body }));
-      } catch (e) {
-        toast('Telemetry save failed: ' + (e.message || e), 'error');
-        await this.refreshTelemetry();
-      }
-    },
-    telemetrySendNow(btn) {
-      return withBusy(btn, async () => {
-        try {
-          const r = await state.transport._req(API.TELEMETRY_SEND, { method: 'POST', body: {} });
-          this._teleApply(r);
-          if (r.accepted) toast('Telemetry sent', 'success');
-          else toast('Telemetry not sent: ' + (r.last_error || r.last_result), 'error');
-        } catch (e) { toast('Telemetry send failed: ' + (e.message || e), 'error'); }
-      });
-    },
-    get telePillClass() {
-      if (!this.tele.enabled) return 'pill';
-      if (this.tele.last_result === 'failed' ||
-          this.tele.last_result === 'config_error' ||
-          this.tele.last_result === 'no_identity') return 'pill bad';
-      return 'pill ok';
-    },
-    get telePillLabel() {
-      if (!this.tele.enabled) return 'Off';
-      return TELE_RESULT_LABELS[this.tele.last_result] || this.tele.last_result;
-    },
-    get teleStatusText() {
-      if (!this.tele.enabled) return 'Periodic sensor readings over LXMF. Off.';
-      const when = this.tele.last_sent_epoch
-        ? fmtWallClock(this.tele.last_sent_epoch * 1000) : 'never';
-      return 'Last update: ' + when;
-    },
   };
 }
 
@@ -5064,8 +5533,71 @@ function systemPopoverData() {
 const TELE_RESULT_LABELS = {
   never: 'On', sent: 'Sent', delivered: 'Delivered', failed: 'Failed',
   finding_route: 'Finding route', config_error: 'Check address',
-  no_identity: 'No identity', pack_error: 'Failed',
+  no_identity: 'No identity', no_readings: 'No readings',
 };
+
+// ---- Collector reports: one model (state.forms.collector) shared by
+// the Settings form and the system popover's status line.
+function _collectorApply(r) {
+  Object.assign(state.forms.collector, {
+    enabled: !!r.enabled, collector: r.collector || '',
+    identity: r.identity || '', interval_s: r.interval_s || 900,
+    battery: r.battery !== false, location: r.location !== false,
+    environment: r.environment !== false, compass: !!r.compass,
+    last_result: r.last_result || 'never',
+    last_error:  r.last_error || '',
+    last_sent_epoch: r.last_sent_epoch || 0,
+  });
+}
+async function populateCollectorConfig() {
+  try { _collectorApply(await state.transport._req(API.TELEMETRY_CONFIG)); }
+  catch (e) { /* keep last-known values */ }
+}
+async function saveCollectorConfig() {
+  const c = state.forms.collector;
+  const body = { enabled: c.enabled, collector: c.collector, identity: c.identity,
+                 interval_s: c.interval_s, battery: c.battery, location: c.location,
+                 environment: c.environment, compass: c.compass };
+  try {
+    _collectorApply(await state.transport._req(API.TELEMETRY_CONFIG, { method: 'POST', body }));
+  } catch (e) {
+    toast('Could not save: ' + (e.message || e), 'error');
+    await populateCollectorConfig();
+  }
+}
+function collectorSendNow(btn) {
+  return withBusy(btn, async () => {
+    try {
+      const r = await state.transport._req(API.TELEMETRY_SEND, { method: 'POST', body: {} });
+      _collectorApply(r);
+      if (r.accepted) toast('Readings sent', 'success');
+      else toast('Not sent: ' + (r.last_error || r.last_result), 'error');
+    } catch (e) { toast('Send failed: ' + (e.message || e), 'error'); }
+  });
+}
+function collectorPillClass() {
+  const c = state.forms.collector;
+  if (!c.enabled) return 'pill';
+  if (c.last_result === 'failed' || c.last_result === 'config_error' ||
+      c.last_result === 'no_identity' || c.last_result === 'no_readings') return 'pill bad';
+  return 'pill ok';
+}
+function collectorPillLabel() {
+  const c = state.forms.collector;
+  if (!c.enabled) return 'Off';
+  return TELE_RESULT_LABELS[c.last_result] || c.last_result;
+}
+// Sensor-style status line: "Last sent 54s ago (f41214)".
+function collectorStatusText() {
+  const c = state.forms.collector;
+  if (!c.enabled) return 'Periodic sensor reports over LXMF. Off.';
+  const dest = c.collector ? ' (' + c.collector.slice(0, 6) + ')' : '';
+  if (!c.last_sent_epoch) return 'Not sent yet' + dest;
+  const sec = Math.max(0, Math.round(Date.now() / 1000 - c.last_sent_epoch));
+  const t = sec < 60 ? sec + 's' : sec < 3600 ? Math.round(sec / 60) + 'm'
+          : Math.round(sec / 3600) + 'h';
+  return 'Last sent ' + t + ' ago' + dest;
+}
 
 // The legacy storage-migrate click handler had no name; expose one so
 // the new @click in markup can reach it.
@@ -5110,6 +5642,8 @@ function tickSystemClock() {
     const nowMs = a.deviceUnixMs + (performance.now() - (a.localPerfMs || 0));
     state.ui.sysClockNow = fmtWallClock(nowMs);
   }
+  // Telemetry status line ages like the sensor "Last read" lines.
+  state.ui.sysTeleStatus = collectorStatusText();
   {
     const anchor = state.clockAnchor || {};
     const lastMs = Number(anchor.lastCalibratedMs || 0);
@@ -5686,6 +6220,8 @@ function dispatchEvent(ev) {
       // Stamp verdict rides along only when a stamp policy applied.
       ...(typeof m.stamp_ok === 'boolean' ? { stamp_ok: m.stamp_ok } : {}),
       ...(typeof m.stamp_value === 'number' ? { stamp_value: m.stamp_value } : {}),
+      ...(m.tel ? { tel: true } : {}),
+      ...(m.tele ? { tele: m.tele } : {}),
       attachments: m.attachments || [],
     });
     renderConversations();
@@ -5710,10 +6246,22 @@ function dispatchEvent(ev) {
       packet_hash: m.pkt || '',
       ...(typeof m.stamp_ok === 'boolean' ? { stamp_ok: m.stamp_ok } : {}),
       ...(typeof m.stamp_value === 'number' ? { stamp_value: m.stamp_value } : {}),
+      ...(m.tel ? { tel: true } : {}),
+      ...(m.tele ? { tele: m.tele } : {}),
       attachments: m.attachments || [],
     });
     renderConversations();
     if (state.openPeer === m.peer) renderThread();
+  } else if (ev.type === 'telemetry_update') {
+    // Fresh readings for a live feed. Patch the feed entry in place so
+    // the strip re-renders without a round-trip.
+    const f = (state.telemetryShares.feeds || []).find(f => f.peer === ev.peer);
+    if (f) {
+      f.tele        = ev.tele;
+      f.updatedAtMs = Date.now();
+    } else {
+      refreshTelemetryShares();   // feed we didn't know about yet
+    }
   } else if (ev.type === 'announce_seen') {
     // Convert the device's monotonic age_ms to a wall-clock anchor so
     // we can refresh "X ago" labels purely client-side.
@@ -6726,25 +7274,26 @@ window.addEventListener('scroll', _closeInfoTooltip, true);
 // Toggle handler for #rd-discoverable. Enabling requires an identity
 // code; disabling just POSTs. On error or cancel we flip the form-state
 // boolean back, which Alpine reflects through x-model.
-function onChangeRdDiscoverable() {
-  const wantOn = state.forms.radio.discoverable;
+function onChangeRdDiscoverable(el) {
+  const wantOn = el.checked;
+  // The switch shows the SAVED state only: snap the visual back until
+  // the server confirms the change. Enabling first needs the identity
+  // code, and a dismissed code prompt must leave the toggle off.
+  el.checked = state.forms.radio.discoverable;
   const apply = async (code) => {
     const body = { discoverable: wantOn };
     if (code) body.identity_code = code;
     try {
       await state.transport._req(API.LORA_DISCOVERABLE,
         { method: 'POST', body });
+      state.forms.radio.discoverable = wantOn;
       toast('LoRa interface ' + (wantOn ? 'is now publicly advertised' : 'is no longer advertised'));
     } catch (e) {
-      state.forms.radio.discoverable = !wantOn;
       toast('Could not save: ' + (e.message || e), 'error');
     }
   };
   if (wantOn) {
-    state.pendingIdCodeAction = (code) => {
-      if (!code) { state.forms.radio.discoverable = false; return; }
-      apply(code);
-    };
+    state.pendingIdCodeAction = (code) => { if (code) apply(code); };
     openIdCodeModal();
   } else {
     apply();
@@ -6856,6 +7405,12 @@ async function populateIdentityTab() {
       stampCost: String(me.stamp_cost ?? 0),
       enforceStamps: !!me.enforce_stamps,
       screen: !!me.screen,
+      telLocation:    !me.telemetry || me.telemetry.location !== false,
+      telEnvironment: !!(me.telemetry && me.telemetry.environment),
+      telBattery:     !!(me.telemetry && me.telemetry.battery),
+      telCompass:     !!(me.telemetry && me.telemetry.compass),
+      telShare:       String((me.telemetry && me.telemetry.share_s) || 0),
+      telRate:        String((me.telemetry && me.telemetry.rate_s) || 60),
     });
     populateMessengerPresets();
     // Remember the server-side last-saved name so onBlurIdName can no-op
@@ -6882,7 +7437,7 @@ function selectSettingsTab(tabId) {
   if (tabId === 'connectivity') { applyTransportCapabilities(); populateRadioTab(); populateWifiTab(); populateTcpClientsList(); populateDiagTab(); }
   if (tabId === 'discovery')    { populateDiscoveryTab(); }
   if (tabId === 'time')         { populateTimeTab(); }
-  if (tabId === 'identity')     populateIdentityTab();
+  if (tabId === 'identity')     { populateIdentityTab(); populateCollectorConfig(); }
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
   if (tabId === 'ui')           {
     state.forms.prefs.enterSends                = !!state.prefs.enterSends;
@@ -7314,6 +7869,28 @@ async function onChangeAnnounceInterval() {
   }
 }
 
+// Telemetry-attach defaults (Settings → Identity). Saved as one
+// object on any control change; the compose popover seeds from
+// state.self.telemetry, so mirror the save there too.
+async function onChangeTelemetryDefaults() {
+  const f = state.forms.identity;
+  const telemetry = {
+    location:    !!f.telLocation,
+    environment: !!f.telEnvironment,
+    battery:     !!f.telBattery,
+    compass:     !!f.telCompass,
+    share_s:     Number(f.telShare || 0),
+    rate_s:      Number(f.telRate || 60),
+  };
+  try {
+    await state.transport.setIdentitySettings(state.identityId, { telemetry });
+    if (state.self) state.self.telemetry = telemetry;
+    toast('Telemetry defaults updated', 'success');
+  } catch (err) {
+    toast('Could not update setting: ' + (err.message || err), 'error');
+  }
+}
+
 // Save the display name on blur (or Enter). No save on every keystroke
 // - peers don't see the new label until the next announce anyway, so
 // per-keystroke API calls would just churn the meta.json write. The
@@ -7381,6 +7958,7 @@ async function onChangeScreenIdentity() {
   }
   state.forms.identity.screen = false;  // pessimistic until confirmed
   state.pendingIdCodeAction = async (code) => {
+    if (!code) return;   // dismissed - the toggle already shows off
     try {
       await state.transport.setIdentitySettings(state.identityId,
         { screen: true, identity_code: code });
@@ -7401,7 +7979,15 @@ async function onChangeScreenIdentity() {
 function normalizeMessengerPresets(list) {
   return (list || []).map(p => ({
     label: p.label || '', dest: p.dest || '',
-    content: p.content || '', gps: !!p.gps,
+    content: p.content || '',
+    telemetry: {
+      location:    !!(p.telemetry && p.telemetry.location),
+      environment: !!(p.telemetry && p.telemetry.environment),
+      battery:     !!(p.telemetry && p.telemetry.battery),
+      compass:     !!(p.telemetry && p.telemetry.compass),
+      share_s:     Number((p.telemetry && p.telemetry.share_s) || 0),
+      rate_s:      Number((p.telemetry && p.telemetry.rate_s) || 60),
+    },
     _manual: false,   // editor-only: recipient select is on "Enter an address"
   }));
 }
@@ -7429,7 +8015,11 @@ function messengerDestKnown(addr) {
 
 function addMessengerPreset() {
   if (state.forms.messenger.presets.length >= 8) return;
-  state.forms.messenger.presets.push({ label: '', dest: '', content: '', gps: false });
+  state.forms.messenger.presets.push({
+    label: '', dest: '', content: '',
+    telemetry: { location: false, environment: false, battery: false,
+                 compass: false, share_s: 0, rate_s: 60 },
+  });
 }
 
 async function populateMessengerPresets() {
@@ -7795,6 +8385,14 @@ function onClickIdcOk() {
   const code = state.forms.idCode.input;
   state.modals.idCode = false;
   if (state.pendingIdCodeAction) { state.pendingIdCodeAction(code); state.pendingIdCodeAction = null; }
+}
+// Dismiss = cancel: the pending action still runs, with an empty code,
+// so its no-code branch can roll back any optimistic UI (e.g. snap a
+// toggle back off). Without this, dismissing left the requesting
+// control looking applied while the server never saw the change.
+function onClickIdcCancel() {
+  state.modals.idCode = false;
+  if (state.pendingIdCodeAction) { state.pendingIdCodeAction(''); state.pendingIdCodeAction = null; }
 }
 
 // ============================== WIFI PROVISIONED PANEL ==============================

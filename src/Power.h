@@ -635,15 +635,17 @@ bool init_pmu() {
     PMU->setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
     PMU->setPowerKeyPressOnTime(XPOWERS_POWERON_128MS);
 
-    // Power-key short press drives the OLED messenger (enter / back).
-    // Enable just that IRQ; the ISR only sets pmuInterrupt - the main
+    // Power-key presses drive the OLED messenger: short = navigate,
+    // long (the 1 s IRQ level, far inside the 4 s power-off hold) =
+    // confirm the send. The ISR only sets pmuInterrupt - the main
     // loop reads and clears the PMU's IRQ status over I2C
-    // (power_key_short_pressed below).
+    // (power_key_event below).
     pinMode(PMU_IRQ, INPUT_PULLUP);
     attachInterrupt(PMU_IRQ, setPmuFlag, FALLING);
     PMU->disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
     PMU->clearIrqStatus();
-    PMU->enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ);
+    ((XPowersAXP2101*)PMU)->setIrqLevelTime(XPOWERS_AXP2101_IRQ_TIME_1S);
+    PMU->enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ | XPOWERS_AXP2101_PKEY_LONG_IRQ);
 
     // It is necessary to disable the detection function of the TS pin on the board
     // without the battery temperature detection function, otherwise it will cause abnormal charging
@@ -677,19 +679,23 @@ void notify_led(bool blinking) {
   #endif
 }
 
-// Consume a power-key short press. True exactly once per press: the
-// ISR latches pmuInterrupt off the PMU's IRQ line; this reads and
-// clears the chip's IRQ status (one I2C transaction, and only after a
-// latched edge) and reports whether the cause was a PKEY short press.
-bool power_key_short_pressed() {
+// Consume a power-key press. 0 = none, 1 = short tap, 2 = held past
+// the IRQ level (1 s - released long before the 4 s hardware
+// power-off). Reports exactly once per press: the ISR latches
+// pmuInterrupt off the PMU's IRQ line; this reads and clears the
+// chip's IRQ status (one I2C transaction, and only after a latched
+// edge).
+uint8_t power_key_event() {
   #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
-    if (!pmuInterrupt || PMU == NULL) return false;
+    if (!pmuInterrupt || PMU == NULL) return 0;
     pmuInterrupt = false;
     PMU->getIrqStatus();
-    const bool short_press = PMU->isPekeyShortPressIrq();
+    uint8_t ev = 0;
+    if      (PMU->isPekeyShortPressIrq()) ev = 1;
+    else if (PMU->isPekeyLongPressIrq())  ev = 2;
     PMU->clearIrqStatus();
-    return short_press;
+    return ev;
   #else
-    return false;
+    return 0;
   #endif
 }

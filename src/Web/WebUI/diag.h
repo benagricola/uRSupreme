@@ -429,16 +429,17 @@
     static void handle_diag_display_post(AsyncWebServerRequest* req, JsonVariant& body) {
       if (!screen_capture_allowed(req)) return;
       #if defined(HAS_LXMF_GATEWAY)
-        // Keys mirror the physical inputs: power = PWR short press
-        // (forward), btn = user button short press (next), btn_hold =
-        // user button hold (back).
+        // Keys mirror the physical inputs: power = PWR tap (forward),
+        // power_hold = PWR held 1 s (confirm send), btn = user button
+        // tap (next), btn_hold = user button hold (back).
         const char* key = body["key"] | "";
-        if      (strcmp(key, "power")    == 0) LXMF::Messenger::on_power_key();
-        else if (strcmp(key, "btn")      == 0) LXMF::Messenger::on_user_button(100);
-        else if (strcmp(key, "btn_hold") == 0) LXMF::Messenger::on_user_button(1000);
+        if      (strcmp(key, "power")      == 0) LXMF::Messenger::on_power_key();
+        else if (strcmp(key, "power_hold") == 0) LXMF::Messenger::on_power_key_hold();
+        else if (strcmp(key, "btn")        == 0) LXMF::Messenger::on_user_button(100);
+        else if (strcmp(key, "btn_hold")   == 0) LXMF::Messenger::on_user_button(1000);
         else {
           send_error_with_message(req, 400, "bad_key",
-            "key must be power, btn, or btn_hold.");
+            "key must be power, power_hold, btn, or btn_hold.");
           return;
         }
         Common::PsramJsonDocument doc;

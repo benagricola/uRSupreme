@@ -36,6 +36,7 @@
 #include "LXMF/AnnounceLog.h"
 #include "LXMF/ScreenNotify.h"
 #include "LXMF/Messenger.h"
+#include "LXMF/TelemetryShare.h"
 #include "LXMF/RatchetBridge.h"
 #include "Common/LoopTiming.h"
 #if HAS_WIFI
@@ -3122,15 +3123,22 @@ void loop() {
   // tick packs ~100 bytes from cached sensor reads and hands off to
   // the LXMF send path.
   LXMF::TelemetrySender::tick();
-  // Power-key short press: enter the OLED messenger, or step back
-  // inside it. Cheap - one latched-flag check; the I2C IRQ-status read
-  // only happens after a real press.
-  if (power_key_short_pressed()) {
-    if (display_blanked) display_unblank();
-    LXMF::Messenger::on_power_key();
+  // Power-key presses drive the OLED messenger: tap = enter / pick,
+  // hold (1 s) = confirm the send. Cheap - one latched-flag check; the
+  // I2C IRQ-status read only happens after a real press.
+  {
+    const uint8_t pk = power_key_event();
+    if (pk != 0) {
+      if (display_blanked) display_unblank();
+      if (pk == 1) LXMF::Messenger::on_power_key();
+      else         LXMF::Messenger::on_power_key_hold();
+    }
   }
   // Messenger housekeeping (auto-dismiss of the result page).
   LXMF::Messenger::tick();
+  // Answer pending telemetry requests from peers holding a live-share
+  // grant. Cheap on the no-op path (empty pending queue).
+  LXMF::TelemetryShare::tick();
 
   // Retention prune. Time-based expirations fire even when no fresh
   // messages are arriving - without this, an idle device with TTL-

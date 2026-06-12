@@ -497,6 +497,14 @@ namespace Web {
       return u.hex6;
     }
 
+    // Cancel a pending code from the device side (a button tap on the
+    // code page). The web flow that requested it just sees the code
+    // expire; nothing is consumed.
+    static void dismiss_identity_code() {
+      id_code().hex6.clear();
+      id_code().consumed = false;
+    }
+
     static uint32_t identity_code_remaining_ms() {
       auto& u = id_code();
       if (u.hex6.empty() || u.consumed) return 0;

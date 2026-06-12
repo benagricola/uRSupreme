@@ -3376,6 +3376,15 @@ void button_event(uint8_t event, unsigned long duration) {
     if (was_blanked) display_unblank();
 
     #if defined(HAS_LXMF_GATEWAY)
+      // While the identity code is on screen it owns the panel (its
+      // render outranks the screen framework), so it must own the
+      // button too: any tap dismisses it. Without this, taps navigate
+      // the framework invisibly underneath for the code's full 60 s
+      // TTL - the "BOOT tap does nothing" trap.
+      if (duration <= 700 && !Web::WebUI::identity_code_for_display().empty()) {
+        Web::WebUI::dismiss_identity_code();
+        return;
+      }
       // Identity-code gesture: a 0.7-5 s hold arms it (below); the
       // next tap inside the window fires it, taking priority over the
       // screen framework's tap handling.

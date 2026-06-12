@@ -85,6 +85,13 @@ inline constexpr uint32_t PULSE_THRESHOLD_S    = 5 * 60;     // 5 min
 inline constexpr uint32_t PULSE_ACQUIRE_TIMEOUT_MS = 120000; // base: 2 min
 inline constexpr uint32_t PULSE_ACQUIRE_MAX_MS     = 300000; // progress cap: 5 min
 inline constexpr uint32_t PROGRESS_HOLD_MS         = 30000;  // "recently saw sats"
+// Identification probe retry. begin() sends one probe; a reply lost to
+// timing (the module mid-frame, or asleep - a sleeping M10 discards
+// the bytes that wake it) used to leave the module unidentified until
+// the next rail cycle. Re-probe at this cadence while unidentified;
+// probe_module() no-ops once a module binds, so this costs nothing
+// afterwards.
+inline constexpr uint32_t PROBE_RETRY_MS           = 10000;
 // M10 config delivery. WAKE_SETTLE: a PSMOO-inactive receiver discards
 // the bytes that wake it and needs time to bring its UART back before
 // it can hear a real frame; 150 ms is comfortably above the observed
@@ -496,6 +503,16 @@ inline void pump() {
   if (module() == Module::MAXM10) {
     _detail::m10_cfg_pump(now);
   }
+  if (module() == Module::Unknown && _detail::hw_powered_ref()) {
+    static uint32_t s_last_probe_ms = 0;
+    if (now - s_last_probe_ms >= PROBE_RETRY_MS) {
+      s_last_probe_ms = now;
+      // Wake first in case the receiver is power-saving (the wake byte
+      // is discarded; the probe frames behind it get through).
+      MaxM10::wake(*s);
+      probe_module();
+    }
+  }
 
   // ---- drain UART (only meaningful if powered) ----
   if (!_detail::hw_powered_ref()) return;
@@ -551,6 +568,7 @@ inline void pump() {
 
 // Read access for /api/gps. Caller gets a copy of the current fix.
 inline Fix last_fix() { return _detail::fix_ref(); }
+
 
 inline bool has_serial() { return _detail::serial_ref() != nullptr; }
 

@@ -26,6 +26,7 @@
 #include "Environment/BME280.h"
 #include "Position/Gnss.h"
 #include "Position/MaxM10.h"
+#include "PlanetView.h"
 
 namespace Sensors {
 namespace View {
@@ -98,69 +99,90 @@ namespace _detail {
   // meter the hero (what you watch on the balcony), a fix makes the
   // coordinates the hero. The clock-sync detail is intentionally
   // absent - it is not what someone holding the device wants here.
+  // The GPS screen is a dithered globe with the device's position
+  // marked on its surface (PlanetView). While searching it spins and
+  // the marker is hidden; on a fix it eases the device longitude to
+  // the front, drops a pin with a pulse, and holds there with the
+  // satellite orbiting for liveness.
   inline void gps_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+    using namespace PlanetView;
     const Gnss::Fix f = Gnss::last_fix();
     const Gnss::AcqStatus a = Gnss::acq_status();
     const uint32_t now = millis();
-    char buf[24], t[16], age[10];
 
-    // Quiet power-mode row pinned to the bottom of the body.
+    // Animation state, persisted across frames.
+    static float    rot_deg   = 0.0f;     // current globe longitude rotation
+    static bool     was_fixed = false;
+    static uint32_t fixed_ms  = 0;        // when the current fix landed
+
+    const int16_t cx = (int16_t)(area.width() / 2);
+    const int16_t cy = (int16_t)(y_top + PLANET_R + 2);
+    draw_stars(area, y_top, y_bottom, cx, cy, now);
+
+    if (f.valid) {
+      if (!was_fixed) { was_fixed = true; fixed_ms = now; }
+      // Ease the rotation so the device longitude faces front (front =
+      // lon - rot == 0, i.e. rot -> device lon).
+      float target = (float)f.longitude_deg;
+      float diff = target - rot_deg;
+      while (diff > 180.0f)  diff -= 360.0f;
+      while (diff < -180.0f) diff += 360.0f;
+      rot_deg += diff * 0.15f;            // critically-damped-ish ease
+    } else {
+      was_fixed = false;
+      rot_deg += 1.4f;                    // free spin while searching
+    }
+    if (rot_deg >= 360.0f) rot_deg -= 360.0f;
+    if (rot_deg < 0.0f)    rot_deg += 360.0f;
+    const int roti = (int)lrintf(rot_deg);
+
+    render_globe(area, cx, cy, roti);
+
+    // Satellite on a constrained orbit (stays in the body, ducks
+    // behind the globe). Phase from millis so it animates frame to
+    // frame regardless of redraw cadence.
+    const float oa = (now % 4000) * (2.0f * 3.14159265f / 4000.0f);
+    const int16_t ox = (int16_t)(cx + (PLANET_R + 6) * cosf(oa));
+    const int16_t oy = (int16_t)(cy + (PLANET_R - 4) * 0.6f * sinf(oa));
+    const bool behind = (cosf(oa) < 0.0f) && (abs(oy - cy) < PLANET_R);
+    if (!behind) {
+      int16_t sx = ox; if (sx < 3) sx = 3; if (sx > area.width() - 4) sx = (int16_t)(area.width() - 4);
+      draw_satellite(area, sx, oy);
+    }
+
+    // Marker: only when fixed and front-facing.
+    if (f.valid) {
+      int16_t mx, my;
+      if (project(f.latitude_deg, f.longitude_deg, roti, cx, cy, mx, my)) {
+        const int pulse = 2 + (int)((now - fixed_ms) / 60);
+        draw_marker(area, mx, my, /*locked=*/true, pulse < 14 ? pulse : -1);
+      }
+    }
+
+    // Text rows below the globe.
+    char buf[24];
+    const int16_t ty = (int16_t)(cy + PLANET_R + 6);
+    if (f.valid) {
+      Common::OledText::line(area, ty, "FIX");
+      snprintf(buf, sizeof(buf), "%.4f %.4f", f.latitude_deg, f.longitude_deg);
+      area.setFont(nullptr);
+      area.setCursor(2, (int16_t)(ty + 8));
+      area.print(buf);
+      area.setFont(&Picopixel);
+    } else {
+      Common::OledText::line(area, ty, "Locating");
+      snprintf(buf, sizeof(buf), "%u sats", (unsigned)f.sats_visible);
+      Common::OledText::line(area, (int16_t)(ty + 8), buf);
+    }
+    // Quiet power-mode row at the very bottom.
     const char* mode_str = "Location off";
     if (a.mode == Gnss::PowerMode::AlwaysOn) mode_str = "Always on";
     else if (a.mode == Gnss::PowerMode::Pulsed) {
-      snprintf(buf, sizeof(buf), "Auto, %lum cycle",
+      static char mbuf[20];
+      snprintf(mbuf, sizeof(mbuf), "Auto, %lum cycle",
                (unsigned long)(Gnss::power_config().interval_s / 60));
-      mode_str = buf;
+      mode_str = mbuf;
     }
-
-    if (!f.valid) {
-      // ---- SEARCHING: signal meter is the hero ----
-      const int16_t icon_y = (int16_t)(y_top + 4);
-      area.drawBitmap(2, icon_y, Display::Screens::GLYPH16_SAT, 16, 16, 1);
-      signal_bars(area, 24, (int16_t)(icon_y + 16), f.sats_visible);
-      snprintf(buf, sizeof(buf), "%u in view", (unsigned)f.sats_visible);
-      Common::OledText::line(area, (int16_t)(icon_y + 24), buf);
-
-      const int16_t cross_y = (int16_t)(icon_y + 32);
-      area.drawBitmap(2, cross_y, Display::Screens::GLYPH16_FIX_NONE, 16, 16, 1);
-      Common::OledText::line_at(area, 21, (int16_t)(cross_y + 5),
-                             a.ever_fixed ? "Fix lost" : "No fix yet");
-      if (a.mode == Gnss::PowerMode::Pulsed
-          && a.state == Gnss::PulseState::Acquiring) {
-        fmt_mmss(t, sizeof(t), now - a.started_ms);
-        snprintf(buf, sizeof(buf), "Search %s", t);
-        Common::OledText::line_at(area, 21, (int16_t)(cross_y + 13), buf);
-      } else if (a.mode == Gnss::PowerMode::Pulsed && a.next_attempt_ms != 0
-                 && (int32_t)(a.next_attempt_ms - now) > 0) {
-        fmt_mmss(t, sizeof(t), a.next_attempt_ms - now);
-        snprintf(buf, sizeof(buf), "Retry %s", t);
-        Common::OledText::line_at(area, 21, (int16_t)(cross_y + 13), buf);
-      } else {
-        Common::OledText::line_at(area, 21, (int16_t)(cross_y + 13), "Searching");
-      }
-    } else {
-      // ---- LOCKED: coordinates are the hero ----
-      const int16_t icon_y = (int16_t)(y_top + 4);
-      area.drawBitmap(2, icon_y, Display::Screens::GLYPH16_FIX_OK, 16, 16, 1);
-      Common::OledText::line_at(area, 21, (int16_t)(icon_y + 5), "FIX");
-      snprintf(buf, sizeof(buf), "%u sats", (unsigned)f.sats);
-      Common::OledText::line_at(area, 21, (int16_t)(icon_y + 13), buf);
-
-      int16_t y = (int16_t)(icon_y + 22);
-      area.setFont(nullptr);   // reading font: both lat and lon fit
-      snprintf(buf, sizeof(buf), "%.5f", f.latitude_deg);
-      area.setCursor(2, y); area.print(buf); y += 9;
-      snprintf(buf, sizeof(buf), "%.5f", f.longitude_deg);
-      area.setCursor(2, y); area.print(buf); y += 11;
-      area.setFont(&Picopixel);
-
-      fmt_age(age, sizeof(age), a.last_fix_ms);
-      if (f.acc_valid) snprintf(buf, sizeof(buf), "+/-%.0fm   %s", f.hacc_m, age);
-      else             snprintf(buf, sizeof(buf), "fixed %s ago", age);
-      Common::OledText::line(area, y, buf); y += 8;
-      signal_bars(area, 2, (int16_t)(y + 10), f.sats_visible);
-    }
-
     Common::OledText::line(area, (int16_t)(y_bottom - 4), mode_str);
   }
 

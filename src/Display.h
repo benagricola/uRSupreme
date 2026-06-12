@@ -157,6 +157,9 @@ bool display_blanked = false;
 bool display_tx = false;
 bool recondition_display = false;
 int disp_update_interval = 1000/disp_target_fps;
+// Redraw period while a live (animated) framework screen is up.
+static constexpr int LIVE_SCREEN_INTERVAL_MS = 80;   // ~12 fps
+
 int epd_update_interval = 1000/disp_target_fps;
 uint32_t last_page_flip = 0;
 int page_interval = 4000;
@@ -1271,7 +1274,11 @@ void update_display(bool blank = false) {
     }
 
   } else {
-    if (millis()-last_disp_update >= disp_update_interval) {
+    // Animated framework screens (the GPS globe) want a faster redraw
+    // than the idle status cadence; only while one is actually showing.
+    int eff_interval = disp_update_interval;
+    if (Display::Screens::active_live()) eff_interval = LIVE_SCREEN_INTERVAL_MS;
+    if (millis()-last_disp_update >= (uint32_t)eff_interval) {
       uint32_t current = millis();
       if (display_contrast != display_intensity) {
         display_contrast = display_intensity;

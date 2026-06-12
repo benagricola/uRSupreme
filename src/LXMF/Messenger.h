@@ -28,6 +28,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "../Common/OledText.h"
 #include <ArduinoJson.h>
 #include <Adafruit_GFX.h>
 #include <Fonts/Picopixel.h>
@@ -490,69 +491,7 @@ inline void tick() {
 //     deterministic. (Classic-font cursors are glyph-top, not
 //     baseline.)
 
-inline void _line(GFXcanvas1& area, int16_t y, const char* text) {
-  area.setCursor(2, y);
-  area.print(text);
-}
-
-// Truncate `text` until it measures inside `max_px` for the currently
-// selected font. Pixel-true, so near-mono fonts cannot clip.
-inline std::string _fit(GFXcanvas1& area, const std::string& text, int16_t max_px) {
-  std::string t = text;
-  int16_t x1, y1;
-  uint16_t w, hh;
-  while (!t.empty()) {
-    area.getTextBounds(t.c_str(), 0, 0, &x1, &y1, &w, &hh);
-    if ((int16_t)w + x1 <= max_px) break;
-    t.pop_back();
-  }
-  return t;
-}
-
-// Greedy word-wrap in the classic 6x8 font: exactly 10 columns, 8 px
-// per row, cursor at glyph top. The final row gets a trailing '~'
-// when text was left over.
-inline void _wrap_classic(GFXcanvas1& area, const std::string& text,
-                          int16_t y_top, int max_rows) {
-  constexpr size_t cols = 10;
-  area.setFont(nullptr);   // classic built-in font
-  size_t pos = 0;
-  int row = 0;
-  while (pos < text.size() && row < max_rows) {
-    size_t take = std::min(cols, text.size() - pos);
-    if (pos + take < text.size()) {
-      const size_t brk = text.rfind(' ', pos + take);
-      if (brk != std::string::npos && brk > pos) take = brk - pos;
-    }
-    std::string line = text.substr(pos, take);
-    // Newlines in content end the line early.
-    const size_t nl = line.find('\n');
-    if (nl != std::string::npos) { line.resize(nl); take = nl; }
-    if (row == max_rows - 1 && pos + take < text.size()) {
-      if (line.size() >= cols) line.resize(cols - 1);
-      line += "~";
-    }
-    area.setCursor(2, y_top + (int16_t)(row * 8));
-    area.print(line.c_str());
-    pos += take;
-    while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\n')) ++pos;
-    ++row;
-  }
-  area.setFont(&Picopixel);
-}
-
-// Bottom-anchored hint block, Picopixel, 7 px steps. Button names
-// match the board silkscreen: PWR, BOOT (RST is not software-
-// readable).
-inline void _hints(GFXcanvas1& area, std::initializer_list<const char*> lines) {
-  area.setFont(&Picopixel);
-  int16_t y = (int16_t)(area.height() - 2 - 7 * (lines.size() - 1));
-  area.drawFastHLine(0, y - 9, area.width(), 1);
-  for (const char* l : lines) {
-    _line(area, y, l);
-    y += 7;
-  }
-}
+// Text helpers shared with the sensors view live in Common/OledText.h.
 
 inline void render(GFXcanvas1& area) {
   area.fillRect(0, 0, area.width(), area.height(), 0 /*black*/);
@@ -566,35 +505,35 @@ inline void render(GFXcanvas1& area) {
   if (pg == Page::Message) {
     // Sender on the title row, message in the bigger classic font
     // below, dismiss hint at the bottom.
-    _line(area, 7, _fit(area, _detail::msg_from_ref(), 60).c_str());
+    Common::OledText::line(area, 7, Common::OledText::fit(area, _detail::msg_from_ref(), 60).c_str());
     area.drawFastHLine(0, 10, area.width(), 1);
     const int body_rows = (h - 16 - 12) / 8;
-    _wrap_classic(area, _detail::msg_text_ref(), 16, body_rows);
-    _hints(area, {"Tap ANY: close"});
+    Common::OledText::wrap_classic(area, _detail::msg_text_ref(), 16, body_rows);
+    Common::OledText::hints(area, {"Tap ANY: close"});
     return;
   }
   if (pg == Page::NoIdentity) {
-    _line(area, 7,  "MESSAGES");
+    Common::OledText::line(area, 7,  "MESSAGES");
     area.drawFastHLine(0, 10, area.width(), 1);
-    _line(area, 20, "No screen identity");
-    _line(area, 27, "is set.");
-    _line(area, 38, "Enable one in the");
-    _line(area, 45, "web app.");
-    if (h > 64) _hints(area, {"Tap ANY: close"});
+    Common::OledText::line(area, 20, "No screen identity");
+    Common::OledText::line(area, 27, "is set.");
+    Common::OledText::line(area, 38, "Enable one in the");
+    Common::OledText::line(area, 45, "web app.");
+    if (h > 64) Common::OledText::hints(area, {"Tap ANY: close"});
     return;
   }
   if (pg == Page::NoPresets) {
-    _line(area, 7,  "MESSAGES");
+    Common::OledText::line(area, 7,  "MESSAGES");
     area.drawFastHLine(0, 10, area.width(), 1);
-    _line(area, 20, "No messages are");
-    _line(area, 27, "set up.");
-    _line(area, 38, "Add some in the");
-    _line(area, 45, "web app.");
-    if (h > 64) _hints(area, {"Tap ANY: close"});
+    Common::OledText::line(area, 20, "No messages are");
+    Common::OledText::line(area, 27, "set up.");
+    Common::OledText::line(area, 38, "Add some in the");
+    Common::OledText::line(area, 45, "web app.");
+    if (h > 64) Common::OledText::hints(area, {"Tap ANY: close"});
     return;
   }
   if (pg == Page::List) {
-    _line(area, 7, "SEND");
+    Common::OledText::line(area, 7, "SEND");
     area.drawFastHLine(0, 10, area.width(), 1);
     _detail::Guard g;
     auto& v = _detail::presets_ref();
@@ -610,9 +549,9 @@ inline void render(GFXcanvas1& area) {
       area.setCursor(2, y);
       area.print(i == cur ? ">" : " ");
       area.setCursor(8, y);
-      area.print(_fit(area, v[idx[i]].label, 54).c_str());
+      area.print(Common::OledText::fit(area, v[idx[i]].label, 54).c_str());
     }
-    _hints(area, {"Tap PWR: pick", "Tap BOOT: next", "Hold BOOT: back"});
+    Common::OledText::hints(area, {"Tap PWR: pick", "Tap BOOT: next", "Hold BOOT: back"});
     return;
   }
   if (pg == Page::Confirm) {
@@ -621,26 +560,26 @@ inline void render(GFXcanvas1& area) {
     if (idx.empty()) { _detail::page_ref() = Page::NoPresets; return; }
     const size_t cur = _detail::cursor_ref() < idx.size() ? _detail::cursor_ref() : 0;
     const Preset& p = _detail::presets_ref()[idx[cur]];
-    _line(area, 7, "SEND?");
+    Common::OledText::line(area, 7, "SEND?");
     area.drawFastHLine(0, 10, area.width(), 1);
-    _line(area, 20, _fit(area, p.label, 60).c_str());
+    Common::OledText::line(area, 20, Common::OledText::fit(area, p.label, 60).c_str());
     // The recipient's prefix, then the message itself in the reading
     // font, so the holder confirms what actually goes out.
     const std::string to = "To: " + p.dest_hex.substr(0, 8);
-    _line(area, 27, to.c_str());
+    Common::OledText::line(area, 27, to.c_str());
     const int body_rows = (h - 33 - 19) / 8;
-    if (body_rows > 0) _wrap_classic(area, p.content, 33, body_rows);
-    _hints(area, {"Hold PWR: send", "Hold BOOT: back"});
+    if (body_rows > 0) Common::OledText::wrap_classic(area, p.content, 33, body_rows);
+    Common::OledText::hints(area, {"Hold PWR: send", "Hold BOOT: back"});
     return;
   }
   if (pg == Page::Result) {
-    _line(area, 7, "STATUS");
+    Common::OledText::line(area, 7, "STATUS");
     area.drawFastHLine(0, 10, area.width(), 1);
     // The status wraps in the reading font - "Finding route" is wider
     // than the 64 px panel on one line.
     const int body_rows = (h - 16 - 19) / 8;
-    _wrap_classic(area, _detail::result_ref(), 16, body_rows > 0 ? body_rows : 1);
-    _hints(area, {"Tap ANY: close"});
+    Common::OledText::wrap_classic(area, _detail::result_ref(), 16, body_rows > 0 ? body_rows : 1);
+    Common::OledText::hints(area, {"Tap ANY: close"});
     return;
   }
 }

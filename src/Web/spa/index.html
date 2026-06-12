@@ -793,7 +793,7 @@
        :class="{ 'is-open': sectionOpen.gps }"
        x-show="gpsAvailable" x-cloak>
     <div class="popover-row clickable" data-role="header" @click="toggleSection('gps')">
-      <div class="popover-label">Position <button type="button" class="info-icon" @click.stop data-info="Satellites: how many are used in the position fix and how many are visible in the sky. Signal: the strongest satellite, in dB. Noise: the receiver's own relative noise level (no unit, lower is better). Gain: how hard the receiver is amplifying, as a percentage of maximum. High noise with high gain explains a missing fix; low noise with low gain just means no sky view."></button></div>
+      <div class="popover-label">Position</div>
       <div id="sys-gps-line">
         <span :class="gpsPillClass" x-text="gpsPillLabel"></span>
       </div>
@@ -806,21 +806,13 @@
     <div class="popover-subline" id="sys-gps-age" x-text="$store.s.ui.sysGpsAge"></div>
     <div class="popover-config" data-role="config" x-show="sectionOpen.gps" x-cloak>
       <label>
-        <input type="checkbox" :checked="$store.s.gpsSource.enabled"
-               @change="onGpsLocationChange($event.target)">
+        <input type="checkbox" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.gps ? $store.s.system.sensors.gps.enabled : false"
+               @change="onSensorConfigChange('gps', $event.target)">
         <span>Enabled</span>
       </label>
-      <label>Location updates <button type="button" class="info-icon" data-info="How often the receiver wakes for a position. Always on gives the fastest first fix and live tracking; longer intervals save battery once a fix has been seen."></button></label>
-      <select :value="String($store.s.gpsSource.interval_s)"
-              @change="onGpsLocationChange($event.target)">
+      <select :value="gpsLocationCurrent()"
+              @change="onSensorConfigChange('gps', $event.target)">
         <template x-for="p in GPS_INTERVALS" :key="p.value">
-          <option :value="String(p.value)" x-text="p.label"></option>
-        </template>
-      </select>
-      <label>Clock sync <button type="button" class="info-icon" data-info="How often GPS time is allowed to set the clock while position data is flowing. Does not wake the receiver."></button></label>
-      <select :value="String($store.s.gpsSource.clock_interval_s)"
-              @change="onGpsClockChange($event.target)">
-        <template x-for="p in GPS_CLOCK_INTERVALS" :key="p.value">
           <option :value="String(p.value)" x-text="p.label"></option>
         </template>
       </select>
@@ -2186,9 +2178,9 @@ let state = {
   // Time-source rows in priority order. Each: { key, label, desc,
   // enabled, interval_s, hasInterval, expanded }.
   timeSources: [],
-  // GPS time-source config (enable + duty-cycle interval_s), loaded from
-  // /api/time/sources when the system popover opens; bound by the GPS row.
-  gpsSource: { enabled: true, interval_s: 0, clock_interval_s: 0, priority: 99 },
+  // GPS is a normal sensor: its enable + location interval live in
+  // state.system.sensors.gps (like the other sensors); its clock-sync
+  // "Refresh" lives in the time-sources list. No dedicated store object.
   // Singleton info-tooltip state. null = closed. { html, x, y } open.
   infoTip: null,
   // Image-resize picker state. Populated by openImageResizePicker; the
@@ -5740,9 +5732,6 @@ async function openSystemPopover() {
   state.popovers.status = false;
   state.popovers.system = true;
   startSystemTicker();
-  // GPS enable/duty-cycle lives in /api/time/sources, not the WS snapshot -
-  // load it so the GPS section's config row reflects the real schedule.
-  loadGpsSource();
   setTimeout(() => {
     const dismiss = (ev) => {
       if (popoverDismissibleClick(ev, 'popover-system', 'btn-system')) {
@@ -5906,23 +5895,6 @@ const GPS_INTERVALS = [
   { value: 1800, label: 'Every 30 min' },
   { value: 3600, label: 'Every hour' },
 ];
-// Clock-sync presets (how often a live fix may set the clock - a
-// Clock::Manager setting with no effect on receiver power).
-const GPS_CLOCK_INTERVALS = [
-  { value: 0,     label: 'Once at boot' },
-  { value: 3600,  label: 'Every hour' },
-  { value: 21600, label: 'Every 6 hours' },
-  { value: 86400, label: 'Every day' },
-];
-function gpsClockIntervalSnap(secs) {
-  const n = Number(secs) || 0;
-  let best = 0, bestDist = Infinity;
-  for (const p of GPS_CLOCK_INTERVALS) {
-    const d = Math.abs((n || 0) - p.value);
-    if (d < bestDist) { best = p.value; bestDist = d; }
-  }
-  return best;
-}
 function gpsIntervalSnap(secs) {
   const n = Number(secs) || 0;
   for (const p of GPS_INTERVALS) if (p.value === n) return p.value;
@@ -5935,46 +5907,13 @@ function gpsIntervalSnap(secs) {
   }
   return best;
 }
-// Two GPS settings back the popover row: location updates (receiver
-// power; sensors config) and clock sync (Clock::Manager; time
-// sources). Both arrive in the system snapshot's gps sensor block;
-// the time-sources priority still comes from /api/time.
-async function loadGpsSource() {
-  try {
-    const t = await state.transport._req(API.TIME_SOURCES);
-    const g = (t.sources && t.sources.gps) || {};
-    const sys = (state.system && state.system.sensors && state.system.sensors.gps) || {};
-    state.gpsSource = {
-      enabled:    sys.enabled !== false,
-      interval_s: gpsIntervalSnap(Math.round((sys.interval_ms || 0) / 1000)),
-      clock_interval_s: gpsClockIntervalSnap(
-        sys.clock_interval_s != null ? sys.clock_interval_s : g.interval_s),
-      priority:   (g.priority != null) ? g.priority : 99,
-    };
-  } catch (_) { /* keep defaults */ }
-}
-async function onGpsLocationChange(sourceEl) {
-  if (sourceEl.type === 'checkbox') state.gpsSource.enabled = sourceEl.checked;
-  else state.gpsSource.interval_s = Math.max(0, parseInt(sourceEl.value, 10) || 0);
-  const g = state.gpsSource;
-  try {
-    await state.transport._req(API.SENSORS_CONFIG, { method: 'POST',
-      body: { sensor: 'gps', enabled: !!g.enabled, interval_s: g.interval_s } });
-    toast('Location schedule updated', 'success');
-  } catch (e) {
-    toast('Location update failed: ' + (e.message || e), 'error');
-  }
-}
-async function onGpsClockChange(sourceEl) {
-  state.gpsSource.clock_interval_s = Math.max(0, parseInt(sourceEl.value, 10) || 0);
-  const g = state.gpsSource;
-  try {
-    await state.transport._req(API.TIME_SOURCES, { method: 'POST',
-      body: { sources: { gps: { enabled: true, priority: g.priority, interval_s: g.clock_interval_s } } } });
-    toast('Clock sync updated', 'success');
-  } catch (e) {
-    toast('Clock sync update failed: ' + (e.message || e), 'error');
-  }
+// GPS is a normal sensor now: enable + location interval go through the
+// shared onSensorConfigChange (POST /api/sensors/config) like every other
+// sensor, and the clock-sync "Refresh" lives in the time-sources list.
+// This just snaps the current location interval for the popover select.
+function gpsLocationCurrent() {
+  const sys = (state.system && state.system.sensors && state.system.sensors.gps) || {};
+  return String(gpsIntervalSnap(Math.round((sys.interval_ms || 0) / 1000)));
 }
 
 // @change handler shared by the checkbox + select inputs in each
@@ -7630,7 +7569,9 @@ const TIME_SOURCE_LABELS = {
 // the only time source that's also a physical sensor). The Time tab
 // keeps the priority/enable knob for GPS but hides the interval
 // dropdown to avoid having two homes for the same value.
-const TIME_SOURCE_HAS_INTERVAL = { gps: false, ntp: true, browser: false, rns: false };
+// GPS's interval here is the clock-sync "Refresh": how often a live fix
+// may resync the clock. Location power lives in the sensors popover.
+const TIME_SOURCE_HAS_INTERVAL = { gps: true, ntp: true, browser: false, rns: false };
 
 // Live-ticking clock state. Anchor = the moment we last got an
 // authoritative reading from the device, captured as (deviceUnixMs,

@@ -41,6 +41,9 @@ namespace Sensors {
 namespace SensorConfig {
 
 inline constexpr const char* CONFIG_PATH = "/lxmf/sensors.json";
+// Magnetometer hard-iron calibration bounds, kept in their own file so a
+// good compass calibration survives reboots and app reflashes.
+inline constexpr const char* MAGCAL_PATH = "/lxmf/magcal.json";
 
 // One-time migration for configs predating the location/clock split:
 // the GPS interval used to live solely in Clock::Manager and did
@@ -112,6 +115,42 @@ inline void persist(microStore::FileSystem& fs) {
 //
 // GPS persists here like every other sensor; the update reaches
 // Sensors::Gnss immediately (power mode follows on its next pump).
+// Restore the magnetometer calibration bounds saved by save_mag_cal.
+// Call once at boot, after QMC6310::begin. Safe if the file is absent.
+inline void load_mag_cal(microStore::FileSystem& fs) {
+  if (!fs.exists(MAGCAL_PATH)) return;
+  std::vector<uint8_t> data;
+  if (fs.readFile(MAGCAL_PATH, data) == 0) return;
+  Common::PsramJsonDocument doc;
+  if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
+  if (!doc["seeded"].as<bool>()) return;
+  JsonArrayConst a = doc["b"].as<JsonArrayConst>();
+  if (a.isNull() || a.size() != 6) return;
+  float b[6];
+  for (int i = 0; i < 6; ++i) b[i] = a[i].as<float>();
+  Sensors::QMC6310::set_cal_bounds(b);
+}
+
+// Write the current magnetometer calibration bounds. Called from the
+// main loop when QMC6310::take_cal_dirty() fires - that is once when a
+// calibration completes or is reset, so it is a rare, small write.
+inline void save_mag_cal(microStore::FileSystem& fs) {
+  Common::PsramJsonDocument doc;
+  const bool seeded = Sensors::QMC6310::cal_seeded();
+  doc["seeded"] = seeded;
+  if (seeded) {
+    float b[6];
+    Sensors::QMC6310::get_cal_bounds(b);
+    JsonArray a = doc["b"].to<JsonArray>();
+    for (int i = 0; i < 6; ++i) a.add(b[i]);
+  }
+  String out;
+  serializeJson(doc, out);
+  fs.writeFile(MAGCAL_PATH,
+               reinterpret_cast<const uint8_t*>(out.c_str()),
+               out.length());
+}
+
 inline bool update_one(microStore::FileSystem& fs, const char* key,
                        bool enabled, uint32_t interval_s) {
   const uint32_t iv_ms = interval_s * 1000UL;

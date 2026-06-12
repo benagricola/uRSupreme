@@ -200,11 +200,14 @@
         o["interval_ms"] = (uint32_t)Sensors::QMC6310::interval_ms();
         o["valid"]       = r.valid;
         if (r.valid) {
-          o["heading_deg"] = r.heading_deg;
-          o["x_uT"]        = r.x_uT;
-          o["y_uT"]        = r.y_uT;
-          o["z_uT"]        = r.z_uT;
-          o["taken_ms"]    = (uint32_t)r.taken_ms;
+          o["heading_deg"]  = r.heading_deg;
+          o["x_uT"]         = r.x_uT;
+          o["y_uT"]         = r.y_uT;
+          o["z_uT"]         = r.z_uT;
+          o["field_uT"]     = r.field_uT;     // hard/soft-iron corrected |B|
+          o["cal_ready"]    = r.cal_ready;
+          o["cal_progress"] = r.cal_progress;
+          o["taken_ms"]     = (uint32_t)r.taken_ms;
         }
         if (Sensors::QMC6310::present()) o["address"] = Sensors::QMC6310::address();
         return r.taken_ms;

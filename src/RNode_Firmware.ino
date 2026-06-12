@@ -1275,6 +1275,9 @@ void setup() {
     // top of the driver defaults. No-op if /lxmf/sensors.json doesn't
     // exist yet (factory state).
     Sensors::SensorConfig::load(filesystem);
+    // Restore the saved magnetometer calibration so the compass works
+    // from boot without re-waving the device. No-op if never calibrated.
+    Sensors::SensorConfig::load_mag_cal(filesystem);
     // Screen rotation for the OLED framework (BOOT-tap order).
     Display::Screens::set_screens({
       &LXMF::Messenger::MESSENGER_PAGE,
@@ -3123,6 +3126,9 @@ void loop() {
   // QMC6310 magnetometer + QMI8658 IMU - same pattern.
   Sensors::QMC6310::pump();
   Sensors::QMI8658::pump();
+  // Persist the compass calibration the once it completes (or is reset).
+  // Rare, small write; take_cal_dirty() is false on every other tick.
+  if (Sensors::QMC6310::take_cal_dirty()) Sensors::SensorConfig::save_mag_cal(filesystem);
   // Battery: voltage + state + sliding-window slope. Cheap - only
   // hits the PMU once per SAMPLE_PERIOD_MS, otherwise no-op.
   Telemetry::Battery::tick();

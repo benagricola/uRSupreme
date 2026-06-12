@@ -112,8 +112,9 @@ inline bool begin() {
 #endif
 }
 
-// Fast poll period while a live demand is active.
-inline constexpr uint32_t LIVE_POLL_MS = 200;
+// Fast poll period while a live demand is active. 10 Hz keeps the gyro
+// fresh for the compass complementary filter.
+inline constexpr uint32_t LIVE_POLL_MS = 100;
 
 inline void pump() {
   if (!_detail::present_ref()) return;

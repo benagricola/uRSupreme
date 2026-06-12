@@ -410,6 +410,21 @@ inline void on_telemetry(const IdentityId& iden, const RNS::Bytes& peer,
 // like any web handler - the loop calls us outside its guarded
 // section.
 inline void tick() {
+  // While any peer holds an active live-share grant to our telemetry,
+  // keep the shared I2C sensors polling fast (the same request_live
+  // demand the screens and the web popover use) so each grant answer
+  // packs a fresh reading. Location rides the GPS power schedule and
+  // battery is always cheap to read, so only environment and compass
+  // need the demand.
+  {
+    uint8_t live_items = 0;
+    for (const auto& g : _detail::grants()) {
+      if (_detail::now_epoch(g.iden) <= g.expires_epoch) live_items |= g.items;
+    }
+    if (live_items & ITEM_ENVIRONMENT) Sensors::BME280::request_live();
+    if (live_items & ITEM_COMPASS)     Sensors::QMC6310::request_live();
+  }
+
   // --- Grant answers ---------------------------------------------
   auto& q = _detail::pending();
   if (!q.empty()) {

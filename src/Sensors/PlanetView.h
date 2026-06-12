@@ -33,19 +33,25 @@ inline bool is_land(int lat_d, int lon_d) { return LandMask::is_land(lat_d, lon_
 inline const uint8_t BAYER[16] = {0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5};
 
 namespace _d {
-  inline uint8_t*&  shade()  { static uint8_t*  p = nullptr; return p; }  // 0..15, 0xFF outside
-  inline int8_t*&   lat()    { static int8_t*   p = nullptr; return p; }  // degrees
-  inline int16_t*&  lonb()   { static int16_t*  p = nullptr; return p; }  // base longitude, deg
-  inline bool&      built()  { static bool b = false; return b; }
+  // View-space unit vector per disc pixel (vx right, vy up, vz toward
+  // viewer) plus the fixed Lambert shade. The earth-frame lat/lon is
+  // derived per frame by rotating this vector, so the globe can both
+  // spin (longitude) AND tilt (latitude) - the latter centres the
+  // device on a fix.
+  inline int8_t*&  vx()    { static int8_t* p = nullptr; return p; }   // -127..127 = -1..1
+  inline int8_t*&  vy()    { static int8_t* p = nullptr; return p; }
+  inline int8_t*&  vz()    { static int8_t* p = nullptr; return p; }
+  inline uint8_t*& shade() { static uint8_t* p = nullptr; return p; }  // 0..15, 0xFF outside
+  inline bool&     built() { static bool b = false; return b; }
 
   inline void ensure() {
     if (built()) return;
     const size_t n = (size_t)BB * BB;
-    shade() = (uint8_t*) heap_caps_malloc(n,     MALLOC_CAP_SPIRAM);
-    lat()   = (int8_t*)  heap_caps_malloc(n,     MALLOC_CAP_SPIRAM);
-    lonb()  = (int16_t*) heap_caps_malloc(n * 2, MALLOC_CAP_SPIRAM);
-    if (!shade() || !lat() || !lonb()) return;   // OOM: render() falls back
-    // Light from upper-left toward the viewer.
+    vx()    = (int8_t*)  heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
+    vy()    = (int8_t*)  heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
+    vz()    = (int8_t*)  heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
+    shade() = (uint8_t*) heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
+    if (!vx() || !vy() || !vz() || !shade()) return;   // OOM: render() falls back
     float lx = -0.5f, ly = -0.55f, lz = 0.66f;
     const float ln = sqrtf(lx*lx + ly*ly + lz*lz);
     lx /= ln; ly /= ln; lz /= ln;
@@ -54,56 +60,84 @@ namespace _d {
         const size_t i = (size_t)(dy + PLANET_R) * BB + (dx + PLANET_R);
         const float nx = (float)dx / PLANET_R, ny = (float)dy / PLANET_R;
         const float d2 = nx*nx + ny*ny;
-        if (d2 > 1.0f) { shade()[i] = 0xFF; lat()[i] = 0; lonb()[i] = 0; continue; }
+        if (d2 > 1.0f) { shade()[i] = 0xFF; vx()[i] = vy()[i] = vz()[i] = 0; continue; }
         const float nz = sqrtf(1.0f - d2);
+        // View space: x right, y up (screen down is +ny), z to viewer.
+        vx()[i] = (int8_t)lrintf(nx  * 127.0f);
+        vy()[i] = (int8_t)lrintf(-ny * 127.0f);
+        vz()[i] = (int8_t)lrintf(nz  * 127.0f);
         float diff = nx*lx + ny*ly + nz*lz; if (diff < 0) diff = 0;
-        const float sh = 0.15f + 0.85f * diff;
-        shade()[i] = (uint8_t)(sh * 15.0f + 0.5f);
-        lat()[i]   = (int8_t)lrintf(asinf(-ny) * RAD2DEG);   // north up
-        lonb()[i]  = (int16_t)lrintf(atan2f(nx, nz) * RAD2DEG);
+        shade()[i] = (uint8_t)((0.15f + 0.85f * diff) * 15.0f + 0.5f);
       }
     }
     built() = true;
   }
 }
 
-// Project a (lat, lon) surface point at rotation rot_deg to screen,
-// returning whether it is front-facing (nz > 0) plus the pixel.
-inline bool project(double lat_d, double lon_d, int rot_deg,
-                    int16_t cx, int16_t cy, int16_t& ox, int16_t& oy) {
-  const float la = (float)lat_d / RAD2DEG;
-  const float lo = ((float)lon_d - rot_deg) / RAD2DEG;
-  const float x = cosf(la) * sinf(lo);
-  const float y = sinf(la);
-  const float z = cosf(la) * cosf(lo);
-  ox = (int16_t)lrintf(cx + x * PLANET_R);
-  oy = (int16_t)lrintf(cy - y * PLANET_R);   // north up
-  return z > 0.05f;
+// Rotate a view-space vector into earth coordinates by tilt phi (about
+// X) then spin theta (about Y), returning (lat, lon) in degrees. This
+// is the inverse of the view rotation, so a pixel whose earth point is
+// the device centre maps to the front.
+inline void view_to_latlon(float vx, float vy, float vz,
+                           float cphi, float sphi, float cth, float sth,
+                           int& lat_d, int& lon_d) {
+  // Rx(phi)
+  const float y1 = vy * cphi - vz * sphi;
+  const float z1 = vy * sphi + vz * cphi;
+  // Ry(theta)
+  const float x2 = vx * cth + z1 * sth;
+  const float z2 = -vx * sth + z1 * cth;
+  lat_d = (int)lrintf(asinf(y1 > 1 ? 1 : (y1 < -1 ? -1 : y1)) * RAD2DEG);
+  lon_d = (int)lrintf(atan2f(x2, z2) * RAD2DEG);
 }
 
-// Draw the shaded globe at (cx, cy) rotated rot_deg about its axis.
-inline void render_globe(GFXcanvas1& area, int16_t cx, int16_t cy, int rot_deg) {
+// Project an earth (lat, lon) point to screen for the current spin
+// (theta=rot) and tilt (phi). Front-facing when the rotated z > 0.
+inline bool project(double lat_d, double lon_d, int rot_deg, int tilt_deg,
+                    int16_t cx, int16_t cy, int16_t& ox, int16_t& oy) {
+  const float la = (float)lat_d / RAD2DEG, lo = (float)lon_d / RAD2DEG;
+  float x = cosf(la) * sinf(lo), y = sinf(la), z = cosf(la) * cosf(lo);
+  // Apply the same view rotation: Ry(-theta) then Rx(-phi).
+  const float th = rot_deg / RAD2DEG, phi = tilt_deg / RAD2DEG;
+  const float cth = cosf(th), sth = sinf(th), cph = cosf(phi), sph = sinf(phi);
+  const float x1 = x * cth - z * sth;
+  const float z1 = x * sth + z * cth;
+  const float y2 = y * cph + z1 * sph;
+  const float z2 = -y * sph + z1 * cph;
+  ox = (int16_t)lrintf(cx + x1 * PLANET_R);
+  oy = (int16_t)lrintf(cy - y2 * PLANET_R);
+  return z2 > 0.05f;
+}
+
+// Draw the shaded globe spun by rot_deg (longitude) and tilted by
+// tilt_deg (latitude). tilt_deg 0 keeps north up; a non-zero tilt
+// brings that latitude to the centre (used to centre the device on a
+// fix). Per frame this rotates the precomputed view vectors and
+// samples the land mask - a couple of transcendentals per disc pixel.
+inline void render_globe(GFXcanvas1& area, int16_t cx, int16_t cy,
+                         int rot_deg, int tilt_deg) {
   _d::ensure();
   if (!_d::built()) { area.drawCircle(cx, cy, PLANET_R, 1); return; }
+  const float th = rot_deg / RAD2DEG, phi = tilt_deg / RAD2DEG;
+  const float cth = cosf(th), sth = sinf(th), cph = cosf(phi), sph = sinf(phi);
   for (int dy = -PLANET_R; dy <= PLANET_R; ++dy) {
     const int16_t py = cy + dy;
     for (int dx = -PLANET_R; dx <= PLANET_R; ++dx) {
       const size_t i = (size_t)(dy + PLANET_R) * BB + (dx + PLANET_R);
       const uint8_t sh = _d::shade()[i];
       if (sh == 0xFF) continue;
+      int lat_d, lon_d;
+      view_to_latlon(_d::vx()[i] / 127.0f, _d::vy()[i] / 127.0f, _d::vz()[i] / 127.0f,
+                     cph, sph, cth, sth, lat_d, lon_d);
+      const bool land = is_land(lat_d, lon_d);
       const int16_t px = cx + dx;
-      const int lon = _d::lonb()[i] + rot_deg;
-      const bool land = is_land(_d::lat()[i], lon);
       const float shf  = sh / 15.0f;
       const float thrf = (BAYER[((py & 3) << 2) | (px & 3)] + 0.5f) / 16.0f;
-      // Land reads as solid on the lit hemisphere; ocean is a sparse
-      // dither only where brightest. The contrast makes continents pop.
       const bool lit = land ? (shf > 0.33f || shf > 0.9f * thrf)
                             : (shf > 0.62f + 0.35f * thrf);
       if (lit) area.drawPixel(px, py, 1);
     }
   }
-  // Crisp rim.
   area.drawCircle(cx, cy, PLANET_R, 1);
 }
 

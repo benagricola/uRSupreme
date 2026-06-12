@@ -92,6 +92,10 @@ struct ScreenPage {
   // True while the body shows live-updating data: the chrome draws
   // the spinner and Display.h redraws at spinner rate.
   bool (*is_live)();
+  // Called from the main-loop tick while this page is active: the page
+  // can renew a live-read demand on the sensors it shows so they poll
+  // fast instead of at the idle interval. May be null.
+  void (*live_demand)();
   // Auto-exit after this much input silence; 0 = sticky.
   uint32_t ttl_ms;
 };
@@ -193,6 +197,7 @@ inline void tick() {
   int a = _detail::active_ref();
   if (a < 0) return;
   const ScreenPage* p = _detail::screens_ref()[a];
+  if (p->live_demand) p->live_demand();
   if (p->ttl_ms != 0
       && (millis() - _detail::last_input_ms_ref()) > p->ttl_ms) {
     exit_active();
@@ -244,7 +249,7 @@ inline void render(GFXcanvas1& area) {
   // exact inverse of the white-background frames).
   if (p->is_live && p->is_live()) {
     const uint8_t frame = (uint8_t)((millis() / SPINNER_FRAME_MS) & 3);
-    area.drawBitmap(w - 10, (HEADER_H - 8) / 2, GLYPH_SPIN[frame], 8, 8, 0);
+    area.drawBitmap(w - 10, (HEADER_H - 8) / 2 + 1, GLYPH_SPIN[frame], 8, 8, 0);
   }
   area.setTextColor(1);
 

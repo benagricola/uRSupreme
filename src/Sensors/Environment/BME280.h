@@ -42,6 +42,7 @@ namespace _detail {
   inline bool&     present_ref()        { static bool v = false; return v; }
   inline Reading&  last_ref()           { static Reading r; return r; }
   inline uint32_t& interval_ms_ref()    { static uint32_t v = 60000; return v; }
+  inline uint32_t& live_until_ref()     { static uint32_t v = 0; return v; }
   inline uint8_t&  addr_ref()           { static uint8_t v = 0; return v; }
   inline bool&     enabled_ref()        { static bool v = true; return v; }
 }
@@ -73,6 +74,9 @@ inline bool begin(TwoWire& wire, uint8_t primary_addr = 0x77) {
 // Drive a periodic read. Cheap - only touches the bus once per
 // interval_ms. Call from the main loop; gated on `enabled` so the
 // user can stop monitoring entirely without unmounting the chip.
+// Fast poll period while a live demand is active.
+inline constexpr uint32_t LIVE_POLL_MS = 500;
+
 inline void pump() {
   if (!_detail::present_ref())                  return;
   if (!_detail::enabled_ref())                  return;
@@ -83,8 +87,10 @@ inline void pump() {
   // this, the SPA's "At boot only" preset (which sends interval_s=0)
   // would cause the sensor to read every main-loop iteration because
   // `(now - taken_ms) < 0` is always false for uint32_t.
-  if (_detail::interval_ms_ref() == 0 && last.taken_ms != 0) return;
-  if (last.taken_ms != 0 && (now - last.taken_ms) < _detail::interval_ms_ref()) return;
+  const bool live = now < _detail::live_until_ref();
+  const uint32_t eff_interval = live ? LIVE_POLL_MS : _detail::interval_ms_ref();
+  if (!live && _detail::interval_ms_ref() == 0 && last.taken_ms != 0) return;
+  if (last.taken_ms != 0 && (now - last.taken_ms) < eff_interval) return;
 
   Reading r;
   r.taken_ms     = now;
@@ -107,6 +113,11 @@ inline uint8_t   address()       { return _detail::addr_ref(); }
 inline Reading   last_reading()  { return _detail::last_ref(); }
 inline uint32_t  interval_ms()   { return _detail::interval_ms_ref(); }
 inline void      set_interval_ms(uint32_t ms) { _detail::interval_ms_ref() = ms; }
+// While live (a screen showing this sensor is open), poll fast
+// instead of at the idle interval. The consumer renews the TTL.
+inline void request_live(uint32_t ttl_ms = 1500) {
+  _detail::live_until_ref() = millis() + ttl_ms;
+}
 inline bool      enabled()       { return _detail::enabled_ref(); }
 inline void      set_enabled(bool on) { _detail::enabled_ref() = on; }
 

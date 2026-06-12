@@ -1280,7 +1280,7 @@ void setup() {
       &LXMF::Messenger::MESSENGER_PAGE,
       &Sensors::View::GPS_PAGE,
       &Sensors::View::HEADING_PAGE,
-      &Sensors::View::SYSTEM_PAGE,
+      &Sensors::View::ENVIRONMENT_PAGE,
     });
     // Telemetry-to-collector config. No-op if /lxmf/telemetry.json
     // doesn't exist yet (feature defaults to off).

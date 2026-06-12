@@ -563,17 +563,17 @@ inline void render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
     return;
   }
   if (pg == Page::Result) {
-    // Status glyph left of the wrapped status text, keyed off the
-    // same string on_outbox_status updates.
+    // Status glyph centred above the wrapped status text (keyed off the
+    // same string on_outbox_status updates), so the two never overlap.
     const std::string& r = _detail::result_ref();
     const uint8_t* g = Display::Screens::GLYPH_CLOCK;
     if      (r == "Sent")      g = Display::Screens::GLYPH_CHECK;
     else if (r == "Delivered") g = Display::Screens::GLYPH_CHECK2;
     else if (r == "Failed")    g = Display::Screens::GLYPH_CROSS;
-    area.drawBitmap(2, (int16_t)(y_top + 4), g, 8, 8, 1);
-    const int body_rows = (y_bottom - y_top - 3) / 8;
-    Common::OledText::wrap_classic(area, r, (int16_t)(y_top + 3),
-                                   body_rows > 0 ? body_rows : 1);
+    area.drawBitmap((int16_t)(area.width() / 2 - 4), (int16_t)(y_top + 4), g, 8, 8, 1);
+    const int16_t txt_y = (int16_t)(y_top + 16);
+    const int body_rows = (y_bottom - txt_y) / 8;
+    Common::OledText::wrap_classic(area, r, txt_y, body_rows > 0 ? body_rows : 1);
     return;
   }
 }
@@ -619,7 +619,13 @@ namespace _detail {
   }
   // The result page after a live-granted send keeps updating: spinner.
   inline bool plugin_live() {
-    return page_ref() == Page::Result && result_live_ref();
+    if (page_ref() != Page::Result) return false;
+    const std::string& r = result_ref();
+    // In flight (finding route / sent, awaiting delivery) or a live
+    // telemetry share: show the activity spinner. Terminal states do
+    // not.
+    if (r == "Delivered" || r == "Failed") return result_live_ref();
+    return true;
   }
   inline void plugin_select() {
     switch (page_ref()) {
@@ -636,7 +642,7 @@ inline const Display::Screens::ScreenPage MESSENGER_PAGE = {
   _detail::plugin_header, _detail::plugin_hints, render_body,
   _detail::plugin_enter, _detail::plugin_exit,
   _detail::plugin_next, _detail::plugin_select, _detail::plugin_back,
-  _detail::plugin_live, /*ttl_ms=*/0,
+  _detail::plugin_live, /*live_demand=*/nullptr, /*ttl_ms=*/0,
 };
 inline const Display::Screens::ScreenPage& screen_page() { return MESSENGER_PAGE; }
 

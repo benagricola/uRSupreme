@@ -18,6 +18,12 @@ inline void line(GFXcanvas1& area, int16_t y, const char* text) {
   area.print(text);
 }
 
+// Same, at an explicit x (e.g. clearing a 16 px icon at the left).
+inline void line_at(GFXcanvas1& area, int16_t x, int16_t y, const char* text) {
+  area.setCursor(x, y);
+  area.print(text);
+}
+
 // Truncate `text` until it measures inside `max_px` for the currently
 // selected font. Pixel-true, so near-mono fonts cannot clip.
 inline std::string fit(GFXcanvas1& area, const std::string& text, int16_t max_px) {

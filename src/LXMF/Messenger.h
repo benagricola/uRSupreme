@@ -555,7 +555,8 @@ inline void render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
     // itself in the reading font, so the holder confirms what goes out.
     area.drawBitmap(2, (int16_t)(y_top + 10), Display::Screens::GLYPH_PERSON, 8, 8, 1);
     const std::string to = p.dest_hex.substr(0, 8);
-    Common::OledText::line(area, (int16_t)(y_top + 17), ("  " + to).c_str());
+    area.setCursor(14, (int16_t)(y_top + 16));   // clear of the glyph box
+    area.print(to.c_str());
     const int16_t body_y = (int16_t)(y_top + 22);
     const int body_rows = (y_bottom - body_y) / 8;
     if (body_rows > 0) Common::OledText::wrap_classic(area, p.content, body_y, body_rows);

@@ -327,3 +327,92 @@ for f in range(4):
     draw_glyph(strip, cx + 8 + 60 - 4, 76, GLYPHS[f"spin{f}"], scale=1)
     ds.text((cx + 8, 74), f"spin{f}", fill=200)
 strip.save("/tmp/oled_shots/spinner_frames.png")
+
+# 16x16 glyphs for the sensor screens' primary visuals (the main
+# status screen's icon scale). Same pixel-art-is-source rule.
+GLYPHS16 = {
+    "sat": [  # comm satellite: body, solar panels, downlink wave
+        "......####......",
+        "......####......",
+        "###...####...###",
+        "###..######..###",
+        "###..######..###",
+        "###..######..###",
+        "###...####...###",
+        "......####......",
+        "......####......",
+        ".......##.......",
+        "....#..##..#....",
+        "...#...##...#...",
+        "..#....##....#..",
+        ".......##.......",
+        "......####......",
+        ".....######.....",
+    ],
+    "fix_none": [  # hollow crosshair: searching
+        ".......##.......",
+        ".......##.......",
+        ".....######.....",
+        "....##....##....",
+        "...##......##...",
+        "..##........##..",
+        "##...........##",
+        "##...........##",
+        "##...........##",
+        "..##........##..",
+        "...##......##...",
+        "....##....##....",
+        ".....######.....",
+        ".......##.......",
+        ".......##.......",
+        "................",
+    ],
+    "fix_ok": [  # solid-centre crosshair: locked
+        ".......##.......",
+        ".......##.......",
+        ".....######.....",
+        "....##....##....",
+        "...##..##..##...",
+        "..##..####..##..",
+        "##...######...##",
+        "##...######...##",
+        "##...######...##",
+        "..##..####..##..",
+        "...##..##..##...",
+        "....##....##....",
+        ".....######.....",
+        ".......##.......",
+        ".......##.......",
+        "................",
+    ],
+}
+
+def emit16(name, rows):
+    out = []
+    for r in rows:
+        r = r.ljust(16, ".")
+        b0 = b1 = 0
+        for i in range(8):
+            if r[i] == "#": b0 |= 0x80 >> i
+            if r[8 + i] == "#": b1 |= 0x80 >> i
+        out.append(b0); out.append(b1)
+    body = ", ".join(f"0x{b:02X}" for b in out)
+    return f"static const uint8_t GLYPH16_{name.upper()}[32] PROGMEM = {{ {body} }};"
+
+with open("/tmp/oled_glyph16_arrays.h", "w") as f:
+    for n, rows in GLYPHS16.items():
+        f.write(emit16(n, rows) + "\n")
+
+# render the 16x16 set onto the icon sheet's bottom row
+
+sheet16 = Image.new("RGB", (3 * 80 + 20, 110), (20, 20, 20))
+d16 = ImageDraw.Draw(sheet16)
+for i, (n, rows) in enumerate(GLYPHS16.items()):
+    gx, gy = 10 + i * 80, 10
+    for ry, row in enumerate(rows):
+        for rx, c in enumerate(row):
+            if c == "#":
+                d16.rectangle([gx + rx * 4, gy + ry * 4, gx + rx * 4 + 3, gy + ry * 4 + 3], fill=(255, 255, 255))
+    d16.text((gx, gy + 70), n, fill=(180, 180, 180))
+sheet16.save("/tmp/oled_shots/icon_sheet16.png")
+print("16x16 set ->", "/tmp/oled_shots/icon_sheet16.png")

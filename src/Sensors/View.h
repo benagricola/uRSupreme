@@ -80,73 +80,88 @@ namespace _detail {
   inline bool gps_live() {
     return Gnss::acq_status().mode != Gnss::PowerMode::Off;
   }
+  // Signal-strength bars: one bar per ~2 satellites in view, capped
+  // at five, lit while in view. Drawn from (x,y) growing rightwards.
+  inline void signal_bars(GFXcanvas1& area, int16_t x, int16_t base_y,
+                          uint8_t sats_visible) {
+    const int lit = sats_visible >= 10 ? 5 : (sats_visible + 1) / 2;
+    for (int i = 0; i < 5; ++i) {
+      const int16_t bh = (int16_t)(4 + i * 3);
+      const int16_t bx = (int16_t)(x + i * 8);
+      const int16_t by = (int16_t)(base_y - bh);
+      if (i < lit) area.fillRect(bx, by, 6, bh, 1);
+      else         area.drawRect(bx, by, 6, bh, 1);
+    }
+  }
+
+  // The GPS screen adapts to its state: searching makes the signal
+  // meter the hero (what you watch on the balcony), a fix makes the
+  // coordinates the hero. The clock-sync detail is intentionally
+  // absent - it is not what someone holding the device wants here.
   inline void gps_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
     const Gnss::Fix f = Gnss::last_fix();
     const Gnss::AcqStatus a = Gnss::acq_status();
     const uint32_t now = millis();
-    int16_t y = (int16_t)(y_top + 6);
+    char buf[24], t[16], age[10];
 
-    linef(area, y, "%s", Gnss::module_name()); y += 10;
-
-    char t[16];
-    switch (a.mode) {
-      case Gnss::PowerMode::Off:
-        Common::OledText::line(area, y, "Location off");
-        break;
-      case Gnss::PowerMode::AlwaysOn:
-        Common::OledText::line(area, y, "Always on");
-        break;
-      default:  // Pulsed
-        if (a.state == Gnss::PulseState::Acquiring) {
-          fmt_mmss(t, sizeof(t), now - a.started_ms);
-          linef(area, y, "Acquiring %s", t);
-        } else if (a.m10 == Gnss::M10Power::Psmoo) {
-          linef(area, y, "Auto %lum cycle",
-                (unsigned long)(Gnss::power_config().interval_s / 60));
-        } else if (a.next_attempt_ms != 0 && (int32_t)(a.next_attempt_ms - now) > 0) {
-          fmt_mmss(t, sizeof(t), a.next_attempt_ms - now);
-          linef(area, y, "Retry in %s", t);
-        } else {
-          Common::OledText::line(area, y, "Waiting");
-        }
+    // Quiet power-mode row pinned to the bottom of the body.
+    const char* mode_str = "Location off";
+    if (a.mode == Gnss::PowerMode::AlwaysOn) mode_str = "Always on";
+    else if (a.mode == Gnss::PowerMode::Pulsed) {
+      snprintf(buf, sizeof(buf), "Auto, %lum cycle",
+               (unsigned long)(Gnss::power_config().interval_s / 60));
+      mode_str = buf;
     }
-    y += 8;
 
-    linef(area, y, "Sats %u seen", (unsigned)f.sats_visible); y += 8;
-    linef(area, y, "     %u used", (unsigned)f.sats); y += 10;
+    if (!f.valid) {
+      // ---- SEARCHING: signal meter is the hero ----
+      const int16_t icon_y = (int16_t)(y_top + 4);
+      area.drawBitmap(2, icon_y, Display::Screens::GLYPH16_SAT, 16, 16, 1);
+      signal_bars(area, 24, (int16_t)(icon_y + 16), f.sats_visible);
+      snprintf(buf, sizeof(buf), "%u in view", (unsigned)f.sats_visible);
+      Common::OledText::line(area, (int16_t)(icon_y + 24), buf);
 
-    char age[10];
-    if (f.valid) {
-      fmt_age(age, sizeof(age), a.last_fix_ms);
-      linef(area, y, "Fix %s ago", age); y += 8;
-      linef(area, y, "%.5f", f.latitude_deg); y += 8;
-      linef(area, y, "%.5f", f.longitude_deg); y += 8;
-      if (f.acc_valid && y < (int16_t)(y_bottom - 8)) {
-        linef(area, y, "Within %.0fm", f.hacc_m); y += 8;
+      const int16_t cross_y = (int16_t)(icon_y + 32);
+      area.drawBitmap(2, cross_y, Display::Screens::GLYPH16_FIX_NONE, 16, 16, 1);
+      Common::OledText::line_at(area, 21, (int16_t)(cross_y + 5),
+                             a.ever_fixed ? "Fix lost" : "No fix yet");
+      if (a.mode == Gnss::PowerMode::Pulsed
+          && a.state == Gnss::PulseState::Acquiring) {
+        fmt_mmss(t, sizeof(t), now - a.started_ms);
+        snprintf(buf, sizeof(buf), "Search %s", t);
+        Common::OledText::line_at(area, 21, (int16_t)(cross_y + 13), buf);
+      } else if (a.mode == Gnss::PowerMode::Pulsed && a.next_attempt_ms != 0
+                 && (int32_t)(a.next_attempt_ms - now) > 0) {
+        fmt_mmss(t, sizeof(t), a.next_attempt_ms - now);
+        snprintf(buf, sizeof(buf), "Retry %s", t);
+        Common::OledText::line_at(area, 21, (int16_t)(cross_y + 13), buf);
+      } else {
+        Common::OledText::line_at(area, 21, (int16_t)(cross_y + 13), "Searching");
       }
-    } else if (a.ever_fixed) {
-      fmt_age(age, sizeof(age), a.last_fix_ms);
-      Common::OledText::line(area, y, "Fix lost"); y += 8;
-      linef(area, y, "last %s ago", age); y += 8;
     } else {
-      Common::OledText::line(area, y, "No fix yet"); y += 8;
+      // ---- LOCKED: coordinates are the hero ----
+      const int16_t icon_y = (int16_t)(y_top + 4);
+      area.drawBitmap(2, icon_y, Display::Screens::GLYPH16_FIX_OK, 16, 16, 1);
+      Common::OledText::line_at(area, 21, (int16_t)(icon_y + 5), "FIX");
+      snprintf(buf, sizeof(buf), "%u sats", (unsigned)f.sats);
+      Common::OledText::line_at(area, 21, (int16_t)(icon_y + 13), buf);
+
+      int16_t y = (int16_t)(icon_y + 22);
+      area.setFont(nullptr);   // reading font: both lat and lon fit
+      snprintf(buf, sizeof(buf), "%.5f", f.latitude_deg);
+      area.setCursor(2, y); area.print(buf); y += 9;
+      snprintf(buf, sizeof(buf), "%.5f", f.longitude_deg);
+      area.setCursor(2, y); area.print(buf); y += 11;
+      area.setFont(&Picopixel);
+
+      fmt_age(age, sizeof(age), a.last_fix_ms);
+      if (f.acc_valid) snprintf(buf, sizeof(buf), "+/-%.0fm   %s", f.hacc_m, age);
+      else             snprintf(buf, sizeof(buf), "fixed %s ago", age);
+      Common::OledText::line(area, y, buf); y += 8;
+      signal_bars(area, 2, (int16_t)(y + 10), f.sats_visible);
     }
 
-    if ((int16_t)(y_bottom - y) > 28) {
-      char cage[10];
-      fmt_age(cage, sizeof(cage), a.last_clock_report_ms);
-      y += 2;
-      area.drawFastHLine(0, y, area.width(), 1); y += 8;
-      linef(area, y, "Clock %s", cage); y += 8;
-      linef(area, y, "via %s",
-            Clock::Manager::source_name(Clock::Manager::current_source()));
-      y += 8;
-      if (Gnss::module() == Gnss::Module::MAXM10 && (int16_t)(y_bottom - y) > 6) {
-        const MaxM10::RfStatus rf = MaxM10::rf_status();
-        linef(area, y, "Gain %u%% jam %u",
-              (unsigned)(rf.agc * 100UL / 8191UL), (unsigned)rf.cw_jam);
-      }
-    }
+    Common::OledText::line(area, (int16_t)(y_bottom - 4), mode_str);
   }
 
   // ---- HEADING ----
@@ -174,12 +189,20 @@ namespace _detail {
     if ((int16_t)(y_bottom - y_top) > 78) {
       // Needle: circle centered below, line pointing toward north
       // relative to device-up.
-      const int16_t cx = 32, cy = (int16_t)(y_top + 57), rad = 18;
+      const int16_t cx = 32, cy = (int16_t)(y_top + 57), rad = 20;
       area.drawCircle(cx, cy, rad, 1);
+      // N marker outside the rim.
+      area.setCursor((int16_t)(cx - 1), (int16_t)(cy - rad - 3));
+      area.print("N");
+      // Filled needle: triangle from two base points perpendicular to
+      // the north direction, pointing where north is from device-up.
       const float th = r.heading_deg * 3.14159265f / 180.0f;
-      area.drawLine(cx, cy,
-                    cx + (int16_t)(rad * sinf(-th)),
-                    cy - (int16_t)(rad * cosf(-th)), 1);
+      const float nx = sinf(-th), ny = -cosf(-th);
+      const int16_t tipx = (int16_t)(cx + (rad - 3) * nx);
+      const int16_t tipy = (int16_t)(cy + (rad - 3) * ny);
+      const int16_t blx  = (int16_t)(cx - 4 * ny), bly = (int16_t)(cy + 4 * nx);
+      const int16_t brx  = (int16_t)(cx + 4 * ny), bry = (int16_t)(cy - 4 * nx);
+      area.fillTriangle(tipx, tipy, blx, bly, brx, bry, 1);
       char age[10];
       fmt_age(age, sizeof(age), r.taken_ms);
       linef(area, (int16_t)(cy + rad + 10), "Read %s ago", age);
@@ -194,24 +217,54 @@ namespace _detail {
   inline void system_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
     const BME280::Reading e = BME280::last_reading();
     const Telemetry::Battery::Snapshot b = Telemetry::Battery::current();
-    int16_t y = (int16_t)(y_top + 6);
+    char buf[20];
+    int16_t y = (int16_t)(y_top + 3);
+
     if (e.valid) {
-      linef(area, y, "Temp %.1fC", e.temp_c); y += 8;
-      linef(area, y, "Humid %.0f%%", e.humidity_pct); y += 8;
-      linef(area, y, "Press %.0fhPa", e.pressure_pa / 100.0f); y += 8;
+      // Temperature: thermometer glyph + the value in the big font.
+      area.drawBitmap(2, y, Display::Screens::GLYPH_THERMO, 8, 8, 1);
+      area.setFont(nullptr);
+      area.setTextSize(2);
+      snprintf(buf, sizeof(buf), "%.1f", e.temp_c);
+      area.setCursor(14, y); area.print(buf);
+      area.setTextSize(1);
+      area.setFont(&Picopixel);
+      y += 20;
+      // Humidity bar: labelled gauge, fill = percent.
+      snprintf(buf, sizeof(buf), "RH %.0f%%", e.humidity_pct);
+      Common::OledText::line(area, (int16_t)(y + 6), buf);
+      area.drawRect(2, (int16_t)(y + 9), 60, 5, 1);
+      area.fillRect(2, (int16_t)(y + 9),
+                    (int16_t)(60.0f * e.humidity_pct / 100.0f), 5, 1);
+      y += 18;
+      snprintf(buf, sizeof(buf), "%.0f hPa", e.pressure_pa / 100.0f);
+      Common::OledText::line(area, (int16_t)(y + 4), buf);
+      y += 12;
     } else {
-      Common::OledText::line(area, y, "No env data"); y += 8;
+      Common::OledText::line(area, (int16_t)(y + 6), "No env data");
+      y += 14;
     }
-    if (b.pmu_present && (int16_t)(y_bottom - y) > 20) {
+
+    if (b.pmu_present && (int16_t)(y_bottom - y) > 26) {
       y += 2;
-      area.drawFastHLine(0, y, area.width(), 1); y += 8;
-      if (b.percent >= 0) { linef(area, y, "Batt %d%%", b.percent); y += 8; }
-      linef(area, y, "%.2fV", b.voltage_v); y += 8;
-      linef(area, y, "%s",
-            b.state == Telemetry::Battery::State::Charging ? "Charging" :
-            b.state == Telemetry::Battery::State::Discharging ? "On battery" : "Powered");
-      y += 8;
-      if (b.vbus_present && y < y_bottom) linef(area, y, "USB power in");
+      area.drawFastHLine(0, y, area.width(), 1);
+      y += 4;
+      // Battery gauge: outline + nub, fill proportional to percent.
+      const int16_t bw = 40, bh = 12;
+      area.drawRect(2, y, bw, bh, 1);
+      area.fillRect((int16_t)(2 + bw), (int16_t)(y + 3), 3, (int16_t)(bh - 6), 1);
+      if (b.percent >= 0) {
+        area.fillRect(4, (int16_t)(y + 2),
+                      (int16_t)((bw - 4) * b.percent / 100), (int16_t)(bh - 4), 1);
+        snprintf(buf, sizeof(buf), "%d%%", b.percent);
+        // Past the gauge body (x=2..45) with clearance.
+        Common::OledText::line_at(area, 48, (int16_t)(y + 9), buf);
+      }
+      y += (int16_t)(bh + 8);
+      snprintf(buf, sizeof(buf), "%.2fV %s", b.voltage_v,
+               b.state == Telemetry::Battery::State::Charging ? "charging" :
+               b.state == Telemetry::Battery::State::Discharging ? "on battery" : "powered");
+      Common::OledText::line(area, y, buf);
     }
   }
 

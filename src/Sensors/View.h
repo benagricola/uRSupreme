@@ -24,6 +24,7 @@
 #include "../Display/ScreenFramework.h"
 #include "../Telemetry/Battery.h"
 #include "Compass/QMC6310.h"
+#include "Motion/QMI8658.h"
 #include "Environment/BME280.h"
 #include "Position/Gnss.h"
 #include "Position/MaxM10.h"
@@ -108,7 +109,6 @@ namespace _detail {
   inline void gps_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
     using namespace PlanetView;
     const Gnss::Fix f = Gnss::last_fix();
-    const Gnss::AcqStatus a = Gnss::acq_status();
     const uint32_t now = millis();
 
     // Animation state, persisted across frames.
@@ -151,18 +151,25 @@ namespace _detail {
     const int n_orbit = f.sats_visible >= 4 ? 4 : f.sats_visible;
     const float orbit_r = PLANET_R + 7;
     const float orbit_tilt_s = 0.45f, orbit_tilt_c = 0.89f;   // ~27 deg
+    // The panel is far taller than wide, so a level ring runs its
+    // satellites straight off the left/right edges. Rotating the whole
+    // path 45 deg throws those extremes into the roomy corners instead,
+    // so they orbit the rim cleanly without clipping.
+    const float ring_cos = 0.70710678f, ring_sin = 0.70710678f;
     for (int k = 0; k < n_orbit; ++k) {
       const float oa = (now % 5000) * (2.0f * 3.14159265f / 5000.0f)
                        + k * (2.0f * 3.14159265f / n_orbit);
       const float wx = orbit_r * cosf(oa);
       const float wy = orbit_r * sinf(oa) * orbit_tilt_s;   // vertical tilt
       const float wz = orbit_r * sinf(oa) * orbit_tilt_c;   // depth
-      const int16_t sx = (int16_t)(cx + wx);
-      const int16_t sy = (int16_t)(cy - wy);
+      const float rx = wx * ring_cos - wy * ring_sin;
+      const float ry = wx * ring_sin + wy * ring_cos;
+      const int16_t sx = (int16_t)(cx + rx);
+      const int16_t sy = (int16_t)(cy - ry);
       const bool over_disc = (sx - cx) * (sx - cx) + (sy - cy) * (sy - cy)
                              < PLANET_R * PLANET_R;
       if (wz < 0.0f && over_disc) continue;                 // behind the globe
-      if (sx < 3 || sx > area.width() - 4) continue;
+      if (sx < 2 || sx > area.width() - 3) continue;
       draw_satellite(area, sx, sy);
     }
 
@@ -192,16 +199,6 @@ namespace _detail {
       snprintf(buf, sizeof(buf), "%u sats seen", (unsigned)f.sats_visible);
       Common::OledText::line(area, (int16_t)(ty + 8), buf);
     }
-    // Quiet power-mode row at the very bottom.
-    const char* mode_str = "Location off";
-    if (a.mode == Gnss::PowerMode::AlwaysOn) mode_str = "Always on";
-    else if (a.mode == Gnss::PowerMode::Pulsed) {
-      static char mbuf[20];
-      snprintf(mbuf, sizeof(mbuf), "Auto, %lum cycle",
-               (unsigned long)(Gnss::power_config().interval_s / 60));
-      mode_str = mbuf;
-    }
-    Common::OledText::line(area, (int16_t)(y_bottom - 4), mode_str);
   }
 
   // ---- HEADING ----
@@ -209,6 +206,11 @@ namespace _detail {
     *glyph = Display::Screens::GLYPH_COMPASS;
     *title = "HEADING";
   }
+  // Ship's compass: the card rotates so the direction you face is at
+  // the top of the screen (the read point). Each mark sits at screen
+  // bearing (mark - heading), so facing east brings E to the top and
+  // swings N to the left. A filled wedge tags north on the card; the
+  // exact bearing is printed below the ring.
   inline void heading_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
     const QMC6310::Reading r = QMC6310::last_reading();
     if (!r.valid) {
@@ -216,37 +218,72 @@ namespace _detail {
       Common::OledText::line(area, (int16_t)(y_top + 22), "reading yet");
       return;
     }
-    // Big degrees in the classic font (2x), cardinal under it.
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%3.0f", r.heading_deg);
+    const int16_t cx = (int16_t)(area.width() / 2);
+    const int16_t R  = 27;
+    const int16_t cy = (int16_t)(y_top + R + 6);   // ring up top, bearing below it
+    const int16_t ny = (int16_t)(cy + R + 4);      // below-ring text row
+    const float   D2R = 0.01745329f;
+
+    area.drawCircle(cx, cy, R, 1);
+    area.fillCircle(cx, cy, 1, 1);                 // pivot
+
+    if (!r.cal_ready) {
+      // Uncalibrated: no rotating card (the heading is not trustworthy
+      // yet). Prompt and a fill-as-you-go progress bar sit below the
+      // ring, clear of it.
+      area.setFont(&Picopixel);
+      Common::OledText::line_at(area, (int16_t)(cx - 15), (int16_t)(ny + 3), "turn + tilt");
+      Common::OledText::line_at(area, (int16_t)(cx - 17), (int16_t)(ny + 10), "to calibrate");
+      const int16_t bw = 44, bx = (int16_t)(cx - bw / 2), by = (int16_t)(ny + 14);
+      area.drawRect(bx, by, bw, 4, 1);
+      area.fillRect(bx, by, (int16_t)(bw * r.cal_progress), 4, 1);
+      return;
+    }
+
+    // Calibrated: rotating card (cardinals labelled, intercardinals
+    // ticked) with the bearing below the ring, so labels own the centre.
+    const float hd = r.heading_deg;
+    struct Mark { float ang; const char* lbl; };
+    static const Mark marks[] = {
+      {0, "N"}, {45, nullptr}, {90, "E"}, {135, nullptr},
+      {180, "S"}, {225, nullptr}, {270, "W"}, {315, nullptr},
+    };
+    for (const Mark& m : marks) {
+      const float phi = (m.ang - hd) * D2R;
+      const float s = sinf(phi), c = cosf(phi);
+      const int16_t tick = (int16_t)(m.lbl ? 5 : 3);
+      area.drawLine((int16_t)(cx + s * R), (int16_t)(cy - c * R),
+                    (int16_t)(cx + s * (R - tick)), (int16_t)(cy - c * (R - tick)), 1);
+      if (m.lbl) {
+        Common::OledText::line_at(area, (int16_t)(cx + s * (R - 9) - 1),
+                                  (int16_t)(cy - c * (R - 9) + 2), m.lbl);
+      }
+    }
+    // North wedge on the card, so you can find it at a glance.
+    {
+      const float phi = (0.0f - hd) * D2R, s = sinf(phi), c = cosf(phi);
+      const float ls = sinf(phi + 0.2f), lc = cosf(phi + 0.2f);
+      const float rs = sinf(phi - 0.2f), rc = cosf(phi - 0.2f);
+      area.fillTriangle((int16_t)(cx + s * R), (int16_t)(cy - c * R),
+                        (int16_t)(cx + ls * (R - 6)), (int16_t)(cy - lc * (R - 6)),
+                        (int16_t)(cx + rs * (R - 6)), (int16_t)(cy - rc * (R - 6)), 1);
+    }
+    // Big bearing below the ring, with a degree ring.
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d", (int)lrintf(hd));
     area.setFont(nullptr);
     area.setTextSize(2);
-    area.setCursor(8, (int16_t)(y_top + 3));
+    const int16_t bw = (int16_t)(strlen(buf) * 12);
+    area.setCursor((int16_t)(cx - bw / 2), ny);
     area.print(buf);
     area.setTextSize(1);
     area.setFont(&Picopixel);
-    linef(area, (int16_t)(y_top + 28), "deg %s", cardinal(r.heading_deg));
-    if ((int16_t)(y_bottom - y_top) > 78) {
-      // Needle: circle centered below, line pointing toward north
-      // relative to device-up.
-      const int16_t cx = 32, cy = (int16_t)(y_top + 57), rad = 20;
-      area.drawCircle(cx, cy, rad, 1);
-      // N marker outside the rim.
-      area.setCursor((int16_t)(cx - 1), (int16_t)(cy - rad - 3));
-      area.print("N");
-      // Filled needle: triangle from two base points perpendicular to
-      // the north direction, pointing where north is from device-up.
-      const float th = r.heading_deg * 3.14159265f / 180.0f;
-      const float nx = sinf(-th), ny = -cosf(-th);
-      const int16_t tipx = (int16_t)(cx + (rad - 3) * nx);
-      const int16_t tipy = (int16_t)(cy + (rad - 3) * ny);
-      const int16_t blx  = (int16_t)(cx - 4 * ny), bly = (int16_t)(cy + 4 * nx);
-      const int16_t brx  = (int16_t)(cx + 4 * ny), bry = (int16_t)(cy - 4 * nx);
-      area.fillTriangle(tipx, tipy, blx, bly, brx, bry, 1);
-      char age[10];
-      fmt_age(age, sizeof(age), r.taken_ms);
-      linef(area, (int16_t)(cy + rad + 10), "Read %s ago", age);
-    }
+    area.drawCircle((int16_t)(cx + bw / 2 + 3), (int16_t)(ny + 1), 1, 1);
+    // Corrected field magnitude, small, at the foot of the screen.
+    char fbuf[12];
+    snprintf(fbuf, sizeof(fbuf), "%.0f uT", r.field_uT);
+    Common::OledText::line_at(area, (int16_t)(cx - (int)strlen(fbuf) * 2),
+                              (int16_t)(y_bottom - 1), fbuf);
   }
 
   // ---- ENVIRONMENT ----
@@ -255,7 +292,7 @@ namespace _detail {
   // commented below as a record of its layout for that future screen.
   inline void environment_header(const uint8_t** glyph, const char** title) {
     *glyph = Display::Screens::GLYPH_THERMO;
-    *title = "ENVIRONMENT";
+    *title = "CLIMATE";   // short enough to clear the header spinner
   }
   inline void environment_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
     const BME280::Reading e = BME280::last_reading();
@@ -320,8 +357,17 @@ namespace _detail {
   inline bool at_root() { return false; }   // no internal levels: back exits
   inline bool not_live() { return false; }
   inline bool always_live() { return true; }
-  inline void demand_compass() { QMC6310::request_live(); }
+  inline void demand_compass() { QMC6310::request_live(); QMI8658::request_live(); }
   inline void demand_env()     { BME280::request_live(); }
+  inline void recal_compass()  { QMC6310::reset_calibration(); }
+  // Compass adds a POWER-hold recalibrate to the shared root hints.
+  inline size_t compass_hints(const char** out, size_t max) {
+    if (max < 3) return root_hints(out, max);
+    out[0] = "Tap BOOT: next";
+    out[1] = "Hold BOOT: back";
+    out[2] = "Hold POWER: recal";
+    return 3;
+  }
 }
 
 // The three registered pages, in BOOT-tap rotation order.
@@ -331,8 +377,8 @@ inline const Display::Screens::ScreenPage GPS_PAGE = {
   _detail::at_root, _detail::gps_live, /*live_demand=*/nullptr, /*ttl_ms=*/0,
 };
 inline const Display::Screens::ScreenPage HEADING_PAGE = {
-  _detail::heading_header, _detail::root_hints, _detail::heading_body,
-  _detail::noop, _detail::noop, _detail::noop, _detail::noop,
+  _detail::heading_header, _detail::compass_hints, _detail::heading_body,
+  _detail::noop, _detail::noop, _detail::noop, _detail::recal_compass,
   _detail::at_root, _detail::always_live, _detail::demand_compass, /*ttl_ms=*/0,
 };
 inline const Display::Screens::ScreenPage ENVIRONMENT_PAGE = {

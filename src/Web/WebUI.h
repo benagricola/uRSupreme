@@ -161,6 +161,13 @@ namespace Web {
       if (_started) return;
       _started = true;
       AuthTokens::load();
+      // While the SPA sensors popover is open it sends {"type":
+      // "sensor_live"} over the WS; honour it by polling those sensors
+      // fast and draining at a faster cadence (the OLED screens use the
+      // same per-sensor request_live demand).
+      Web::WS::on_client_message() = [](const char* data, size_t len) {
+        on_ws_client_message(data, len);
+      };
       BootCounter::init();  // emit the log line; current() is otherwise lazy
       register_routes();
       server.begin();
@@ -292,7 +299,10 @@ namespace Web {
         // pass walks the sensor kinds; any that have a fresh reading
         // since the last drain land in a single multi-kind frame.
         // Nothing changes → nothing sent.
-        if (now - _last_sensor_drain >= SENSOR_DRAIN_PERIOD_MS) {
+        const uint32_t drain_period =
+            (now < _sensor_ws_live_until) ? SENSOR_DRAIN_LIVE_MS
+                                          : SENSOR_DRAIN_PERIOD_MS;
+        if (now - _last_sensor_drain >= drain_period) {
           _last_sensor_drain = now;
           drain_sensor_updates();
         }
@@ -324,6 +334,22 @@ namespace Web {
     // changed (no allocation on the no-op path - important because
     // this runs every SENSOR_DRAIN_PERIOD_MS while any client is
     // connected).
+    // Honour a sensors-popover live demand: poll the I2C sensors fast
+    // and renew a window during which the drain runs at SENSOR_DRAIN_
+    // LIVE_MS. GPS is not demanded here - it runs on its own schedule.
+    static void on_ws_client_message(const char* data, size_t len) {
+      if (!data || len == 0) return;
+      const std::string m(data, len);
+      if (m.find("\"sensor_live\"") == std::string::npos) return;
+      const bool on = m.find("\"on\":true") != std::string::npos
+                   || m.find("\"on\": true") != std::string::npos;
+      if (!on) { _sensor_ws_live_until = 0; return; }
+      Sensors::BME280::request_live(SENSOR_WS_LIVE_TTL_MS);
+      Sensors::QMC6310::request_live(SENSOR_WS_LIVE_TTL_MS);
+      Sensors::QMI8658::request_live(SENSOR_WS_LIVE_TTL_MS);
+      _sensor_ws_live_until = millis() + SENSOR_WS_LIVE_TTL_MS;
+    }
+
     static void drain_sensor_updates() {
       static constexpr const char* KINDS[]  = { "gps", "environment", "magnetometer", "imu" };
       uint32_t* const last_pub[] = { &_last_pub_gps_ms, &_last_pub_bme_ms,
@@ -979,6 +1005,10 @@ namespace Web {
     // in the SPA, so the SPA never sees a fresh sensor reading sit
     // for longer than one drain period before getting through to it.
     static constexpr uint32_t SENSOR_DRAIN_PERIOD_MS = 1000;
+    // Faster drain + sensor TTL while a client demands live data.
+    static constexpr uint32_t SENSOR_DRAIN_LIVE_MS  = 250;
+    static constexpr uint32_t SENSOR_WS_LIVE_TTL_MS = 3000;
+    static inline uint32_t _sensor_ws_live_until = 0;
 
     // Per-sensor `taken_ms` snapshots, used by drain_sensor_updates
     // to dedupe WS broadcasts. Reading a sensor twice per second when

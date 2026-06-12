@@ -3227,9 +3227,14 @@ class UReticulumHTTPTransport extends Transport {
           ws.send('{"type":"ping"}');
         }
       }, 25000);
+      // Expose a sender so the sensors popover can request live data.
+      window.__wsSend = (obj) => {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+      };
     };
     const onClose = () => {
       if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+      window.__wsSend = null;
       if (stopped) return;
       if (!state.reconnectStart) state.reconnectStart = Date.now();
       // Show "Reconnecting…" if disconnected > 5 s.
@@ -5700,15 +5705,23 @@ function tickSystemClock() {
   }
 }
 
+// While the sensors popover is open, ask the device to stream live
+// sensor data (it polls the I2C sensors fast + drains the WS faster
+// for as long as we keep asking; closing the popover stops the asks
+// and the demand expires).
+function requestSensorLive() {
+  if (window.__wsSend) window.__wsSend({ type: 'sensor_live', on: true });
+}
 function startSystemTicker() {
   if (sysPopover.ticker) return;
+  requestSensorLive();
   // Populate the clock + "Last calibrated" + per-sensor age lines immediately
   // so they're visible the instant the popover opens, rather than blank until
   // the first 1 Hz tick lands ~1 s later. openSystemPopover() sets
   // state.popovers.system = true before calling us, so tickSystemClock()'s
   // guard passes.
   tickSystemClock();
-  sysPopover.ticker = setInterval(tickSystemClock, 1000);
+  sysPopover.ticker = setInterval(() => { tickSystemClock(); requestSensorLive(); }, 1000);
 }
 
 function stopSystemTicker() {

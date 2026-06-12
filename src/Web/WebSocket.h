@@ -31,6 +31,7 @@
 #include <ArduinoJson.h>
 #include "../Common/PsramAllocator.h"
 #include <vector>
+#include <functional>
 #include <string>
 #include <cstring>      // strlen / memcpy for text_psram()
 #include <stdint.h>
@@ -47,6 +48,13 @@ namespace LXMF { struct MessageRecord; }
 
 namespace Web {
 namespace WS {
+
+// Optional handler for client->server text frames (beyond ping).
+// WebUI registers one to honour the sensors-popover live demand.
+inline std::function<void(const char*, size_t)>& on_client_message() {
+  static std::function<void(const char*, size_t)> f;
+  return f;
+}
 
   inline AsyncWebSocket& server() {
     static AsyncWebSocket s(ApiRoutes::WS);
@@ -657,7 +665,9 @@ namespace WS {
       std::string s((const char*)data, len);
       if (s.find("\"ping\"") != std::string::npos) {
         text_psram(client, "{\"type\":\"pong\"}");
+        return;
       }
+      if (on_client_message()) on_client_message()(data ? (const char*)data : "", len);
     }
   }
 

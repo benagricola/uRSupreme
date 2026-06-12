@@ -39,6 +39,7 @@
 #include "LXMF/TelemetryShare.h"
 #include "LXMF/RatchetBridge.h"
 #include "Common/LoopTiming.h"
+#include "Sensors/View.h"     // before WebUI.h: diag.h drives the view
 #if HAS_WIFI
 #include "WifiRxWatchdog.h"   // before WebUI.h: diag.h surfaces its counters
 #endif
@@ -3134,8 +3135,17 @@ void loop() {
     const uint8_t pk = power_key_event();
     if (pk != 0) {
       if (display_blanked) display_unblank();
-      if (pk == 1) LXMF::Messenger::on_power_key();
-      else         LXMF::Messenger::on_power_key_hold();
+      if (pk == 1) {
+        if (Sensors::View::active()) Sensors::View::on_power_key();
+        else                         LXMF::Messenger::on_power_key();
+      } else {
+        // Hold: confirm inside the messenger, otherwise open the
+        // sensors view. (Interim routing; the screen framework will
+        // own this arbitration.)
+        if (LXMF::Messenger::active()) LXMF::Messenger::on_power_key_hold();
+        else if (Sensors::View::active()) { /* no hold action yet */ }
+        else Sensors::View::open();
+      }
     }
   }
   // Messenger housekeeping (auto-dismiss of the result page).
@@ -3380,6 +3390,16 @@ void button_event(uint8_t event, unsigned long duration) {
         LXMF::Messenger::exit_mode();
       }
     #endif
+      // Same contract for the sensors view: the user button drives it
+      // up to the 5 s tier, longer presses exit and fall through to
+      // the global gestures.
+      if (Sensors::View::active()) {
+        if (duration <= 5000) {
+          Sensors::View::on_user_button(duration);
+          return;
+        }
+        Sensors::View::exit_mode();
+      }
 
     if (duration > 10000) {
       #if HAS_CONSOLE

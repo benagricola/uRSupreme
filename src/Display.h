@@ -14,6 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "Graphics.h"
+#include "Sensors/View.h"
 #include <Adafruit_GFX.h>
 
 #if defined(HAS_LXMF_GATEWAY)
@@ -988,6 +989,10 @@ void draw_disp_area() {
       LXMF::Messenger::render(disp_area);
       return;
     }
+    if (Sensors::View::active() && device_init_done && !firmware_update_mode) {
+      Sensors::View::render(disp_area);
+      return;
+    }
   #endif
   if (!device_init_done || firmware_update_mode) {
     uint8_t p_by = 37;
@@ -1223,7 +1228,8 @@ void update_display(bool blank = false) {
   if (blank == true) {
     last_disp_update = millis()-disp_update_interval-1;
   } else {
-    if (display_blanking_enabled && millis()-last_unblank_event >= display_blanking_timeout) {
+    if (display_blanking_enabled && millis()-last_unblank_event >= display_blanking_timeout
+        && !Sensors::View::active()) {
       blank = true;
       display_blanked = true;
       if (display_intensity != 0) {
@@ -1305,6 +1311,16 @@ void update_display(bool blank = false) {
           LXMF::Messenger::render(messenger_full_area);
           drawBitmap(p_ad_x, p_ad_y, messenger_full_area.getBuffer(),
                      messenger_full_area.width(), messenger_full_area.height(),
+                     SSD1306_WHITE, SSD1306_BLACK);
+        } else if (Sensors::View::active() && device_init_done && !firmware_update_mode
+            && disp_mode == DISP_MODE_PORTRAIT
+            && Web::WebUI::identity_code_for_display().empty()) {
+          // Sensors pages take the same full-panel slot as the
+          // messenger; identity code still wins.
+          static GFXcanvas1 sensors_full_area(64, 128);
+          Sensors::View::render(sensors_full_area);
+          drawBitmap(p_ad_x, p_ad_y, sensors_full_area.getBuffer(),
+                     sensors_full_area.width(), sensors_full_area.height(),
                      SSD1306_WHITE, SSD1306_BLACK);
         } else
         #endif

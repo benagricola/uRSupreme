@@ -568,6 +568,31 @@ inline void pump() {
 
 // Read access for /api/gps. Caller gets a copy of the current fix.
 inline Fix last_fix() { return _detail::fix_ref(); }
+// Acquisition/power snapshot for on-device display and diagnostics.
+struct AcqStatus {
+  PowerMode  mode;
+  PulseState state;
+  M10Power   m10;
+  bool       ever_fixed;
+  uint8_t    backoff_count;
+  uint32_t   started_ms;        // valid while state == Acquiring
+  uint32_t   next_attempt_ms;   // 0 = none scheduled
+  uint32_t   last_fix_ms;       // 0 = never
+  uint32_t   last_clock_report_ms;  // 0 = never (clock-sync side)
+};
+inline AcqStatus acq_status() {
+  AcqStatus a;
+  a.mode            = target_mode();
+  a.state           = _detail::pulse_state_ref();
+  a.m10             = _detail::m10_power_ref();
+  a.ever_fixed      = _detail::ever_fixed_ref();
+  a.backoff_count   = _detail::backoff_count_ref();
+  a.started_ms      = _detail::pulse_started_ms_ref();
+  a.next_attempt_ms = _detail::next_attempt_ms_ref();
+  a.last_fix_ms     = _detail::last_fix_ms_ref();
+  a.last_clock_report_ms = _detail::last_report_ms_ref();
+  return a;
+}
 
 
 inline bool has_serial() { return _detail::serial_ref() != nullptr; }

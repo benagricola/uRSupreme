@@ -416,6 +416,7 @@
       #if defined(HAS_LXMF_GATEWAY)
         doc["messenger_page"] = LXMF::Messenger::page_name();
       #endif
+      doc["sensors_page"] = Sensors::View::page_name();
       std::string fb;
       fb.reserve(sizeof(snap) * 2);
       for (size_t i = 0; i < sizeof(snap); ++i) {
@@ -433,11 +434,19 @@
         // power_hold = PWR held 1 s (confirm send), btn = user button
         // tap (next), btn_hold = user button hold (back).
         const char* key = body["key"] | "";
-        if      (strcmp(key, "power")      == 0) LXMF::Messenger::on_power_key();
-        else if (strcmp(key, "power_hold") == 0) LXMF::Messenger::on_power_key_hold();
-        else if (strcmp(key, "btn")        == 0) LXMF::Messenger::on_user_button(100);
-        else if (strcmp(key, "btn_hold")   == 0) LXMF::Messenger::on_user_button(1000);
-        else {
+        if (strcmp(key, "power") == 0) {
+          if (Sensors::View::active()) Sensors::View::on_power_key();
+          else                         LXMF::Messenger::on_power_key();
+        } else if (strcmp(key, "power_hold") == 0) {
+          if (LXMF::Messenger::active())      LXMF::Messenger::on_power_key_hold();
+          else if (!Sensors::View::active())  Sensors::View::open();
+        } else if (strcmp(key, "btn") == 0) {
+          if (Sensors::View::active()) Sensors::View::on_user_button(100);
+          else                         LXMF::Messenger::on_user_button(100);
+        } else if (strcmp(key, "btn_hold") == 0) {
+          if (Sensors::View::active()) Sensors::View::on_user_button(1000);
+          else                         LXMF::Messenger::on_user_button(1000);
+        } else {
           send_error_with_message(req, 400, "bad_key",
             "key must be power, power_hold, btn, or btn_hold.");
           return;
@@ -445,6 +454,7 @@
         Common::PsramJsonDocument doc;
         doc["status"]         = "ok";
         doc["messenger_page"] = LXMF::Messenger::page_name();
+        doc["sensors_page"]   = Sensors::View::page_name();
         send_json(req, 200, doc);
       #else
         (void)body;

@@ -807,12 +807,20 @@
     <div class="popover-config" data-role="config" x-show="sectionOpen.gps" x-cloak>
       <label>
         <input type="checkbox" :checked="$store.s.gpsSource.enabled"
-               @change="onGpsConfigChange($event.target)">
+               @change="onGpsLocationChange($event.target)">
         <span>Enabled</span>
       </label>
+      <label>Location updates <button type="button" class="info-icon" data-info="How often the receiver wakes for a position. Always on gives the fastest first fix and live tracking; longer intervals save battery once a fix has been seen."></button></label>
       <select :value="String($store.s.gpsSource.interval_s)"
-              @change="onGpsConfigChange($event.target)">
+              @change="onGpsLocationChange($event.target)">
         <template x-for="p in GPS_INTERVALS" :key="p.value">
+          <option :value="String(p.value)" x-text="p.label"></option>
+        </template>
+      </select>
+      <label>Clock sync <button type="button" class="info-icon" data-info="How often GPS time is allowed to set the clock while position data is flowing. Does not wake the receiver."></button></label>
+      <select :value="String($store.s.gpsSource.clock_interval_s)"
+              @change="onGpsClockChange($event.target)">
+        <template x-for="p in GPS_CLOCK_INTERVALS" :key="p.value">
           <option :value="String(p.value)" x-text="p.label"></option>
         </template>
       </select>
@@ -2180,7 +2188,7 @@ let state = {
   timeSources: [],
   // GPS time-source config (enable + duty-cycle interval_s), loaded from
   // /api/time/sources when the system popover opens; bound by the GPS row.
-  gpsSource: { enabled: true, interval_s: 0, priority: 99 },
+  gpsSource: { enabled: true, interval_s: 0, clock_interval_s: 0, priority: 99 },
   // Singleton info-tooltip state. null = closed. { html, x, y } open.
   infoTip: null,
   // Image-resize picker state. Populated by openImageResizePicker; the
@@ -5874,12 +5882,10 @@ function sensorIntervalCurrent(key) {
   return String(sensorIntervalSnap(Math.round(((s && s.interval_ms) || 60000) / 1000)));
 }
 
-// GPS duty-cycle presets. GPS isn't a /api/sensors/config sensor - it's a time
-// source (Clock::Manager). Its interval_s drives the L76K power schedule:
-//   0 .. <300s  -> chip stays powered (continuous)
-//   >= 300s     -> pulsed: power on, hunt for a fix, report, power off, sleep
-// So "Pulse every N" lets the GPS sleep between fixes (the power-saving intent);
-// "Always on" keeps it streaming.
+// GPS location-update presets (the receiver power schedule, saved via
+// /api/sensors/config like the other sensors):
+//   0 .. <300s  -> receiver stays powered (continuous)
+//   >= 300s     -> pulsed: full-power acquisition, then sleep between fixes
 const GPS_INTERVALS = [
   { value: 0,    label: 'Always on' },
   { value: 300,  label: 'Every 5 min' },
@@ -5887,6 +5893,23 @@ const GPS_INTERVALS = [
   { value: 1800, label: 'Every 30 min' },
   { value: 3600, label: 'Every hour' },
 ];
+// Clock-sync presets (how often a live fix may set the clock - a
+// Clock::Manager setting with no effect on receiver power).
+const GPS_CLOCK_INTERVALS = [
+  { value: 0,     label: 'Once at boot' },
+  { value: 3600,  label: 'Every hour' },
+  { value: 21600, label: 'Every 6 hours' },
+  { value: 86400, label: 'Every day' },
+];
+function gpsClockIntervalSnap(secs) {
+  const n = Number(secs) || 0;
+  let best = 0, bestDist = Infinity;
+  for (const p of GPS_CLOCK_INTERVALS) {
+    const d = Math.abs((n || 0) - p.value);
+    if (d < bestDist) { best = p.value; bestDist = d; }
+  }
+  return best;
+}
 function gpsIntervalSnap(secs) {
   const n = Number(secs) || 0;
   for (const p of GPS_INTERVALS) if (p.value === n) return p.value;
@@ -5899,30 +5922,45 @@ function gpsIntervalSnap(secs) {
   }
   return best;
 }
-// GPS enable + duty-cycle live in /api/time/sources (gps.{enabled,interval_s}),
-// not /api/sensors/config. Loaded into state.gpsSource when the system popover
-// opens; the GPS sensor row binds to it.
+// Two GPS settings back the popover row: location updates (receiver
+// power; sensors config) and clock sync (Clock::Manager; time
+// sources). Both arrive in the system snapshot's gps sensor block;
+// the time-sources priority still comes from /api/time.
 async function loadGpsSource() {
   try {
     const t = await state.transport._req(API.TIME_SOURCES);
     const g = (t.sources && t.sources.gps) || {};
+    const sys = (state.system && state.system.sensors && state.system.sensors.gps) || {};
     state.gpsSource = {
-      enabled:    g.enabled !== false,
-      interval_s: gpsIntervalSnap(g.interval_s),
+      enabled:    sys.enabled !== false,
+      interval_s: gpsIntervalSnap(Math.round((sys.interval_ms || 0) / 1000)),
+      clock_interval_s: gpsClockIntervalSnap(
+        sys.clock_interval_s != null ? sys.clock_interval_s : g.interval_s),
       priority:   (g.priority != null) ? g.priority : 99,
     };
   } catch (_) { /* keep defaults */ }
 }
-async function onGpsConfigChange(sourceEl) {
+async function onGpsLocationChange(sourceEl) {
   if (sourceEl.type === 'checkbox') state.gpsSource.enabled = sourceEl.checked;
   else state.gpsSource.interval_s = Math.max(0, parseInt(sourceEl.value, 10) || 0);
   const g = state.gpsSource;
   try {
-    await state.transport._req(API.TIME_SOURCES, { method: 'POST',
-      body: { sources: { gps: { enabled: !!g.enabled, priority: g.priority, interval_s: g.interval_s } } } });
-    toast('GPS schedule updated', 'success');
+    await state.transport._req(API.SENSORS_CONFIG, { method: 'POST',
+      body: { sensor: 'gps', enabled: !!g.enabled, interval_s: g.interval_s } });
+    toast('Location schedule updated', 'success');
   } catch (e) {
-    toast('GPS update failed: ' + (e.message || e), 'error');
+    toast('Location update failed: ' + (e.message || e), 'error');
+  }
+}
+async function onGpsClockChange(sourceEl) {
+  state.gpsSource.clock_interval_s = Math.max(0, parseInt(sourceEl.value, 10) || 0);
+  const g = state.gpsSource;
+  try {
+    await state.transport._req(API.TIME_SOURCES, { method: 'POST',
+      body: { sources: { gps: { enabled: true, priority: g.priority, interval_s: g.clock_interval_s } } } });
+    toast('Clock sync updated', 'success');
+  } catch (e) {
+    toast('Clock sync update failed: ' + (e.message || e), 'error');
   }
 }
 

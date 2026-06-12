@@ -122,15 +122,17 @@
         const Sensors::Gnss::Fix f = Sensors::Gnss::last_fix();
         o["model"]        = Sensors::Gnss::module_name();
         o["available"]    = Sensors::Gnss::has_serial();
-        // GPS is presented as a sensor in the popover (enable/interval
-        // controls alongside BME280/QMC6310/IMU), but its config is
-        // owned by TimeManager since it doubles as a time source. Pull
-        // those fields here so the SPA's sensor-config row can render
-        // without a second fetch.
+        // Two separate GPS settings ride this block: enabled +
+        // interval_ms are the LOCATION policy (sensor power; 0 =
+        // always on), clock_interval_s is how often a live fix may
+        // resync the clock (Clock::Manager; no power meaning). The
+        // popover renders both without a second fetch.
         {
+          const auto& pc = Sensors::Gnss::power_config();
+          o["enabled"]     = pc.enabled;
+          o["interval_ms"] = pc.interval_s * 1000UL;
           const auto gcfg = Clock::Manager::get_config(Clock::Manager::Source::GPS);
-          o["enabled"]     = gcfg.enabled;
-          o["interval_ms"] = (uint32_t)gcfg.interval_s * 1000UL;
+          o["clock_interval_s"] = gcfg.interval_s;
         }
         o["valid"]        = f.valid;
         o["latitude"]     = f.latitude_deg;

@@ -29,6 +29,7 @@
 
 #include <Arduino.h>
 #include "../Common/OledText.h"
+#include "../Display/ScreenFramework.h"
 #include <ArduinoJson.h>
 #include <Adafruit_GFX.h>
 #include <Fonts/Picopixel.h>
@@ -102,6 +103,9 @@ namespace _detail {
   inline std::vector<Preset>& presets_ref() { static std::vector<Preset> v; return v; }
   inline std::string& store_path_ref() { static std::string p; return p; }
   inline Page&     page_ref()        { static Page p = Page::Hidden; return p; }
+  // True while the showing Result page belongs to a send that granted
+  // live telemetry updates - drives the chrome spinner.
+  inline bool&     result_live_ref() { static bool v = false; return v; }
   inline size_t&   cursor_ref()      { static size_t c = 0; return c; }
   inline std::string& result_ref()   { static std::string s; return s; }
   inline uint32_t& result_at_ref()   { static uint32_t t = 0; return t; }
@@ -226,10 +230,10 @@ inline std::vector<Preset> default_templates() {
   return v;
 }
 
+// Close the messenger through the framework (its on_exit callback
+// does the cleanup); safe no-op when another screen is active.
 inline void exit_mode() {
-  _detail::page_ref()   = Page::Hidden;
-  _detail::cursor_ref() = 0;
-  notify_led(false);
+  if (_detail::page_ref() != Page::Hidden) Display::Screens::exit_active();
 }
 
 // Screen-identity lifecycle, called from LXMFGateway::set_screen_identity
@@ -316,6 +320,9 @@ inline void boot(microStore::FileSystem& fs) {
 // callback (main loop) for the screen identity only. If the holder is
 // mid-send-flow, the page is not stolen - the LED still announces the
 // arrival and the message waits in the inbox.
+inline void send_selected();
+inline const Display::Screens::ScreenPage& screen_page();
+
 inline void show_incoming(const std::string& from_name, const std::string& content) {
   const Page pg = _detail::page_ref();
   if (pg != Page::Hidden && pg != Page::Message) {
@@ -326,60 +333,53 @@ inline void show_incoming(const std::string& from_name, const std::string& conte
   _detail::msg_text_ref() = content.substr(0, MAX_CONTENT_LEN);
   _detail::msg_at_ref()   = millis();
   _detail::page_ref()     = Page::Message;
+  Display::Screens::activate(&screen_page());
   notify_led(true);
 }
 
-inline void send_selected();
 
-// Power key, short press: forward. Enters the mode, chooses, sends.
-inline void on_power_key() {
-  switch (_detail::page_ref()) {
-    case Page::Hidden:
-      _detail::cursor_ref() = 0;
-      if (LXMFGateway::screen_identity() == nullptr) {
-        _detail::page_ref() = Page::NoIdentity;
-      } else if (usable_count() == 0) {
-        _detail::page_ref() = Page::NoPresets;
-      } else {
-        _detail::page_ref() = Page::List;
+// ---- ScreenFramework plugin handlers --------------------------------
+// New gesture map (issue #3): POWER tap advances the cursor, POWER
+// hold commits (pick on the list, send on the confirm page), BOOT
+// hold pops one level (Confirm -> List) and exits at the root. The
+// framework owns entry (BOOT tap rotation) and exit.
+
+namespace _detail {
+  // Framework entry: initialise the flow unless an out-of-band page
+  // (incoming message) was set before activation.
+  inline void plugin_enter() {
+    if (page_ref() != Page::Hidden) return;
+    cursor_ref() = 0;
+    if (LXMFGateway::screen_identity() == nullptr) page_ref() = Page::NoIdentity;
+    else if (usable_count() == 0)                  page_ref() = Page::NoPresets;
+    else                                           page_ref() = Page::List;
+  }
+  inline void plugin_exit() {
+    page_ref()   = Page::Hidden;
+    cursor_ref() = 0;
+    notify_led(false);
+  }
+  inline void plugin_next() {
+    switch (page_ref()) {
+      case Page::List: {
+        const size_t n = usable_count();
+        if (n == 0) page_ref() = Page::NoPresets;
+        else        cursor_ref() = (cursor_ref() + 1) % n;
+        break;
       }
-      break;
-    case Page::List:    _detail::page_ref() = Page::Confirm; break;
-    case Page::Confirm: break;   // sending takes a HOLD (see below)
-    default:            exit_mode();                         break;
-  }
-}
-
-// Power-key hold (the PMU's 1 s IRQ level). Deliberate by design: the
-// send fires only from the confirm page, so a stray long press
-// elsewhere does nothing.
-inline void on_power_key_hold() {
-  if (_detail::page_ref() == Page::Confirm) send_selected();
-}
-
-// User button. Short press: next item (closes the read-only pages).
-// Hold: back / exit. duration follows button_event's click semantics.
-inline void on_user_button(unsigned long duration) {
-  const bool hold = duration > HOLD_PRESS_MS;
-  if (hold) {
-    switch (_detail::page_ref()) {
-      case Page::Confirm: _detail::page_ref() = Page::List; break;
-      default:            exit_mode();                      break;
+      case Page::Confirm:
+        break;   // commit is a hold; nothing to advance
+      default:
+        Display::Screens::exit_active();   // read-only pages: any input closes
+        break;
     }
-    return;
   }
-  switch (_detail::page_ref()) {
-    case Page::List: {
-      const size_t n = usable_count();
-      if (n == 0) _detail::page_ref() = Page::NoPresets;
-      else        _detail::cursor_ref() = (_detail::cursor_ref() + 1) % n;
-      break;
+  inline void plugin_select();
+  inline bool plugin_back() {
+    switch (page_ref()) {
+      case Page::Confirm: page_ref() = Page::List; return true;
+      default:            return false;   // at root: framework exits
     }
-    case Page::Confirm:
-      break;  // choose/send is the power key; back is a hold
-    default:
-      exit_mode();
-      break;
   }
 }
 
@@ -390,7 +390,7 @@ inline void send_selected() {
   {
     _detail::Guard g;
     const auto idx = _detail::complete_indices_locked();
-    if (_detail::cursor_ref() >= idx.size()) { exit_mode(); return; }
+    if (_detail::cursor_ref() >= idx.size()) { Display::Screens::exit_active(); return; }
     p = _detail::presets_ref()[idx[_detail::cursor_ref()]];
   }
 
@@ -440,6 +440,9 @@ inline void send_selected() {
   if ((ok || queued) && extra.telemetry.size() > 0) {
     TelemetryShare::record_grant(a->id, dest, tel_items, p.tel_share_s);
   }
+  _detail::result_live_ref() = (ok || queued)
+                               && extra.telemetry.size() > 0
+                               && p.tel_share_s > 0;
   _detail::sent_hash_ref() = rec.packet_hash;
   if (ok)          _detail::result_ref() = "Sent";
   else if (queued) _detail::result_ref() = "Finding route";
@@ -493,65 +496,51 @@ inline void tick() {
 
 // Text helpers shared with the sensors view live in Common/OledText.h.
 
-inline void render(GFXcanvas1& area) {
-  area.fillRect(0, 0, area.width(), area.height(), 0 /*black*/);
+inline void render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
   area.setFont(&Picopixel);
   area.setTextWrap(false);
-  area.setTextColor(1 /*white*/);
+  area.setTextColor(1);
   area.setTextSize(1);
-  const int16_t h = area.height();
 
   const Page pg = _detail::page_ref();
   if (pg == Page::Message) {
-    // Sender on the title row, message in the bigger classic font
-    // below, dismiss hint at the bottom.
-    Common::OledText::line(area, 7, Common::OledText::fit(area, _detail::msg_from_ref(), 60).c_str());
-    area.drawFastHLine(0, 10, area.width(), 1);
-    const int body_rows = (h - 16 - 12) / 8;
-    Common::OledText::wrap_classic(area, _detail::msg_text_ref(), 16, body_rows);
-    Common::OledText::hints(area, {"Tap ANY: close"});
+    const int body_rows = (y_bottom - y_top - 3) / 8;
+    Common::OledText::wrap_classic(area, _detail::msg_text_ref(),
+                                   (int16_t)(y_top + 3), body_rows);
     return;
   }
   if (pg == Page::NoIdentity) {
-    Common::OledText::line(area, 7,  "MESSAGES");
-    area.drawFastHLine(0, 10, area.width(), 1);
-    Common::OledText::line(area, 20, "No screen identity");
-    Common::OledText::line(area, 27, "is set.");
-    Common::OledText::line(area, 38, "Enable one in the");
-    Common::OledText::line(area, 45, "web app.");
-    if (h > 64) Common::OledText::hints(area, {"Tap ANY: close"});
+    Common::OledText::line(area, (int16_t)(y_top + 7),  "No screen identity");
+    Common::OledText::line(area, (int16_t)(y_top + 14), "is set.");
+    Common::OledText::line(area, (int16_t)(y_top + 25), "Enable one in the");
+    Common::OledText::line(area, (int16_t)(y_top + 32), "web app.");
     return;
   }
   if (pg == Page::NoPresets) {
-    Common::OledText::line(area, 7,  "MESSAGES");
-    area.drawFastHLine(0, 10, area.width(), 1);
-    Common::OledText::line(area, 20, "No messages are");
-    Common::OledText::line(area, 27, "set up.");
-    Common::OledText::line(area, 38, "Add some in the");
-    Common::OledText::line(area, 45, "web app.");
-    if (h > 64) Common::OledText::hints(area, {"Tap ANY: close"});
+    Common::OledText::line(area, (int16_t)(y_top + 7),  "No messages are");
+    Common::OledText::line(area, (int16_t)(y_top + 14), "set up.");
+    Common::OledText::line(area, (int16_t)(y_top + 25), "Add some in the");
+    Common::OledText::line(area, (int16_t)(y_top + 32), "web app.");
     return;
   }
   if (pg == Page::List) {
-    Common::OledText::line(area, 7, "SEND");
-    area.drawFastHLine(0, 10, area.width(), 1);
     _detail::Guard g;
     auto& v = _detail::presets_ref();
     const auto idx = _detail::complete_indices_locked();
     const size_t cur = _detail::cursor_ref();
-    // Rows fill whatever height is left above the hint block; the
-    // window scrolls to keep the cursor on screen. The device must
-    // explain itself - whoever holds it has no web UI in hand.
-    const size_t rows  = (size_t)((h - 18 - 32) / 7);
+    // Rows fill the body; the window scrolls to keep the cursor on
+    // screen. The device must explain itself - whoever holds it has
+    // no web UI in hand.
+    const size_t rows  = (size_t)((y_bottom - y_top - 5) / 7);
     const size_t first = (cur >= rows) ? cur - rows + 1 : 0;
-    int16_t y = 18;
+    int16_t y = (int16_t)(y_top + 7);
     for (size_t i = first; i < idx.size() && i < first + rows; ++i, y += 7) {
-      area.setCursor(2, y);
-      area.print(i == cur ? ">" : " ");
-      area.setCursor(8, y);
-      area.print(Common::OledText::fit(area, v[idx[i]].label, 54).c_str());
+      if (i == cur) {
+        area.drawBitmap(2, (int16_t)(y - 6), Display::Screens::GLYPH_CURSOR, 8, 8, 1);
+      }
+      area.setCursor(11, y);
+      area.print(Common::OledText::fit(area, v[idx[i]].label, 51).c_str());
     }
-    Common::OledText::hints(area, {"Tap PWR: pick", "Tap BOOT: next", "Hold BOOT: back"});
     return;
   }
   if (pg == Page::Confirm) {
@@ -560,28 +549,95 @@ inline void render(GFXcanvas1& area) {
     if (idx.empty()) { _detail::page_ref() = Page::NoPresets; return; }
     const size_t cur = _detail::cursor_ref() < idx.size() ? _detail::cursor_ref() : 0;
     const Preset& p = _detail::presets_ref()[idx[cur]];
-    Common::OledText::line(area, 7, "SEND?");
-    area.drawFastHLine(0, 10, area.width(), 1);
-    Common::OledText::line(area, 20, Common::OledText::fit(area, p.label, 60).c_str());
-    // The recipient's prefix, then the message itself in the reading
-    // font, so the holder confirms what actually goes out.
-    const std::string to = "To: " + p.dest_hex.substr(0, 8);
-    Common::OledText::line(area, 27, to.c_str());
-    const int body_rows = (h - 33 - 19) / 8;
-    if (body_rows > 0) Common::OledText::wrap_classic(area, p.content, 33, body_rows);
-    Common::OledText::hints(area, {"Hold PWR: send", "Hold BOOT: back"});
+    Common::OledText::line(area, (int16_t)(y_top + 7),
+                           Common::OledText::fit(area, p.label, 60).c_str());
+    // The recipient's prefix with the person glyph, then the message
+    // itself in the reading font, so the holder confirms what goes out.
+    area.drawBitmap(2, (int16_t)(y_top + 10), Display::Screens::GLYPH_PERSON, 8, 8, 1);
+    const std::string to = p.dest_hex.substr(0, 8);
+    Common::OledText::line(area, (int16_t)(y_top + 17), ("  " + to).c_str());
+    const int16_t body_y = (int16_t)(y_top + 22);
+    const int body_rows = (y_bottom - body_y) / 8;
+    if (body_rows > 0) Common::OledText::wrap_classic(area, p.content, body_y, body_rows);
     return;
   }
   if (pg == Page::Result) {
-    Common::OledText::line(area, 7, "STATUS");
-    area.drawFastHLine(0, 10, area.width(), 1);
-    // The status wraps in the reading font - "Finding route" is wider
-    // than the 64 px panel on one line.
-    const int body_rows = (h - 16 - 19) / 8;
-    Common::OledText::wrap_classic(area, _detail::result_ref(), 16, body_rows > 0 ? body_rows : 1);
-    Common::OledText::hints(area, {"Tap ANY: close"});
+    // Status glyph left of the wrapped status text, keyed off the
+    // same string on_outbox_status updates.
+    const std::string& r = _detail::result_ref();
+    const uint8_t* g = Display::Screens::GLYPH_CLOCK;
+    if      (r == "Sent")      g = Display::Screens::GLYPH_CHECK;
+    else if (r == "Delivered") g = Display::Screens::GLYPH_CHECK2;
+    else if (r == "Failed")    g = Display::Screens::GLYPH_CROSS;
+    area.drawBitmap(2, (int16_t)(y_top + 4), g, 8, 8, 1);
+    const int body_rows = (y_bottom - y_top - 3) / 8;
+    Common::OledText::wrap_classic(area, r, (int16_t)(y_top + 3),
+                                   body_rows > 0 ? body_rows : 1);
     return;
   }
 }
+
+namespace _detail {
+  inline void plugin_header(const uint8_t** glyph, const char** title) {
+    switch (page_ref()) {
+      case Page::Confirm:
+        *glyph = Display::Screens::GLYPH_SEND;  *title = "SEND";   break;
+      case Page::Result:
+        *glyph = Display::Screens::GLYPH_SEND;  *title = "STATUS"; break;
+      case Page::Message: {
+        // Sender as the title, uppercased per the chrome rules.
+        static char buf[14];
+        const std::string& f = msg_from_ref();
+        size_t n = 0;
+        for (; n < sizeof(buf) - 1 && n < f.size(); ++n) buf[n] = (char)toupper((unsigned char)f[n]);
+        buf[n] = 0;
+        *glyph = Display::Screens::GLYPH_INBOX; *title = buf;       break;
+      }
+      default:
+        *glyph = Display::Screens::GLYPH_ENVELOPE; *title = "MESSAGES"; break;
+    }
+  }
+  inline size_t plugin_hints(const char** out, size_t max) {
+    switch (page_ref()) {
+      case Page::List:
+        if (max < 3) return 0;
+        out[0] = "Tap POWER: next";
+        out[1] = "Hold POWER: pick";
+        out[2] = "Hold BOOT: back";
+        return 3;
+      case Page::Confirm:
+        if (max < 2) return 0;
+        out[0] = "Hold POWER: send";
+        out[1] = "Hold BOOT: back";
+        return 2;
+      default:
+        if (max < 1) return 0;
+        out[0] = "Tap ANY: close";
+        return 1;
+    }
+  }
+  // The result page after a live-granted send keeps updating: spinner.
+  inline bool plugin_live() {
+    return page_ref() == Page::Result && result_live_ref();
+  }
+  inline void plugin_select() {
+    switch (page_ref()) {
+      case Page::List:    page_ref() = Page::Confirm; break;
+      case Page::Confirm: send_selected();            break;
+      default:            Display::Screens::exit_active(); break;
+    }
+  }
+}
+
+// The registered framework page. Body + handlers above; chrome and
+// navigation are the framework's.
+inline const Display::Screens::ScreenPage MESSENGER_PAGE = {
+  _detail::plugin_header, _detail::plugin_hints, render_body,
+  _detail::plugin_enter, _detail::plugin_exit,
+  _detail::plugin_next, _detail::plugin_select, _detail::plugin_back,
+  _detail::plugin_live, /*ttl_ms=*/0,
+};
+inline const Display::Screens::ScreenPage& screen_page() { return MESSENGER_PAGE; }
+
 }  // namespace Messenger
 }  // namespace LXMF

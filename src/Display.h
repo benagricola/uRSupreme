@@ -14,6 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "Graphics.h"
+#include "Display/ScreenFramework.h"
 #include "Sensors/View.h"
 #include <Adafruit_GFX.h>
 
@@ -985,12 +986,8 @@ void draw_disp_area() {
     // Messenger mode pages (preset list / confirm / result). The
     // identity code keeps priority above - it is single-use with a
     // 60 s TTL, the messenger can wait.
-    if (LXMF::Messenger::active() && device_init_done && !firmware_update_mode) {
-      LXMF::Messenger::render(disp_area);
-      return;
-    }
-    if (Sensors::View::active() && device_init_done && !firmware_update_mode) {
-      Sensors::View::render(disp_area);
+    if (Display::Screens::active() && device_init_done && !firmware_update_mode) {
+      Display::Screens::render(disp_area);
       return;
     }
   #endif
@@ -1229,7 +1226,7 @@ void update_display(bool blank = false) {
     last_disp_update = millis()-disp_update_interval-1;
   } else {
     if (display_blanking_enabled && millis()-last_unblank_event >= display_blanking_timeout
-        && !Sensors::View::active()) {
+        && !Display::Screens::active()) {
       blank = true;
       display_blanked = true;
       if (display_intensity != 0) {
@@ -1299,28 +1296,18 @@ void update_display(bool blank = false) {
         #endif
 
         #if defined(HAS_LXMF_GATEWAY)
-        if (LXMF::Messenger::active() && device_init_done && !firmware_update_mode
+        if (Display::Screens::active() && device_init_done && !firmware_update_mode
             && disp_mode == DISP_MODE_PORTRAIT
             && Web::WebUI::identity_code_for_display().empty()) {
-          // Messenger pages own the whole panel in portrait - both
-          // area slots, one tall canvas - so message text and the
-          // button hints get the full height. The identity-code page
-          // still wins (the normal path below renders it); landscape
-          // keeps the split layout via draw_disp_area's override.
-          static GFXcanvas1 messenger_full_area(64, 128);
-          LXMF::Messenger::render(messenger_full_area);
-          drawBitmap(p_ad_x, p_ad_y, messenger_full_area.getBuffer(),
-                     messenger_full_area.width(), messenger_full_area.height(),
-                     SSD1306_WHITE, SSD1306_BLACK);
-        } else if (Sensors::View::active() && device_init_done && !firmware_update_mode
-            && disp_mode == DISP_MODE_PORTRAIT
-            && Web::WebUI::identity_code_for_display().empty()) {
-          // Sensors pages take the same full-panel slot as the
-          // messenger; identity code still wins.
-          static GFXcanvas1 sensors_full_area(64, 128);
-          Sensors::View::render(sensors_full_area);
-          drawBitmap(p_ad_x, p_ad_y, sensors_full_area.getBuffer(),
-                     sensors_full_area.width(), sensors_full_area.height(),
+          // Framework screens own the whole panel in portrait - both
+          // area slots, one tall canvas - so bodies and the hint bar
+          // get the full height. The identity-code page still wins
+          // (the normal path below renders it); landscape keeps the
+          // split layout via draw_disp_area's override.
+          static GFXcanvas1 screens_full_area(64, 128);
+          Display::Screens::render(screens_full_area);
+          drawBitmap(p_ad_x, p_ad_y, screens_full_area.getBuffer(),
+                     screens_full_area.width(), screens_full_area.height(),
                      SSD1306_WHITE, SSD1306_BLACK);
         } else
         #endif

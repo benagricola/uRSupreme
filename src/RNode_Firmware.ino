@@ -1275,6 +1275,13 @@ void setup() {
     // top of the driver defaults. No-op if /lxmf/sensors.json doesn't
     // exist yet (factory state).
     Sensors::SensorConfig::load(filesystem);
+    // Screen rotation for the OLED framework (BOOT-tap order).
+    Display::Screens::set_screens({
+      &LXMF::Messenger::MESSENGER_PAGE,
+      &Sensors::View::GPS_PAGE,
+      &Sensors::View::HEADING_PAGE,
+      &Sensors::View::SYSTEM_PAGE,
+    });
     // Telemetry-to-collector config. No-op if /lxmf/telemetry.json
     // doesn't exist yet (feature defaults to off).
     LXMF::TelemetrySender::load(filesystem);
@@ -3135,20 +3142,12 @@ void loop() {
     const uint8_t pk = power_key_event();
     if (pk != 0) {
       if (display_blanked) display_unblank();
-      if (pk == 1) {
-        if (Sensors::View::active()) Sensors::View::on_power_key();
-        else                         LXMF::Messenger::on_power_key();
-      } else {
-        // Hold: confirm inside the messenger, otherwise open the
-        // sensors view. (Interim routing; the screen framework will
-        // own this arbitration.)
-        if (LXMF::Messenger::active()) LXMF::Messenger::on_power_key_hold();
-        else if (Sensors::View::active()) { /* no hold action yet */ }
-        else Sensors::View::open();
-      }
+      Display::Screens::handle_power(pk);
     }
   }
-  // Messenger housekeeping (auto-dismiss of the result page).
+  // Screen housekeeping: framework TTLs + the messenger's own
+  // result/incoming auto-dismiss.
+  Display::Screens::tick();
   LXMF::Messenger::tick();
   // Answer pending telemetry requests from peers holding a live-share
   // grant. Cheap on the no-op path (empty pending queue).
@@ -3377,29 +3376,25 @@ void button_event(uint8_t event, unsigned long duration) {
     if (was_blanked) display_unblank();
 
     #if defined(HAS_LXMF_GATEWAY)
-      // Mode-local remap: while the messenger is on screen, the user
-      // button drives it (short = next, hold = back). The global
-      // gestures (sleep, BT toggle, console, identity code) stay
-      // outside the mode; presses past 5 s exit it and fall through
-      // so pairing and the console remain reachable.
-      if (LXMF::Messenger::active()) {
-        if (duration <= 5000) {
-          LXMF::Messenger::on_user_button(duration);
-          return;
-        }
-        LXMF::Messenger::exit_mode();
+      // Identity-code gesture: a 0.7-5 s hold arms it (below); the
+      // next tap inside the window fires it, taking priority over the
+      // screen framework's tap handling.
+      if (duration <= 700 && lxmf_long_press_armed_ms != 0 &&
+          (millis() - lxmf_long_press_armed_ms) < LXMF_GESTURE_WINDOW_MS) {
+        lxmf_long_press_armed_ms = 0;
+        Web::WebUI::on_button_request_identity_code();
+        return;
       }
     #endif
-      // Same contract for the sensors view: the user button drives it
-      // up to the 5 s tier, longer presses exit and fall through to
-      // the global gestures.
-      if (Sensors::View::active()) {
-        if (duration <= 5000) {
-          Sensors::View::on_user_button(duration);
-          return;
-        }
-        Sensors::View::exit_mode();
-      }
+    // Screen framework: BOOT tap cycles the registered screens, BOOT
+    // hold goes back one level / exits. Returns false for presses it
+    // does not own (>5 s, or holds while no screen is active) so the
+    // global gestures below stay reachable. The old idle-tap BT
+    // toggle is retired by this routing (BT-on stays reachable via
+    // the pairing hold; BT-off lives in the web UI).
+    if (Display::Screens::handle_boot(duration)) {
+      return;
+    }
 
     if (duration > 10000) {
       #if HAS_CONSOLE
@@ -3425,27 +3420,10 @@ void button_event(uint8_t event, unsigned long duration) {
         lxmf_long_press_armed_ms = millis();
       #endif
     } else {
-      #if defined(HAS_LXMF_GATEWAY)
-        unsigned long now = millis();
-        if (lxmf_long_press_armed_ms != 0 &&
-            (now - lxmf_long_press_armed_ms) < LXMF_GESTURE_WINDOW_MS) {
-          lxmf_long_press_armed_ms = 0;
-          Web::WebUI::on_button_request_identity_code();
-          // Gesture consumed - don't also toggle BT this press.
-          return;
-        }
-      #endif
-      #if HAS_BLUETOOTH || HAS_BLE
-      if (!was_blanked && bt_state != BT_STATE_CONNECTED) {
-        if (bt_state == BT_STATE_OFF) {
-          bt_start();
-          bt_conf_save(true);
-        } else {
-          bt_stop();
-          bt_conf_save(false);
-        }
-      }
-      #endif
+      // Taps that reach here were not consumed by the identity-code
+      // gesture or the screen framework (e.g. zero registered
+      // screens); nothing else owns a bare tap.
+      (void)was_blanked;
     }
   #endif
 }

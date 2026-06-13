@@ -148,6 +148,13 @@ inline void      set_interval_ms(uint32_t ms) { _detail::interval_ms_ref() = ms;
 inline void request_live(uint32_t ttl_ms = 1500) {
   _detail::live_until_ref() = millis() + ttl_ms;
 }
+// Whether a live-poll window is currently active (from any demander -
+// the web popover or a device live screen both renew the same window).
+inline bool live() { return millis() < _detail::live_until_ref(); }
+inline uint32_t live_remaining_ms() {
+  const uint32_t u = _detail::live_until_ref(), n = millis();
+  return u > n ? u - n : 0;
+}
 inline bool      enabled()       { return _detail::enabled_ref(); }
 inline void      set_enabled(bool on) { _detail::enabled_ref() = on; }
 

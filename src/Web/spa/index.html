@@ -2263,6 +2263,9 @@ let state = {
   // Populated from the WS `hello` frame and refreshed by `system_update`
   // events every ~30s. Read-only state for popovers + the topbar icons.
   system: null,
+  // Per-sensor live-poll state pushed by the device (sensor_live_state):
+  // {environment:{live,ttl_ms}, magnetometer, imu, gps:{powered,mode}}.
+  sensorLive: {},
   contacts: JSON.parse(localStorage.getItem(LS.CONTACTS) || '{}'),
   prefs: loadPrefs(),
   pendingIdCode: false,
@@ -5740,8 +5743,8 @@ function tickSystemClock() {
 // sensor data (it polls the I2C sensors fast + drains the WS faster
 // for as long as we keep asking; closing the popover stops the asks
 // and the demand expires).
-function requestSensorLive() {
-  if (window.__wsSend) window.__wsSend({ type: 'sensor_live', on: true });
+function requestSensorLive(on = true) {
+  if (window.__wsSend) window.__wsSend({ type: 'sensor_live', on: !!on });
 }
 function startSystemTicker() {
   if (sysPopover.ticker) return;
@@ -5756,7 +5759,14 @@ function startSystemTicker() {
 }
 
 function stopSystemTicker() {
-  if (sysPopover.ticker) { clearInterval(sysPopover.ticker); sysPopover.ticker = null; }
+  if (sysPopover.ticker) {
+    clearInterval(sysPopover.ticker);
+    sysPopover.ticker = null;
+    // Closing stops the asks; also tell the device to drop the live
+    // demand now instead of waiting out the TTL (and so the last frame
+    // is on:false, not a racing tick's on:true).
+    requestSensorLive(false);
+  }
 }
 
 async function openSystemPopover() {
@@ -6210,6 +6220,13 @@ function dispatchEvent(ev) {
         state.system.sensors[kind] = ev.values[kind];
       }
     }
+    return;
+  }
+  if (ev.type === 'sensor_live_state') {
+    // Which sensors are being fast-polled right now, from this client,
+    // another client, or a device live screen (all share one window).
+    // {environment:{live,ttl_ms}, magnetometer:{...}, imu:{...}, gps:{powered,mode}}
+    state.sensorLive = ev.sensors || {};
     return;
   }
   if (ev.type === 'storage_changed') {

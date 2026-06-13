@@ -305,6 +305,13 @@ namespace Web {
         if (now - _last_sensor_drain >= drain_period) {
           _last_sensor_drain = now;
           drain_sensor_updates();
+          // Push the live-demand set when it changes - device live screens
+          // demand sensors directly, so the web view tracks them too.
+          const uint32_t sig = sensor_live_signature();
+          if (sig != _last_live_sig) {
+            _last_live_sig = sig;
+            Web::WS::publish_sensor_live([](JsonObject s){ fill_sensor_live(s); });
+          }
         }
         // Full system snapshot every 30 s - battery decay, storage
         // usage drift, outbound_caps shifts on SD insert/eject. Cheap
@@ -337,17 +344,55 @@ namespace Web {
     // Honour a sensors-popover live demand: poll the I2C sensors fast
     // and renew a window during which the drain runs at SENSOR_DRAIN_
     // LIVE_MS. GPS is not demanded here - it runs on its own schedule.
+    // Per-sensor live-demand state: which sensors are being fast-polled
+    // right now, by either the web popover or a device live screen (both
+    // renew the same per-sensor window). GPS runs on its own power
+    // schedule rather than a live window, so it reports power state.
+    static void fill_sensor_live(JsonObject s) {
+      auto put = [&](const char* k, bool live, uint32_t ttl) {
+        JsonObject o = s[k].to<JsonObject>();
+        o["live"] = live;
+        if (live) o["ttl_ms"] = ttl;
+      };
+      put("environment",  Sensors::BME280::live(),  Sensors::BME280::live_remaining_ms());
+      put("magnetometer", Sensors::QMC6310::live(), Sensors::QMC6310::live_remaining_ms());
+      put("imu",          Sensors::QMI8658::live(), Sensors::QMI8658::live_remaining_ms());
+      JsonObject g = s["gps"].to<JsonObject>();
+      g["powered"] = Sensors::Gnss::is_powered();
+      static const char* MODE[] = { "off", "always_on", "pulsed" };
+      g["mode"] = MODE[(uint8_t)Sensors::Gnss::acq_status().mode];
+    }
+
+    // A compact bitmask of the current live set, so the drain loop can
+    // detect a change (e.g. a device screen demanding sensors) and push
+    // a fresh sensor_live_state without re-broadcasting every tick.
+    static uint32_t sensor_live_signature() {
+      return (Sensors::BME280::live()  ? 1u : 0u)
+           | (Sensors::QMC6310::live() ? 2u : 0u)
+           | (Sensors::QMI8658::live() ? 4u : 0u)
+           | (Sensors::Gnss::is_powered() ? 8u : 0u)
+           | ((uint32_t)Sensors::Gnss::acq_status().mode << 4);
+    }
+
     static void on_ws_client_message(const char* data, size_t len) {
       if (!data || len == 0) return;
       const std::string m(data, len);
       if (m.find("\"sensor_live\"") == std::string::npos) return;
       const bool on = m.find("\"on\":true") != std::string::npos
                    || m.find("\"on\": true") != std::string::npos;
-      if (!on) { _sensor_ws_live_until = 0; return; }
-      Sensors::BME280::request_live(SENSOR_WS_LIVE_TTL_MS);
-      Sensors::QMC6310::request_live(SENSOR_WS_LIVE_TTL_MS);
-      Sensors::QMI8658::request_live(SENSOR_WS_LIVE_TTL_MS);
-      _sensor_ws_live_until = millis() + SENSOR_WS_LIVE_TTL_MS;
+      if (!on) {
+        _sensor_ws_live_until = 0;
+      } else {
+        Sensors::BME280::request_live(SENSOR_WS_LIVE_TTL_MS);
+        Sensors::QMC6310::request_live(SENSOR_WS_LIVE_TTL_MS);
+        Sensors::QMI8658::request_live(SENSOR_WS_LIVE_TTL_MS);
+        _sensor_ws_live_until = millis() + SENSOR_WS_LIVE_TTL_MS;
+      }
+      // Reply with the resulting live set so the client knows exactly
+      // what is being fast-polled (its own demand plus any device-screen
+      // demand). The change-detect in the drain loop keeps it current.
+      _last_live_sig = sensor_live_signature();
+      Web::WS::publish_sensor_live([](JsonObject s){ fill_sensor_live(s); });
     }
 
     static void drain_sensor_updates() {
@@ -1009,6 +1054,9 @@ namespace Web {
     static constexpr uint32_t SENSOR_DRAIN_LIVE_MS  = 250;
     static constexpr uint32_t SENSOR_WS_LIVE_TTL_MS = 3000;
     static inline uint32_t _sensor_ws_live_until = 0;
+    // Last broadcast live-demand signature (see sensor_live_signature),
+    // so the drain loop only re-publishes sensor_live_state on change.
+    static inline uint32_t _last_live_sig = 0;
 
     // Per-sensor `taken_ms` snapshots, used by drain_sensor_updates
     // to dedupe WS broadcasts. Reading a sensor twice per second when

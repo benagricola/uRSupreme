@@ -165,18 +165,20 @@ inline bool handle_boot(unsigned long duration_ms) {
   }
   _detail::last_input_ms_ref() = millis();
   if (duration_ms <= BOOT_HOLD_MS) {
-    // Tap: enter the rotation, advance through it, wrap to status.
+    // Tap: advance through the rotation, wrapping back to status (page 0,
+    // the home), never to the -1 blank state.
     if (_detail::screen_count_ref() == 0) return false;
-    if (a < 0)                                   _detail::enter(0);
+    if (a < 0)                                              _detail::enter(0);
     else if ((size_t)(a + 1) < _detail::screen_count_ref()) _detail::enter(a + 1);
-    else                                         exit_active();
+    else                                                    _detail::enter(0);
     return true;
   }
-  // Hold: back one level; at the page root, exit to status.
+  // Hold: back one level; at a page root, return to status (page 0); at
+  // status itself there is nowhere further back, so stay (it is home).
   if (a < 0) return false;
   const ScreenPage* p = _detail::screens_ref()[a];
   if (p->on_back && p->on_back()) return true;
-  exit_active();
+  if (a != 0) _detail::enter(0);
   return true;
 }
 

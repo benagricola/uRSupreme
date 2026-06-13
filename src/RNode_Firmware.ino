@@ -1278,13 +1278,19 @@ void setup() {
     // Restore the saved magnetometer calibration so the compass works
     // from boot without re-waving the device. No-op if never calibrated.
     Sensors::SensorConfig::load_mag_cal(filesystem);
-    // Screen rotation for the OLED framework (BOOT-tap order).
+    // Screen rotation for the OLED framework (BOOT-tap order). Status is
+    // page 0, the home: tap cycles status -> messenger -> sensors ->
+    // status, and BOOT-hold backs out to it.
     Display::Screens::set_screens({
+      &STATUS_PAGE,
       &LXMF::Messenger::MESSENGER_PAGE,
       &Sensors::View::GPS_PAGE,
       &Sensors::View::HEADING_PAGE,
       &Sensors::View::ENVIRONMENT_PAGE,
     });
+    // Start on the status home so the framework owns the panel from boot
+    // (the legacy -1 split is now only the landscape / pre-init path).
+    Display::Screens::activate(&STATUS_PAGE);
     // Telemetry-to-collector config. No-op if /lxmf/telemetry.json
     // doesn't exist yet (feature defaults to off).
     LXMF::TelemetrySender::load(filesystem);

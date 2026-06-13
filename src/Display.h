@@ -1191,6 +1191,53 @@ void update_disp_area() {
   }
 }
 
+#if defined(HAS_LXMF_GATEWAY)
+// ---- Status as a ScreenFramework page (the home, page 0) ----
+// Ports the legacy status display into the page system: the icon panel
+// (WiFi/BT/LoRa/cable + the bottom strip's battery/quality/signal bars
+// and the status marquee) is the shared stat_area, blitted into the
+// framework body, with the radio stats below it. Keeping the whole
+// stat_area means the battery and signal indicators keep their home.
+inline void status_header(const uint8_t** glyph, const char** title) {
+  *glyph = nullptr;
+  *title = "STATUS";
+}
+inline size_t status_hints(const char** out, size_t max) {
+  if (max < 1) return 0;
+  out[0] = "Tap BOOT: next";
+  return 1;
+}
+inline void status_render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+  (void)y_bottom;
+  draw_stat_area();   // fills stat_area: icons + battery/signal bars / marquee
+  area.drawBitmap(0, y_top, stat_area.getBuffer(), 64, 64,
+                  SSD1306_WHITE, SSD1306_BLACK);
+  // Radio stats below the icon panel (framework set Picopixel already).
+  int16_t y = (int16_t)(y_top + 64 + 6);
+  char buf[24];
+  if (radio_online) {
+    snprintf(buf, sizeof(buf), "%.1f kbps", (float)lora_bitrate / 1000.0f);
+    Common::OledText::line(area, y, buf); y += 7;
+    snprintf(buf, sizeof(buf), "Air %.0f%% / %.0f%%",
+             airtime * 100.0f, longterm_airtime * 100.0f);
+    Common::OledText::line(area, y, buf); y += 7;
+    snprintf(buf, sizeof(buf), "Load %.0f%% / %.0f%%",
+             total_channel_util * 100.0f, longterm_channel_util * 100.0f);
+    Common::OledText::line(area, y, buf); y += 7;
+  } else {
+    Common::OledText::line(area, y, "Radio offline");
+  }
+}
+inline void status_noop() {}
+inline bool status_at_root() { return false; }   // home: BOOT-hold stays here
+inline bool status_is_live() { return radio_online; }
+inline const Display::Screens::ScreenPage STATUS_PAGE = {
+  status_header, status_hints, status_render_body,
+  status_noop, status_noop, status_noop, status_noop,
+  status_at_root, status_is_live, nullptr, /*ttl_ms=*/0,
+};
+#endif
+
 void display_recondition() {
   #if PLATFORM == PLATFORM_ESP32
     for (uint8_t iy = 0; iy < disp_area.height(); iy++) {

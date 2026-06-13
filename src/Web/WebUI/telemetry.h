@@ -20,14 +20,31 @@
       if (require_auth(req).empty()) return;
       auto& c = LXMF::TelemetrySender::config();
 
-      const std::string collector =
-          (const char*)(body["collector"] | c.collector_hex.c_str());
-      if (!collector.empty()) {
-        if (collector.size() != 32 ||
-            collector.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
-          send_error_with_message(req, 400, "bad_collector",
-            "Collector address must be 32 hex characters.");
-          return;
+      // Collectors: accept a "collectors" array, or migrate a legacy
+      // single "collector" string. Absent means keep the current list.
+      std::vector<std::string> collectors = c.collectors;
+      bool collectors_given = false;
+      if (body["collectors"].is<JsonArray>()) {
+        collectors_given = true;
+        collectors.clear();
+        for (JsonVariant v : body["collectors"].as<JsonArray>()) {
+          const char* s = v.as<const char*>();
+          if (s && *s) collectors.emplace_back(s);
+        }
+      } else if (body["collector"].is<const char*>()) {
+        collectors_given = true;
+        collectors.clear();
+        const char* s = body["collector"].as<const char*>();
+        if (s && *s) collectors.emplace_back(s);
+      }
+      if (collectors_given) {
+        for (const std::string& h : collectors) {
+          if (h.size() != 32 ||
+              h.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
+            send_error_with_message(req, 400, "bad_collector",
+              "Collector address must be 32 hex characters.");
+            return;
+          }
         }
       }
       uint32_t interval_s = body["interval_s"] | c.interval_s;
@@ -46,15 +63,15 @@
         return;
       }
       const bool enabled = body["enabled"] | c.enabled;
-      if (enabled && collector.empty()) {
+      if (enabled && collectors.empty()) {
         send_error_with_message(req, 400, "missing_collector",
-          "Set a collector address before enabling telemetry.");
+          "Add a collector address before enabling telemetry.");
         return;
       }
 
       c.enabled             = enabled;
       c.identity            = identity;
-      c.collector_hex       = collector;
+      c.collectors          = collectors;
       c.interval_s          = interval_s;
       c.include.battery     = body["battery"]     | c.include.battery;
       c.include.location    = body["location"]    | c.include.location;

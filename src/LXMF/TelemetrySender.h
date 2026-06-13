@@ -1,8 +1,9 @@
-// Periodic LXMF telemetry to a Sideband collector.
+// Periodic LXMF telemetry to one or more Sideband collectors.
 //
-// At each due tick, packs the device's sensor readings in Sideband's
-// Telemeter format (Telemetry/Telemeter.h) and sends them as an LXMF
-// message with empty title/content and the blob in FIELD_TELEMETRY -
+// At each due tick, packs the device's sensor readings once in
+// Sideband's Telemeter format (Telemetry/Telemeter.h) and sends the
+// same sample to every configured collector as an LXMF message with
+// empty title/content and the blob in FIELD_TELEMETRY -
 // the exact message shape Sideband builds for its own collector
 // updates (sbapp/sideband/core.py:1515 @ 863b925: LXMessage(dest,
 // source, "", fields={FIELD_TELEMETRY: packed})).
@@ -41,9 +42,9 @@ inline constexpr uint32_t    MAX_INTERVAL_S = 7 * 24 * 3600;
 struct Config {
   bool        enabled = false;
   IdentityId  identity;          // sending identity id; empty = first active
-  std::string collector_hex;     // 16-byte LXMF destination hash, hex
+  std::vector<std::string> collectors;  // 16-byte LXMF dest hashes, hex (32 chars)
   uint32_t    interval_s = 900;
-  Telemetry::Telemeter::Include include;
+  Telemetry::Telemeter::Include include;  // same items to every collector
 };
 
 namespace _detail {
@@ -52,7 +53,11 @@ namespace _detail {
   inline double&  last_sent_epoch()    { static double v = 0.0; return v; }
   inline std::string& last_result()    { static std::string s = "never"; return s; }
   inline std::string& last_error()     { static std::string s; return s; }
-  inline RNS::Bytes& last_packet()     { static RNS::Bytes b; return b; }
+  // One packet hash per collector reached in the last batch; delivery
+  // receipts are matched against any of them.
+  inline std::vector<RNS::Bytes>& last_packets() {
+    static std::vector<RNS::Bytes> v; return v;
+  }
 }
 
 inline Config&       config()      { return _detail::config_ref(); }
@@ -69,7 +74,17 @@ inline void load(microStore::FileSystem& fs) {
   Config& c = config();
   c.enabled       = doc["enabled"] | false;
   c.identity      = (const char*)(doc["identity"] | "");
-  c.collector_hex = (const char*)(doc["collector"] | "");
+  c.collectors.clear();
+  if (doc["collectors"].is<JsonArray>()) {
+    for (JsonVariant v : doc["collectors"].as<JsonArray>()) {
+      const char* s = v.as<const char*>();
+      if (s && *s) c.collectors.emplace_back(s);
+    }
+  } else {
+    // Migrate the old single-collector field.
+    const char* legacy = doc["collector"] | "";
+    if (legacy && *legacy) c.collectors.emplace_back(legacy);
+  }
   c.interval_s    = doc["interval_s"] | 900u;
   if (c.interval_s < MIN_INTERVAL_S) c.interval_s = MIN_INTERVAL_S;
   if (c.interval_s > MAX_INTERVAL_S) c.interval_s = MAX_INTERVAL_S;
@@ -84,7 +99,8 @@ inline void persist(microStore::FileSystem& fs) {
   Common::PsramJsonDocument doc;
   doc["enabled"]     = c.enabled;
   doc["identity"]    = c.identity;
-  doc["collector"]   = c.collector_hex;
+  JsonArray cols = doc["collectors"].to<JsonArray>();
+  for (const std::string& h : c.collectors) cols.add(h);
   doc["interval_s"]  = c.interval_s;
   doc["battery"]     = c.include.battery;
   doc["location"]    = c.include.location;
@@ -121,13 +137,23 @@ inline bool send_now() {
   _detail::last_attempt_ms() = millis();
 
   const Config& c = config();
-  if (c.collector_hex.size() != 32) {
-    return fail("config_error", "Collector address must be 32 hex characters.");
+  if (c.collectors.empty()) {
+    return fail("config_error", "Add at least one collector address.");
   }
-  RNS::Bytes dest;
-  dest.assignHex(c.collector_hex.c_str());
-  if (dest.size() != 16) {
-    return fail("config_error", "Collector address is not valid hex.");
+  // Validate every collector before sending so a bad entry fails fast
+  // rather than half-sending the batch.
+  std::vector<RNS::Bytes> dests;
+  dests.reserve(c.collectors.size());
+  for (const std::string& hex : c.collectors) {
+    if (hex.size() != 32) {
+      return fail("config_error", "Collector address must be 32 hex characters.");
+    }
+    RNS::Bytes dest;
+    dest.assignHex(hex.c_str());
+    if (dest.size() != 16) {
+      return fail("config_error", "Collector address is not valid hex.");
+    }
+    dests.push_back(dest);
   }
 
   const IdentityId iden = resolve_identity();
@@ -147,35 +173,55 @@ inline bool send_now() {
   ExtraFields extra;
   extra.telemetry = RNS::Bytes(packed, packed_len);
 
-  MessageRecord rec;
-  const char* err = nullptr;
-  bool queued = false;
-  const bool ok = LXMFGateway::send(iden, dest, "", "", nullptr, rec, &err,
-                                    &queued, /*use_seq=*/0, &extra);
-  if (ok) {
-    _detail::last_result()     = "sent";
-    _detail::last_error()      = "";
-    _detail::last_sent_epoch() = now_epoch;
-    _detail::last_packet()     = rec.packet_hash;
-    return true;
+  // Send the same sample to every collector. Track each outcome so the
+  // batch result reflects the worst case the user needs to act on.
+  _detail::last_packets().clear();
+  size_t n_sent = 0, n_queued = 0, n_failed = 0;
+  const char* last_err = nullptr;
+  for (const RNS::Bytes& dest : dests) {
+    MessageRecord rec;
+    const char* err = nullptr;
+    bool queued = false;
+    const bool ok = LXMFGateway::send(iden, dest, "", "", nullptr, rec, &err,
+                                      &queued, /*use_seq=*/0, &extra);
+    if (ok) {
+      n_sent++;
+      _detail::last_packets().push_back(rec.packet_hash);
+    } else if (queued) {
+      n_queued++;
+    } else {
+      n_failed++;
+      last_err = err;
+    }
   }
-  if (queued) {
-    // Accepted into the gateway's route-pending queue; it will go out
-    // (with this sample's readings) once a path arrives.
-    _detail::last_result()     = "finding_route";
-    _detail::last_error()      = "";
-    _detail::last_sent_epoch() = now_epoch;
-    return true;
+
+  if (n_sent == 0 && n_queued == 0) {
+    return fail("failed", last_err ? last_err : "Send failed.");
   }
-  return fail("failed", err ? err : "Send failed.");
+  _detail::last_sent_epoch() = now_epoch;
+  _detail::last_error()      = "";
+  if (n_failed > 0) {
+    _detail::last_result() = "partial";
+  } else if (n_sent == 0) {
+    // All collectors are awaiting a route; the samples go out once a
+    // path arrives for each.
+    _detail::last_result() = "finding_route";
+  } else {
+    _detail::last_result() = "sent";
+  }
+  return true;
 }
 
 // Delivery-state hook, called from the gateway's outbox status
 // callback. Telemetry records are not in the outbox, so this is the
 // only consumer of their receipts.
 inline void on_outbox_status(const RNS::Bytes& hash, OutboxStatus status) {
-  if (_detail::last_packet().size() == 0) return;
-  if (!(hash == _detail::last_packet())) return;
+  auto& packets = _detail::last_packets();
+  bool match = false;
+  for (const RNS::Bytes& p : packets) {
+    if (hash == p) { match = true; break; }
+  }
+  if (!match) return;
   switch (status) {
     case OutboxStatus::Delivered: _detail::last_result() = "delivered"; break;
     case OutboxStatus::Failed:    _detail::last_result() = "failed";    break;
@@ -209,7 +255,8 @@ inline void fill_status(JsonObject o) {
   const Config& c = config();
   o["enabled"]     = c.enabled;
   o["identity"]    = c.identity;
-  o["collector"]   = c.collector_hex;
+  JsonArray cols = o["collectors"].to<JsonArray>();
+  for (const std::string& h : c.collectors) cols.add(h);
   o["interval_s"]  = c.interval_s;
   o["battery"]     = c.include.battery;
   o["location"]    = c.include.location;

@@ -1300,7 +1300,7 @@
               @click="closeSettingsModal()"></button>
     </header>
     <div class="tab-bar" id="settings-tabs">
-      <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['time','Time'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
+      <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['telemetry','Telemetry'],['time','Time'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
         <button class="tab" :data-tab="t[0]"
                 :class="{ active: $store.s.settingsTab === t[0] }"
                 :hidden="$store.s.settingsFirstRun && t[0] !== 'connectivity'"
@@ -1407,65 +1407,6 @@
                           :selected="String(o.s) === $store.s.forms.identity.telRate"></option>
                 </template>
               </select>
-            </div>
-          </details>
-          <details class="cn-section mt-4" data-cn="collector">
-            <summary><span class="cn-title">Collector reports</span>
-              <button type="button" class="info-icon" @click.stop data-info="Sends this device's sensor readings to a Sideband collector on a schedule. Separate from the telemetry you attach to individual messages."></button>
-            </summary>
-            <div class="cn-section-body">
-              <label class="toggle-row">
-                <input type="checkbox"
-                       x-model="$store.s.forms.collector.enabled"
-                       @change="saveCollectorConfig()">
-                <span>Send readings to a collector</span>
-              </label>
-              <label class="mt-3">Collector address</label>
-              <input type="text" maxlength="32" class="font-mono-inline" placeholder="32 hex characters"
-                     spellcheck="false" autocomplete="off"
-                     x-model.trim="$store.s.forms.collector.collector"
-                     @change="saveCollectorConfig()">
-              <label class="mt-3">Send as
-                <button type="button" class="info-icon" @click.stop data-info="Which of this device's accounts the reports are sent from. The default uses the first account."></button>
-              </label>
-              <select x-model="$store.s.forms.collector.identity" @change="saveCollectorConfig()">
-                <option value="" :selected="!$store.s.forms.collector.identity">First account on this device</option>
-                <template x-for="i in $store.s.identities" :key="i.id">
-                  <option :value="i.id" x-text="i.display_name || i.id"
-                          :selected="i.id === $store.s.forms.collector.identity"></option>
-                </template>
-              </select>
-              <label class="mt-3">Send every</label>
-              <select x-model.number="$store.s.forms.collector.interval_s" @change="saveCollectorConfig()">
-                <template x-for="p in TELEMETRY_INTERVALS" :key="p.value">
-                  <option :value="p.value" x-text="p.label"
-                          :selected="p.value === $store.s.forms.collector.interval_s"></option>
-                </template>
-              </select>
-              <label class="toggle-row mt-3">
-                <input type="checkbox" x-model="$store.s.forms.collector.location"
-                       @change="saveCollectorConfig()">
-                <span class="ico-pin">Position</span>
-              </label>
-              <label class="toggle-row mt-1">
-                <input type="checkbox" x-model="$store.s.forms.collector.compass"
-                       @change="saveCollectorConfig()">
-                <span class="ico-compass">Heading</span>
-              </label>
-              <label class="toggle-row mt-1">
-                <input type="checkbox" x-model="$store.s.forms.collector.environment"
-                       @change="saveCollectorConfig()">
-                <span class="ico-thermo">Environment</span>
-              </label>
-              <label class="toggle-row mt-1">
-                <input type="checkbox" x-model="$store.s.forms.collector.battery"
-                       @change="saveCollectorConfig()">
-                <span class="ico-battery">Battery</span>
-              </label>
-              <div class="row mt-3">
-                <button type="button" class="secondary" @click="collectorSendNow($event.currentTarget)">Send now</button>
-              </div>
-              <div class="muted mt-1" x-text="collectorStatusText()"></div>
             </div>
           </details>
           <label class="toggle-row mt-4">
@@ -1836,6 +1777,82 @@
           </select>
         </div>
         <div class="muted mt-2 text-xs" id="disc-status" x-text="$store.s.ui.discStatus"></div>
+      </div>
+
+      <!-- ============== Telemetry tab ============== -->
+      <div class="tab-panel" data-panel="telemetry" :class="{ active: $store.s.settingsTab === 'telemetry' }">
+        <div class="card">
+          <label class="toggle-row">
+            <input type="checkbox"
+                   x-model="$store.s.forms.collector.enabled"
+                   @change="saveCollectorConfig()">
+            <span>Send readings to collectors</span>
+            <button type="button" class="info-icon" @click.stop data-info="Sends this device's sensor readings to one or more Sideband collectors on a schedule. Separate from the telemetry you attach to individual messages."></button>
+          </label>
+
+          <label class="mt-3">Collectors
+            <button type="button" class="info-icon" @click.stop data-info="Addresses that receive these reports. Each is a 32-character hex address. The same readings go to every collector."></button>
+          </label>
+          <template x-for="(addr, i) in $store.s.forms.collector.collectors" :key="i">
+            <div class="list-row flex items-center gap-10 mt-1">
+              <input type="text" maxlength="32" class="font-mono-inline flex-1-min0" placeholder="32 hex characters"
+                     spellcheck="false" autocomplete="off"
+                     x-model.trim="$store.s.forms.collector.collectors[i]"
+                     @change="saveCollectorConfig()">
+              <button type="button" class="icon icon-x" title="Remove" @click="removeCollector(i)"></button>
+            </div>
+          </template>
+          <div class="muted mt-1" x-show="!$store.s.forms.collector.collectors.length">No collectors yet.</div>
+          <div class="row mt-2">
+            <button type="button" class="secondary" @click="addCollector()">Add collector</button>
+          </div>
+
+          <label class="mt-3">Send as
+            <button type="button" class="info-icon" @click.stop data-info="Which of this device's accounts the reports are sent from. The default uses the first account."></button>
+          </label>
+          <select x-model="$store.s.forms.collector.identity" @change="saveCollectorConfig()">
+            <option value="" :selected="!$store.s.forms.collector.identity">First account on this device</option>
+            <template x-for="i in $store.s.identities" :key="i.id">
+              <option :value="i.id" x-text="i.display_name || i.id"
+                      :selected="i.id === $store.s.forms.collector.identity"></option>
+            </template>
+          </select>
+
+          <label class="mt-3">Send every</label>
+          <select x-model.number="$store.s.forms.collector.interval_s" @change="saveCollectorConfig()">
+            <template x-for="p in TELEMETRY_INTERVALS" :key="p.value">
+              <option :value="p.value" x-text="p.label"
+                      :selected="p.value === $store.s.forms.collector.interval_s"></option>
+            </template>
+          </select>
+
+          <label class="mt-3">Include</label>
+          <label class="toggle-row mt-1">
+            <input type="checkbox" x-model="$store.s.forms.collector.location"
+                   @change="saveCollectorConfig()">
+            <span class="ico-pin">Position</span>
+          </label>
+          <label class="toggle-row mt-1">
+            <input type="checkbox" x-model="$store.s.forms.collector.compass"
+                   @change="saveCollectorConfig()">
+            <span class="ico-compass">Heading</span>
+          </label>
+          <label class="toggle-row mt-1">
+            <input type="checkbox" x-model="$store.s.forms.collector.environment"
+                   @change="saveCollectorConfig()">
+            <span class="ico-thermo">Environment</span>
+          </label>
+          <label class="toggle-row mt-1">
+            <input type="checkbox" x-model="$store.s.forms.collector.battery"
+                   @change="saveCollectorConfig()">
+            <span class="ico-battery">Battery</span>
+          </label>
+
+          <div class="row mt-3">
+            <button type="button" class="secondary" @click="collectorSendNow($event.currentTarget)">Send now</button>
+          </div>
+          <div class="muted mt-1" x-text="collectorStatusText()"></div>
+        </div>
       </div>
 
       <!-- ============== Time tab ============== -->
@@ -2314,9 +2331,9 @@ let state = {
     identity:        { displayName: '', announceInterval: '', persistOutbound: false, stampCost: '0', enforceStamps: false, screen: false,
                        telLocation: true, telEnvironment: false, telBattery: false, telCompass: false, telShare: '0', telRate: '60' },
     messenger:       { presets: [] },        // OLED messenger preset editor
-    // Collector reporting (Settings -> Identity); also feeds the
+    // Collector reporting (Settings -> Telemetry); also feeds the
     // system popover's telemetry status line.
-    collector:       { enabled: false, collector: '', identity: '', interval_s: 900,
+    collector:       { enabled: false, collectors: [], identity: '', interval_s: 900,
                        location: true, compass: false, environment: true, battery: true,
                        last_result: 'never', last_error: '', last_sent_epoch: 0 },
     wifiAdd:         { ssid: '', psk: '', code: '' },
@@ -5545,7 +5562,8 @@ const TELE_RESULT_LABELS = {
 // the Settings form and the system popover's status line.
 function _collectorApply(r) {
   Object.assign(state.forms.collector, {
-    enabled: !!r.enabled, collector: r.collector || '',
+    enabled: !!r.enabled,
+    collectors: Array.isArray(r.collectors) ? r.collectors.slice() : [],
     identity: r.identity || '', interval_s: r.interval_s || 900,
     battery: r.battery !== false, location: r.location !== false,
     environment: r.environment !== false, compass: !!r.compass,
@@ -5560,7 +5578,8 @@ async function populateCollectorConfig() {
 }
 async function saveCollectorConfig() {
   const c = state.forms.collector;
-  const body = { enabled: c.enabled, collector: c.collector, identity: c.identity,
+  const collectors = c.collectors.map(s => (s || '').trim()).filter(Boolean);
+  const body = { enabled: c.enabled, collectors, identity: c.identity,
                  interval_s: c.interval_s, battery: c.battery, location: c.location,
                  environment: c.environment, compass: c.compass };
   try {
@@ -5569,6 +5588,15 @@ async function saveCollectorConfig() {
     toast('Could not save: ' + (e.message || e), 'error');
     await populateCollectorConfig();
   }
+}
+// Append a blank row for the user to type into; saved on @change once
+// it holds a value. No save here, so an empty row is not yet posted.
+function addCollector() {
+  state.forms.collector.collectors.push('');
+}
+function removeCollector(i) {
+  state.forms.collector.collectors.splice(i, 1);
+  saveCollectorConfig();
 }
 function collectorSendNow(btn) {
   return withBusy(btn, async () => {
@@ -5596,7 +5624,9 @@ function collectorPillLabel() {
 function collectorStatusText() {
   const c = state.forms.collector;
   if (!c.enabled) return 'Periodic sensor reports over LXMF. Off.';
-  const dest = c.collector ? ' (' + c.collector.slice(0, 6) + ')' : '';
+  const n = (c.collectors || []).filter(Boolean).length;
+  const dest = n === 1 ? ' (' + c.collectors[0].slice(0, 6) + ')'
+             : n > 1 ? ' (' + n + ' collectors)' : '';
   if (!c.last_sent_epoch) return 'Not sent yet' + dest;
   const sec = Math.max(0, Math.round(Date.now() / 1000 - c.last_sent_epoch));
   const t = sec < 60 ? sec + 's' : sec < 3600 ? Math.round(sec / 60) + 'm'
@@ -7427,7 +7457,8 @@ function selectSettingsTab(tabId) {
   if (tabId === 'connectivity') { applyTransportCapabilities(); populateRadioTab(); populateWifiTab(); populateTcpClientsList(); populateDiagTab(); }
   if (tabId === 'discovery')    { populateDiscoveryTab(); }
   if (tabId === 'time')         { populateTimeTab(); }
-  if (tabId === 'identity')     { populateIdentityTab(); populateCollectorConfig(); }
+  if (tabId === 'identity')     { populateIdentityTab(); }
+  if (tabId === 'telemetry')    { populateCollectorConfig(); }
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
   if (tabId === 'ui')           {
     state.forms.prefs.enterSends                = !!state.prefs.enterSends;

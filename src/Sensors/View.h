@@ -131,6 +131,14 @@ namespace _detail {
     const Gnss::Fix f = Gnss::last_fix();
     const uint32_t now = millis();
 
+    // Animation tuning, per rendered frame (not per real-time unit, so
+    // the feel tracks the frame rate the page renders at).
+    constexpr float    GLOBE_EASE          = 0.15f;  // ease spin+tilt toward the fix
+    constexpr float    SEARCH_SPIN_DEG     = 1.4f;   // free longitude spin while searching
+    constexpr float    TILT_SETTLE         = 0.1f;   // ease tilt back to north-up
+    constexpr int      SAT_ORBIT_MAX       = 4;      // most satellites drawn orbiting
+    constexpr uint32_t SAT_ORBIT_PERIOD_MS = 5000;   // one full orbit
+
     // Animation state, persisted across frames.
     static float    rot_deg   = 0.0f;     // longitude spin
     static float    tilt_deg  = 0.0f;     // latitude tilt (centres the fix)
@@ -149,12 +157,12 @@ namespace _detail {
       float dlon = (float)f.longitude_deg - rot_deg;
       while (dlon > 180.0f)  dlon -= 360.0f;
       while (dlon < -180.0f) dlon += 360.0f;
-      rot_deg  += dlon * 0.15f;
-      tilt_deg += ((float)f.latitude_deg - tilt_deg) * 0.15f;
+      rot_deg  += dlon * GLOBE_EASE;
+      tilt_deg += ((float)f.latitude_deg - tilt_deg) * GLOBE_EASE;
     } else {
       was_fixed = false;
-      rot_deg += 1.4f;                    // free spin while searching
-      tilt_deg += (0.0f - tilt_deg) * 0.1f;   // settle back to north-up
+      rot_deg += SEARCH_SPIN_DEG;        // free spin while searching
+      tilt_deg += (0.0f - tilt_deg) * TILT_SETTLE;   // settle back to north-up
     }
     if (rot_deg >= 360.0f) rot_deg -= 360.0f;
     if (rot_deg < 0.0f)    rot_deg += 360.0f;
@@ -168,7 +176,7 @@ namespace _detail {
     // hidden only when genuinely behind the sphere (depth < 0 AND its
     // screen point falls on the disc); it stays visible all the way
     // round the sides, where the ring is wider than the planet.
-    const int n_orbit = f.sats_visible >= 4 ? 4 : f.sats_visible;
+    const int n_orbit = f.sats_visible >= SAT_ORBIT_MAX ? SAT_ORBIT_MAX : f.sats_visible;
     const float orbit_r = PLANET_R + 7;
     const float orbit_tilt_s = 0.45f, orbit_tilt_c = 0.89f;   // ~27 deg
     // The panel is far taller than wide, so a level ring runs its
@@ -177,7 +185,8 @@ namespace _detail {
     // so they orbit the rim cleanly without clipping.
     const float ring_cos = 0.70710678f, ring_sin = 0.70710678f;
     for (int k = 0; k < n_orbit; ++k) {
-      const float oa = (now % 5000) * (2.0f * 3.14159265f / 5000.0f)
+      const float oa = (now % SAT_ORBIT_PERIOD_MS)
+                       * (2.0f * 3.14159265f / (float)SAT_ORBIT_PERIOD_MS)
                        + k * (2.0f * 3.14159265f / n_orbit);
       const float wx = orbit_r * cosf(oa);
       const float wy = orbit_r * sinf(oa) * orbit_tilt_s;   // vertical tilt

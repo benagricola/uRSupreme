@@ -35,15 +35,16 @@ extern microStore::FileSystem filesystem;
 namespace LXMF {
 namespace TelemetrySender {
 
-inline constexpr const char* CONFIG_PATH    = "/lxmf/telemetry.json";
-inline constexpr uint32_t    MIN_INTERVAL_S = 60;
-inline constexpr uint32_t    MAX_INTERVAL_S = 7 * 24 * 3600;
+inline constexpr const char* CONFIG_PATH        = "/lxmf/telemetry.json";
+inline constexpr uint32_t    MIN_INTERVAL_S     = 60;
+inline constexpr uint32_t    MAX_INTERVAL_S     = 7 * 24 * 3600;
+inline constexpr uint32_t    DEFAULT_INTERVAL_S = 15 * 60;
 
 struct Config {
   bool        enabled = false;
   IdentityId  identity;          // sending identity id; empty = first active
   std::vector<std::string> collectors;  // 16-byte LXMF dest hashes, hex (32 chars)
-  uint32_t    interval_s = 900;
+  uint32_t    interval_s = DEFAULT_INTERVAL_S;
   Telemetry::Telemeter::Include include;  // same items to every collector
 };
 
@@ -85,7 +86,7 @@ inline void load(microStore::FileSystem& fs) {
     const char* legacy = doc["collector"] | "";
     if (legacy && *legacy) c.collectors.emplace_back(legacy);
   }
-  c.interval_s    = doc["interval_s"] | 900u;
+  c.interval_s    = doc["interval_s"] | DEFAULT_INTERVAL_S;
   if (c.interval_s < MIN_INTERVAL_S) c.interval_s = MIN_INTERVAL_S;
   if (c.interval_s > MAX_INTERVAL_S) c.interval_s = MAX_INTERVAL_S;
   c.include.battery     = doc["battery"]     | true;

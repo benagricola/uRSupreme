@@ -52,8 +52,11 @@ inline constexpr const char* MAGCAL_PATH = "/lxmf/magcal.json";
 // setting (>= 5 min was the old duty-cycle threshold); otherwise
 // default to always-on so a cold receiver can actually acquire.
 inline void migrate_gps_defaults() {
+  // The smallest old combined interval that read as a power-saving duty
+  // cycle rather than a clock-sync cadence; below it, adopt always-on.
+  constexpr uint32_t OLD_DUTY_CYCLE_MIN_S = 5 * 60;
   const auto& c = Clock::Manager::get_config(Clock::Manager::Source::GPS);
-  const uint32_t adopted = (c.interval_s >= 300) ? c.interval_s : 0;
+  const uint32_t adopted = (c.interval_s >= OLD_DUTY_CYCLE_MIN_S) ? c.interval_s : 0;
   Sensors::Gnss::set_power_config(c.enabled, adopted);
 }
 

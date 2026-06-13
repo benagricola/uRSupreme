@@ -109,6 +109,8 @@ namespace _detail {
   inline size_t&   cursor_ref()      { static size_t c = 0; return c; }
   inline std::string& result_ref()   { static std::string s; return s; }
   inline uint32_t& result_at_ref()   { static uint32_t t = 0; return t; }
+  // Secondary line on the result page, e.g. a telemetry caveat.
+  inline std::string& result_note_ref() { static std::string s; return s; }
   inline RNS::Bytes& sent_hash_ref() { static RNS::Bytes b; return b; }
   inline std::string& msg_from_ref() { static std::string s; return s; }
   inline std::string& msg_text_ref() { static std::string s; return s; }
@@ -400,9 +402,10 @@ inline void send_selected() {
   RNS::Bytes dest;
   dest.assignHex(p.dest_hex.c_str());
   if (dest.size() != 16) {
-    _detail::result_ref()    = "Bad address";
-    _detail::result_at_ref() = millis();
-    _detail::page_ref()      = Page::Result;
+    _detail::result_ref()      = "Bad address";
+    _detail::result_note_ref() = "";
+    _detail::result_at_ref()   = millis();
+    _detail::page_ref()        = Page::Result;
     return;
   }
 
@@ -447,6 +450,10 @@ inline void send_selected() {
   if (ok)          _detail::result_ref() = "Sent";
   else if (queued) _detail::result_ref() = "Finding route";
   else             _detail::result_ref() = "Failed";
+  // Surface a requested-but-unavailable location: the message still went,
+  // just without the position blob (the rest of the telemetry rode along).
+  _detail::result_note_ref() =
+      (p.tel_location && !Sensors::Gnss::last_fix().valid) ? "No GPS fix" : "";
   _detail::result_at_ref() = millis();
   _detail::page_ref()      = Page::Result;
 }
@@ -566,14 +573,21 @@ inline void render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
     // Status glyph centred above the wrapped status text (keyed off the
     // same string on_outbox_status updates), so the two never overlap.
     const std::string& r = _detail::result_ref();
+    const std::string& note = _detail::result_note_ref();
     const uint8_t* g = Display::Screens::GLYPH_CLOCK;
     if      (r == "Sent")      g = Display::Screens::GLYPH_CHECK;
     else if (r == "Delivered") g = Display::Screens::GLYPH_CHECK2;
     else if (r == "Failed")    g = Display::Screens::GLYPH_CROSS;
     area.drawBitmap((int16_t)(area.width() / 2 - 4), (int16_t)(y_top + 4), g, 8, 8, 1);
     const int16_t txt_y = (int16_t)(y_top + 16);
-    const int body_rows = (y_bottom - txt_y) / 8;
+    const int16_t note_h = note.empty() ? 0 : 9;   // reserve a row for the note
+    const int body_rows = (y_bottom - txt_y - note_h) / 8;
     Common::OledText::wrap_classic(area, r, txt_y, body_rows > 0 ? body_rows : 1);
+    if (!note.empty()) {
+      area.setFont(&Picopixel);
+      Common::OledText::line_at(area, (int16_t)(area.width() / 2 - (int)note.size() * 2),
+                                (int16_t)(y_bottom - 3), note.c_str());
+    }
     return;
   }
 }

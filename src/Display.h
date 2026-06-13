@@ -1215,10 +1215,25 @@ inline size_t status_hints(const char** out, size_t max) {
 }
 inline void status_render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
   draw_stat_area();   // fills stat_area: icons + battery/signal bars / marquee
-  int16_t y = (int16_t)(y_top + ((y_bottom - y_top) - 64) / 2);
-  if (y < y_top) y = y_top;
-  area.drawBitmap(0, y, stat_area.getBuffer(), 64, 64,
+  // Icon panel at the top of the body.
+  area.drawBitmap(0, y_top, stat_area.getBuffer(), 64, 64,
                   SSD1306_WHITE, SSD1306_BLACK);
+  // Extra row under the panel: GPS fix state (left) and battery (right).
+  const int16_t ry = (int16_t)(y_top + 66);
+  if (ry + 16 > y_bottom) return;   // no room on a short layout
+  const bool fixed = Sensors::Gnss::last_fix().valid;
+  area.drawBitmap(10, ry,
+                  fixed ? Display::Screens::GLYPH16_FIX_OK
+                        : Display::Screens::GLYPH16_SAT,
+                  16, 16, 1);
+  // 16x16 battery on the right: body outline + nub + fill by percent.
+  const int16_t bx = 38;
+  area.drawRect(bx, (int16_t)(ry + 4), 13, 8, 1);
+  area.fillRect((int16_t)(bx + 13), (int16_t)(ry + 6), 2, 4, 1);
+  int fw = (int)(11.0f * battery_percent / 100.0f);
+  if (fw < 0) fw = 0;
+  if (fw > 11) fw = 11;
+  if (fw > 0) area.fillRect((int16_t)(bx + 1), (int16_t)(ry + 5), (int16_t)fw, 6, 1);
 }
 inline const Display::Screens::ScreenPage STATUS_PAGE = {
   status_header, status_hints, status_render_body,
@@ -1239,33 +1254,70 @@ inline size_t radio_hints(const char** out, size_t max) {
 }
 inline void radio_render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
   (void)y_bottom;
-  int16_t y = (int16_t)(y_top + 8);
-  char buf[24];
+  const int16_t W = area.width();
   if (!radio_online) {
-    Common::OledText::line(area, y, "Radio offline");
+    Common::OledText::line(area, (int16_t)(y_top + 8), "Radio offline");
     return;
   }
-  snprintf(buf, sizeof(buf), "%.1f kbps", (float)lora_bitrate / 1000.0f);
-  Common::OledText::line(area, y, buf); y += 9;
-  snprintf(buf, sizeof(buf), "Air %.0f / %.0f%%",
-           airtime * 100.0f, longterm_airtime * 100.0f);
-  Common::OledText::line(area, y, buf); y += 9;
-  snprintf(buf, sizeof(buf), "Load %.0f / %.0f%%",
-           total_channel_util * 100.0f, longterm_channel_util * 100.0f);
-  Common::OledText::line(area, y, buf); y += 9;
+  // RSSI history ring, sampled ~2 Hz while the page renders, so the
+  // sparkline traces the recent link strength as a live graph.
+  static constexpr int HN = 60;
+  static int8_t   hist[HN];
+  static int      hidx = 0, hcnt = 0;
+  static uint32_t hms = 0;
+  const uint32_t now = millis();
+  if (now - hms >= 500) {
+    hms = now;
+    int r = last_rssi;
+    if (r > -10)  r = -10;
+    if (r < -130) r = -130;
+    hist[hidx] = (int8_t)r;
+    hidx = (hidx + 1) % HN;
+    if (hcnt < HN) hcnt++;
+  }
+  char buf[24];
+  int16_t y = (int16_t)(y_top + 6);
+  // RSSI value + a live sparkline of recent samples.
+  snprintf(buf, sizeof(buf), "RSSI %d dBm", last_rssi);
+  Common::OledText::line(area, y, buf);
+  const int16_t gx = 2, gw = (int16_t)(W - 4), gh = 15, gtop = (int16_t)(y + 3);
+  area.drawFastHLine(gx, (int16_t)(gtop + gh), gw, 1);
+  for (int i = 0; i < hcnt; ++i) {
+    const int s = (hidx - hcnt + i + HN * 2) % HN;
+    float frac = (float)(hist[s] + 130) / 120.0f;   // -130..-10 dBm -> 0..1
+    if (frac < 0.0f) frac = 0.0f;
+    if (frac > 1.0f) frac = 1.0f;
+    const int16_t bh  = (int16_t)(frac * (gh - 1)) + 1;
+    const int16_t bxp = (int16_t)(gx + (int)((float)i * gw / hcnt));
+    area.drawFastVLine(bxp, (int16_t)(gtop + gh - bh), bh, 1);
+  }
+  y = (int16_t)(gtop + gh + 7);
+  // Airtime + channel-load as full-width gauges.
+  auto gauge = [&](const char* label, float pct) {
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 100.0f) pct = 100.0f;
+    char l[20];
+    snprintf(l, sizeof(l), "%s %.0f%%", label, pct);
+    Common::OledText::line(area, y, l);
+    y += 3;
+    area.drawRect(2, y, (int16_t)(W - 4), 5, 1);
+    area.fillRect(2, y, (int16_t)((float)(W - 4) * pct / 100.0f), 5, 1);
+    y += 11;
+  };
+  gauge("Air",  airtime * 100.0f);
+  gauge("Load", total_channel_util * 100.0f);
+  // Counters + link detail.
   #ifdef HAS_RNS
   snprintf(buf, sizeof(buf), "RX %u  TX %u",
            (unsigned)RNS::Transport::packets_received(),
            (unsigned)RNS::Transport::packets_sent());
-  Common::OledText::line(area, y, buf); y += 9;
+  Common::OledText::line(area, y, buf); y += 7;
   #endif
-  snprintf(buf, sizeof(buf), "RSSI %d dBm", last_rssi);
-  Common::OledText::line(area, y, buf); y += 9;
-  snprintf(buf, sizeof(buf), "SNR %.1f dB",
-           (float)((signed char)last_snr_raw) * 0.25f);
-  Common::OledText::line(area, y, buf); y += 9;
-  snprintf(buf, sizeof(buf), "Noise %d dBm", noise_floor);
-  Common::OledText::line(area, y, buf); y += 9;
+  snprintf(buf, sizeof(buf), "%.1f kbps", (float)lora_bitrate / 1000.0f);
+  Common::OledText::line(area, y, buf); y += 7;
+  snprintf(buf, sizeof(buf), "SNR %.1f  N%d",
+           (float)((signed char)last_snr_raw) * 0.25f, noise_floor);
+  Common::OledText::line(area, y, buf);
 }
 inline const Display::Screens::ScreenPage RADIO_PAGE = {
   radio_header, radio_hints, radio_render_body,

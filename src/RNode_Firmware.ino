@@ -1279,10 +1279,11 @@ void setup() {
     // from boot without re-waving the device. No-op if never calibrated.
     Sensors::SensorConfig::load_mag_cal(filesystem);
     // Screen rotation for the OLED framework (BOOT-tap order). Status is
-    // page 0, the home: tap cycles status -> messenger -> sensors ->
-    // status, and BOOT-hold backs out to it.
+    // page 0, the home: tap cycles status -> radio -> messenger ->
+    // sensors -> status, and BOOT-hold backs out to it.
     Display::Screens::set_screens({
       &STATUS_PAGE,
+      &RADIO_PAGE,
       &LXMF::Messenger::MESSENGER_PAGE,
       &Sensors::View::GPS_PAGE,
       &Sensors::View::HEADING_PAGE,

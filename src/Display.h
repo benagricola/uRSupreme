@@ -1190,12 +1190,20 @@ void update_disp_area() {
 }
 
 #if defined(HAS_LXMF_GATEWAY)
-// ---- Status as a ScreenFramework page (the home, page 0) ----
-// Ports the legacy status display into the page system: the icon panel
-// (WiFi/BT/LoRa/cable + the bottom strip's battery/quality/signal bars
-// and the status marquee) is the shared stat_area, blitted into the
-// framework body, with the radio stats below it. Keeping the whole
-// stat_area means the battery and signal indicators keep their home.
+// ---- Status + Radio as ScreenFramework pages ----
+// Shared no-op handlers: these pages have no internal levels or POWER
+// actions, so on_enter/exit/next/select do nothing and on_back returns
+// false (the framework then returns to status). is_live tracks the
+// radio so the chrome spinner runs and the stats redraw.
+inline void page_noop() {}
+inline bool page_no_back() { return false; }
+inline bool page_radio_live() { return radio_online; }
+
+// Status (page 0, the home): just the legacy icon panel - the shared
+// stat_area (WiFi/BT/LoRa/cable plus the bottom strip's battery/quality/
+// signal bars and the status marquee), centred in the body. Keeping the
+// whole stat_area means the battery and signal indicators keep their
+// home. The radio stats moved to the Radio page.
 inline void status_header(const uint8_t** glyph, const char** title) {
   *glyph = nullptr;
   *title = "STATUS";
@@ -1206,33 +1214,63 @@ inline size_t status_hints(const char** out, size_t max) {
   return 1;
 }
 inline void status_render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
-  (void)y_bottom;
   draw_stat_area();   // fills stat_area: icons + battery/signal bars / marquee
-  area.drawBitmap(0, y_top, stat_area.getBuffer(), 64, 64,
+  int16_t y = (int16_t)(y_top + ((y_bottom - y_top) - 64) / 2);
+  if (y < y_top) y = y_top;
+  area.drawBitmap(0, y, stat_area.getBuffer(), 64, 64,
                   SSD1306_WHITE, SSD1306_BLACK);
-  // Radio stats below the icon panel (framework set Picopixel already).
-  int16_t y = (int16_t)(y_top + 64 + 6);
-  char buf[24];
-  if (radio_online) {
-    snprintf(buf, sizeof(buf), "%.1f kbps", (float)lora_bitrate / 1000.0f);
-    Common::OledText::line(area, y, buf); y += 7;
-    snprintf(buf, sizeof(buf), "Air %.0f%% / %.0f%%",
-             airtime * 100.0f, longterm_airtime * 100.0f);
-    Common::OledText::line(area, y, buf); y += 7;
-    snprintf(buf, sizeof(buf), "Load %.0f%% / %.0f%%",
-             total_channel_util * 100.0f, longterm_channel_util * 100.0f);
-    Common::OledText::line(area, y, buf); y += 7;
-  } else {
-    Common::OledText::line(area, y, "Radio offline");
-  }
 }
-inline void status_noop() {}
-inline bool status_at_root() { return false; }   // home: BOOT-hold stays here
-inline bool status_is_live() { return radio_online; }
 inline const Display::Screens::ScreenPage STATUS_PAGE = {
   status_header, status_hints, status_render_body,
-  status_noop, status_noop, status_noop, status_noop,
-  status_at_root, status_is_live, nullptr, /*ttl_ms=*/0,
+  page_noop, page_noop, page_noop, page_noop,
+  page_no_back, page_radio_live, nullptr, /*ttl_ms=*/0,
+};
+
+// Radio (page 1, just after status): the transport/radio numbers that
+// used to share the status screen, with room for link quality.
+inline void radio_header(const uint8_t** glyph, const char** title) {
+  *glyph = nullptr;
+  *title = "RADIO";
+}
+inline size_t radio_hints(const char** out, size_t max) {
+  if (max < 1) return 0;
+  out[0] = "Tap BOOT: next";
+  return 1;
+}
+inline void radio_render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+  (void)y_bottom;
+  int16_t y = (int16_t)(y_top + 8);
+  char buf[24];
+  if (!radio_online) {
+    Common::OledText::line(area, y, "Radio offline");
+    return;
+  }
+  snprintf(buf, sizeof(buf), "%.1f kbps", (float)lora_bitrate / 1000.0f);
+  Common::OledText::line(area, y, buf); y += 9;
+  snprintf(buf, sizeof(buf), "Air %.0f / %.0f%%",
+           airtime * 100.0f, longterm_airtime * 100.0f);
+  Common::OledText::line(area, y, buf); y += 9;
+  snprintf(buf, sizeof(buf), "Load %.0f / %.0f%%",
+           total_channel_util * 100.0f, longterm_channel_util * 100.0f);
+  Common::OledText::line(area, y, buf); y += 9;
+  #ifdef HAS_RNS
+  snprintf(buf, sizeof(buf), "RX %u  TX %u",
+           (unsigned)RNS::Transport::packets_received(),
+           (unsigned)RNS::Transport::packets_sent());
+  Common::OledText::line(area, y, buf); y += 9;
+  #endif
+  snprintf(buf, sizeof(buf), "RSSI %d dBm", last_rssi);
+  Common::OledText::line(area, y, buf); y += 9;
+  snprintf(buf, sizeof(buf), "SNR %.1f dB",
+           (float)((signed char)last_snr_raw) * 0.25f);
+  Common::OledText::line(area, y, buf); y += 9;
+  snprintf(buf, sizeof(buf), "Noise %d dBm", noise_floor);
+  Common::OledText::line(area, y, buf); y += 9;
+}
+inline const Display::Screens::ScreenPage RADIO_PAGE = {
+  radio_header, radio_hints, radio_render_body,
+  page_noop, page_noop, page_noop, page_noop,
+  page_no_back, page_radio_live, nullptr, /*ttl_ms=*/0,
 };
 #endif
 

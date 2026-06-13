@@ -136,7 +136,8 @@ namespace _detail {
     constexpr float    GLOBE_EASE          = 0.15f;  // ease spin+tilt toward the fix
     constexpr float    SEARCH_SPIN_DEG     = 1.4f;   // free longitude spin while searching
     constexpr float    TILT_SETTLE         = 0.1f;   // ease tilt back to north-up
-    constexpr int      SAT_ORBIT_MAX       = 4;      // most satellites drawn orbiting
+    constexpr int      SAT_PER_ORBIT       = 4;      // satellites per orbital ring
+    constexpr int      SAT_ORBIT_MAX       = 8;      // two rings, so up to 8 shown
     constexpr uint32_t SAT_ORBIT_PERIOD_MS = 5000;   // one full orbit
 
     // Animation state, persisted across frames.
@@ -171,36 +172,40 @@ namespace _detail {
 
     render_globe(area, cx, cy, roti, tilti);
 
-    // Orbiting satellites: one per satellite in view, capped at 4, each
-    // on its own phase. A proper tilted 3D ring - the satellite is
-    // hidden only when genuinely behind the sphere (depth < 0 AND its
-    // screen point falls on the disc); it stays visible all the way
-    // round the sides, where the ring is wider than the planet.
-    const int n_orbit = f.sats_visible >= SAT_ORBIT_MAX ? SAT_ORBIT_MAX : f.sats_visible;
+    // Orbiting satellites: the ones actually being heard (signal
+    // present), spread across two latitude bands - one over the northern
+    // hemisphere, one over the southern - in the same orbital plane.
+    // SAT_PER_ORBIT on each, SAT_ORBIT_MAX total. Each band is a tilted
+    // ellipse offset up or down; a satellite is hidden only when behind
+    // the sphere (depth < 0 AND its screen point is on the disc), so the
+    // bands read as rings circling the globe.
     const float orbit_r = PLANET_R + 7;
-    const float orbit_tilt_s = 0.45f, orbit_tilt_c = 0.89f;   // ~27 deg
-    // The panel is far taller than wide, so a level ring runs its
-    // satellites straight off the left/right edges. Rotating the whole
-    // path 45 deg throws those extremes into the roomy corners instead,
-    // so they orbit the rim cleanly without clipping.
-    const float ring_cos = 0.70710678f, ring_sin = 0.70710678f;
-    for (int k = 0; k < n_orbit; ++k) {
-      const float oa = (now % SAT_ORBIT_PERIOD_MS)
-                       * (2.0f * 3.14159265f / (float)SAT_ORBIT_PERIOD_MS)
-                       + k * (2.0f * 3.14159265f / n_orbit);
-      const float wx = orbit_r * cosf(oa);
-      const float wy = orbit_r * sinf(oa) * orbit_tilt_s;   // vertical tilt
-      const float wz = orbit_r * sinf(oa) * orbit_tilt_c;   // depth
-      const float rx = wx * ring_cos - wy * ring_sin;
-      const float ry = wx * ring_sin + wy * ring_cos;
-      const int16_t sx = (int16_t)(cx + rx);
-      const int16_t sy = (int16_t)(cy - ry);
-      const bool over_disc = (sx - cx) * (sx - cx) + (sy - cy) * (sy - cy)
-                             < PLANET_R * PLANET_R;
-      if (wz < 0.0f && over_disc) continue;                 // behind the globe
-      if (sx < 2 || sx > area.width() - 3) continue;
-      draw_satellite(area, sx, sy);
-    }
+    const float lat_cos  = 0.82f;            // band radius factor (~35 deg latitude)
+    const float band_tilt_s = 0.30f;         // vertical squash of each band ellipse
+    const float band_tilt_c = 0.95f;         // depth component (hide-behind)
+    const float band_v = orbit_r * 0.42f;    // north/south offset from the centre
+    auto draw_band = [&](int count, float center_y, float phase0) {
+      for (int k = 0; k < count; ++k) {
+        const float oa = (now % SAT_ORBIT_PERIOD_MS)
+                         * (2.0f * 3.14159265f / (float)SAT_ORBIT_PERIOD_MS)
+                         + phase0 + k * (2.0f * 3.14159265f / count);
+        const float wx = orbit_r * lat_cos * cosf(oa);
+        const float wy = orbit_r * lat_cos * sinf(oa) * band_tilt_s;
+        const float wz = orbit_r * lat_cos * sinf(oa) * band_tilt_c;   // depth
+        const int16_t sx = (int16_t)(cx + wx);
+        const int16_t sy = (int16_t)(center_y - wy);
+        const bool over_disc = (sx - cx) * (sx - cx) + (sy - cy) * (sy - cy)
+                               < PLANET_R * PLANET_R;
+        if (wz < 0.0f && over_disc) continue;                 // behind the globe
+        if (sx < 2 || sx > area.width() - 3) continue;
+        draw_satellite(area, sx, sy);
+      }
+    };
+    const int n_total = f.sats_tracked > SAT_ORBIT_MAX ? SAT_ORBIT_MAX : f.sats_tracked;
+    const int n1 = n_total > SAT_PER_ORBIT ? SAT_PER_ORBIT : n_total;
+    const int n2 = n_total > SAT_PER_ORBIT ? n_total - SAT_PER_ORBIT : 0;
+    draw_band(n1, (float)cy - band_v, 0.0f);    // northern band
+    draw_band(n2, (float)cy + band_v, 0.6f);    // southern band, staggered
 
     // Marker: only when fixed and front-facing.
     if (f.valid) {
@@ -211,19 +216,39 @@ namespace _detail {
       }
     }
 
-    // Single status line, centred at the foot of the screen.
-    char buf[24];
+    // Two-line footer: the fix line (the position once fixed, otherwise
+    // its state) and, below it, the satellite tally (heard vs used in the
+    // solution). Each is centred by true pixel width (Picopixel is
+    // proportional, so a strlen estimate clips) over a cleared black box
+    // so a scattered star or low-orbiting satellite never bleeds in.
+    auto draw_status = [&](int16_t ty, const char* s) {
+      int16_t bx, by; uint16_t bw, bh;
+      area.getTextBounds(s, 0, ty, &bx, &by, &bw, &bh);
+      const int16_t tx = (int16_t)((area.width() - (int16_t)bw) / 2 - bx);
+      area.fillRect((int16_t)(tx + bx - 1), (int16_t)(by - 1),
+                    (int16_t)(bw + 2), (int16_t)(bh + 2), 0);
+      Common::OledText::line_at(area, tx, ty, s);
+    };
+    const Gnss::PowerMode mode = Gnss::acq_status().mode;
+    char fix_line[24];
     if (f.valid) {
-      snprintf(buf, sizeof(buf), "%.2f%c  %.2f%c",
+      snprintf(fix_line, sizeof(fix_line), "%.2f%c %.2f%c",
                fabsf((float)f.latitude_deg),  f.latitude_deg  >= 0 ? 'N' : 'S',
                fabsf((float)f.longitude_deg), f.longitude_deg >= 0 ? 'E' : 'W');
-    } else if (Gnss::acq_status().mode == Gnss::PowerMode::Off) {
-      snprintf(buf, sizeof(buf), "Location off");
+    } else if (mode == Gnss::PowerMode::Off) {
+      snprintf(fix_line, sizeof(fix_line), "Location off");
     } else {
-      snprintf(buf, sizeof(buf), "Locating  %u sats", (unsigned)f.sats_visible);
+      snprintf(fix_line, sizeof(fix_line), "No fix");
     }
-    Common::OledText::line_at(area, (int16_t)(cx - (int)strlen(buf) * 2),
-                              (int16_t)(y_bottom - 3), buf);
+    if (mode == Gnss::PowerMode::Off) {
+      draw_status((int16_t)(y_bottom - 3), fix_line);
+    } else {
+      char sat_line[24];
+      snprintf(sat_line, sizeof(sat_line), "Trk %u  Used %u",
+               (unsigned)f.sats_tracked, (unsigned)f.sats);
+      draw_status((int16_t)(y_bottom - 10), fix_line);
+      draw_status((int16_t)(y_bottom - 3),  sat_line);
+    }
   }
 
   // Detail level: the numbers behind the globe, reached with POWER.
@@ -238,9 +263,16 @@ namespace _detail {
     if (f.acc_valid) {
       linef(area, y, "Acc H%.0f V%.0f m", f.hacc_m, f.vacc_m); y += 8;
     }
-    char age[10];
-    fmt_age(age, sizeof(age), f.fix_received_ms);
-    linef(area, y, "Fix %s ago", age); y += 8;
+    // Age of the last *valid* fix, not the last sentence: the M10 emits
+    // RMC ~1 Hz whether it has a fix or not, so fix_received_ms would
+    // read "0s ago" forever while never actually fixing.
+    if (f.last_valid_fix_ms == 0) {
+      linef(area, y, "Fix: none yet"); y += 8;
+    } else {
+      char age[10];
+      fmt_age(age, sizeof(age), f.last_valid_fix_ms);
+      linef(area, y, "Fix %s ago", age); y += 8;
+    }
     if (Gnss::module() == Gnss::Module::MAXM10) {
       const auto rf = MaxM10::rf_status();
       static const char* JAM[] = { "unknown", "none", "warning", "critical" };
@@ -336,9 +368,12 @@ namespace _detail {
                         (int16_t)(cx + ls * (R - 6)), (int16_t)(cy - lc * (R - 6)),
                         (int16_t)(cx + rs * (R - 6)), (int16_t)(cy - rc * (R - 6)), 1);
     }
-    // Big bearing below the ring, with a degree ring.
+    // Big bearing below the ring, with a degree ring. Wrap the rounded
+    // value so 359.5+ shows 0, not 360 (the bearing range is 0-359).
+    int hdi = (int)lrintf(hd);
+    if (hdi >= 360) hdi -= 360;
     char buf[8];
-    snprintf(buf, sizeof(buf), "%d", (int)lrintf(hd));
+    snprintf(buf, sizeof(buf), "%d", hdi);
     area.setFont(nullptr);
     area.setTextSize(2);
     const int16_t bw = (int16_t)(strlen(buf) * 12);

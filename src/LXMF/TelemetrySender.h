@@ -41,6 +41,9 @@ inline constexpr const char* CONFIG_PATH        = "/lxmf/telemetry.json";
 inline constexpr uint32_t    MIN_INTERVAL_S     = 60;
 inline constexpr uint32_t    MAX_INTERVAL_S     = 7 * 24 * 3600;
 inline constexpr uint32_t    DEFAULT_INTERVAL_S = 15 * 60;
+// Diag mode sends a tiny single packet, so it may beacon faster than a
+// full telemetry update for usable field-debug resolution.
+inline constexpr uint32_t    DIAG_MIN_INTERVAL_S = 10;
 
 struct Config {
   bool        enabled = false;

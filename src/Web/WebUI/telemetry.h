@@ -47,10 +47,13 @@
           }
         }
       }
+      // Diag mode sends a tiny single packet, so it gets a lower
+      // interval floor for usable field-debug resolution.
+      const bool diag = body["diag"] | c.diag;
+      const uint32_t floor = diag ? LXMF::TelemetrySender::DIAG_MIN_INTERVAL_S
+                                  : LXMF::TelemetrySender::MIN_INTERVAL_S;
       uint32_t interval_s = body["interval_s"] | c.interval_s;
-      if (interval_s < LXMF::TelemetrySender::MIN_INTERVAL_S) {
-        interval_s = LXMF::TelemetrySender::MIN_INTERVAL_S;
-      }
+      if (interval_s < floor) interval_s = floor;
       if (interval_s > LXMF::TelemetrySender::MAX_INTERVAL_S) {
         send_error_with_message(req, 400, "interval_too_large",
           "Interval must be no more than 7 days.");
@@ -77,7 +80,7 @@
       c.include.location    = body["location"]    | c.include.location;
       c.include.environment = body["environment"] | c.include.environment;
       c.include.magnetic    = body["compass"]     | c.include.magnetic;
-      c.diag                = body["diag"]         | c.diag;
+      c.diag                = diag;
       LXMF::TelemetrySender::persist(filesystem);
 
       Common::PsramJsonDocument doc;

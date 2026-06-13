@@ -86,13 +86,13 @@ inline constexpr float CAL_MOVE_MIN_UT = 30.0f;  // raw |B| window spread provin
 //
 // Heading zero offset and rotation sense. The offset is a fixed board
 // constant - the angle between the chip axes and the board's top edge -
-// so it is measured once and baked, never set per user. Measured 245.6
-// deg at magnetic north on a clean (flat-field) calibration, so +74.4
-// zeroes it there. Sign +1: clockwise rotation increases the bearing.
-// Declination (true vs magnetic) is ~1 deg here, inside the noise, so
-// it is ignored; add it from GPS later for true north. The +74.4 still
-// wants a confirm flash in the normal hold (it was read screen-down).
-inline constexpr float HEADING_OFFSET_DEG = 74.4f;
+// so for a chip mounted at a cardinal orientation it is a clean
+// multiple of 90. With the offset at 0 the raw angle read 0 where a
+// phone read ~280, i.e. a quarter turn: 270. The ~10 deg difference is
+// handheld misalignment, not a real fractional offset (London
+// declination is <1 deg). Sign +1: clockwise rotation increases the
+// bearing. Add GPS-derived declination later for true (not magnetic) north.
+inline constexpr float HEADING_OFFSET_DEG = 270.0f;
 inline constexpr float HEADING_SIGN       = 1.0f;
 
 // Gyro complementary filter. The gyroscope gives a smooth, low-noise
@@ -185,14 +185,20 @@ inline void pump() {
 
   if (r.valid) {
     // Grow the 3D hard-iron bounds as the device moves through its
-    // orientations.
+    // orientations - but only until the calibration locks. Once the
+    // flatness gate is satisfied the centre is frozen; continuing to
+    // grow it would let later movement drift the centre, which makes the
+    // corrected field look un-flat again and oscillates the verdict
+    // (calibrate -> ready -> drift -> recalibrate). reset_calibration()
+    // is the only way back to accumulating.
     _detail::Calib& c = _detail::calib_ref();
+    const bool cal_locked = _detail::calwin_ref().ready;
     if (!c.seeded) {
       c.xmin = c.xmax = r.x_uT;
       c.ymin = c.ymax = r.y_uT;
       c.zmin = c.zmax = r.z_uT;
       c.seeded = true;
-    } else {
+    } else if (!cal_locked) {
       if (r.x_uT < c.xmin) c.xmin = r.x_uT;
       if (r.x_uT > c.xmax) c.xmax = r.x_uT;
       if (r.y_uT < c.ymin) c.ymin = r.y_uT;
@@ -281,7 +287,11 @@ inline void pump() {
         sum += w.corr[i];
         sumsq += w.corr[i] * w.corr[i];
       }
-      if ((rmax - rmin) > CAL_MOVE_MIN_UT) {        // only judge while moving
+      // Judge flatness only until the calibration locks; once ready
+      // latches it stays ready (and the bar stops moving) so continued
+      // turning cannot un-ready a good calibration. reset_calibration()
+      // clears w.ready to start over.
+      if (!w.ready && (rmax - rmin) > CAL_MOVE_MIN_UT) {   // judge while moving
         const float mean = sum / CAL_WIN;
         float var = sumsq / CAL_WIN - mean * mean;
         if (var < 0.0f) var = 0.0f;
@@ -315,6 +325,13 @@ inline void      set_interval_ms(uint32_t ms) { _detail::interval_ms_ref() = ms;
 // instead of at the idle interval. The consumer renews the TTL.
 inline void request_live(uint32_t ttl_ms = 1500) {
   _detail::live_until_ref() = millis() + ttl_ms;
+}
+// Whether a live-poll window is currently active (web popover or a
+// device live screen - e.g. the heading screen - renew the same window).
+inline bool live() { return millis() < _detail::live_until_ref(); }
+inline uint32_t live_remaining_ms() {
+  const uint32_t u = _detail::live_until_ref(), n = millis();
+  return u > n ? u - n : 0;
 }
 // Restart hard-iron calibration: the next full turn re-learns the
 // bounds. Use after the device moves to a magnetically different spot.

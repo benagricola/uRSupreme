@@ -46,12 +46,10 @@
 #endif
 
 #include "Fonts/Org_01.h"
-// Picopixel is a 4x6 *monospace* font from Adafruit_GFX. Used for the
-// 6-char identity code render - Org_01 (the SMALL_FONT default) is
-// variable-width, so different hex digits produce different total
-// widths, causing the code to overflow the 64-px disp_area on some
-// glyph combinations.
-#include "Fonts/Picopixel.h"
+// The OLED fixed-width font (Common::OledText::OLED_FONT, pulled in via
+// ScreenFramework.h above) is monospace, so the 6-char identity code
+// renders at a constant width - Org_01 (the SMALL_FONT default) is
+// variable-width and overflows the 64-px disp_area on some hex runs.
 #include "Common/Status.h"     // marquee strip at the bottom of stat_area
 #define DISP_W 128
 #define DISP_H 64
@@ -844,7 +842,7 @@ static bool draw_status_marquee(int px, int py, int width, int height) {
   }
 
   // Measure text in Picopixel.
-  stat_area.setFont(&Picopixel);
+  stat_area.setFont(Common::OledText::OLED_FONT);
   stat_area.setTextSize(1);
   stat_area.setTextWrap(false);
   int16_t  bx, by;
@@ -975,7 +973,7 @@ void draw_disp_area() {
       // so 6 chars = 48 px regardless of which hex digits land. The Y
       // origin convention also differs (GFX custom fonts draw above the
       // cursor's baseline rather than below it), hence the cursor shift.
-      disp_area.setFont(&Picopixel);
+      disp_area.setFont(Common::OledText::OLED_FONT);
       disp_area.setTextSize(2);
       disp_area.setCursor(8, 36);
       disp_area.print(id_code.c_str());

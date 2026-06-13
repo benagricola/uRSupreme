@@ -24,12 +24,11 @@
 #pragma once
 
 #include <Adafruit_GFX.h>
-#include <Fonts/Picopixel.h>
 #include <stdint.h>
 #include <string.h>
 #include <initializer_list>
 
-#include "../Common/OledText.h"
+#include "../Common/OledText.h"   // also supplies OLED_FONT (the fixed-width font)
 
 namespace Display {
 namespace Screens {
@@ -227,7 +226,7 @@ inline void render(GFXcanvas1& area) {
   area.fillRect(0, 0, w, h, 0);
   area.setTextWrap(false);
   area.setTextSize(1);
-  area.setFont(&Picopixel);
+  area.setFont(Common::OledText::OLED_FONT);
 
   // Header: inverted bar, glyph at x=2, UPPERCASE title, centred to
   // the glyph midline via measured bounds (not eyeballed offsets).

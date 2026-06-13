@@ -15,7 +15,6 @@
 #pragma once
 
 #include <Adafruit_GFX.h>
-#include <Fonts/Picopixel.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -331,7 +330,7 @@ namespace _detail {
       // Uncalibrated: no rotating card (the heading is not trustworthy
       // yet). Prompt and a fill-as-you-go progress bar sit below the
       // ring, clear of it.
-      area.setFont(&Picopixel);
+      area.setFont(Common::OledText::OLED_FONT);
       Common::OledText::line_at(area, (int16_t)(cx - 15), (int16_t)(ny + 3), "turn + tilt");
       Common::OledText::line_at(area, (int16_t)(cx - 17), (int16_t)(ny + 10), "to calibrate");
       const int16_t bw = 44, bx = (int16_t)(cx - bw / 2), by = (int16_t)(ny + 14);
@@ -380,7 +379,7 @@ namespace _detail {
     area.setCursor((int16_t)(cx - bw / 2), ny);
     area.print(buf);
     area.setTextSize(1);
-    area.setFont(&Picopixel);
+    area.setFont(Common::OledText::OLED_FONT);
     area.drawCircle((int16_t)(cx + bw / 2 + 3), (int16_t)(ny + 1), 1, 1);
     // Corrected field magnitude, small, at the foot of the screen.
     char fbuf[12];
@@ -411,7 +410,7 @@ namespace _detail {
       snprintf(buf, sizeof(buf), "%.1f", e.temp_c);
       area.setCursor(2, y); area.print(buf);
       area.setTextSize(1);
-      area.setFont(&Picopixel);
+      area.setFont(Common::OledText::OLED_FONT);
       int16_t ux = (int16_t)(2 + (int)strlen(buf) * 12 + 1);
       area.drawCircle(ux, (int16_t)(y + 1), 1, 1);
       Common::OledText::line_at(area, (int16_t)(ux + 3), (int16_t)(y + 5), "C");

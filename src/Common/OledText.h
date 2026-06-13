@@ -1,17 +1,24 @@
 // Shared OLED text helpers for full-screen views (messenger, sensors).
-// Drawing conventions: Picopixel for dense rows (7 px steps, baseline
-// cursors), the classic built-in 6x8 font for body text (glyph-top
-// cursors, 10 columns across the 64 px panel).
+// Drawing conventions: OLED_FONT (a small fixed-width font) for dense
+// rows (7 px steps, baseline cursors), the classic built-in 6x8 font
+// for body text (glyph-top cursors, 10 columns across the 64 px panel).
 #pragma once
 
 #include <Adafruit_GFX.h>
-#include <Fonts/Picopixel.h>
+#include <Fonts/TomThumb.h>
 #include <string>
 #include <initializer_list>
 #include <algorithm>
 
 namespace Common {
 namespace OledText {
+
+// THE device OLED font, used everywhere the framework and the sensor /
+// messenger screens draw text. Fixed-width is mandatory on the panel:
+// a proportional font (the old Picopixel) breaks centring and column
+// alignment. TomThumb is 3x5, ~4 px advance, close to Picopixel's
+// density. Defined once so a future font swap is a one-line change.
+inline const GFXfont* const OLED_FONT = &TomThumb;
 
 inline void line(GFXcanvas1& area, int16_t y, const char* text) {
   area.setCursor(2, y);
@@ -67,14 +74,14 @@ inline void wrap_classic(GFXcanvas1& area, const std::string& text,
     while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\n')) ++pos;
     ++row;
   }
-  area.setFont(&Picopixel);
+  area.setFont(OLED_FONT);
 }
 
 // Bottom-anchored hint block, Picopixel, 7 px steps. Button names
 // match the board silkscreen: PWR, BOOT (RST is not software-
 // readable).
 inline void hints(GFXcanvas1& area, std::initializer_list<const char*> lines) {
-  area.setFont(&Picopixel);
+  area.setFont(OLED_FONT);
   int16_t y = (int16_t)(area.height() - 2 - 7 * (lines.size() - 1));
   area.drawFastHLine(0, y - 9, area.width(), 1);
   for (const char* l : lines) {

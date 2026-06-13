@@ -32,7 +32,6 @@
 #include "../Display/ScreenFramework.h"
 #include <ArduinoJson.h>
 #include <Adafruit_GFX.h>
-#include <Fonts/Picopixel.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <stdint.h>
@@ -504,7 +503,7 @@ inline void tick() {
 // Text helpers shared with the sensors view live in Common/OledText.h.
 
 inline void render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
-  area.setFont(&Picopixel);
+  area.setFont(Common::OledText::OLED_FONT);
   area.setTextWrap(false);
   area.setTextColor(1);
   area.setTextSize(1);
@@ -584,7 +583,7 @@ inline void render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
     const int body_rows = (y_bottom - txt_y - note_h) / 8;
     Common::OledText::wrap_classic(area, r, txt_y, body_rows > 0 ? body_rows : 1);
     if (!note.empty()) {
-      area.setFont(&Picopixel);
+      area.setFont(Common::OledText::OLED_FONT);
       Common::OledText::line_at(area, (int16_t)(area.width() / 2 - (int)note.size() * 2),
                                 (int16_t)(y_bottom - 3), note.c_str());
     }

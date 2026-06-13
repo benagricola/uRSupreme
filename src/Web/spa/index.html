@@ -1826,6 +1826,13 @@
             </template>
           </select>
 
+          <label class="toggle-row mt-3">
+            <input type="checkbox" x-model="$store.s.forms.collector.diag"
+                   @change="saveCollectorConfig()">
+            <span>GPS diagnostics</span>
+            <button type="button" class="info-icon" @click.stop data-info="Debug mode. Sends a compact GNSS status report (AGC, satellites, fix, power mode) instead of sensor telemetry, for field-testing GPS over the radio. Stays out of the conversation."></button>
+          </label>
+
           <label class="mt-3">Include</label>
           <label class="toggle-row mt-1">
             <input type="checkbox" x-model="$store.s.forms.collector.location"
@@ -2335,6 +2342,7 @@ let state = {
     // system popover's telemetry status line.
     collector:       { enabled: false, collectors: [], identity: '', interval_s: 900,
                        location: true, compass: false, environment: true, battery: true,
+                       diag: false,
                        last_result: 'never', last_error: '', last_sent_epoch: 0 },
     wifiAdd:         { ssid: '', psk: '', code: '' },
     tcpAdd:          { name: '', host: '', port: 4242 },
@@ -5567,6 +5575,7 @@ function _collectorApply(r) {
     identity: r.identity || '', interval_s: r.interval_s || 900,
     battery: r.battery !== false, location: r.location !== false,
     environment: r.environment !== false, compass: !!r.compass,
+    diag: !!r.diag,
     last_result: r.last_result || 'never',
     last_error:  r.last_error || '',
     last_sent_epoch: r.last_sent_epoch || 0,
@@ -5581,7 +5590,7 @@ async function saveCollectorConfig() {
   const collectors = c.collectors.map(s => (s || '').trim()).filter(Boolean);
   const body = { enabled: c.enabled, collectors, identity: c.identity,
                  interval_s: c.interval_s, battery: c.battery, location: c.location,
-                 environment: c.environment, compass: c.compass };
+                 environment: c.environment, compass: c.compass, diag: c.diag };
   try {
     _collectorApply(await state.transport._req(API.TELEMETRY_CONFIG, { method: 'POST', body }));
   } catch (e) {

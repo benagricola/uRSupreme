@@ -77,6 +77,7 @@
       c.include.location    = body["location"]    | c.include.location;
       c.include.environment = body["environment"] | c.include.environment;
       c.include.magnetic    = body["compass"]     | c.include.magnetic;
+      c.diag                = body["diag"]         | c.diag;
       LXMF::TelemetrySender::persist(filesystem);
 
       Common::PsramJsonDocument doc;

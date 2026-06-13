@@ -26,7 +26,9 @@
 
 #include <microStore/FileSystem.h>
 #include "../Common/PsramAllocator.h"
+#include "../Common/MsgPack.h"
 #include "../Telemetry/Telemeter.h"
+#include "../Sensors/Position/Gnss.h"
 #include "LXMFTypes.h"
 #include "LXMFGateway.h"
 
@@ -46,6 +48,12 @@ struct Config {
   std::vector<std::string> collectors;  // 16-byte LXMF dest hashes, hex (32 chars)
   uint32_t    interval_s = DEFAULT_INTERVAL_S;
   Telemetry::Telemeter::Include include;  // same items to every collector
+  // Field-debug mode: send a human-readable GNSS diagnostics line as
+  // the message content instead of a Sideband telemetry blob, so a
+  // plain LXMF node logs it directly while the device is out of WiFi
+  // range. A visible message (it lands in the conversation), unlike
+  // the silent telemetry path.
+  bool        diag = false;
 };
 
 namespace _detail {
@@ -93,6 +101,7 @@ inline void load(microStore::FileSystem& fs) {
   c.include.location    = doc["location"]    | true;
   c.include.environment = doc["environment"] | true;
   c.include.magnetic    = doc["compass"]     | false;
+  c.diag                = doc["diag"]        | false;
 }
 
 inline void persist(microStore::FileSystem& fs) {
@@ -107,6 +116,7 @@ inline void persist(microStore::FileSystem& fs) {
   doc["location"]    = c.include.location;
   doc["environment"] = c.include.environment;
   doc["compass"]     = c.include.magnetic;
+  doc["diag"]        = c.diag;
   String out;
   serializeJson(doc, out);
   fs.writeFile(CONFIG_PATH,
@@ -124,6 +134,52 @@ inline IdentityId resolve_identity() {
   const auto& actives = LXMFGateway::active_identities();
   if (!actives.empty()) return actives.front()->id;
   return IdentityId{};
+}
+
+// Field-debug payload: the GNSS diagnostics snapshot as a compact
+// msgpack map under "urtn_gps" in FIELD_CUSTOM_META. Carried as a
+// meta field (content stays empty) so the send stays out of the
+// outbox/conversation, and small (short keys) so it stays a single
+// opportunistic packet over LoRa. A uR receiver swallows it as
+// machinery (no urtn_msg marker); a plain LXMF node decodes the map.
+// Keys: pm power-mode, ps pulse-state, m1 m10-power (enums); ef
+// ever-fixed; bo backoff; fx fix-valid; sv/su sats visible/used; sn
+// snr dB; ag agc%, ar agc-raw, nz noise/ms, jm jamming, cw cw-jam;
+// ak/nk valset acks/naks.
+inline RNS::Bytes pack_gps_diag_meta() {
+  using namespace Common::MsgPack;
+  const Sensors::Gnss::DiagSnapshot d = Sensors::Gnss::diag_snapshot();
+  uint8_t buf[128];
+  size_t pos = 0, n = 0;
+  auto put_int = [&](const char* key, int64_t v) -> bool {
+    size_t m = pack_str(&buf[pos], sizeof(buf) - pos, key);
+    if (m == 0) return false;
+    pos += m;
+    m = pack_int(&buf[pos], sizeof(buf) - pos, v);
+    if (m == 0) return false;
+    pos += m;
+    return true;
+  };
+  n = pack_map_header(buf, sizeof(buf), 1);            // { urtn_gps: {...} }
+  if (n == 0) return RNS::Bytes{};
+  pos += n;
+  n = pack_str(&buf[pos], sizeof(buf) - pos, "urtn_gps");
+  if (n == 0) return RNS::Bytes{};
+  pos += n;
+  n = pack_map_header(&buf[pos], sizeof(buf) - pos, 15);
+  if (n == 0) return RNS::Bytes{};
+  pos += n;
+  if (!put_int("pm", d.mode)          || !put_int("ps", d.pulse_state) ||
+      !put_int("m1", d.m10_power)     || !put_int("ef", d.ever_fixed ? 1 : 0) ||
+      !put_int("bo", d.backoff_count) || !put_int("fx", d.fix_valid ? 1 : 0) ||
+      !put_int("sv", d.sats_visible)  || !put_int("su", d.sats_used) ||
+      !put_int("sn", d.snr_db)        || !put_int("ag", d.agc_pct) ||
+      !put_int("ar", d.agc_raw)       || !put_int("nz", d.noise) ||
+      !put_int("jm", d.jamming_state) || !put_int("ak", (int64_t)d.valset_acks) ||
+      !put_int("nk", (int64_t)d.valset_naks)) {
+    return RNS::Bytes{};
+  }
+  return RNS::Bytes(buf, pos);
 }
 
 // Build and send one telemetry update now. Returns true when the
@@ -164,15 +220,30 @@ inline bool send_now() {
   const LXMFIdentity* a = LXMFGateway::identity_by_id(iden);
   if (!a) return fail("no_identity", "No active identity to send from.");
 
-  uint8_t packed[Telemetry::Telemeter::MAX_PACKED];
   const double now_epoch = a->lxmf.get_timestamp();
-  const size_t packed_len = Telemetry::Telemeter::pack(
-      packed, sizeof(packed), c.include, now_epoch);
-  if (packed_len == 0) {
-    return fail("no_readings", "No sensor readings available right now.");
+
+  // Two meta-field shapes, both with empty content so the send stays
+  // out of the outbox/conversation (LXMFGateway machinery path). Diag:
+  // the GNSS diagnostics map in FIELD_CUSTOM_META. Normal: the Sideband
+  // telemetry blob in FIELD_TELEMETRY.
+  ExtraFields        extra;
+  const ExtraFields* extra_ptr = nullptr;
+  if (c.diag) {
+    extra.custom_meta = pack_gps_diag_meta();
+    if (extra.custom_meta.size() == 0) {
+      return fail("no_readings", "GPS diagnostics unavailable right now.");
+    }
+    extra_ptr = &extra;
+  } else {
+    uint8_t packed[Telemetry::Telemeter::MAX_PACKED];
+    const size_t packed_len = Telemetry::Telemeter::pack(
+        packed, sizeof(packed), c.include, now_epoch);
+    if (packed_len == 0) {
+      return fail("no_readings", "No sensor readings available right now.");
+    }
+    extra.telemetry = RNS::Bytes(packed, packed_len);
+    extra_ptr = &extra;
   }
-  ExtraFields extra;
-  extra.telemetry = RNS::Bytes(packed, packed_len);
 
   // Send the same sample to every collector. Track each outcome so the
   // batch result reflects the worst case the user needs to act on.
@@ -184,7 +255,7 @@ inline bool send_now() {
     const char* err = nullptr;
     bool queued = false;
     const bool ok = LXMFGateway::send(iden, dest, "", "", nullptr, rec, &err,
-                                      &queued, /*use_seq=*/0, &extra);
+                                      &queued, /*use_seq=*/0, extra_ptr);
     if (ok) {
       n_sent++;
       _detail::last_packets().push_back(rec.packet_hash);
@@ -263,6 +334,7 @@ inline void fill_status(JsonObject o) {
   o["location"]    = c.include.location;
   o["environment"] = c.include.environment;
   o["compass"]     = c.include.magnetic;
+  o["diag"]        = c.diag;
   o["last_result"] = _detail::last_result();
   if (!_detail::last_error().empty()) o["last_error"] = _detail::last_error();
   if (_detail::last_sent_epoch() > 0.0) {

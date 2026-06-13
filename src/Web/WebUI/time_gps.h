@@ -267,6 +267,22 @@
         doc["cw_jamming"] = rf.valid ? rf.cw_jam : 0;
         doc["noise"]      = rf.valid ? rf.noise_per_ms : 0;
         doc["agc_pct"]    = rf.valid ? (uint8_t)((uint32_t)rf.agc * 100 / 8191) : 0;
+        doc["agc_raw"]    = rf.valid ? rf.agc : 0;
+        doc["valset_acks"] = Sensors::MaxM10::valset_acks();
+        doc["valset_naks"] = Sensors::MaxM10::valset_naks();
+      }
+      // Acquisition + power-mode state: the counters that separate an RF
+      // problem (sees sats, never fixes) from a power one (cycling).
+      {
+        const auto a = Sensors::Gnss::acq_status();
+        static const char* MODE[] = { "off", "always_on", "pulsed" };
+        static const char* M10P[] = { "not_applied", "full", "psmoo" };
+        static const char* PST[]  = { "idle", "acquiring" };
+        doc["mode"]          = MODE[(uint8_t)a.mode];
+        doc["pulse_state"]   = PST[(uint8_t)a.state];
+        doc["m10_power"]     = M10P[(uint8_t)a.m10];
+        doc["ever_fixed"]    = a.ever_fixed;
+        doc["backoff_count"] = a.backoff_count;
       }
       doc["fix_age_ms"]  = f.fix_received_ms == 0 ? -1
                             : (long)(millis() - f.fix_received_ms);

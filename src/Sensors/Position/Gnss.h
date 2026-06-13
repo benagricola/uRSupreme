@@ -597,5 +597,55 @@ inline AcqStatus acq_status() {
 
 inline bool has_serial() { return _detail::serial_ref() != nullptr; }
 
+// Raw acquisition + RF diagnostics snapshot, for the over-LoRa diag
+// beacon (TelemetrySender) and /api/gps. Bundles the receiver state
+// that separates an RF problem (sees sats, never fixes) from a power
+// one (cycling): AGC floor, jamming, power mode, VALSET acks, backoff.
+struct DiagSnapshot {
+  uint8_t  mode;          // PowerMode
+  uint8_t  pulse_state;   // PulseState
+  uint8_t  m10_power;     // M10Power
+  bool     ever_fixed;
+  uint8_t  backoff_count;
+  bool     fix_valid;
+  uint8_t  sats_visible;
+  uint8_t  sats_used;
+  uint8_t  snr_db;
+  bool     rf_valid;
+  uint8_t  jamming_state; // 0 unknown .. 3 critical
+  uint8_t  cw_jam;
+  uint16_t agc_raw;       // 0..8191
+  uint8_t  agc_pct;
+  uint16_t noise;
+  uint32_t valset_acks;
+  uint32_t valset_naks;
+};
+inline DiagSnapshot diag_snapshot() {
+  const AcqStatus a = acq_status();
+  const Fix&      f = _detail::fix_ref();
+  DiagSnapshot d{};
+  d.mode          = (uint8_t)a.mode;
+  d.pulse_state   = (uint8_t)a.state;
+  d.m10_power     = (uint8_t)a.m10;
+  d.ever_fixed    = a.ever_fixed;
+  d.backoff_count = a.backoff_count;
+  d.fix_valid     = f.valid;
+  d.sats_visible  = f.sats_visible;
+  d.sats_used     = f.sats;
+  d.snr_db        = f.best_snr_db;
+  if (module() == Module::MAXM10) {
+    const auto rf = MaxM10::rf_status();
+    d.rf_valid      = rf.valid;
+    d.jamming_state = rf.jamming_state;
+    d.cw_jam        = rf.cw_jam;
+    d.agc_raw       = rf.agc;
+    d.agc_pct       = rf.valid ? (uint8_t)((uint32_t)rf.agc * 100 / 8191) : 0;
+    d.noise         = rf.noise_per_ms;
+    d.valset_acks   = MaxM10::valset_acks();
+    d.valset_naks   = MaxM10::valset_naks();
+  }
+  return d;
+}
+
 }  // namespace Gnss
 }  // namespace Sensors

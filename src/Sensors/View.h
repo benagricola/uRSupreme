@@ -76,10 +76,34 @@ namespace _detail {
   }
 
   // ---- GPS ----
+  // The GPS screen has two levels: the globe (the hero) with a single
+  // status line, and a detail page with the numbers (sats, signal,
+  // accuracy, RF health, schedules). POWER toggles between them; at the
+  // globe, BOOT-hold exits; leaving the screen resets to the globe.
+  inline bool& gps_detail_ref() { static bool v = false; return v; }
   inline void gps_header(const uint8_t** glyph, const char** title) {
     *glyph = Display::Screens::GLYPH_PIN;
-    *title = "GPS";
+    *title = gps_detail_ref() ? "GPS INFO" : "GPS";
   }
+  inline size_t gps_hints(const char** out, size_t max) {
+    if (gps_detail_ref()) {
+      if (max < 2) return 0;
+      out[0] = "Hold POWER: globe";
+      out[1] = "Hold BOOT: back";
+      return 2;
+    }
+    if (max < 3) return root_hints(out, max);
+    out[0] = "Tap BOOT: next";
+    out[1] = "Hold BOOT: back";
+    out[2] = "Hold POWER: info";
+    return 3;
+  }
+  inline void gps_on_select() { gps_detail_ref() = !gps_detail_ref(); }
+  inline bool gps_on_back() {
+    if (gps_detail_ref()) { gps_detail_ref() = false; return true; }
+    return false;
+  }
+  inline void gps_on_exit() { gps_detail_ref() = false; }
   inline bool gps_live() {
     return Gnss::acq_status().mode != Gnss::PowerMode::Off;
   }
@@ -97,16 +121,12 @@ namespace _detail {
     }
   }
 
-  // The GPS screen adapts to its state: searching makes the signal
-  // meter the hero (what you watch on the balcony), a fix makes the
-  // coordinates the hero. The clock-sync detail is intentionally
-  // absent - it is not what someone holding the device wants here.
-  // The GPS screen is a dithered globe with the device's position
-  // marked on its surface (PlanetView). While searching it spins and
-  // the marker is hidden; on a fix it eases the device longitude to
-  // the front, drops a pin with a pulse, and holds there with the
-  // satellite orbiting for liveness.
-  inline void gps_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+  // Globe level: the dithered Earth is the hero with one status line
+  // beneath it - a position on a fix, otherwise "Locating" or the power
+  // state. The numbers move to the detail level (POWER). While searching
+  // it spins; on a fix it eases the device lat+lon to centre, drops a
+  // pulsing pin, and the satellites in view orbit the rim.
+  inline void gps_globe_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
     using namespace PlanetView;
     const Gnss::Fix f = Gnss::last_fix();
     const uint32_t now = millis();
@@ -118,7 +138,7 @@ namespace _detail {
     static uint32_t fixed_ms  = 0;        // when the current fix landed
 
     const int16_t cx = (int16_t)(area.width() / 2);
-    const int16_t cy = (int16_t)(y_top + PLANET_R + 2);
+    const int16_t cy = (int16_t)((y_top + y_bottom) / 2 - 6);
     draw_stars(area, y_top, y_bottom, cx, cy, now);
 
     if (f.valid) {
@@ -182,23 +202,62 @@ namespace _detail {
       }
     }
 
-    // Text rows below the globe.
+    // Single status line, centred at the foot of the screen.
     char buf[24];
-    const int16_t ty = (int16_t)(cy + PLANET_R + 6);
     if (f.valid) {
-      snprintf(buf, sizeof(buf), "%u seen  %u used",
-               (unsigned)f.sats_visible, (unsigned)f.sats);
-      Common::OledText::line(area, ty, buf);
-      snprintf(buf, sizeof(buf), "%.4f %.4f", f.latitude_deg, f.longitude_deg);
-      area.setFont(nullptr);
-      area.setCursor(2, (int16_t)(ty + 8));
-      area.print(buf);
-      area.setFont(&Picopixel);
+      snprintf(buf, sizeof(buf), "%.2f%c  %.2f%c",
+               fabsf((float)f.latitude_deg),  f.latitude_deg  >= 0 ? 'N' : 'S',
+               fabsf((float)f.longitude_deg), f.longitude_deg >= 0 ? 'E' : 'W');
+    } else if (Gnss::acq_status().mode == Gnss::PowerMode::Off) {
+      snprintf(buf, sizeof(buf), "Location off");
     } else {
-      Common::OledText::line(area, ty, "Locating");
-      snprintf(buf, sizeof(buf), "%u sats seen", (unsigned)f.sats_visible);
-      Common::OledText::line(area, (int16_t)(ty + 8), buf);
+      snprintf(buf, sizeof(buf), "Locating  %u sats", (unsigned)f.sats_visible);
     }
+    Common::OledText::line_at(area, (int16_t)(cx - (int)strlen(buf) * 2),
+                              (int16_t)(y_bottom - 3), buf);
+  }
+
+  // Detail level: the numbers behind the globe, reached with POWER.
+  inline void gps_detail_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+    const Gnss::Fix f = Gnss::last_fix();
+    const Gnss::AcqStatus a = Gnss::acq_status();
+    (void)y_bottom;
+    int16_t y = (int16_t)(y_top + 5);
+    linef(area, y, "Seen %u  Used %u",
+          (unsigned)f.sats_visible, (unsigned)f.sats); y += 8;
+    linef(area, y, "Signal %u dB", (unsigned)f.best_snr_db); y += 8;
+    if (f.acc_valid) {
+      linef(area, y, "Acc H%.0f V%.0f m", f.hacc_m, f.vacc_m); y += 8;
+    }
+    char age[10];
+    fmt_age(age, sizeof(age), f.fix_received_ms);
+    linef(area, y, "Fix %s ago", age); y += 8;
+    if (Gnss::module() == Gnss::Module::MAXM10) {
+      const auto rf = MaxM10::rf_status();
+      static const char* JAM[] = { "unknown", "none", "warning", "critical" };
+      linef(area, y, "Jam: %s", JAM[rf.valid ? (rf.jamming_state & 0x03) : 0]); y += 8;
+      linef(area, y, "Noise %u  AGC %u%%",
+            (unsigned)(rf.valid ? rf.noise_per_ms : 0),
+            (unsigned)(rf.valid ? (uint8_t)((uint32_t)rf.agc * 100 / 8191) : 0)); y += 8;
+    }
+    if (a.mode == Gnss::PowerMode::AlwaysOn) {
+      linef(area, y, "Loc: always on"); y += 8;
+    } else if (a.mode == Gnss::PowerMode::Pulsed) {
+      linef(area, y, "Loc: every %lum",
+            (unsigned long)(Gnss::power_config().interval_s / 60)); y += 8;
+    } else {
+      linef(area, y, "Loc: off"); y += 8;
+    }
+    const auto gc = Clock::Manager::get_config(Clock::Manager::Source::GPS);
+    if (gc.interval_s == 0) linef(area, y, "Sync: at boot");
+    else linef(area, y, "Sync: every %luh",
+               (unsigned long)(gc.interval_s / 3600));
+  }
+
+  // Router: globe or detail.
+  inline void gps_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+    if (gps_detail_ref()) gps_detail_body(area, y_top, y_bottom);
+    else                  gps_globe_body(area, y_top, y_bottom);
   }
 
   // ---- HEADING ----
@@ -322,12 +381,39 @@ namespace _detail {
       y += 18;
       snprintf(buf, sizeof(buf), "%.0f hPa", e.pressure_pa / 100.0f);
       Common::OledText::line(area, (int16_t)(y + 4), buf);
-      y += 12;
+      y += 10;
+      // Pressure trend: a sparkline of the recent history, bars scaled
+      // to the window's own min/max so even small weather swings show.
+      float hist[BME280::PRESS_HIST_N];
+      const int hn = BME280::pressure_history(hist, BME280::PRESS_HIST_N);
+      const int16_t gtop = (int16_t)(y + 2);
+      const int16_t gh   = (int16_t)(y_bottom - gtop - 1);
+      if (hn >= 2 && gh > 5) {
+        float pmin = hist[0], pmax = hist[0];
+        for (int i = 1; i < hn; ++i) {
+          if (hist[i] < pmin) pmin = hist[i];
+          if (hist[i] > pmax) pmax = hist[i];
+        }
+        // A calm pressure must read as a calm low line, not noise blown
+        // up to full height; PRESS_GRAPH_FULL_PA is the swing that fills
+        // the chart, so anything smaller stays proportionally short.
+        constexpr float PRESS_GRAPH_FULL_PA = 300.0f;   // 3 hPa fills the chart
+        const float eff = (pmax - pmin) > PRESS_GRAPH_FULL_PA
+                          ? (pmax - pmin) : PRESS_GRAPH_FULL_PA;
+        const int16_t gx = 2, gw = (int16_t)(area.width() - 4);
+        area.drawFastHLine(gx, (int16_t)(gtop + gh), gw, 1);   // baseline
+        const float bwf = (float)gw / hn;
+        for (int i = 0; i < hn; ++i) {
+          const float frac = (hist[i] - pmin) / eff;
+          const int16_t bh = (int16_t)(frac * (gh - 1)) + 1;
+          const int16_t bx = (int16_t)(gx + i * bwf);
+          const int16_t biw = bwf >= 2.0f ? (int16_t)(bwf - 1) : 1;
+          area.fillRect(bx, (int16_t)(gtop + gh - bh), biw, bh, 1);
+        }
+      }
     } else {
       Common::OledText::line(area, (int16_t)(y + 6), "No env data");
-      y += 14;
     }
-    (void)y_bottom;
 
     // --- Battery block (moves to a future SYSTEM screen) ---------------
     // const Telemetry::Battery::Snapshot b = Telemetry::Battery::current();
@@ -372,9 +458,9 @@ namespace _detail {
 
 // The three registered pages, in BOOT-tap rotation order.
 inline const Display::Screens::ScreenPage GPS_PAGE = {
-  _detail::gps_header, _detail::root_hints, _detail::gps_body,
-  _detail::noop, _detail::noop, _detail::noop, _detail::noop,
-  _detail::at_root, _detail::gps_live, /*live_demand=*/nullptr, /*ttl_ms=*/0,
+  _detail::gps_header, _detail::gps_hints, _detail::gps_body,
+  _detail::noop, _detail::gps_on_exit, _detail::noop, _detail::gps_on_select,
+  _detail::gps_on_back, _detail::gps_live, /*live_demand=*/nullptr, /*ttl_ms=*/0,
 };
 inline const Display::Screens::ScreenPage HEADING_PAGE = {
   _detail::heading_header, _detail::compass_hints, _detail::heading_body,

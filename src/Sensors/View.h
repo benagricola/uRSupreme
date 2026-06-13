@@ -358,15 +358,13 @@ namespace _detail {
                                   (int16_t)(cy - c * (R - 9) + 2), m.lbl);
       }
     }
-    // North wedge on the card, so you can find it at a glance.
-    {
-      const float phi = (0.0f - hd) * D2R, s = sinf(phi), c = cosf(phi);
-      const float ls = sinf(phi + 0.2f), lc = cosf(phi + 0.2f);
-      const float rs = sinf(phi - 0.2f), rc = cosf(phi - 0.2f);
-      area.fillTriangle((int16_t)(cx + s * R), (int16_t)(cy - c * R),
-                        (int16_t)(cx + ls * (R - 6)), (int16_t)(cy - lc * (R - 6)),
-                        (int16_t)(cx + rs * (R - 6)), (int16_t)(cy - rc * (R - 6)), 1);
-    }
+    // Static index arrow (the read point), floated inside the ring below
+    // the cardinal lettering so it never collides with the top mark. It
+    // points up at whichever mark the rotating card has brought to the
+    // top, which is the current heading. Not part of the rotating card.
+    area.fillTriangle(cx, (int16_t)(cy - R + 14),
+                      (int16_t)(cx - 3), (int16_t)(cy - R + 19),
+                      (int16_t)(cx + 3), (int16_t)(cy - R + 19), 1);
     // Big bearing below the ring, with a degree ring. Wrap the rounded
     // value so 359.5+ shows 0, not 360 (the bearing range is 0-359).
     int hdi = (int)lrintf(hd);

@@ -1199,44 +1199,127 @@ inline void page_noop() {}
 inline bool page_no_back() { return false; }
 inline bool page_radio_live() { return radio_online; }
 
-// Status (page 0, the home): just the legacy icon panel - the shared
-// stat_area (WiFi/BT/LoRa/cable plus the bottom strip's battery/quality/
-// signal bars and the status marquee), centred in the body. Keeping the
-// whole stat_area means the battery and signal indicators keep their
-// home. The radio stats moved to the Radio page.
+// Status (page 0, the home): the RNode device-info header (logo + address /
+// WiFi IP) on top, the icon + waterfall + battery/signal panel below. The
+// transport stats moved to their own page; this page always shows the device
+// view that the legacy panel only showed when transport was off. Hold POWER
+// reveals the device identity code (shown big by the legacy fallback path in
+// update_display for its TTL; a BOOT tap dismisses it). POWER is used because
+// the framework owns BOOT, so the old hold-then-tap BOOT gesture could never
+// arm while a screen was active.
 inline void status_header(const uint8_t** glyph, const char** title) {
   *glyph = Display::Screens::GLYPH_HOUSE;
   *title = "STATUS";
 }
 inline size_t status_hints(const char** out, size_t max) {
+  if (max < 2) { if (max < 1) return 0; out[0] = "Tap BOOT: next"; return 1; }
+  out[0] = "Tap BOOT: next";
+  out[1] = "Hold POWER: ID";
+  return 2;
+}
+inline void status_on_select() { Web::WebUI::on_button_request_identity_code(); }
+// The logo (23 px) + one info line + the 64 px panel sum to the body height,
+// so the panel is bottom-aligned and the device info fills the strip above it
+// with no overlap. The info line prefers the WiFi IP (so the web app is
+// reachable); it falls back to the short device address when WiFi is down.
+inline void status_render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+  draw_stat_area();   // icon + waterfall + battery/signal panel -> stat_area (64x64)
+  if (device_signatures_ok()) area.drawBitmap(0, y_top, bm_def_lc, 64, 23, SSD1306_WHITE, SSD1306_BLACK);
+  else                        area.drawBitmap(0, y_top, bm_def,    64, 23, SSD1306_WHITE, SSD1306_BLACK);
+  char info[22] = {0};
+  #if HAS_WIFI
+    if (wifi_is_connected()) {
+      snprintf(info, sizeof(info), "%u.%u.%u.%u",
+               (unsigned)wr_device_ip[0], (unsigned)wr_device_ip[1],
+               (unsigned)wr_device_ip[2], (unsigned)wr_device_ip[3]);
+    }
+  #endif
+  #if HAS_BT
+    if (!info[0]) snprintf(info, sizeof(info), "Addr %02X%02X", (uint8_t)bt_dh[14], (uint8_t)bt_dh[15]);
+  #endif
+  if (info[0]) Common::OledText::line(area, (int16_t)(y_top + 30), info);
+  area.drawBitmap(0, (int16_t)(y_bottom - 64), stat_area.getBuffer(),
+                  64, 64, SSD1306_WHITE, SSD1306_BLACK);
+}
+inline const Display::Screens::ScreenPage STATUS_PAGE = {
+  status_header, status_hints, status_render_body,
+  page_noop, page_noop, page_noop, status_on_select,   // POWER hold -> ID code
+  page_no_back, page_radio_live, nullptr, /*ttl_ms=*/0,
+};
+
+// Transport (its own page, after status). The link-layer stats that used to
+// crowd the status panel: rolling history of radio airtime and channel
+// utilisation, plus the packet counters and bitrate. The two graphs scroll
+// left at 1 Hz so the page reads as live even when the numbers hold steady.
+inline void transport_header(const uint8_t** glyph, const char** title) {
+  *glyph = Display::Screens::GLYPH_CHART;
+  *title = "TRANSPORT";
+}
+inline size_t transport_hints(const char** out, size_t max) {
   if (max < 1) return 0;
   out[0] = "Tap BOOT: next";
   return 1;
 }
-inline void status_render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
-  draw_stat_area();   // fills stat_area: icons + battery/signal bars / marquee
-  // Icon panel at the top of the body.
-  area.drawBitmap(0, y_top, stat_area.getBuffer(), 64, 64,
-                  SSD1306_WHITE, SSD1306_BLACK);
-  // Extra row under the panel: GPS fix state (left) and battery (right).
-  const int16_t ry = (int16_t)(y_top + 66);
-  if (ry + 16 > y_bottom) return;   // no room on a short layout
-  const bool fixed = Sensors::Gnss::last_fix().valid;
-  area.drawBitmap(10, ry,
-                  fixed ? Display::Screens::GLYPH16_FIX_OK
-                        : Display::Screens::GLYPH16_SAT,
-                  16, 16, 1);
-  // 16x16 battery on the right: body outline + nub + fill by percent.
-  const int16_t bx = 38;
-  area.drawRect(bx, (int16_t)(ry + 4), 13, 8, 1);
-  area.fillRect((int16_t)(bx + 13), (int16_t)(ry + 6), 2, 4, 1);
-  int fw = (int)(11.0f * battery_percent / 100.0f);
-  if (fw < 0) fw = 0;
-  if (fw > 11) fw = 11;
-  if (fw > 0) area.fillRect((int16_t)(bx + 1), (int16_t)(ry + 5), (int16_t)fw, 6, 1);
+inline void transport_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+  (void)y_bottom;
+  const int16_t W = area.width();
+  if (!radio_online) {
+    Common::OledText::line(area, (int16_t)(y_top + 8), "Radio offline");
+    return;
+  }
+  const uint32_t now = millis();
+  // 1 Hz rolling history of airtime + channel utilisation (short-term), each
+  // a 0..1 fraction stored as a byte. 56 samples is bounded and ~= a minute.
+  static constexpr int TN = 56;
+  static uint8_t air_h[TN], load_h[TN];
+  static int tidx = 0, tcnt = 0;
+  static uint32_t tms = 0;
+  if (tms == 0 || now - tms >= 1000) {
+    tms = now;
+    float a = airtime;            if (a < 0) a = 0; if (a > 1) a = 1;
+    float l = total_channel_util; if (l < 0) l = 0; if (l > 1) l = 1;
+    air_h[tidx]  = (uint8_t)(a * 255.0f);
+    load_h[tidx] = (uint8_t)(l * 255.0f);
+    tidx = (tidx + 1) % TN;
+    if (tcnt < TN) tcnt++;
+  }
+  char buf[24];
+  snprintf(buf, sizeof(buf), "%.1f Kbps", (float)lora_bitrate / 1000.0f);
+  Common::OledText::line_at(area, 2, (int16_t)(y_top + 5), buf);
+  // A labeled rolling-history bar graph filling the panel width: title on the
+  // left, current value right-aligned, framed bar strip beneath.
+  auto graph = [&](const char* label, const uint8_t* hist, float cur, int16_t ly) {
+    Common::OledText::line_at(area, 2, ly, label);
+    char r[8];
+    snprintf(r, sizeof(r), "%.0f%%", cur * 100.0f);
+    int16_t bx, by; uint16_t bw, bh2;
+    area.getTextBounds(r, 0, 0, &bx, &by, &bw, &bh2);
+    Common::OledText::line_at(area, (int16_t)(W - 2 - (int16_t)bw), ly, r);
+    const int16_t fy = (int16_t)(ly + 3), fh = 18;
+    area.drawRect(0, fy, W, fh, 1);
+    const int16_t baseY  = (int16_t)(fy + fh - 2);
+    const int16_t innerW = (int16_t)(W - 4), innerH = (int16_t)(fh - 4);
+    for (int i = 0; i < tcnt; ++i) {
+      const int s = (tidx - tcnt + i + TN * 2) % TN;
+      const float f = hist[s] / 255.0f;
+      const int16_t hh = (int16_t)(f * innerH);
+      const int16_t x  = (int16_t)(2 + (int)((float)i * innerW / tcnt));
+      area.drawFastVLine(x, (int16_t)(baseY - hh), (int16_t)(hh + 1), 1);
+    }
+  };
+  graph("AIRTIME",   air_h,  airtime,             (int16_t)(y_top + 16));
+  graph("CHAN LOAD", load_h, total_channel_util,  (int16_t)(y_top + 42));
+  #ifdef HAS_RNS
+    snprintf(buf, sizeof(buf), "RX %u    TX %u",
+             (unsigned)RNS::Transport::packets_received(),
+             (unsigned)RNS::Transport::packets_sent());
+  #else
+    snprintf(buf, sizeof(buf), "RX -    TX -");
+  #endif
+  Common::OledText::line_at(area, 2, (int16_t)(y_top + 74), buf);
 }
-inline const Display::Screens::ScreenPage STATUS_PAGE = {
-  status_header, status_hints, status_render_body,
+inline const Display::Screens::ScreenPage TRANSPORT_PAGE = {
+  transport_header, transport_hints, transport_body,
   page_noop, page_noop, page_noop, page_noop,
   page_no_back, page_radio_live, nullptr, /*ttl_ms=*/0,
 };

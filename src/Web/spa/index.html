@@ -233,6 +233,10 @@
       <!-- chip / cpu -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
     </button>
+    <button class="icon" id="btn-map" title="Map" @click="openMapView()">
+      <!-- map / location -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+    </button>
     <button class="icon" id="btn-settings"  title="Settings" @click="openSettingsModal('identity', false)">
       <!-- gear -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -559,7 +563,7 @@
                    Static tiles (see locationThumbTiles); click opens the
                    full map modal. -->
               <template x-if="m.tele && typeof m.tele.lat === 'number' && mapTilesEnabled()">
-                <button class="map-thumb" @click="openLocationModal(m)" title="Open map">
+                <button class="map-thumb" @click="openMapView({ peer: m.peer, latlon: [m.tele.lat, m.tele.lon] })" title="Open map">
                   <template x-for="tile in locationThumbTiles(m.tele)" :key="tile.left + ',' + tile.top">
                     <img class="map-thumb-tile" :src="tile.url"
                          :style="'left:' + tile.left + 'px;top:' + tile.top + 'px'" alt="" loading="lazy">
@@ -1221,31 +1225,18 @@
   </a>
 </div>
 
-<!-- ===================== LOCATION MAP MODAL ===================== -->
-<!-- Opened from a bubble's position preview. Interactive Leaflet map
-     (initialised lazily on open via openLocationModal), with an accuracy
-     circle, a readout, and a LIVE badge while the sender's feed updates
-     the marker in place. -->
-<div id="modal-location" class="modal-bg z-260" x-data x-show="$store.s.modals.locationMap"
-     @click.self="closeLocationModal()" x-cloak>
-  <div class="modal map-modal">
-    <header class="modal-header">
-      <h3>Shared location</h3>
-      <template x-if="$store.s.locationMap.live">
-        <span class="live-badge">LIVE</span>
-      </template>
-      <button class="icon icon-x" title="Close" @click="closeLocationModal()"></button>
-    </header>
-    <div id="loc-map" class="map-modal-canvas"></div>
-    <div class="map-readout">
-      <div class="tline ico-pin coords" x-text="locationReadoutCoords()"></div>
-      <div class="muted" x-text="locationReadoutDetail()"></div>
-    </div>
-    <div class="row">
-      <a class="secondary" target="_blank" rel="noopener" :href="locationOsmHref()">Open in OpenStreetMap</a>
-      <button @click="closeLocationModal()">Close</button>
-    </div>
-  </div>
+<!-- ===================== MAP VIEW ===================== -->
+<!-- Full-screen map, opened from the top-bar map icon or a bubble's
+     position preview. One persistent Leaflet map (initialised lazily in
+     openMapView). Markers for every peer sharing a position, a per-peer
+     track polyline + heading, browsable over offline tiles. -->
+<div id="map-view" class="map-view" x-data x-show="$store.s.mapView.open" x-cloak>
+  <header class="map-view-bar">
+    <button class="icon icon-x" title="Close" @click="closeMapView()"></button>
+    <strong class="map-view-title">Map</strong>
+    <span class="muted text-xs flex-1-min0" x-text="mapViewStatus()"></span>
+  </header>
+  <div id="map-canvas" class="map-view-canvas"></div>
 </div>
 
 <!-- ===================== CONVERSATION RETENTION MODAL ===================== -->
@@ -2259,12 +2250,9 @@ let state = {
     convRetention:  false,
     idCode:         false,
     settings:       false,
-    locationMap:    false,
   },
-  // Currently-open shared location (set by openLocationModal); `live`
-  // flips on when the message maps to an active telemetry feed.
-  locationMap: { lat: null, lon: null, alt_m: null, speed_kmh: null,
-                 bearing_deg: null, acc_m: null, peer: null, live: false },
+  // The full-screen map view (top-bar icon / bubble preview open it).
+  mapView: { open: false },
   // Map tile source, mirrored from /api/map/config. mode is off|sd|online;
   // online (the OSM fallback) is opt-in via the Map settings.
   mapTiles: { mode: 'sd', sdPresent: false, sdAvailable: false, zooms: [],
@@ -3031,71 +3019,154 @@ function locationThumbTiles(t) {
   return out;
 }
 
-let _locMap = null, _locMarker = null, _locCircle = null;
-function _locPin() {
-  return window.L.divIcon({ className: 'pin-ico', iconSize: [30, 30], iconAnchor: [15, 30],
-    html: "<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 24 24' fill='#58a6ff' stroke='white' stroke-width='1.5'><path d='M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z'/><circle cx='12' cy='10' r='3' fill='white' stroke='none'/></svg>" });
+// The map view shows every peer that is sharing a position, with a track
+// and heading. Tracks are kept in the browser only (this session), capped.
+const MAP_TRACK_MAX = 300;
+let _map = null;                 // the single Leaflet map instance
+const _mapLayers = {};           // peer hex -> { marker, track }
+const _mapTracks = {};           // peer hex -> [{lat, lon, bearing}] live history
+
+// Great-circle bearing from point a to b ([lat, lon]), 0..360.
+function bearingBetween(a, b) {
+  const r = Math.PI / 180;
+  const y = Math.sin((b[1] - a[1]) * r) * Math.cos(b[0] * r);
+  const x = Math.cos(a[0] * r) * Math.sin(b[0] * r)
+          - Math.sin(a[0] * r) * Math.cos(b[0] * r) * Math.cos((b[1] - a[1]) * r);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
 }
-function openLocationModal(m) {
-  const t = m && m.tele;
-  if (!t || typeof t.lat !== 'number') return;
-  const feed = (state.telemetryShares.feeds || []).find(f => f.peer === m.peer);
-  state.locationMap = {
-    lat: t.lat, lon: t.lon, alt_m: t.alt_m, speed_kmh: t.speed_kmh,
-    bearing_deg: t.bearing_deg, acc_m: t.acc_m, peer: m.peer || null, live: !!feed,
-  };
-  state.modals.locationMap = true;
-  setTimeout(renderLocationMap, 60);   // wait for the modal to lay out
+function _peerName(peer) {
+  const c = state.conversations[peer];
+  return (c && c.display_name) || (peer ? peer.slice(0, 8) : '?');
 }
-function closeLocationModal() { state.modals.locationMap = false; }
-function renderLocationMap() {
-  const L = window.L; if (!L) return;
-  const lm = state.locationMap; if (typeof lm.lat !== 'number') return;
-  if (!_locMap) {
-    _locMap = L.map('loc-map', { zoomControl: true, attributionControl: true });
-    // Custom layer so each tile goes through mapTileUrl (SD route with the
-    // token, or the online template) instead of a {z}/{x}/{y} string the
-    // API helper would URI-encode.
-    const Tiles = L.TileLayer.extend({
-      getTileUrl: function (c) { return mapTileUrl(c.z, c.x, c.y); }
-    });
-    _locMap._urtnTiles = new Tiles('', { maxZoom: 19, attribution: mapAttribution() });
-    _locMap._urtnTiles.addTo(_locMap);
+// Latest known position for a peer: an active live feed first, else the
+// most recent message in the conversation that carried a position.
+function peerLatestPosition(peer) {
+  const f = (state.telemetryShares.feeds || []).find(x => x.peer === peer);
+  if (f && f.tele && typeof f.tele.lat === 'number') return { tele: f.tele, live: true };
+  const c = state.conversations[peer];
+  if (c) for (let i = c.msgs.length - 1; i >= 0; i--) {
+    const t = c.msgs[i].tele;
+    if (t && typeof t.lat === 'number') return { tele: t, live: false };
   }
-  _locMap.setView([lm.lat, lm.lon], state.mapTiles.defaultZoom || 16);
-  if (_locMarker) _locMarker.setLatLng([lm.lat, lm.lon]);
-  else _locMarker = L.marker([lm.lat, lm.lon], { icon: _locPin() }).addTo(_locMap);
-  if (_locCircle) { _locMap.removeLayer(_locCircle); _locCircle = null; }
-  if (typeof lm.acc_m === 'number' && lm.acc_m > 0)
-    _locCircle = L.circle([lm.lat, lm.lon], { radius: lm.acc_m, color: '#58a6ff',
-      weight: 1, fillColor: '#58a6ff', fillOpacity: 0.12 }).addTo(_locMap);
-  _locMap.invalidateSize();
+  return null;
 }
-function locationReadoutCoords() {
-  const lm = state.locationMap;
-  return (typeof lm.lat === 'number') ? lm.lat.toFixed(5) + ', ' + lm.lon.toFixed(5) : '';
+// The peer's track: positions from their messages (chronological) plus any
+// live points accumulated this session, capped.
+function peerTrackPoints(peer) {
+  const pts = [];
+  const c = state.conversations[peer];
+  if (c) for (const m of c.msgs) {
+    const t = m.tele;
+    if (t && typeof t.lat === 'number') pts.push([t.lat, t.lon]);
+  }
+  for (const p of (_mapTracks[peer] || [])) pts.push([p.lat, p.lon]);
+  return pts.slice(-MAP_TRACK_MAX);
 }
-function locationReadoutDetail() {
-  const lm = state.locationMap, parts = [];
-  if (typeof lm.acc_m === 'number' && lm.acc_m > 0) parts.push('±' + Math.round(lm.acc_m) + ' m accuracy');
-  if (typeof lm.alt_m === 'number') parts.push(Math.round(lm.alt_m) + ' m elevation');
-  if (typeof lm.speed_kmh === 'number' && lm.speed_kmh >= 1) parts.push(Math.round(lm.speed_kmh) + ' km/h');
-  return parts.join(' · ');
+// A position marker: a heading arrow when we know the bearing, else a dot.
+// Live peers are red, last-known are blue.
+function _peerIcon(headingDeg, live) {
+  const color = live ? '#f85149' : '#58a6ff';
+  let html;
+  if (typeof headingDeg === 'number') {
+    html = "<svg width='24' height='24' viewBox='0 0 24 24' style='transform:rotate("
+         + headingDeg + "deg)'><path d='M12 2 L19 21 L12 16 L5 21 Z' fill='" + color
+         + "' stroke='white' stroke-width='1'/></svg>";
+  } else {
+    html = "<svg width='16' height='16' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='"
+         + color + "' stroke='white' stroke-width='2'/></svg>";
+  }
+  return window.L.divIcon({ className: 'peer-pin', iconSize: [24, 24], iconAnchor: [12, 12], html });
 }
-function locationOsmHref() {
-  const lm = state.locationMap;
-  if (typeof lm.lat !== 'number') return '#';
-  return 'https://www.openstreetmap.org/?mlat=' + lm.lat + '&mlon=' + lm.lon
-       + '#map=16/' + lm.lat + '/' + lm.lon;
+// Popup built as a DOM node so the peer name needs no escaping.
+function _peerPopup(peer, latest) {
+  const t = latest.tele, el = document.createElement('div');
+  const nm = document.createElement('div'); nm.style.fontWeight = '600'; nm.textContent = _peerName(peer);
+  const co = document.createElement('div'); co.style.cssText = 'font-family:ui-monospace,monospace;font-size:11px';
+  co.textContent = t.lat.toFixed(5) + ', ' + t.lon.toFixed(5);
+  el.appendChild(nm); el.appendChild(co);
+  const bits = [];
+  if (typeof t.acc_m === 'number' && t.acc_m > 0) bits.push('±' + Math.round(t.acc_m) + ' m');
+  if (typeof t.alt_m === 'number') bits.push(Math.round(t.alt_m) + ' m alt');
+  if (typeof t.speed_kmh === 'number' && t.speed_kmh >= 1) bits.push(Math.round(t.speed_kmh) + ' km/h');
+  if (latest.live) bits.push('live');
+  if (bits.length) {
+    const d = document.createElement('div'); d.className = 'muted';
+    d.style.fontSize = '11px'; d.textContent = bits.join(' · '); el.appendChild(d);
+  }
+  return el;
 }
-// Live feed update for the open modal: move the marker in place.
-function locationModalLive(ev) {
-  const lm = state.locationMap;
-  if (!state.modals.locationMap || lm.peer !== ev.peer) return;
-  const t = ev.tele; if (!t || typeof t.lat !== 'number') return;
-  Object.assign(lm, { lat: t.lat, lon: t.lon, alt_m: t.alt_m,
-    speed_kmh: t.speed_kmh, bearing_deg: t.bearing_deg, acc_m: t.acc_m });
-  renderLocationMap();
+function _mapInit() {
+  const L = window.L; if (!L || _map) return;
+  _map = L.map('map-canvas', { zoomControl: true, attributionControl: true });
+  // Custom layer so each tile goes through mapTileUrl (SD route with token,
+  // or the online template) rather than a {z}/{x}/{y} string the API helper
+  // would URI-encode.
+  const Tiles = L.TileLayer.extend({ getTileUrl: function (c) { return mapTileUrl(c.z, c.x, c.y); } });
+  new Tiles('', { maxZoom: 19, attribution: mapAttribution() }).addTo(_map);
+  _map.setView([20, 0], 2);   // world-ish until markers arrive
+}
+function _removePeerLayer(peer) {
+  const ly = _mapLayers[peer];
+  if (!ly) return;
+  if (ly.marker) _map.removeLayer(ly.marker);
+  if (ly.track) _map.removeLayer(ly.track);
+  delete _mapLayers[peer];
+}
+// Rebuild every peer's marker + track. focusPeer/focusLatLon centre the view;
+// otherwise fit to all markers (first open only).
+function mapRefresh(focusPeer, focusLatLon, fit) {
+  const L = window.L; if (!_map) return;
+  const seen = new Set();
+  const bounds = [];
+  for (const peer of Object.keys(state.conversations)) {
+    const latest = peerLatestPosition(peer);
+    if (!latest) { _removePeerLayer(peer); continue; }
+    seen.add(peer);
+    const latlng = [latest.tele.lat, latest.tele.lon];
+    const pts = peerTrackPoints(peer);
+    let heading = (typeof latest.tele.bearing_deg === 'number') ? latest.tele.bearing_deg : undefined;
+    if (heading === undefined && pts.length >= 2) heading = bearingBetween(pts[pts.length - 2], latlng);
+    const color = latest.live ? '#f85149' : '#58a6ff';
+    let ly = _mapLayers[peer];
+    if (!ly) {
+      ly = _mapLayers[peer] = {
+        track: L.polyline(pts, { color, weight: 2, opacity: 0.6 }).addTo(_map),
+        marker: L.marker(latlng, { icon: _peerIcon(heading, latest.live) }).addTo(_map),
+      };
+      ly.marker.bindPopup(_peerPopup(peer, latest));
+    } else {
+      ly.marker.setLatLng(latlng).setIcon(_peerIcon(heading, latest.live));
+      ly.marker.setPopupContent(_peerPopup(peer, latest));
+      ly.track.setLatLngs(pts).setStyle({ color });
+    }
+    bounds.push(latlng);
+  }
+  for (const peer of Object.keys(_mapLayers)) if (!seen.has(peer)) _removePeerLayer(peer);
+  if (focusLatLon) _map.setView(focusLatLon, state.mapTiles.defaultZoom || 15);
+  else if (focusPeer && _mapLayers[focusPeer]) _map.setView(_mapLayers[focusPeer].marker.getLatLng(), state.mapTiles.defaultZoom || 15);
+  else if (fit && bounds.length) _map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+  _map.invalidateSize();
+}
+// Open the map view. opts: { peer, latlon } to centre on a shared position.
+function openMapView(opts) {
+  opts = opts || {};
+  state.mapView.open = true;
+  setTimeout(() => { _mapInit(); mapRefresh(opts.peer, opts.latlon, !opts.peer && !opts.latlon); }, 60);
+}
+function closeMapView() { state.mapView.open = false; }
+function mapViewStatus() {
+  if (!mapTilesEnabled()) return 'No tiles. Pick a source in Settings, Map.';
+  let n = 0;
+  for (const peer of Object.keys(state.conversations)) if (peerLatestPosition(peer)) n++;
+  return n ? (n + (n === 1 ? ' contact' : ' contacts')) : 'No shared positions yet.';
+}
+// Live feed update: extend the peer's track and refresh the open map.
+function mapLive(ev) {
+  if (!ev.tele || typeof ev.tele.lat !== 'number') return;
+  const arr = _mapTracks[ev.peer] || (_mapTracks[ev.peer] = []);
+  arr.push({ lat: ev.tele.lat, lon: ev.tele.lon, bearing: ev.tele.bearing_deg });
+  if (arr.length > MAP_TRACK_MAX) arr.splice(0, arr.length - MAP_TRACK_MAX);
+  if (state.mapView.open) mapRefresh();
 }
 // Mirror the persisted /api/map/config into the live tile state + the
 // settings form.
@@ -6556,7 +6627,7 @@ function dispatchEvent(ev) {
     } else {
       refreshTelemetryShares();   // feed we didn't know about yet
     }
-    locationModalLive(ev);        // move the open map marker, if any
+    mapLive(ev);                  // extend the peer's track + refresh the map
   } else if (ev.type === 'announce_seen') {
     // Convert the device's monotonic age_ms to a wall-clock anchor so
     // we can refresh "X ago" labels purely client-side.

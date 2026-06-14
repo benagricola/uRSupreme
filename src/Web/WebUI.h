@@ -855,6 +855,8 @@ namespace Web {
       server.on("/index.html",    HTTP_GET, handle_spa);
       server.on("/styles.css",    HTTP_GET, handle_styles_css);
       server.on("/alpine.min.js", HTTP_GET, handle_alpine_js);
+      server.on("/leaflet.min.js",HTTP_GET, handle_leaflet_js);
+      server.on("/leaflet.css",   HTTP_GET, handle_leaflet_css);
       // Public
       on_http(HTTP_GET, ApiRoutes::INFO, handle_info);
       // Diagnostics (bearer-gated). GET reads heap headroom; POST resets

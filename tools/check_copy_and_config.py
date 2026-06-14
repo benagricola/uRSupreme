@@ -21,6 +21,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXCLUDE = {
     "src/Web/SPAEmbedded.h",     # generated (gzip embed of the SPA)
     "src/Web/spa/alpine.min.js", # vendored
+    "src/Web/spa/leaflet.min.js",# vendored (map renderer)
+    "src/Web/spa/leaflet.css",   # vendored (map renderer)
     "MIRROR.md",                 # upstream author's notice, mirrored verbatim
 }
 # Mirrored/vendored trees we must never rewrite: upstream content is

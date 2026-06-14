@@ -76,6 +76,7 @@ extern char             wr_hostname[10];
 #include "FileStreamResponse.h"
 #include "MapConfig.h"
 #include "MapDownload.h"
+#include "MapExtract.h"
 #include "SPAEmbedded.h"
 
 // EEPROM helpers + WiFi config constants from the existing firmware.
@@ -965,6 +966,9 @@ namespace Web {
       on_uri(HTTP_GET, ApiRoutes::MAP_DOWNLOAD, handle_map_download_get);
       on_json_post(ApiRoutes::MAP_DOWNLOAD, handle_map_download_post);
       on_uri(HTTP_POST, ApiRoutes::MAP_DOWNLOAD_CANCEL, handle_map_download_cancel);
+      on_uri(HTTP_GET, ApiRoutes::MAP_EXTRACT, handle_map_extract_get);
+      on_json_post(ApiRoutes::MAP_EXTRACT, handle_map_extract_post);
+      on_uri(HTTP_POST, ApiRoutes::MAP_EXTRACT_CANCEL, handle_map_extract_cancel);
       on_http(HTTP_POST, ApiRoutes::STORAGE_MIGRATE, handle_migrate_flash_to_sd);
       // Paths - per-destination lookup + transmit-ETA estimate.
       // `uri()` forces an exact match on /estimate. Without it the

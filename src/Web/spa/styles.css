@@ -1145,6 +1145,18 @@ input[type="checkbox"]:focus-visible {
   background: var(--bg); display: flex; flex-direction: column;
 }
 .map-view-canvas { flex: 1 1 auto; min-height: 0; }
+/* "Download this view" control, floated over the canvas top-right (above
+   Leaflet panes, which sit at z-index ~400). */
+.map-dl-ctl {
+  position: absolute; top: 12px; right: 12px; z-index: 500;
+  display: flex; gap: 8px; align-items: center;
+}
+.map-dl-ctl button { width: auto; box-shadow: 0 1px 4px rgba(0,0,0,0.4); }
+.map-dl-status {
+  background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 8px; font-size: 12px; color: var(--text);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4); max-width: 50vw;
+}
 /* Dark map backdrop before/behind tiles, so it doesn't flash white in the
    app's dark theme (Leaflet's container defaults to light). */
 .leaflet-container { background: var(--bg); }

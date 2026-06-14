@@ -40,6 +40,9 @@
 
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
+#include <vector>
+#include <new>
+#include <cstddef>
 
 namespace Common {
 
@@ -79,5 +82,27 @@ public:
   PsramJsonDocument()
     : ::ArduinoJson::JsonDocument(PsramAllocator::instance()) {}
 };
+
+// Minimal PSRAM-backed std:: allocator, for large containers (the map
+// extractor's tile-entry tables) that would otherwise fragment internal
+// SRAM. Same rationale as PsramAllocator above; throws std::bad_alloc on
+// exhaustion (exceptions are enabled on the Supreme build), so callers
+// can fail the operation cleanly instead of dereferencing null.
+template <class T>
+struct PsramStdAllocator {
+  using value_type = T;
+  PsramStdAllocator() = default;
+  template <class U> PsramStdAllocator(const PsramStdAllocator<U>&) noexcept {}
+  T* allocate(std::size_t n) {
+    void* p = heap_caps_malloc(n * sizeof(T), MALLOC_CAP_SPIRAM);
+    if (!p) throw std::bad_alloc();
+    return static_cast<T*>(p);
+  }
+  void deallocate(T* p, std::size_t) noexcept { heap_caps_free(p); }
+  template <class U> bool operator==(const PsramStdAllocator<U>&) const noexcept { return true; }
+  template <class U> bool operator!=(const PsramStdAllocator<U>&) const noexcept { return false; }
+};
+
+template <class T> using PsramVector = std::vector<T, PsramStdAllocator<T>>;
 
 } // namespace Common

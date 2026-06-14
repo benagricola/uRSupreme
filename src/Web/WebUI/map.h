@@ -41,7 +41,19 @@
         }
       }
       doc["sd_available"]      = card && raster_ok;
-      doc["pmtiles_available"] = card && Storage::SDCard::exists(cfg.pmtiles.c_str());
+      const bool pm_ok = card && Storage::SDCard::exists(cfg.pmtiles.c_str());
+      doc["pmtiles_available"] = pm_ok;
+      // Report the basemap's own max zoom (header byte 101) so the web app
+      // can overzoom past it (render the coarsest data scaled) instead of
+      // going blank when zoomed in beyond the data.
+      if (pm_ok) {
+        File fp = Storage::SDCard::open_read(cfg.pmtiles.c_str());
+        if (fp) {
+          uint8_t hb[110]; size_t got;
+          { Storage::SDCard::BusGuard _bg; got = fp.read(hb, sizeof(hb)); fp.close(); }
+          if (got >= 102 && memcmp(hb, "PMTiles", 7) == 0) doc["pmtiles_maxzoom"] = (int)hb[101];
+        }
+      }
       send_json(req, 200, doc);
     }
 
@@ -259,5 +271,87 @@
       Web::MapDownload::cancel();
       Common::PsramJsonDocument doc;
       Web::MapDownload::fill_status(doc.to<JsonObject>());
+      send_json(req, 200, doc);
+    }
+
+    // GET /api/map/extract - status of the region-extract job (phase, tile
+    // count, bytes). The browser polls it while a job runs.
+    static void handle_map_extract_get(AsyncWebServerRequest* req) {
+      {
+        RnsLockGuard _g;
+        if (require_auth(req).empty()) return;
+      }
+      Common::PsramJsonDocument doc;
+      Web::MapExtract::fill_status(doc.to<JsonObject>());
+      send_json(req, 200, doc);
+    }
+
+    // POST /api/map/extract - extract a region from a remote planet pmtiles
+    // straight to the SD card. Body: {url, bbox:{w,s,e,n}, maxzoom, dest?}.
+    // `url` is the planet archive (the browser resolves the latest build);
+    // `dest` defaults to the configured basemap path. One map job at a time.
+    static void handle_map_extract_post(AsyncWebServerRequest* req, JsonVariant& body) {
+      {
+        RnsLockGuard _g;
+        if (require_auth(req).empty()) return;
+      }
+      // No url -> the device resolves the latest Protomaps planet. A given
+      // url (advanced) must be http(s)://.
+      const char* url = body["url"].is<const char*>() ? body["url"].as<const char*>() : "";
+      if (url && *url &&
+          strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
+        send_error_with_message(req, 400, "bad_url",
+          "Enter a full http:// or https:// planet link, or leave it blank.");
+        return;
+      }
+      if (!body["bbox"].is<JsonObject>()) {
+        send_error_with_message(req, 400, "bad_bbox", "An area is required.");
+        return;
+      }
+      JsonObject bb = body["bbox"].as<JsonObject>();
+      double w = bb["w"] | 999.0, s = bb["s"] | 999.0, e = bb["e"] | 999.0, n = bb["n"] | 999.0;
+      if (w < -180 || w > 180 || e < -180 || e > 180 || s < -90 || s > 90 || n < -90 || n > 90 ||
+          e <= w || n <= s) {
+        send_error_with_message(req, 400, "bad_bbox", "The map area is not valid.");
+        return;
+      }
+      int maxz = body["maxzoom"] | 0;
+      if (maxz < 1 || maxz > Web::MapConfig::MAX_ZOOM) {
+        send_error_with_message(req, 400, "bad_zoom", "Choose a zoom between 1 and 15.");
+        return;
+      }
+      if (!Storage::SDCard::present()) {
+        send_error_with_message(req, 409, "sd_absent",
+          "No SD card is inserted: nowhere to save the map.");
+        return;
+      }
+      if (Web::MapDownload::st().phase == Web::MapDownload::RUNNING || Web::MapExtract::active()) {
+        send_error_with_message(req, 409, "map_job_busy",
+          "A map download is already running.");
+        return;
+      }
+      std::string dest = Web::MapConfig::config().pmtiles;
+      if (body["dest"].is<const char*>()) {
+        const char* d = body["dest"].as<const char*>();
+        if (d && *d) dest = Web::MapConfig::sanitize_file(d);
+      }
+      if (!Web::MapExtract::start(url, dest, w, s, e, n, (uint8_t)maxz)) {
+        send_error_with_message(req, 409, "map_job_busy", "A map job is already running.");
+        return;
+      }
+      Common::PsramJsonDocument doc;
+      Web::MapExtract::fill_status(doc.to<JsonObject>());
+      send_json(req, 200, doc);
+    }
+
+    // POST /api/map/extract/cancel - ask the running extract to stop.
+    static void handle_map_extract_cancel(AsyncWebServerRequest* req) {
+      {
+        RnsLockGuard _g;
+        if (require_auth(req).empty()) return;
+      }
+      Web::MapExtract::cancel();
+      Common::PsramJsonDocument doc;
+      Web::MapExtract::fill_status(doc.to<JsonObject>());
       send_json(req, 200, doc);
     }

@@ -1245,6 +1245,11 @@
      + heading, browsable over offline tiles. -->
 <div id="map-view" class="map-view" x-data x-show="$store.s.mapView.open" x-cloak>
   <div id="map-canvas" class="map-view-canvas"></div>
+  <div class="map-dl-ctl" x-show="$store.s.mapTiles.mode === 'sd' && $store.s.mapTiles.format === 'vector'">
+    <span class="map-dl-status" x-show="$store.s.mapExt.phase !== 'idle'" x-text="mapExtStatus()"></span>
+    <button type="button" @click="extractCurrentView()" x-show="!$store.s.mapExt.active">Download this view</button>
+    <button type="button" class="danger" @click="cancelMapExtract()" x-show="$store.s.mapExt.active">Cancel</button>
+  </div>
 </div>
 
 <!-- ===================== CONVERSATION RETENTION MODAL ===================== -->
@@ -1970,26 +1975,45 @@
 
         <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.forms.map.format === 'vector'">
           <div class="card">
-            <label>Download a map to the card
-              <button type="button" class="info-icon" @click.stop data-info="The device fetches a .pmtiles map file from a link and saves it to the card, so no second computer is needed. Use a regional Protomaps extract or your own server."></button>
+            <label>Get a map from the planet
+              <button type="button" class="info-icon" @click.stop data-info="The device downloads map data for an area straight from the Protomaps planet and saves it to the card. No second computer and no account. Bigger areas and higher detail mean larger files."></button>
             </label>
-            <input type="text" spellcheck="false" autocomplete="off"
-                   placeholder="https://example.com/region.pmtiles"
-                   x-model.trim="$store.s.forms.map.download_url"
-                   :disabled="$store.s.mapDl.active">
-            <div class="muted mt-1 text-xs">Saves to <span x-text="$store.s.forms.map.pmtiles || '/maps/basemap.pmtiles'"></span></div>
-            <div class="row mt-2">
-              <button type="button" @click="startMapDownload()" x-show="!$store.s.mapDl.active" :disabled="!$store.s.forms.map.download_url">Download</button>
-              <button type="button" class="danger" @click="cancelMapDownload()" x-show="$store.s.mapDl.active">Cancel</button>
+
+            <div class="row">
+              <button type="button" @click="extractWorld()" x-show="!$store.s.mapExt.active">Download world map (rough, about 45 MB)</button>
+              <button type="button" class="danger" @click="cancelMapExtract()" x-show="$store.s.mapExt.active">Cancel</button>
             </div>
-            <template x-if="$store.s.mapDl.phase !== 'idle'">
+            <div class="muted mt-1 text-xs">For a detailed area, open the map, find the place, then tap "Download this view".</div>
+
+            <template x-if="$store.s.mapExt.phase !== 'idle'">
               <div class="mt-2">
-                <div class="progress-track" x-show="$store.s.mapDl.active || $store.s.mapDl.phase === 'done'">
-                  <div class="progress-fill" :style="'width:' + mapDlPct() + '%'"></div>
+                <div class="progress-track" x-show="$store.s.mapExt.active || $store.s.mapExt.phase === 'done'">
+                  <div class="progress-fill" :style="'width:' + mapExtPct() + '%'"></div>
                 </div>
-                <div class="muted mt-1 text-xs" x-text="mapDlStatus()"></div>
+                <div class="muted mt-1 text-xs" x-text="mapExtStatus()"></div>
               </div>
             </template>
+
+            <details class="mt-3">
+              <summary class="muted text-xs">Advanced: load a .pmtiles file from a link</summary>
+              <input type="text" spellcheck="false" autocomplete="off" class="mt-2"
+                     placeholder="https://example.com/region.pmtiles"
+                     x-model.trim="$store.s.forms.map.download_url"
+                     :disabled="$store.s.mapDl.active">
+              <div class="muted mt-1 text-xs">Saves to <span x-text="$store.s.forms.map.pmtiles || '/maps/basemap.pmtiles'"></span></div>
+              <div class="row mt-2">
+                <button type="button" @click="startMapDownload()" x-show="!$store.s.mapDl.active" :disabled="!$store.s.forms.map.download_url">Download file</button>
+                <button type="button" class="danger" @click="cancelMapDownload()" x-show="$store.s.mapDl.active">Cancel</button>
+              </div>
+              <template x-if="$store.s.mapDl.phase !== 'idle'">
+                <div class="mt-2">
+                  <div class="progress-track" x-show="$store.s.mapDl.active || $store.s.mapDl.phase === 'done'">
+                    <div class="progress-fill" :style="'width:' + mapDlPct() + '%'"></div>
+                  </div>
+                  <div class="muted mt-1 text-xs" x-text="mapDlStatus()"></div>
+                </div>
+              </template>
+            </details>
           </div>
         </template>
       </div>
@@ -2312,12 +2336,15 @@ let state = {
   // Map tile source, mirrored from /api/map/config. mode is off|sd|online;
   // online (the OSM fallback) is opt-in via the Map settings.
   mapTiles: { mode: 'sd', format: 'raster', sdPresent: false, sdAvailable: false,
-              pmtilesAvailable: false, zooms: [], mapsDir: '/maps',
+              pmtilesAvailable: false, pmtilesMaxzoom: 0, zooms: [], mapsDir: '/maps',
               pmtiles: '/maps/basemap.pmtiles', defaultZoom: 16, online: false,
               onlineUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
   // Device-side map download job, mirrored from /api/map/download while a
   // download runs. phase is idle|running|done|error|cancelled.
   mapDl: { phase: 'idle', active: false, written: 0, total: -1, url: '', dest: '', error: '' },
+  // Device-side region extract from the planet, mirrored from
+  // /api/map/extract. phase is idle|scanning|writing|done|error|cancelled.
+  mapExt: { phase: 'idle', active: false, tiles: 0, bytesDone: 0, bytesTotal: 0, dest: '', error: '' },
   // Per-popover visibility flags. Same pattern as modals.
   popovers: {
     status:    false,
@@ -3072,7 +3099,12 @@ function mapPmtilesUrl() {
 function mapBaseLayer() {
   const L = window.L;
   if (state.mapTiles.format === 'vector' && window.protomapsL) {
-    return window.protomapsL.leafletLayer({ url: mapPmtilesUrl(), flavor: 'dark', lang: 'en' });
+    // maxDataZoom = the basemap's own max zoom, so zooming in past it
+    // overzooms (renders the coarsest data scaled) instead of going blank.
+    // Lets a rough world basemap still be framed to pick an area to download.
+    const opts = { url: mapPmtilesUrl(), flavor: 'dark', lang: 'en' };
+    if (state.mapTiles.pmtilesMaxzoom > 0) opts.maxDataZoom = state.mapTiles.pmtilesMaxzoom;
+    return window.protomapsL.leafletLayer(opts);
   }
   const Tiles = L.TileLayer.extend({ getTileUrl: function (c) { return mapTileUrl(c.z, c.x, c.y); } });
   return new Tiles('', { maxZoom: 19, attribution: mapAttribution() });
@@ -3179,7 +3211,7 @@ function _peerPopup(peer, latest) {
 }
 function _mapInit() {
   const L = window.L; if (!L || _map) return;
-  _map = L.map('map-canvas', { zoomControl: true, attributionControl: true });
+  _map = L.map('map-canvas', { zoomControl: true, attributionControl: true, maxZoom: 18 });
   _map.setView([20, 0], 2);   // world-ish until markers arrive
 }
 // (Re)build the base layer from the current format/source, so a settings
@@ -3287,16 +3319,17 @@ function applyMapConfig(r) {
   mt.sdPresent        = !!r.sd_present;
   mt.sdAvailable      = !!r.sd_available;
   mt.pmtilesAvailable = !!r.pmtiles_available;
+  mt.pmtilesMaxzoom   = r.pmtiles_maxzoom || 0;
   mt.zooms            = r.zooms || [];
   mt.mapsDir          = r.maps_dir || '/maps';
   mt.pmtiles          = r.pmtiles || '/maps/basemap.pmtiles';
   mt.defaultZoom      = r.default_zoom || 16;
   if (r.online_url) mt.onlineUrl = r.online_url;
   mt.online           = (mt.mode === 'online');
-  const prevUrl = (state.forms.map && state.forms.map.download_url) || '';
+  const pf = state.forms.map || {};
   state.forms.map = { mode: mt.mode, format: mt.format, maps_dir: mt.mapsDir,
                       pmtiles: mt.pmtiles, default_zoom: mt.defaultZoom, online_url: mt.onlineUrl,
-                      download_url: prevUrl };
+                      download_url: pf.download_url || '' };
 }
 async function fetchMapConfig() {
   try { applyMapConfig(await state.transport._req(API.MAP_CONFIG)); }
@@ -3400,6 +3433,86 @@ function mapDlStatus() {
   }
   if (d.phase === 'done')      return 'Saved ' + _fmtBytes(d.written) + ' to ' + (d.dest || state.forms.map.pmtiles) + '.';
   if (d.phase === 'error')     return 'Failed: ' + (d.error || 'unknown error') + '.';
+  if (d.phase === 'cancelled') return 'Cancelled.';
+  return '';
+}
+
+// --- Device-side region extract from the planet -------------------
+// The device range-reads the Protomaps planet for a chosen area and writes
+// a small .pmtiles to the card. The browser polls /api/map/extract.
+let _mapExtPoll = null;
+function _mapExtApply(r) {
+  const d = state.mapExt;
+  d.phase      = r.phase || 'idle';
+  d.active     = !!r.active;
+  d.tiles      = r.tiles_total || 0;
+  d.bytesDone  = r.bytes_done || 0;
+  d.bytesTotal = r.bytes_total || 0;
+  d.dest       = r.dest || '';
+  d.error      = r.error || '';
+}
+function _mapExtStop() { if (_mapExtPoll) { clearInterval(_mapExtPoll); _mapExtPoll = null; } }
+function _mapExtStartPolling() {
+  _mapExtStop();
+  _mapExtPoll = setInterval(async () => {
+    let r; try { r = await state.transport._req(API.MAP_EXTRACT); } catch (e) { return; }
+    const wasActive = state.mapExt.active;
+    _mapExtApply(r);
+    if (!state.mapExt.active) {
+      _mapExtStop();
+      if (wasActive) {
+        if (state.mapExt.phase === 'done') {
+          toast('Map saved to the card.', 'info');
+          fetchMapConfig().then(() => { if (state.mapView.open) mapRefresh(); });
+        } else if (state.mapExt.phase === 'error') {
+          toast('Map download failed: ' + (state.mapExt.error || 'unknown error'), 'error');
+        } else if (state.mapExt.phase === 'cancelled') {
+          toast('Map download cancelled.', 'info');
+        }
+      }
+    }
+  }, 1500);
+}
+async function refreshMapExtract() {
+  try { _mapExtApply(await state.transport._req(API.MAP_EXTRACT)); }
+  catch (e) { return; }
+  if (state.mapExt.active) _mapExtStartPolling();
+}
+function _mapJobBusy() { return state.mapExt.active || state.mapDl.active; }
+// Start an extract of a bbox at a max zoom. No url -> the device resolves the
+// latest planet. Saves to the configured basemap path so it serves at once.
+async function _startExtract(bbox, maxzoom) {
+  if (_mapJobBusy()) { toast('A map download is already running.', 'warn'); return; }
+  try {
+    _mapExtApply(await state.transport._req(API.MAP_EXTRACT, { method: 'POST', body: {
+      bbox, maxzoom, dest: state.forms.map.pmtiles,
+    }}));
+    _mapExtStartPolling();
+    toast('Downloading map. This can take a few minutes.', 'info');
+  } catch (e) { toast('Could not start: ' + (e.message || e), 'error'); }
+}
+function extractWorld() { _startExtract({ w: -180, s: -85, e: 180, n: 85 }, 6); }
+function extractCurrentView() {
+  if (!_map) return;
+  const b = _map.getBounds();
+  const z = Math.min(15, Math.max(Math.round(_map.getZoom()) + 2, 12));
+  _startExtract({ w: b.getWest(), s: b.getSouth(), e: b.getEast(), n: b.getNorth() }, z);
+}
+async function cancelMapExtract() {
+  try { _mapExtApply(await state.transport._req(API.MAP_EXTRACT_CANCEL, { method: 'POST' })); }
+  catch (e) { toast('Could not cancel: ' + (e.message || e), 'error'); }
+}
+function mapExtPct() {
+  const d = state.mapExt;
+  if (d.bytesTotal > 0) return Math.min(100, Math.round((d.bytesDone / d.bytesTotal) * 100));
+  return d.phase === 'done' ? 100 : 0;
+}
+function mapExtStatus() {
+  const d = state.mapExt;
+  if (d.phase === 'scanning') return 'Finding map data...';
+  if (d.phase === 'writing')  return _fmtBytes(d.bytesDone) + (d.bytesTotal ? ' / ' + _fmtBytes(d.bytesTotal) : '') + ' (' + mapExtPct() + '%)';
+  if (d.phase === 'done')     return 'Saved ' + _fmtBytes(d.bytesDone) + ' to the card.';
+  if (d.phase === 'error')    return 'Failed: ' + (d.error || 'unknown error') + '.';
   if (d.phase === 'cancelled') return 'Cancelled.';
   return '';
 }
@@ -8006,7 +8119,7 @@ function selectSettingsTab(tabId) {
   if (tabId === 'time')         { populateTimeTab(); }
   if (tabId === 'identity')     { populateIdentityTab(); }
   if (tabId === 'telemetry')    { populateCollectorConfig(); }
-  if (tabId === 'map')          { fetchMapConfig(); refreshMapDownload(); }
+  if (tabId === 'map')          { fetchMapConfig(); refreshMapDownload(); refreshMapExtract(); }
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
   if (tabId === 'ui')           {
     state.forms.prefs.enterSends                = !!state.prefs.enterSends;

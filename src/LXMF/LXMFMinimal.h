@@ -798,6 +798,18 @@ namespace LXMF {
       if (!_initialized) return fail("LXMF gateway not initialised");
       if (pm.payload.size() == 0) return fail("Internal error: empty prepared payload.");
 
+      // DIVERGES: cap the combined in-flight send count. Upstream
+      // LXMRouter.pending_outbound is an unbounded list (LXMRouter.py:99);
+      // here the two pending-send maps are bounded RAM. A send only reaches
+      // send_prepared once a route exists - no-route sends wait in the
+      // gateway's own bounded auto-send queue - so this guards a burst to a
+      // reachable-but-slow peer that outruns the proof/established lifecycle
+      // and the 30-min orphan sweep. Reject rather than evict: these are live
+      // sends, so dropping the oldest would silently lose a real message.
+      if (pending_link_sends().size() + pending_opp_sends().size() >= MAX_INFLIGHT_SENDS) {
+        return fail("Too many messages are still being delivered. Wait a moment, then resend.");
+      }
+
       RNS::Identity remote_identity = RNS::Identity::recall(dest_hash);
       if (!remote_identity || !RNS::Transport::has_path(dest_hash)) {
         // The route can lapse between prepare and dispatch (a stamp search
@@ -1054,11 +1066,22 @@ namespace LXMF {
       return r;
     }
 
+    // In-flight outbound sends live in these two maps. PsAlloc puts the
+    // tree nodes in PSRAM so they never compete with the WiFi MAC's
+    // internal-SRAM esf_buf region (the default std::map allocator would
+    // land them there). MAX_INFLIGHT_SENDS bounds the combined entry count;
+    // the guard lives in send_prepared. See DIVERGENCES.md - upstream's
+    // pending_outbound list is unbounded.
+    template<typename V>
+    using PendingSendMap = std::map<RNS::Bytes, V, std::less<RNS::Bytes>,
+                                    PsAlloc<std::pair<const RNS::Bytes, V>>>;
+    static constexpr size_t MAX_INFLIGHT_SENDS = 64;
+
     // Outbound link state, keyed by link.hash(). Each pending send sits
     // here from the time send_message kicks off the link establishment
     // until the resource (or in-link packet) concludes / link closes.
-    static std::map<RNS::Bytes, PendingLinkSend>& pending_link_sends() {
-      static std::map<RNS::Bytes, PendingLinkSend> p;
+    static PendingSendMap<PendingLinkSend>& pending_link_sends() {
+      static PendingSendMap<PendingLinkSend> p;
       return p;
     }
 
@@ -1066,8 +1089,8 @@ namespace LXMF {
     // keyed by the outbox record hash (== packet hash). Shared static
     // across all LXMFMinimal instances, polled by
     // tick_opportunistic_receipts().
-    static std::map<RNS::Bytes, PendingOppSend>& pending_opp_sends() {
-      static std::map<RNS::Bytes, PendingOppSend> p;
+    static PendingSendMap<PendingOppSend>& pending_opp_sends() {
+      static PendingSendMap<PendingOppSend> p;
       return p;
     }
 
@@ -1421,8 +1444,8 @@ namespace LXMF {
     // an iterator that's valid on entry; after this returns the
     // iterator is invalid in the give-up branch and points to the
     // same entry in the schedule branch.
-    static void _schedule_retry_or_fail(typename std::map<RNS::Bytes, PendingLinkSend>::iterator it,
-                                         std::map<RNS::Bytes, PendingLinkSend>& m,
+    static void _schedule_retry_or_fail(typename PendingSendMap<PendingLinkSend>::iterator it,
+                                         PendingSendMap<PendingLinkSend>& m,
                                          const char* reason) {
       PendingLinkSend& ps = it->second;
       if (ps.retries_left == 0) {

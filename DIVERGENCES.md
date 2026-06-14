@@ -73,6 +73,22 @@ RNode. Rules (see CLAUDE.md §1):
   uncompressed form keeps every upstream client able to parse our
   announces. Wire-compatible by design.
 
+### 9. In-flight outbound send maps are count-capped
+- Where: firmware `src/LXMF/LXMFMinimal.h` (`send_prepared` capacity
+  guard, `MAX_INFLIGHT_SENDS` = 64; the two `pending_*_sends` maps).
+- Upstream: `LXMRouter.pending_outbound` is an unbounded list
+  (`LXMF/LXMRouter.py:99`, appended at 1690/2496, pruned only on
+  delivery/failure).
+- Why: RAM bound. The maps hold one entry per send awaiting a delivery
+  proof or link establishment; their normal exits are the completion
+  callbacks, with a 30-min orphan sweep as the only other backstop. A
+  burst to a reachable-but-slow peer (or a stuck-entry leak) could grow
+  them unbounded between sweeps. At/above the cap, send_prepared rejects
+  the new send with a user-facing message rather than evicting a live
+  entry (which would silently drop a real message). No-route sends are
+  unaffected; they wait in the gateway's separately-bounded auto-send
+  queue. Map nodes are PSRAM-backed (PsAlloc), not a wire change.
+
 ## Recently retired (do not reintroduce)
 
 Removed by `6aef568` + the June 2026 uR re-pins, all matching upstream

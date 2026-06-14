@@ -953,6 +953,8 @@ namespace Web {
       on_json_post(ApiRoutes::CONVERSATION_CONFIG,
                    handle_conversation_config_post);
       on_uri(HTTP_GET, ApiRoutes::ATTACHMENT_DOWNLOAD, handle_attachment_get);
+      on_uri(HTTP_GET, ApiRoutes::MAP_CONFIG, handle_map_config);
+      on_uri(HTTP_GET, ApiRoutes::MAP_TILE, handle_map_tile);
       on_http(HTTP_POST, ApiRoutes::STORAGE_MIGRATE, handle_migrate_flash_to_sd);
       // Paths - per-destination lookup + transmit-ETA estimate.
       // `uri()` forces an exact match on /estimate. Without it the
@@ -1041,6 +1043,7 @@ namespace Web {
     #include "WebUI/tcp_clients.h"
     #include "WebUI/paths.h"
     #include "WebUI/conversations.h"
+    #include "WebUI/map.h"
     #include "WebUI/state.h"
 
   private:

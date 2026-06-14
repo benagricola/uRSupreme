@@ -558,7 +558,7 @@
               <!-- Inline map preview when the message carries a position.
                    Static tiles (see locationThumbTiles); click opens the
                    full map modal. -->
-              <template x-if="m.tele && typeof m.tele.lat === 'number'">
+              <template x-if="m.tele && typeof m.tele.lat === 'number' && mapTilesEnabled()">
                 <button class="map-thumb" @click="openLocationModal(m)" title="Open map">
                   <template x-for="tile in locationThumbTiles(m.tele)" :key="tile.left + ',' + tile.top">
                     <img class="map-thumb-tile" :src="tile.url"
@@ -1902,6 +1902,49 @@
           </div>
           <div class="muted mt-1" x-text="collectorStatusText()"></div>
         </div>
+
+        <div class="card mt-3">
+          <strong>Map
+            <button type="button" class="info-icon" @click.stop data-info="How shared locations are shown on a map. SD card serves tiles you have copied onto the card, so the map works with no internet. Online has your browser fetch tiles from a tile server, which tells that server where you are looking."></button>
+          </strong>
+          <label class="mt-2">Tile source</label>
+          <select x-model="$store.s.forms.map.mode" @change="saveMapConfig()">
+            <option value="off">Off (coordinates only)</option>
+            <option value="sd">SD card</option>
+            <option value="online">Online</option>
+          </select>
+          <div class="muted mt-1 text-xs" x-text="mapSourceStatus()"></div>
+
+          <template x-if="$store.s.forms.map.mode === 'sd'">
+            <div>
+              <label class="mt-3">Tiles folder on the card</label>
+              <input type="text" spellcheck="false" autocomplete="off" placeholder="/maps"
+                     x-model.trim="$store.s.forms.map.maps_dir" @change="saveMapConfig()">
+            </div>
+          </template>
+
+          <template x-if="$store.s.forms.map.mode === 'online'">
+            <div>
+              <label class="mt-3">Tile URL</label>
+              <input type="text" spellcheck="false" autocomplete="off"
+                     placeholder="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+                     x-model.trim="$store.s.forms.map.online_url" @change="saveMapConfig()">
+              <div class="muted mt-1 text-xs">Use a tile server whose terms allow it. The default OpenStreetMap server is for light use only.</div>
+            </div>
+          </template>
+
+          <template x-if="$store.s.forms.map.mode !== 'off'">
+            <div>
+              <label class="mt-3">Open at zoom</label>
+              <select x-model.number="$store.s.forms.map.default_zoom" @change="saveMapConfig()">
+                <option value="12">Town</option>
+                <option value="14">District</option>
+                <option value="16">Street</option>
+                <option value="18">Building</option>
+              </select>
+            </div>
+          </template>
+        </div>
       </div>
 
       <!-- ============== Time tab ============== -->
@@ -2222,10 +2265,11 @@ let state = {
   // flips on when the message maps to an active telemetry feed.
   locationMap: { lat: null, lon: null, alt_m: null, speed_kmh: null,
                  bearing_deg: null, acc_m: null, peer: null, live: false },
-  // Map tile source. sdAvailable comes from /api/map/config; online is the
-  // opt-in OSM fallback (off by default, see the Map settings).
-  mapTiles: { sdAvailable: false, zooms: [], mapsDir: '/maps',
-              online: false, onlineUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
+  // Map tile source, mirrored from /api/map/config. mode is off|sd|online;
+  // online (the OSM fallback) is opt-in via the Map settings.
+  mapTiles: { mode: 'sd', sdPresent: false, sdAvailable: false, zooms: [],
+              mapsDir: '/maps', defaultZoom: 16, online: false,
+              onlineUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
   // Per-popover visibility flags. Same pattern as modals.
   popovers: {
     status:    false,
@@ -2376,6 +2420,8 @@ let state = {
   // FORM_DEFAULTS.x). No more $('input-id').value = '' across the file.
   forms: {
     bootstrap:       { ssid: '', psk: '', code: '' },
+    map:             { mode: 'sd', maps_dir: '/maps', default_zoom: 16,
+                       online_url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
     createIdent:     { name: '', pw1: '', pw2: '', code: '' },
     login:           { pw: '' },
     factoryReset:    { code: '' },           // bottom of identity-picker
@@ -2947,17 +2993,22 @@ function lonLatToTilePx(lat, lon, z) {
   const xt = Math.floor(xw), yt = Math.floor(yw);
   return { n, xt, yt, px: Math.floor((xw - xt) * 256), py: Math.floor((yw - yt) * 256) };
 }
-// Tile URL for the active source: the device SD route (token in the query
-// so an <img>/tile layer can load it) or the opt-in online template.
+// Whether a map preview/modal should render at all (source not Off, and
+// for SD a card with tiles is present).
+function mapTilesEnabled() {
+  const mt = state.mapTiles;
+  return mt.mode === 'online' || (mt.mode === 'sd' && mt.sdAvailable);
+}
+// Tile URL for the active source: the opt-in online template, or the
+// device SD route (token in the query so an <img>/tile layer can load it).
 function mapTileUrl(z, x, y) {
   const mt = state.mapTiles;
-  if (mt && mt.online && !mt.sdAvailable && mt.onlineUrl)
+  if (mt.mode === 'online' && mt.onlineUrl)
     return mt.onlineUrl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
   return API.MAP_TILE(z, x, y) + '?token=' + encodeURIComponent(state.token || '');
 }
 function mapAttribution() {
-  const mt = state.mapTiles;
-  return (mt && mt.online && !mt.sdAvailable) ? '&copy; OpenStreetMap contributors' : '';
+  return state.mapTiles.mode === 'online' ? '&copy; OpenStreetMap contributors' : '';
 }
 // Static 3x3 tile grid for a bubble preview, positioned so the location
 // pixel lands at the box centre (240x132, zoom 15). Latitude clamped,
@@ -3011,7 +3062,7 @@ function renderLocationMap() {
     _locMap._urtnTiles = new Tiles('', { maxZoom: 19, attribution: mapAttribution() });
     _locMap._urtnTiles.addTo(_locMap);
   }
-  _locMap.setView([lm.lat, lm.lon], 16);
+  _locMap.setView([lm.lat, lm.lon], state.mapTiles.defaultZoom || 16);
   if (_locMarker) _locMarker.setLatLng([lm.lat, lm.lon]);
   else _locMarker = L.marker([lm.lat, lm.lon], { icon: _locPin() }).addTo(_locMap);
   if (_locCircle) { _locMap.removeLayer(_locCircle); _locCircle = null; }
@@ -3046,15 +3097,41 @@ function locationModalLive(ev) {
     speed_kmh: t.speed_kmh, bearing_deg: t.bearing_deg, acc_m: t.acc_m });
   renderLocationMap();
 }
-// Whether SD tiles are present, and the tile root. Online fallback stays
-// off until the user opts in (Map settings).
+// Mirror the persisted /api/map/config into the live tile state + the
+// settings form.
+function applyMapConfig(r) {
+  const mt = state.mapTiles;
+  mt.mode        = r.mode || 'sd';
+  mt.sdPresent   = !!r.sd_present;
+  mt.sdAvailable = !!r.sd_available;
+  mt.zooms       = r.zooms || [];
+  mt.mapsDir     = r.maps_dir || '/maps';
+  mt.defaultZoom = r.default_zoom || 16;
+  if (r.online_url) mt.onlineUrl = r.online_url;
+  mt.online      = (mt.mode === 'online');
+  state.forms.map = { mode: mt.mode, maps_dir: mt.mapsDir,
+                      default_zoom: mt.defaultZoom, online_url: mt.onlineUrl };
+}
 async function fetchMapConfig() {
+  try { applyMapConfig(await state.transport._req(API.MAP_CONFIG)); }
+  catch (e) { /* keep defaults */ }
+}
+async function saveMapConfig() {
+  const f = state.forms.map;
   try {
-    const r = await state.transport._req(API.MAP_CONFIG);
-    state.mapTiles.sdAvailable = !!r.sd_available;
-    state.mapTiles.zooms = r.zooms || [];
-    state.mapTiles.mapsDir = r.maps_dir || '/maps';
-  } catch (e) { /* keep defaults */ }
+    applyMapConfig(await state.transport._req(API.MAP_CONFIG, { method: 'POST', body: {
+      mode: f.mode, maps_dir: f.maps_dir, default_zoom: f.default_zoom, online_url: f.online_url,
+    }}));
+  } catch (e) { toast('Could not save map settings: ' + (e.message || e), 'error'); }
+}
+// One-line status under the source picker in settings.
+function mapSourceStatus() {
+  const mt = state.mapTiles;
+  if (mt.mode === 'off')    return 'Positions show as coordinates only.';
+  if (mt.mode === 'online') return 'Your browser loads tiles from the URL below.';
+  if (!mt.sdPresent)        return 'No SD card detected. Insert a card with tiles, or use Online.';
+  if (!mt.sdAvailable)      return 'Card present, but no tiles found in ' + mt.mapsDir + '.';
+  return 'Serving tiles from the card (' + mt.zooms.length + ' zoom levels).';
 }
 
 // --- Live shares (grants we answer, feeds we poll) -----------------

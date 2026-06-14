@@ -74,6 +74,7 @@ extern char             wr_hostname[10];
 #include "BootCounter.h"
 #include "PasswordHash.h"
 #include "FileStreamResponse.h"
+#include "MapConfig.h"
 #include "SPAEmbedded.h"
 
 // EEPROM helpers + WiFi config constants from the existing firmware.
@@ -955,7 +956,8 @@ namespace Web {
       on_json_post(ApiRoutes::CONVERSATION_CONFIG,
                    handle_conversation_config_post);
       on_uri(HTTP_GET, ApiRoutes::ATTACHMENT_DOWNLOAD, handle_attachment_get);
-      on_uri(HTTP_GET, ApiRoutes::MAP_CONFIG, handle_map_config);
+      on_uri(HTTP_GET, ApiRoutes::MAP_CONFIG, handle_map_config_get);
+      on_json_post(ApiRoutes::MAP_CONFIG, handle_map_config_post);
       on_uri(HTTP_GET, ApiRoutes::MAP_TILE, handle_map_tile);
       on_http(HTTP_POST, ApiRoutes::STORAGE_MIGRATE, handle_migrate_flash_to_sd);
       // Paths - per-destination lookup + transmit-ETA estimate.

@@ -7,36 +7,60 @@
 // caches them (they are immutable). With no card or no tiles the route
 // 404s and the map falls back to coordinates only. Tiles are generated
 // off-device (see tools/) and copied to the card; the firmware only
-// serves what is there.
+// serves what is there. Settings (source / dir / zoom / online URL)
+// persist via Web::MapConfig.
 
-    // Fixed tile root on the card. The settings layer makes this
-    // configurable later; for now it is the path the generator writes to.
-    static constexpr const char* MAP_TILES_DIR = "/maps";
-    // Highest slippy zoom we probe/serve. z19 is ~building level; beyond
-    // it the tile counts and card footprint become impractical.
-    static constexpr int MAP_MAX_ZOOM = 19;
+    // Highest slippy zoom we probe for /api/map/config.
+    static constexpr int MAP_MAX_ZOOM = Web::MapConfig::MAX_ZOOM;
 
-    // GET /api/map/config - is an SD tile set available, where, and which
-    // zoom levels exist. One shallow dir probe per zoom, bounded by
-    // MAP_MAX_ZOOM and only on this infrequent call.
-    static void handle_map_config(AsyncWebServerRequest* req) {
+    // GET /api/map/config - the persisted settings plus, for the SD source,
+    // whether a card is present and which zoom levels have a directory. One
+    // shallow dir probe per zoom, bounded by MAP_MAX_ZOOM, only on this call.
+    static void handle_map_config_get(AsyncWebServerRequest* req) {
       LXMF::IdentityId caller = require_auth(req);
       if (caller.empty()) return;
+      const Web::MapConfig::Config& cfg = Web::MapConfig::config();
       Common::PsramJsonDocument doc;
+      doc["mode"]         = Web::MapConfig::mode_str(cfg.mode);
+      doc["maps_dir"]     = cfg.maps_dir;
+      doc["default_zoom"] = cfg.default_zoom;
+      doc["online_url"]   = cfg.online_url;
       const bool card = Storage::SDCard::present();
       doc["sd_present"] = card;
-      doc["maps_dir"]   = MAP_TILES_DIR;
       JsonArray zooms = doc["zooms"].to<JsonArray>();
       bool any = false;
       if (card) {
         for (int z = 0; z <= MAP_MAX_ZOOM; ++z) {
-          char d[48];
-          snprintf(d, sizeof(d), "%s/%d", MAP_TILES_DIR, z);
+          char d[80];
+          snprintf(d, sizeof(d), "%s/%d", cfg.maps_dir.c_str(), z);
           if (Storage::SDCard::exists(d)) { zooms.add(z); any = true; }
         }
       }
       doc["sd_available"] = card && any;
       send_json(req, 200, doc);
+    }
+
+    // POST /api/map/config - partial update of the map settings, persisted
+    // to /map.json. Unknown/absent keys keep their current value.
+    static void handle_map_config_post(AsyncWebServerRequest* req, JsonVariant& body) {
+      if (require_auth(req).empty()) return;
+      Web::MapConfig::Config& c = Web::MapConfig::config();
+      if (body["mode"].is<const char*>())
+        c.mode = Web::MapConfig::mode_from(body["mode"].as<const char*>(), c.mode);
+      if (body["maps_dir"].is<const char*>())
+        c.maps_dir = Web::MapConfig::sanitize_dir(body["maps_dir"].as<const char*>());
+      if (body["default_zoom"].is<int>()) {
+        int z = body["default_zoom"].as<int>();
+        if (z < 1) z = 1;
+        if (z > MAP_MAX_ZOOM) z = MAP_MAX_ZOOM;
+        c.default_zoom = (uint8_t)z;
+      }
+      if (body["online_url"].is<const char*>()) {
+        const char* u = body["online_url"].as<const char*>();
+        if (u && *u) c.online_url = u;
+      }
+      Web::MapConfig::persist(filesystem);
+      handle_map_config_get(req);   // echo the stored config back
     }
 
     // GET /api/map/tile/{z}/{x}/{y} - stream one PNG tile from the card.
@@ -74,8 +98,9 @@
         return;
       }
       if (!Storage::SDCard::present()) { send_error(req, 404, "no_sd"); return; }
-      char path[64];
-      snprintf(path, sizeof(path), "%s/%ld/%ld/%ld.png", MAP_TILES_DIR, z, x, y);
+      char path[96];
+      snprintf(path, sizeof(path), "%s/%ld/%ld/%ld.png",
+               Web::MapConfig::config().maps_dir.c_str(), z, x, y);
       if (!Storage::SDCard::exists(path)) { send_error(req, 404, "tile_not_found"); return; }
       auto fp = std::make_shared<File>(Storage::SDCard::open_read(path));
       if (!*fp) { send_error(req, 500, "tile_open_failed"); return; }

@@ -1296,6 +1296,9 @@ void setup() {
     // Telemetry-to-collector config. No-op if /lxmf/telemetry.json
     // doesn't exist yet (feature defaults to off).
     LXMF::TelemetrySender::load(filesystem);
+    // Map tile settings (source / dir / zoom / online URL). No-op if
+    // /map.json doesn't exist yet (defaults to SD source, /maps).
+    Web::MapConfig::load(filesystem);
     // OLED messenger boot cleanup (removes the legacy device-wide
     // presets file; the screen identity's own store is loaded by the
     // gateway's identity load path).

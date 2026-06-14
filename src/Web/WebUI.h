@@ -73,6 +73,7 @@ extern char             wr_hostname[10];
 #include "AuthTokens.h"
 #include "BootCounter.h"
 #include "PasswordHash.h"
+#include "FileStreamResponse.h"
 #include "SPAEmbedded.h"
 
 // EEPROM helpers + WiFi config constants from the existing firmware.

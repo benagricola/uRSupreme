@@ -131,10 +131,12 @@
       req->send(resp);
     }
 
-    // GET /api/map/pmtiles - serve the configured vector basemap (.pmtiles)
-    // from SD with HTTP range support, which protomaps-leaflet relies on
-    // (it reads the header, directory and tiles via Range). The body is the
-    // requested byte slice, streamed from SD off-loop with the bus guard.
+    // GET /api/map/basemap.pmtiles - serve the configured vector basemap
+    // (.pmtiles) from SD with HTTP range support, which protomaps-leaflet
+    // relies on (it reads the header, directory and tiles via Range). The
+    // path ends in .pmtiles so protomaps-leaflet treats it as an archive to
+    // range-read, not a {z}/{x}/{y} tile template. The body is the requested
+    // byte slice, streamed from SD off-loop with the bus guard.
     static void handle_map_pmtiles(AsyncWebServerRequest* req) {
       {
         RnsLockGuard _g;
@@ -196,4 +198,66 @@
         resp->addHeader("Content-Range", cr);
       }
       req->send(resp);
+    }
+
+    // GET /api/map/download - status of the current (or last) download job:
+    // phase, bytes written, content length, url and dest. Cheap; the browser
+    // polls it while a job runs to drive the progress bar.
+    static void handle_map_download_get(AsyncWebServerRequest* req) {
+      {
+        RnsLockGuard _g;
+        if (require_auth(req).empty()) return;
+      }
+      Common::PsramJsonDocument doc;
+      Web::MapDownload::fill_status(doc.to<JsonObject>());
+      send_json(req, 200, doc);
+    }
+
+    // POST /api/map/download - fetch a file from a URL straight to the SD
+    // card on a background task. Body: {"url": "...", "dest": "..."}. `dest`
+    // defaults to the configured vector basemap path. Only http:// and
+    // https:// are accepted; one job at a time (409 while one runs).
+    static void handle_map_download_post(AsyncWebServerRequest* req, JsonVariant& body) {
+      {
+        RnsLockGuard _g;
+        if (require_auth(req).empty()) return;
+      }
+      const char* url = body["url"].is<const char*>() ? body["url"].as<const char*>() : nullptr;
+      if (!url || !*url ||
+          (strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0)) {
+        send_error_with_message(req, 400, "bad_url",
+          "Enter a full http:// or https:// link to the map file.");
+        return;
+      }
+      if (!Storage::SDCard::present()) {
+        send_error_with_message(req, 409, "sd_absent",
+          "No SD card is inserted: nowhere to save the map.");
+        return;
+      }
+      std::string dest = Web::MapConfig::config().pmtiles;
+      if (body["dest"].is<const char*>()) {
+        const char* d = body["dest"].as<const char*>();
+        if (d && *d) dest = Web::MapConfig::sanitize_file(d);
+      }
+      if (!Web::MapDownload::start(url, dest)) {
+        send_error_with_message(req, 409, "download_busy",
+          "A map download is already running.");
+        return;
+      }
+      Common::PsramJsonDocument doc;
+      Web::MapDownload::fill_status(doc.to<JsonObject>());
+      send_json(req, 200, doc);
+    }
+
+    // POST /api/map/download/cancel - ask the running job to stop. Always
+    // 200; the next status poll reflects the cancelled (then idle) phase.
+    static void handle_map_download_cancel(AsyncWebServerRequest* req) {
+      {
+        RnsLockGuard _g;
+        if (require_auth(req).empty()) return;
+      }
+      Web::MapDownload::cancel();
+      Common::PsramJsonDocument doc;
+      Web::MapDownload::fill_status(doc.to<JsonObject>());
+      send_json(req, 200, doc);
     }

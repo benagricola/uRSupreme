@@ -1967,6 +1967,31 @@
             </div>
           </template>
         </div>
+
+        <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.forms.map.format === 'vector'">
+          <div class="card">
+            <label>Download a map to the card
+              <button type="button" class="info-icon" @click.stop data-info="The device fetches a .pmtiles map file from a link and saves it to the card, so no second computer is needed. Use a regional Protomaps extract or your own server."></button>
+            </label>
+            <input type="text" spellcheck="false" autocomplete="off"
+                   placeholder="https://example.com/region.pmtiles"
+                   x-model.trim="$store.s.forms.map.download_url"
+                   :disabled="$store.s.mapDl.active">
+            <div class="muted mt-1 text-xs">Saves to <span x-text="$store.s.forms.map.pmtiles || '/maps/basemap.pmtiles'"></span></div>
+            <div class="row mt-2">
+              <button type="button" @click="startMapDownload()" x-show="!$store.s.mapDl.active" :disabled="!$store.s.forms.map.download_url">Download</button>
+              <button type="button" class="danger" @click="cancelMapDownload()" x-show="$store.s.mapDl.active">Cancel</button>
+            </div>
+            <template x-if="$store.s.mapDl.phase !== 'idle'">
+              <div class="mt-2">
+                <div class="progress-track" x-show="$store.s.mapDl.active || $store.s.mapDl.phase === 'done'">
+                  <div class="progress-fill" :style="'width:' + mapDlPct() + '%'"></div>
+                </div>
+                <div class="muted mt-1 text-xs" x-text="mapDlStatus()"></div>
+              </div>
+            </template>
+          </div>
+        </template>
       </div>
 
       <!-- ============== Time tab ============== -->
@@ -2290,6 +2315,9 @@ let state = {
               pmtilesAvailable: false, zooms: [], mapsDir: '/maps',
               pmtiles: '/maps/basemap.pmtiles', defaultZoom: 16, online: false,
               onlineUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
+  // Device-side map download job, mirrored from /api/map/download while a
+  // download runs. phase is idle|running|done|error|cancelled.
+  mapDl: { phase: 'idle', active: false, written: 0, total: -1, url: '', dest: '', error: '' },
   // Per-popover visibility flags. Same pattern as modals.
   popovers: {
     status:    false,
@@ -2442,7 +2470,8 @@ let state = {
     bootstrap:       { ssid: '', psk: '', code: '' },
     map:             { mode: 'sd', format: 'raster', maps_dir: '/maps',
                        pmtiles: '/maps/basemap.pmtiles', default_zoom: 16,
-                       online_url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
+                       online_url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                       download_url: '' },
     createIdent:     { name: '', pw1: '', pw2: '', code: '' },
     login:           { pw: '' },
     factoryReset:    { code: '' },           // bottom of identity-picker
@@ -3264,8 +3293,10 @@ function applyMapConfig(r) {
   mt.defaultZoom      = r.default_zoom || 16;
   if (r.online_url) mt.onlineUrl = r.online_url;
   mt.online           = (mt.mode === 'online');
+  const prevUrl = (state.forms.map && state.forms.map.download_url) || '';
   state.forms.map = { mode: mt.mode, format: mt.format, maps_dir: mt.mapsDir,
-                      pmtiles: mt.pmtiles, default_zoom: mt.defaultZoom, online_url: mt.onlineUrl };
+                      pmtiles: mt.pmtiles, default_zoom: mt.defaultZoom, online_url: mt.onlineUrl,
+                      download_url: prevUrl };
 }
 async function fetchMapConfig() {
   try { applyMapConfig(await state.transport._req(API.MAP_CONFIG)); }
@@ -3291,6 +3322,86 @@ function mapSourceStatus() {
                                : 'Card present, but ' + f.pmtiles + ' was not found.';
   return mt.sdAvailable ? 'Serving raster tiles from the card (' + mt.zooms.length + ' zoom levels).'
                         : 'Card present, but no tiles found in ' + mt.mapsDir + '.';
+}
+
+// --- Device-side map download -------------------------------------
+// The device fetches a .pmtiles file from a URL straight to the SD card on
+// a background task; the browser polls /api/map/download for progress.
+let _mapDlPoll = null;
+function _mapDlApply(r) {
+  const d = state.mapDl;
+  d.phase   = r.phase || 'idle';
+  d.active  = !!r.active;
+  d.written = r.written || 0;
+  d.total   = (typeof r.total === 'number') ? r.total : -1;
+  d.url     = r.url || '';
+  d.dest    = r.dest || '';
+  d.error   = r.error || '';
+}
+function _mapDlStopPolling() { if (_mapDlPoll) { clearInterval(_mapDlPoll); _mapDlPoll = null; } }
+function _mapDlStartPolling() {
+  _mapDlStopPolling();
+  _mapDlPoll = setInterval(async () => {
+    let r; try { r = await state.transport._req(API.MAP_DOWNLOAD); }
+    catch (e) { return; }
+    const wasActive = state.mapDl.active;
+    _mapDlApply(r);
+    if (!state.mapDl.active) {
+      _mapDlStopPolling();
+      if (wasActive) {
+        if (state.mapDl.phase === 'done') {
+          toast('Map downloaded to the card.', 'info');
+          fetchMapConfig().then(() => { if (state.mapView.open) mapRefresh(); });
+        } else if (state.mapDl.phase === 'error') {
+          toast('Map download failed: ' + (state.mapDl.error || 'unknown error'), 'error');
+        } else if (state.mapDl.phase === 'cancelled') {
+          toast('Map download cancelled.', 'info');
+        }
+      }
+    }
+  }, 1000);
+}
+// Pull the current job state once (e.g. on opening settings) so a download
+// started elsewhere still shows progress here.
+async function refreshMapDownload() {
+  try { _mapDlApply(await state.transport._req(API.MAP_DOWNLOAD)); }
+  catch (e) { return; }
+  if (state.mapDl.active) _mapDlStartPolling();
+}
+async function startMapDownload() {
+  const url = (state.forms.map.download_url || '').trim();
+  if (!/^https?:\/\//i.test(url)) { toast('Enter a full http:// or https:// link.', 'warn'); return; }
+  try {
+    _mapDlApply(await state.transport._req(API.MAP_DOWNLOAD, { method: 'POST', body: {
+      url, dest: state.forms.map.pmtiles,
+    }}));
+    _mapDlStartPolling();
+  } catch (e) { toast('Could not start download: ' + (e.message || e), 'error'); }
+}
+async function cancelMapDownload() {
+  try { _mapDlApply(await state.transport._req(API.MAP_DOWNLOAD_CANCEL, { method: 'POST' })); }
+  catch (e) { toast('Could not cancel: ' + (e.message || e), 'error'); }
+}
+function mapDlPct() {
+  const d = state.mapDl;
+  if (d.total > 0) return Math.min(100, Math.round((d.written / d.total) * 100));
+  return d.phase === 'done' ? 100 : 0;
+}
+function _fmtBytes(n) {
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+  if (n >= 1024)    return (n / 1024).toFixed(0) + ' KB';
+  return n + ' B';
+}
+function mapDlStatus() {
+  const d = state.mapDl;
+  if (d.phase === 'running') {
+    if (d.total > 0) return _fmtBytes(d.written) + ' of ' + _fmtBytes(d.total) + ' (' + mapDlPct() + '%)';
+    return 'Downloaded ' + _fmtBytes(d.written);
+  }
+  if (d.phase === 'done')      return 'Saved ' + _fmtBytes(d.written) + ' to ' + (d.dest || state.forms.map.pmtiles) + '.';
+  if (d.phase === 'error')     return 'Failed: ' + (d.error || 'unknown error') + '.';
+  if (d.phase === 'cancelled') return 'Cancelled.';
+  return '';
 }
 
 // --- Live shares (grants we answer, feeds we poll) -----------------
@@ -7895,6 +8006,7 @@ function selectSettingsTab(tabId) {
   if (tabId === 'time')         { populateTimeTab(); }
   if (tabId === 'identity')     { populateIdentityTab(); }
   if (tabId === 'telemetry')    { populateCollectorConfig(); }
+  if (tabId === 'map')          { fetchMapConfig(); refreshMapDownload(); }
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
   if (tabId === 'ui')           {
     state.forms.prefs.enterSends                = !!state.prefs.enterSends;

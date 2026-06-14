@@ -14,6 +14,7 @@
 <link rel="stylesheet" href="/leaflet.css">
 <link rel="stylesheet" href="/styles.css?v=__STYLES_VERSION__">
 <script src="/leaflet.min.js" defer></script>
+<script src="/protomaps-leaflet.js" defer></script>
 <script src="/alpine.min.js" defer></script>
 </head>
 <body>
@@ -201,6 +202,21 @@
           x-show="!!$store.s.ui.announceLabelText"
           x-text="$store.s.ui.announceLabelText"></span>
     <div class="spacer"></div>
+    <!-- Main-area view switch (Chats / Map): leftmost of the right cluster,
+         set apart by a separator from the popover + action icons. -->
+    <div class="view-switch" x-data>
+      <button class="icon" id="btn-chats" title="Chats"
+              :class="{ active: !$store.s.mapView.open }" @click="closeMapView()">
+        <!-- speech bubble -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+      </button>
+      <button class="icon" id="btn-map" title="Map"
+              :class="{ active: $store.s.mapView.open }" @click="openMapView()">
+        <!-- map -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+      </button>
+    </div>
+    <span class="topbar-sep" aria-hidden="true"></span>
     <!-- Radio + transport status indicator. Colored dot overlay shows
          online (green) / offline (red) / not-configured (grey). Click
          to open the status popover below. -->
@@ -232,10 +248,6 @@
     <button class="icon" id="btn-system" title="System status" @click="onClickSystemBtn()">
       <!-- chip / cpu -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
-    </button>
-    <button class="icon" id="btn-map" title="Map" @click="openMapView()">
-      <!-- map / location -->
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
     </button>
     <button class="icon" id="btn-settings"  title="Settings" @click="openSettingsModal('identity', false)">
       <!-- gear -->
@@ -1226,16 +1238,12 @@
 </div>
 
 <!-- ===================== MAP VIEW ===================== -->
-<!-- Full-screen map, opened from the top-bar map icon or a bubble's
-     position preview. One persistent Leaflet map (initialised lazily in
-     openMapView). Markers for every peer sharing a position, a per-peer
-     track polyline + heading, browsable over offline tiles. -->
+<!-- The map fills the main app area (below the app top bar) when the Map
+     view switch is active. Just the canvas; the top bar's Chats/Map icons
+     switch views. One persistent Leaflet map, initialised lazily in
+     openMapView: markers for every peer sharing a position, per-peer track
+     + heading, browsable over offline tiles. -->
 <div id="map-view" class="map-view" x-data x-show="$store.s.mapView.open" x-cloak>
-  <header class="map-view-bar">
-    <button class="icon icon-x" title="Close" @click="closeMapView()"></button>
-    <strong class="map-view-title">Map</strong>
-    <span class="muted text-xs flex-1-min0" x-text="mapViewStatus()"></span>
-  </header>
   <div id="map-canvas" class="map-view-canvas"></div>
 </div>
 
@@ -1333,7 +1341,7 @@
               @click="closeSettingsModal()"></button>
     </header>
     <div class="tab-bar" id="settings-tabs">
-      <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['telemetry','Telemetry'],['time','Time'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
+      <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['telemetry','Telemetry'],['map','Map'],['time','Time'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
         <button class="tab" :data-tab="t[0]"
                 :class="{ active: $store.s.settingsTab === t[0] }"
                 :hidden="$store.s.settingsFirstRun && t[0] !== 'connectivity'"
@@ -1894,11 +1902,14 @@
           <div class="muted mt-1" x-text="collectorStatusText()"></div>
         </div>
 
-        <div class="card mt-3">
-          <strong>Map
-            <button type="button" class="info-icon" @click.stop data-info="How shared locations are shown on a map. SD card serves tiles you have copied onto the card, so the map works with no internet. Online has your browser fetch tiles from a tile server, which tells that server where you are looking."></button>
-          </strong>
-          <label class="mt-2">Tile source</label>
+      </div>
+
+      <!-- ============== Map tab ============== -->
+      <div class="tab-panel" data-panel="map" :class="{ active: $store.s.settingsTab === 'map' }">
+        <div class="card">
+          <label>Tile source
+            <button type="button" class="info-icon" @click.stop data-info="Where the location map gets its tiles. SD card works with no internet from tiles you load onto the card. Online has your browser fetch tiles from a server, which tells that server where you are looking."></button>
+          </label>
           <select x-model="$store.s.forms.map.mode" @change="saveMapConfig()">
             <option value="off">Off (coordinates only)</option>
             <option value="sd">SD card</option>
@@ -1906,11 +1917,31 @@
           </select>
           <div class="muted mt-1 text-xs" x-text="mapSourceStatus()"></div>
 
-          <template x-if="$store.s.forms.map.mode === 'sd'">
+          <template x-if="$store.s.forms.map.mode !== 'off'">
+            <div>
+              <label class="mt-3">Format
+                <button type="button" class="info-icon" @click.stop data-info="Raster is a grid of image tiles: simple, and you can download an exact area. Vector is one compact file (.pmtiles) that stays sharp at any zoom and takes far less space."></button>
+              </label>
+              <select x-model="$store.s.forms.map.format" @change="saveMapConfig()">
+                <option value="raster">Raster tiles</option>
+                <option value="vector">Vector basemap</option>
+              </select>
+            </div>
+          </template>
+
+          <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.forms.map.format === 'raster'">
             <div>
               <label class="mt-3">Tiles folder on the card</label>
               <input type="text" spellcheck="false" autocomplete="off" placeholder="/maps"
                      x-model.trim="$store.s.forms.map.maps_dir" @change="saveMapConfig()">
+            </div>
+          </template>
+
+          <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.forms.map.format === 'vector'">
+            <div>
+              <label class="mt-3">Vector file on the card</label>
+              <input type="text" spellcheck="false" autocomplete="off" placeholder="/maps/basemap.pmtiles"
+                     x-model.trim="$store.s.forms.map.pmtiles" @change="saveMapConfig()">
             </div>
           </template>
 
@@ -2255,8 +2286,9 @@ let state = {
   mapView: { open: false },
   // Map tile source, mirrored from /api/map/config. mode is off|sd|online;
   // online (the OSM fallback) is opt-in via the Map settings.
-  mapTiles: { mode: 'sd', sdPresent: false, sdAvailable: false, zooms: [],
-              mapsDir: '/maps', defaultZoom: 16, online: false,
+  mapTiles: { mode: 'sd', format: 'raster', sdPresent: false, sdAvailable: false,
+              pmtilesAvailable: false, zooms: [], mapsDir: '/maps',
+              pmtiles: '/maps/basemap.pmtiles', defaultZoom: 16, online: false,
               onlineUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
   // Per-popover visibility flags. Same pattern as modals.
   popovers: {
@@ -2408,7 +2440,8 @@ let state = {
   // FORM_DEFAULTS.x). No more $('input-id').value = '' across the file.
   forms: {
     bootstrap:       { ssid: '', psk: '', code: '' },
-    map:             { mode: 'sd', maps_dir: '/maps', default_zoom: 16,
+    map:             { mode: 'sd', format: 'raster', maps_dir: '/maps',
+                       pmtiles: '/maps/basemap.pmtiles', default_zoom: 16,
                        online_url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
     createIdent:     { name: '', pw1: '', pw2: '', code: '' },
     login:           { pw: '' },
@@ -2981,19 +3014,39 @@ function lonLatToTilePx(lat, lon, z) {
   const xt = Math.floor(xw), yt = Math.floor(yw);
   return { n, xt, yt, px: Math.floor((xw - xt) * 256), py: Math.floor((yw - yt) * 256) };
 }
-// Whether a map preview/modal should render at all (source not Off, and
-// for SD a card with tiles is present).
+// Whether a map preview/modal should render at all: source not Off, and the
+// chosen format's data is present (raster needs SD zoom dirs / online URL;
+// vector needs the .pmtiles on SD / an online URL).
 function mapTilesEnabled() {
   const mt = state.mapTiles;
-  return mt.mode === 'online' || (mt.mode === 'sd' && mt.sdAvailable);
+  if (mt.mode === 'off') return false;
+  if (mt.mode === 'online') return !!mt.onlineUrl;
+  return mt.format === 'vector' ? !!mt.pmtilesAvailable : !!mt.sdAvailable;
 }
-// Tile URL for the active source: the opt-in online template, or the
-// device SD route (token in the query so an <img>/tile layer can load it).
+// Raster tile URL: the opt-in online template, or the device SD route (token
+// in the query so an <img>/tile layer can load it).
 function mapTileUrl(z, x, y) {
   const mt = state.mapTiles;
   if (mt.mode === 'online' && mt.onlineUrl)
     return mt.onlineUrl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
   return API.MAP_TILE(z, x, y) + '?token=' + encodeURIComponent(state.token || '');
+}
+// Vector basemap URL: the online template/.pmtiles, or the device's range-
+// served .pmtiles route (token in the query).
+function mapPmtilesUrl() {
+  const mt = state.mapTiles;
+  if (mt.mode === 'online' && mt.onlineUrl) return mt.onlineUrl;
+  return API.MAP_PMTILES + '?token=' + encodeURIComponent(state.token || '');
+}
+// The Leaflet base layer for the current format: a raster tile layer, or the
+// protomaps-leaflet vector layer (dark flavor, to match the app chrome).
+function mapBaseLayer() {
+  const L = window.L;
+  if (state.mapTiles.format === 'vector' && window.protomapsL) {
+    return window.protomapsL.leafletLayer({ url: mapPmtilesUrl(), flavor: 'dark', lang: 'en' });
+  }
+  const Tiles = L.TileLayer.extend({ getTileUrl: function (c) { return mapTileUrl(c.z, c.x, c.y); } });
+  return new Tiles('', { maxZoom: 19, attribution: mapAttribution() });
 }
 function mapAttribution() {
   return state.mapTiles.mode === 'online' ? '&copy; OpenStreetMap contributors' : '';
@@ -3098,12 +3151,15 @@ function _peerPopup(peer, latest) {
 function _mapInit() {
   const L = window.L; if (!L || _map) return;
   _map = L.map('map-canvas', { zoomControl: true, attributionControl: true });
-  // Custom layer so each tile goes through mapTileUrl (SD route with token,
-  // or the online template) rather than a {z}/{x}/{y} string the API helper
-  // would URI-encode.
-  const Tiles = L.TileLayer.extend({ getTileUrl: function (c) { return mapTileUrl(c.z, c.x, c.y); } });
-  new Tiles('', { maxZoom: 19, attribution: mapAttribution() }).addTo(_map);
   _map.setView([20, 0], 2);   // world-ish until markers arrive
+}
+// (Re)build the base layer from the current format/source, so a settings
+// change (raster <-> vector, SD <-> online) takes effect on the next open.
+function _mapApplyBase() {
+  if (!_map) return;
+  if (_map._urtnBase) { _map.removeLayer(_map._urtnBase); _map._urtnBase = null; }
+  const base = mapBaseLayer();
+  if (base) { base.addTo(_map); _map._urtnBase = base; }
 }
 function _removePeerLayer(peer) {
   const ly = _mapLayers[peer];
@@ -3151,15 +3207,9 @@ function mapRefresh(focusPeer, focusLatLon, fit) {
 function openMapView(opts) {
   opts = opts || {};
   state.mapView.open = true;
-  setTimeout(() => { _mapInit(); mapRefresh(opts.peer, opts.latlon, !opts.peer && !opts.latlon); }, 60);
+  setTimeout(() => { _mapInit(); _mapApplyBase(); mapRefresh(opts.peer, opts.latlon, !opts.peer && !opts.latlon); }, 60);
 }
 function closeMapView() { state.mapView.open = false; }
-function mapViewStatus() {
-  if (!mapTilesEnabled()) return 'No tiles. Pick a source in Settings, Map.';
-  let n = 0;
-  for (const peer of Object.keys(state.conversations)) if (peerLatestPosition(peer)) n++;
-  return n ? (n + (n === 1 ? ' contact' : ' contacts')) : 'No shared positions yet.';
-}
 // Live feed update: extend the peer's track and refresh the open map.
 function mapLive(ev) {
   if (!ev.tele || typeof ev.tele.lat !== 'number') return;
@@ -3172,16 +3222,19 @@ function mapLive(ev) {
 // settings form.
 function applyMapConfig(r) {
   const mt = state.mapTiles;
-  mt.mode        = r.mode || 'sd';
-  mt.sdPresent   = !!r.sd_present;
-  mt.sdAvailable = !!r.sd_available;
-  mt.zooms       = r.zooms || [];
-  mt.mapsDir     = r.maps_dir || '/maps';
-  mt.defaultZoom = r.default_zoom || 16;
+  mt.mode             = r.mode || 'sd';
+  mt.format           = r.format || 'raster';
+  mt.sdPresent        = !!r.sd_present;
+  mt.sdAvailable      = !!r.sd_available;
+  mt.pmtilesAvailable = !!r.pmtiles_available;
+  mt.zooms            = r.zooms || [];
+  mt.mapsDir          = r.maps_dir || '/maps';
+  mt.pmtiles          = r.pmtiles || '/maps/basemap.pmtiles';
+  mt.defaultZoom      = r.default_zoom || 16;
   if (r.online_url) mt.onlineUrl = r.online_url;
-  mt.online      = (mt.mode === 'online');
-  state.forms.map = { mode: mt.mode, maps_dir: mt.mapsDir,
-                      default_zoom: mt.defaultZoom, online_url: mt.onlineUrl };
+  mt.online           = (mt.mode === 'online');
+  state.forms.map = { mode: mt.mode, format: mt.format, maps_dir: mt.mapsDir,
+                      pmtiles: mt.pmtiles, default_zoom: mt.defaultZoom, online_url: mt.onlineUrl };
 }
 async function fetchMapConfig() {
   try { applyMapConfig(await state.transport._req(API.MAP_CONFIG)); }
@@ -3191,18 +3244,22 @@ async function saveMapConfig() {
   const f = state.forms.map;
   try {
     applyMapConfig(await state.transport._req(API.MAP_CONFIG, { method: 'POST', body: {
-      mode: f.mode, maps_dir: f.maps_dir, default_zoom: f.default_zoom, online_url: f.online_url,
+      mode: f.mode, format: f.format, maps_dir: f.maps_dir, pmtiles: f.pmtiles,
+      default_zoom: f.default_zoom, online_url: f.online_url,
     }}));
   } catch (e) { toast('Could not save map settings: ' + (e.message || e), 'error'); }
 }
 // One-line status under the source picker in settings.
 function mapSourceStatus() {
-  const mt = state.mapTiles;
-  if (mt.mode === 'off')    return 'Positions show as coordinates only.';
-  if (mt.mode === 'online') return 'Your browser loads tiles from the URL below.';
-  if (!mt.sdPresent)        return 'No SD card detected. Insert a card with tiles, or use Online.';
-  if (!mt.sdAvailable)      return 'Card present, but no tiles found in ' + mt.mapsDir + '.';
-  return 'Serving tiles from the card (' + mt.zooms.length + ' zoom levels).';
+  const mt = state.mapTiles, f = state.forms.map;
+  if (f.mode === 'off')    return 'Positions show as coordinates only.';
+  if (f.mode === 'online') return 'Your browser loads tiles from the URL below.';
+  if (!mt.sdPresent)       return 'No SD card detected. Load a card, or use Online.';
+  if (f.format === 'vector')
+    return mt.pmtilesAvailable ? 'Serving the vector basemap from the card.'
+                               : 'Card present, but ' + f.pmtiles + ' was not found.';
+  return mt.sdAvailable ? 'Serving raster tiles from the card (' + mt.zooms.length + ' zoom levels).'
+                        : 'Card present, but no tiles found in ' + mt.mapsDir + '.';
 }
 
 // --- Live shares (grants we answer, feeds we poll) -----------------

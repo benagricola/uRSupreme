@@ -65,3 +65,15 @@
       req->send(resp);
     }
 
+    // protomaps-leaflet: the vector basemap renderer, used when the map
+    // source is a .pmtiles. Vendored + embedded like Leaflet.
+    static void handle_protomaps_js(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      AsyncWebServerResponse* resp = req->beginResponse_P(
+          200, "application/javascript",
+          Web::SPA_PROTOMAPS_JS_GZ, Web::SPA_PROTOMAPS_JS_GZ_LEN);
+      resp->addHeader("Content-Encoding", "gzip");
+      resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
+      req->send(resp);
+    }
+

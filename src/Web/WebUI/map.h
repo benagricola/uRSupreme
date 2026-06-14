@@ -22,21 +22,26 @@
       const Web::MapConfig::Config& cfg = Web::MapConfig::config();
       Common::PsramJsonDocument doc;
       doc["mode"]         = Web::MapConfig::mode_str(cfg.mode);
+      doc["format"]       = Web::MapConfig::format_str(cfg.format);
       doc["maps_dir"]     = cfg.maps_dir;
+      doc["pmtiles"]      = cfg.pmtiles;
       doc["default_zoom"] = cfg.default_zoom;
       doc["online_url"]   = cfg.online_url;
       const bool card = Storage::SDCard::present();
       doc["sd_present"] = card;
+      // Raster: which zoom-level dirs exist. Vector: whether the .pmtiles file
+      // is present. Both probed only on this infrequent config call.
       JsonArray zooms = doc["zooms"].to<JsonArray>();
-      bool any = false;
+      bool raster_ok = false;
       if (card) {
         for (int z = 0; z <= MAP_MAX_ZOOM; ++z) {
           char d[80];
           snprintf(d, sizeof(d), "%s/%d", cfg.maps_dir.c_str(), z);
-          if (Storage::SDCard::exists(d)) { zooms.add(z); any = true; }
+          if (Storage::SDCard::exists(d)) { zooms.add(z); raster_ok = true; }
         }
       }
-      doc["sd_available"] = card && any;
+      doc["sd_available"]      = card && raster_ok;
+      doc["pmtiles_available"] = card && Storage::SDCard::exists(cfg.pmtiles.c_str());
       send_json(req, 200, doc);
     }
 
@@ -47,8 +52,12 @@
       Web::MapConfig::Config& c = Web::MapConfig::config();
       if (body["mode"].is<const char*>())
         c.mode = Web::MapConfig::mode_from(body["mode"].as<const char*>(), c.mode);
+      if (body["format"].is<const char*>())
+        c.format = Web::MapConfig::format_from(body["format"].as<const char*>(), c.format);
       if (body["maps_dir"].is<const char*>())
         c.maps_dir = Web::MapConfig::sanitize_dir(body["maps_dir"].as<const char*>());
+      if (body["pmtiles"].is<const char*>())
+        c.pmtiles = Web::MapConfig::sanitize_file(body["pmtiles"].as<const char*>());
       if (body["default_zoom"].is<int>()) {
         int z = body["default_zoom"].as<int>();
         if (z < 1) z = 1;
@@ -119,5 +128,72 @@
       }
       // Same z/x/y always returns the same image: cache hard.
       resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
+      req->send(resp);
+    }
+
+    // GET /api/map/pmtiles - serve the configured vector basemap (.pmtiles)
+    // from SD with HTTP range support, which protomaps-leaflet relies on
+    // (it reads the header, directory and tiles via Range). The body is the
+    // requested byte slice, streamed from SD off-loop with the bus guard.
+    static void handle_map_pmtiles(AsyncWebServerRequest* req) {
+      {
+        RnsLockGuard _g;
+        if (require_auth(req).empty()) return;
+      }
+      if (!Storage::SDCard::present()) { send_error(req, 404, "no_sd"); return; }
+      const std::string path = Web::MapConfig::config().pmtiles;
+      if (!Storage::SDCard::exists(path.c_str())) { send_error(req, 404, "pmtiles_not_found"); return; }
+      auto fp = std::make_shared<File>(Storage::SDCard::open_read(path.c_str()));
+      if (!*fp) { send_error(req, 500, "pmtiles_open_failed"); return; }
+      const size_t total = (size_t)fp->size();
+      // A single byte range ("bytes=start-end"); protomaps-leaflet always
+      // sends one. No Range -> serve the whole file (rare).
+      size_t start = 0, end = (total ? total - 1 : 0);
+      bool ranged = false;
+      if (req->hasHeader("Range")) {
+        String r = req->header("Range");
+        if (r.startsWith("bytes=")) {
+          const int dash = r.indexOf('-', 6);
+          if (dash > 6) {
+            start = (size_t)strtoul(r.substring(6, dash).c_str(), nullptr, 10);
+            String es = r.substring(dash + 1); es.trim();
+            if (es.length()) end = (size_t)strtoul(es.c_str(), nullptr, 10);
+            ranged = true;
+          }
+        }
+      }
+      if (total == 0 || start > end || start >= total) {
+        AsyncWebServerResponse* r416 = req->beginResponse(416, "text/plain", "");
+        char cr[40]; snprintf(cr, sizeof(cr), "bytes */%u", (unsigned)total);
+        r416->addHeader("Content-Range", cr);
+        req->send(r416);
+        return;
+      }
+      if (end >= total) end = total - 1;
+      fp->seek(start);
+      auto rem = std::make_shared<size_t>(end - start + 1);
+      AsyncWebServerResponse* resp = Web::FileStream::begin(
+          req, *rem, "application/octet-stream",
+          [fp, rem](uint8_t* dst, size_t want) -> size_t {
+            if (*rem == 0) return 0;
+            const size_t n = want < *rem ? want : *rem;
+            Storage::SDCard::BusGuard _bg;   // HSPI shared with the IMU pump
+            const size_t got = (size_t)fp->read(dst, n);
+            *rem -= got;
+            return got;
+          },
+          [fp]() { if (*fp) fp->close(); });
+      if (!resp) {
+        send_error_with_message(req, 503, "out_of_memory", "Low memory; try again in a moment.");
+        return;
+      }
+      resp->addHeader("Accept-Ranges", "bytes");
+      resp->addHeader("Cache-Control", "no-store");   // the basemap file can be replaced
+      if (ranged) {
+        resp->setCode(206);
+        char cr[64];
+        snprintf(cr, sizeof(cr), "bytes %u-%u/%u", (unsigned)start, (unsigned)end, (unsigned)total);
+        resp->addHeader("Content-Range", cr);
+      }
       req->send(resp);
     }

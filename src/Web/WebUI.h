@@ -858,6 +858,7 @@ namespace Web {
       server.on("/alpine.min.js", HTTP_GET, handle_alpine_js);
       server.on("/leaflet.min.js",HTTP_GET, handle_leaflet_js);
       server.on("/leaflet.css",   HTTP_GET, handle_leaflet_css);
+      server.on("/protomaps-leaflet.js", HTTP_GET, handle_protomaps_js);
       // Public
       on_http(HTTP_GET, ApiRoutes::INFO, handle_info);
       // Diagnostics (bearer-gated). GET reads heap headroom; POST resets
@@ -959,6 +960,7 @@ namespace Web {
       on_uri(HTTP_GET, ApiRoutes::MAP_CONFIG, handle_map_config_get);
       on_json_post(ApiRoutes::MAP_CONFIG, handle_map_config_post);
       on_uri(HTTP_GET, ApiRoutes::MAP_TILE, handle_map_tile);
+      on_uri(HTTP_GET, ApiRoutes::MAP_PMTILES, handle_map_pmtiles);
       on_http(HTTP_POST, ApiRoutes::STORAGE_MIGRATE, handle_migrate_flash_to_sd);
       // Paths - per-destination lookup + transmit-ETA estimate.
       // `uri()` forces an exact match on /estimate. Without it the

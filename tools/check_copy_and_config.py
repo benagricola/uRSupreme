@@ -23,6 +23,7 @@ EXCLUDE = {
     "src/Web/spa/alpine.min.js", # vendored
     "src/Web/spa/leaflet.min.js",# vendored (map renderer)
     "src/Web/spa/leaflet.css",   # vendored (map renderer)
+    "src/Web/spa/protomaps-leaflet.js",  # vendored (vector map renderer)
     "MIRROR.md",                 # upstream author's notice, mirrored verbatim
 }
 # Mirrored/vendored trees we must never rewrite: upstream content is

@@ -505,7 +505,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
    Replaces the slide-out drawer + separate page-style radio view so
    all "settings"-shaped UI uses one display method. */
 .modal.modal-tall {
-  width: 100%; max-width: 560px;
+  width: 100%; max-width: 680px;
   /* `100dvh` (dynamic viewport height) tracks the CURRENTLY visible
      area, so Firefox Android's bottom address bar - and any other
      collapsible browser chrome - actually counts. `100vh` returns
@@ -568,11 +568,11 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 /* Tab bar inside the settings modal. */
 .tab-bar {
   display: flex;
+  flex-wrap: wrap;          /* tabs flow to a second row rather than scroll */
   gap: 2px;
   padding: 0 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elev);
-  overflow-x: auto;
   flex-shrink: 0;            /* see .modal-header rule above */
 }
 .tab-bar .tab {
@@ -1134,17 +1134,21 @@ input[type="checkbox"]:focus-visible {
   background: rgba(13,17,23,.78); color: var(--text-mute); pointer-events: none;
 }
 
-/* Full-screen map view: a top bar over a Leaflet map filling the rest. */
+/* Map view: fills the main app area (the contacts + chat panes) below the
+   56 px top-bar row while the app top bar stays put. Just the canvas, no
+   bar of its own; the top bar's Chats/Map switch toggles it. Modals and
+   popovers (z 260+) still open above it. */
 .map-view {
-  position: fixed; inset: 0; z-index: 300; background: var(--bg);
-  display: flex; flex-direction: column;
+  position: fixed; top: 56px; left: 0; right: 0; bottom: 0; z-index: 100;
+  background: var(--bg); display: flex; flex-direction: column;
 }
-.map-view-bar {
-  display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
-  padding: 8px 10px; border-bottom: 1px solid var(--border);
-}
-.map-view-title { font-size: 15px; }
 .map-view-canvas { flex: 1 1 auto; min-height: 0; }
+/* View switch (Chats vs Map): leftmost of the top bar's right cluster, with
+   a separator setting it apart from the popover/action icons. The active
+   one reads as selected. */
+.view-switch { display: flex; align-items: center; gap: 2px; }
+.topbar-sep { width: 1px; height: 22px; align-self: center; background: var(--border); margin: 0 6px; }
+.icon.active { color: var(--accent); }
 /* Peer markers: a heading arrow or dot, drawn by _peerIcon as an SVG. */
 .peer-pin { filter: drop-shadow(0 1px 1px rgba(0,0,0,.55)); }
 .peer-pin svg { display: block; }

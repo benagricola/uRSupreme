@@ -3155,11 +3155,34 @@ function _mapInit() {
 }
 // (Re)build the base layer from the current format/source, so a settings
 // change (raster <-> vector, SD <-> online) takes effect on the next open.
+// Why the map can't show tiles, or '' when it should be fine. Used to warn
+// the user on open rather than leaving a silently blank canvas.
+function mapUnavailableReason() {
+  const mt = state.mapTiles;
+  if (mt.mode === 'off')    return 'Map tiles are off. Choose a source in Settings, Map.';
+  if (mt.mode === 'online') return mt.onlineUrl ? '' : 'No online tile URL set. Settings, Map.';
+  if (!mt.sdPresent)        return 'No SD card detected for map tiles. Settings, Map.';
+  if (mt.format === 'vector')
+    return mt.pmtilesAvailable ? '' : 'Vector basemap not found on the card: ' + mt.pmtiles + '.';
+  return mt.sdAvailable ? '' : 'No map tiles found on the card in ' + mt.mapsDir + '.';
+}
+let _mapTileErrorShown = false;   // one missing-tile toast per open
 function _mapApplyBase() {
   if (!_map) return;
   if (_map._urtnBase) { _map.removeLayer(_map._urtnBase); _map._urtnBase = null; }
   const base = mapBaseLayer();
-  if (base) { base.addTo(_map); _map._urtnBase = base; }
+  if (base) {
+    // A part of the map not loading (raster 404, vector tile fetch failure,
+    // or an online server not responding) fires tileerror; warn once per
+    // open rather than per tile. Source-neutral: this can be SD or online.
+    base.on('tileerror', function () {
+      if (_mapTileErrorShown) return;
+      _mapTileErrorShown = true;
+      toast('Some of the map could not be loaded.', 'warn');
+    });
+    base.addTo(_map);
+    _map._urtnBase = base;
+  }
 }
 function _removePeerLayer(peer) {
   const ly = _mapLayers[peer];
@@ -3207,7 +3230,15 @@ function mapRefresh(focusPeer, focusLatLon, fit) {
 function openMapView(opts) {
   opts = opts || {};
   state.mapView.open = true;
-  setTimeout(() => { _mapInit(); _mapApplyBase(); mapRefresh(opts.peer, opts.latlon, !opts.peer && !opts.latlon); }, 60);
+  _mapTileErrorShown = false;
+  setTimeout(() => {
+    _mapInit(); _mapApplyBase();
+    mapRefresh(opts.peer, opts.latlon, !opts.peer && !opts.latlon);
+    // A definite config reason (no card / no file) trumps a per-tile error,
+    // so report it and suppress the tileerror toast.
+    const reason = mapUnavailableReason();
+    if (reason) { _mapTileErrorShown = true; toast(reason, 'warn'); }
+  }, 60);
 }
 function closeMapView() { state.mapView.open = false; }
 // Live feed update: extend the peer's track and refresh the open map.

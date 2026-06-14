@@ -505,7 +505,9 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
    Replaces the slide-out drawer + separate page-style radio view so
    all "settings"-shaped UI uses one display method. */
 .modal.modal-tall {
-  width: 100%; max-width: 680px;
+  /* Narrow on purpose: keeps the form fields from stretching too wide, and
+     lets the tab bar wrap to two balanced rows rather than one long line. */
+  width: 100%; max-width: 440px;
   /* `100dvh` (dynamic viewport height) tracks the CURRENTLY visible
      area, so Firefox Android's bottom address bar - and any other
      collapsible browser chrome - actually counts. `100vh` returns
@@ -1143,6 +1145,9 @@ input[type="checkbox"]:focus-visible {
   background: var(--bg); display: flex; flex-direction: column;
 }
 .map-view-canvas { flex: 1 1 auto; min-height: 0; }
+/* Dark map backdrop before/behind tiles, so it doesn't flash white in the
+   app's dark theme (Leaflet's container defaults to light). */
+.leaflet-container { background: var(--bg); }
 /* View switch (Chats vs Map): leftmost of the top bar's right cluster, with
    a separator setting it apart from the popover/action icons. The active
    one reads as selected. */

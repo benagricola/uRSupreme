@@ -519,6 +519,23 @@
                   <div class="chip mt-6" :class="attachmentIconClass(a)"
             x-text="attachmentLabel(a)"></div>
                 </template>
+                <template x-if="attachmentMode(a) === 'gpx'">
+                  <div class="mt-6" x-init="loadGpxThumb(a)">
+                    <template x-if="gpxState(a) === 'loading'">
+                      <div class="muted chip ico-pin">Loading track…</div>
+                    </template>
+                    <template x-if="gpxState(a) === 'failed'">
+                      <button class="attachment-chip chip chip-btn ico-pin" @click="loadGpxThumb(a, true)">Track unavailable - retry</button>
+                    </template>
+                    <template x-if="gpxState(a) === 'ready'">
+                      <div class="map-thumb gpx-thumb" @click="openMapView({ gpx: a })" role="button" title="Open track">
+                        <img class="gpx-thumb-img" :src="$store.s.gpxThumb[a.filename]" alt="track preview">
+                        <button class="gpx-thumb-dl" @click.stop="downloadAttachment(state.identityId, a)" title="Download .gpx">Save</button>
+                        <span class="map-thumb-hint gpx-thumb-hint" x-text="a.display_name || 'track'"></span>
+                      </div>
+                    </template>
+                  </div>
+                </template>
                 <template x-if="attachmentMode(a) === 'inline-image'">
                   <div class="mt-6" x-init="loadAttachmentBlob(a)">
                     <template x-if="$store.s.attachmentBlobs[a.filename] === 'loading'">
@@ -571,10 +588,11 @@
                line links to the map. -->
           <template x-if="telemetryLines(m).length > 0">
             <div class="telemetry-block mt-6">
-              <!-- Inline map preview when the message carries a position.
-                   Static tiles (see locationThumbTiles); click opens the
-                   full map modal. -->
-              <template x-if="m.tele && typeof m.tele.lat === 'number' && mapTilesEnabled()">
+              <!-- Inline single-point preview from static raster tiles; only
+                   when raster tiles exist (online, or SD raster). In SD vector
+                   mode there are no raster images, so it would render blank -
+                   a track there shows via its GPX thumbnail instead. -->
+              <template x-if="m.tele && typeof m.tele.lat === 'number' && mapTilesEnabled() && !(state.mapTiles.mode === 'sd' && state.mapTiles.format === 'vector')">
                 <button class="map-thumb" @click="openMapView({ peer: m.peer, latlon: [m.tele.lat, m.tele.lon] })" title="Open map">
                   <template x-for="tile in locationThumbTiles(m.tele)" :key="tile.left + ',' + tile.top">
                     <img class="map-thumb-tile" :src="tile.url"
@@ -1245,7 +1263,16 @@
      + heading, browsable over offline tiles. -->
 <div id="map-view" class="map-view" x-data x-show="$store.s.mapView.open" x-cloak>
   <div id="map-canvas" class="map-view-canvas"></div>
-  <div class="map-dl-ctl" x-show="$store.s.mapTiles.mode === 'sd' && $store.s.mapTiles.format === 'vector'">
+  <div class="map-loading" x-show="$store.s.mapView.loading" x-cloak>
+    <span class="icon-spinner" aria-hidden="true"></span><span>Loading map…</span>
+  </div>
+  <!-- Viewing a track: just a download control, whatever the tile source. -->
+  <div class="map-dl-ctl" x-show="$store.s.mapView.gpx">
+    <span class="map-dl-actions">
+      <button type="button" class="secondary" @click="downloadGpx()">Download track</button>
+    </span>
+  </div>
+  <div class="map-dl-ctl" x-show="!$store.s.mapView.gpx && $store.s.mapTiles.mode === 'sd' && $store.s.mapTiles.format === 'vector'">
     <span class="map-dl-status" x-show="$store.s.mapExt.phase !== 'idle' && !$store.s.mapDraw.on" x-text="mapExtStatus()"></span>
     <template x-if="!$store.s.mapExt.active && !$store.s.mapDraw.on">
       <span class="map-dl-actions">
@@ -2353,7 +2380,7 @@ let state = {
     settings:       false,
   },
   // The full-screen map view (top-bar icon / bubble preview open it).
-  mapView: { open: false },
+  mapView: { open: false, gpx: null, loading: false },
   // Map tile source, mirrored from /api/map/config. mode is off|sd|online;
   // online (the OSM fallback) is opt-in via the Map settings.
   mapTiles: { mode: 'sd', format: 'raster', sdPresent: false, sdAvailable: false,
@@ -2468,6 +2495,8 @@ let state = {
                                     // at least one manual announce since SPA load
   pendingAttachments: [],           // [{ tag, bytes:Uint8Array, filename, mime, eta_ms }]
                                     // staged before send; cleared after send.
+  gpxState: {},                     // gpx filename → 'loading'|'ready'|'failed'
+  gpxThumb: {},                     // gpx filename → rendered thumbnail data URL
   attachmentBlobs: {},              // filename → object URL. Inbound image
                                     // chips auto-fetch on first render and
                                     // cache the result here so SSE-driven
@@ -3065,6 +3094,20 @@ function telemetryLines(m) {
     L.push({ ico: 'ico-pin', txt,
              href: 'https://www.openstreetmap.org/?mlat=' + t.lat + '&mlon=' + t.lon
                  + '#map=16/' + t.lat + '/' + t.lon });
+    // Distance from the peer's position to ours - only when our own GPS has a
+    // fix (the device this app is talking to).
+    const sg = state.system && state.system.sensors && state.system.sensors.gps;
+    if (sg && sg.valid && typeof sg.latitude === 'number') {
+      const km = haversineKm([sg.latitude, sg.longitude], [t.lat, t.lon]);
+      const dtxt = km >= 1 ? km.toFixed(km < 10 ? 1 : 0) + ' km' : Math.round(km * 1000) + ' m';
+      L.push({ ico: 'ico-activity', txt: dtxt + ' away' });
+    }
+    // Course over ground (GPS heading) as a cardinal - distinct from the
+    // magnetometer heading below (where the device is pointing).
+    if (typeof t.bearing_deg === 'number') {
+      const deg = Math.round((t.bearing_deg % 360 + 360) % 360);
+      L.push({ ico: 'ico-compass', txt: 'Heading ' + deg + '° ' + cardinal(deg) });
+    }
   }
   if (typeof t.mag_x === 'number') {
     // Uncompensated heading from the horizontal field components -
@@ -3177,6 +3220,7 @@ const MAP_TRACK_MAX = 300;
 let _map = null;                 // the single Leaflet map instance
 const _mapLayers = {};           // peer hex -> { marker, track }
 const _mapTracks = {};           // peer hex -> [{lat, lon, bearing}] live history
+let _gpxLayer = null;            // the track drawn when the map is opened from a GPX
 
 // Great-circle bearing from point a to b ([lat, lon]), 0..360.
 function bearingBetween(a, b) {
@@ -3185,6 +3229,14 @@ function bearingBetween(a, b) {
   const x = Math.cos(a[0] * r) * Math.sin(b[0] * r)
           - Math.sin(a[0] * r) * Math.cos(b[0] * r) * Math.cos((b[1] - a[1]) * r);
   return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+// Great-circle distance in km between two [lat, lon] points.
+function haversineKm(a, b) {
+  const r = Math.PI / 180, R = 6371;
+  const dlat = (b[0] - a[0]) * r, dlon = (b[1] - a[1]) * r;
+  const s = Math.sin(dlat / 2) ** 2
+          + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dlon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
 }
 function _peerName(peer) {
   const c = state.conversations[peer];
@@ -3202,17 +3254,132 @@ function peerLatestPosition(peer) {
   }
   return null;
 }
-// The peer's track: positions from their messages (chronological) plus any
-// live points accumulated this session, capped.
-function peerTrackPoints(peer) {
+// ---- GPX tracks -----------------------------------------------------------
+// A track renders the same whether the device synthesised the GPX from a live
+// telemetry feed or a peer sent a real .gpx as an attachment.
+function isGpxAttachment(a) {
+  if (!a) return false;
+  const n = (a.display_name || a.filename || '').toLowerCase();
+  return (a.mime || '').toLowerCase().includes('gpx') || n.endsWith('.gpx');
+}
+function messageGpx(m) {
+  return ((m && m.attachments) || []).find(isGpxAttachment) || null;
+}
+// Parse GPX trkpt/rtept/wpt into [[lat,lon],...]. Namespace-tolerant; anything
+// it can't read yields an empty track rather than throwing.
+function parseGpx(text) {
   const pts = [];
-  const c = state.conversations[peer];
-  if (c) for (const m of c.msgs) {
-    const t = m.tele;
-    if (t && typeof t.lat === 'number') pts.push([t.lat, t.lon]);
+  try {
+    const doc = new DOMParser().parseFromString(text, 'application/xml');
+    if (doc.getElementsByTagName('parsererror').length) return pts;
+    for (const el of doc.getElementsByTagName('*')) {
+      const ln = (el.localName || el.tagName || '').toLowerCase();
+      if (ln !== 'trkpt' && ln !== 'rtept' && ln !== 'wpt') continue;
+      const lat = parseFloat(el.getAttribute('lat'));
+      const lon = parseFloat(el.getAttribute('lon'));
+      if (Number.isFinite(lat) && Number.isFinite(lon)) pts.push([lat, lon]);
+    }
+  } catch (e) { /* malformed GPX -> empty track */ }
+  return pts;
+}
+// Bubble thumbnail: fetch + parse a GPX once, render a static basemap (the
+// protomaps Static renderer - no Leaflet instance, so no per-bubble map to
+// leak) with the track drawn on top, cache it as a data URL. state.gpxState
+// drives the reactive render; state.gpxThumb holds the image.
+const GPX_THUMB_W = 240, GPX_THUMB_H = 132, GPX_THUMB_PAD = 22;
+// Track line amber, start green, end red - three distinct colours so the end
+// marker doesn't blend into the line. Shared by the bubble thumbnail and the
+// full map view.
+const GPX_TRACK_COLOR = '#f0883e', GPX_START_COLOR = '#3fb950', GPX_END_COLOR = '#f85149';
+// Map config + layer list are normally fetched when the map view opens; a
+// bubble thumbnail needs them too (to pick the basemap layer), so load once.
+let _mapMetaPromise = null;
+function ensureMapMeta() {
+  if (!_mapMetaPromise) _mapMetaPromise = (async () => {
+    await fetchMapConfig();
+    if (state.mapTiles.mode === 'sd' && state.mapTiles.format === 'vector') await fetchMapLayers();
+  })().catch(() => { _mapMetaPromise = null; });
+  return _mapMetaPromise;
+}
+async function loadGpxThumb(a, force) {
+  if (!a || !a.filename) return;
+  const f = a.filename;
+  if (!force && (state.gpxState[f] === 'loading' || state.gpxState[f] === 'ready')) return;
+  state.gpxState[f] = 'loading';
+  try {
+    await ensureMapMeta();
+    const { blob } = await state.transport.fetchAttachment(state.identityId, f);
+    const pts = parseGpx(await blob.text());
+    if (!pts.length) { state.gpxState[f] = 'failed'; return; }
+    state.gpxThumb[f] = await _renderGpxThumb(pts);
+    state.gpxState[f] = 'ready';
+  } catch (e) { state.gpxState[f] = 'failed'; }
+}
+function gpxState(a) { return (a && state.gpxState[a.filename]) || 'idle'; }
+// Slippy-map world pixel of a lat/lon at zoom z (matches the protomaps Static
+// renderer's projection, so the track overlays the basemap exactly).
+function _gpxMerc(lat, lon, z) {
+  const s = 256 * Math.pow(2, z);
+  const sy = Math.sin(lat * Math.PI / 180);
+  return [(lon + 180) / 360 * s, (0.5 - Math.log((1 + sy) / (1 - sy)) / (4 * Math.PI)) * s];
+}
+function _gpxBbox(pts) {
+  let a = 90, b = -90, c = 180, d = -180;
+  for (const [la, lo] of pts) { if (la < a) a = la; if (la > b) b = la; if (lo < c) c = lo; if (lo > d) d = lo; }
+  return { minLat: a, maxLat: b, minLon: c, maxLon: d, cLat: (a + b) / 2, cLon: (c + d) / 2 };
+}
+// Fractional zoom that fits the track's bbox into the padded inner box, so the
+// start/end markers always sit clear of the edges (integer zoom-to-fit could
+// leave the bbox spanning almost the whole width).
+function _gpxFitZoom(bb, w, h, pad) {
+  const innerW = Math.max(1, w - 2 * pad), innerH = Math.max(1, h - 2 * pad);
+  const p1 = _gpxMerc(bb.maxLat, bb.minLon, 0), p2 = _gpxMerc(bb.minLat, bb.maxLon, 0);
+  const spanX = Math.max(1e-6, Math.abs(p2[0] - p1[0])), spanY = Math.max(1e-6, Math.abs(p2[1] - p1[1]));
+  const z = Math.min(Math.log2(innerW / spanX), Math.log2(innerH / spanY));
+  return Math.max(0, Math.min(18, z));
+}
+// The detail layer whose bounds contain the track centre (highest max zoom),
+// else the world base - so the thumbnail shows streets where we have them.
+function _gpxBaseLayer(bb) {
+  const layers = state.mapTiles.layers || [];
+  let best = null;
+  for (const ly of layers) {
+    if (ly.id === 'world' || typeof ly.s !== 'number') continue;
+    if (bb.cLat >= ly.s && bb.cLat <= ly.n && bb.cLon >= ly.w && bb.cLon <= ly.e
+        && (!best || (ly.maxzoom || 0) > (best.maxzoom || 0))) best = ly;
   }
-  for (const p of (_mapTracks[peer] || [])) pts.push([p.lat, p.lon]);
-  return pts.slice(-MAP_TRACK_MAX);
+  return best || layers.find(l => l.id === 'world') || null;
+}
+async function _renderGpxThumb(pts) {
+  const W = GPX_THUMB_W, H = GPX_THUMB_H, dpr = window.devicePixelRatio || 1;
+  const bb = _gpxBbox(pts), z = _gpxFitZoom(bb, W, H, GPX_THUMB_PAD);
+  const canvas = document.createElement('canvas');
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  // Static vector basemap (best layer for the area). Failure leaves the app
+  // background, so the track still shows.
+  const ly = (state.mapTiles.mode === 'sd' && state.mapTiles.format === 'vector') ? _gpxBaseLayer(bb) : null;
+  if (ly && window.protomapsL && window.protomapsL.Static) {
+    try {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const src = new window.protomapsL.Static({
+        url: layerUrl(ly.file) + '&v=' + (ly.size || 0), flavor: 'dark', lang: 'en',
+        maxDataZoom: ly.maxzoom > 0 ? ly.maxzoom : 15 });
+      await src.drawContext(ctx, W, H, { x: bb.cLon, y: bb.cLat }, z);
+    } catch (e) { /* basemap unavailable - track on the app background */ }
+  }
+  // Track overlay, projected to match the basemap.
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const cen = _gpxMerc(bb.cLat, bb.cLon, z);
+  const px = ([la, lo]) => { const w = _gpxMerc(la, lo, z); return [w[0] - cen[0] + W / 2, w[1] - cen[1] + H / 2]; };
+  ctx.beginPath();
+  pts.forEach((p, i) => { const q = px(p); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
+  ctx.lineJoin = ctx.lineCap = 'round'; ctx.lineWidth = 2.5; ctx.strokeStyle = GPX_TRACK_COLOR; ctx.stroke();
+  const dot = (p, col) => { const q = px(p); ctx.beginPath(); ctx.arc(q[0], q[1], 4, 0, 2 * Math.PI);
+    ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke(); };
+  dot(pts[0], GPX_START_COLOR);
+  if (pts.length > 1) dot(pts[pts.length - 1], GPX_END_COLOR);
+  return canvas.toDataURL('image/png');
 }
 // A position marker: a heading arrow when we know the bearing, else a dot.
 // Live peers are red, last-known are blue.
@@ -3275,15 +3442,38 @@ function _onMapTileErr() {
 }
 // (Re)build the base layers for the current source. Vector + SD stacks one
 // layer per file: the world base, then each downloaded area clipped on top.
+// Map-view loading indicator: a spinner pill while base-layer tiles are still
+// being fetched (or the GPX is loading), so it's clear the map isn't done.
+// Each layer carries its own loading flag (set from Leaflet GridLayer
+// 'loading'/'load' events); the indicator is on if any current layer is
+// loading. Recomputing over the live layer set (not a counter) means a layer
+// removed mid-load can't leave the spinner stuck; a safety timeout is a final
+// backstop if a 'load' never arrives.
+let _gpxLoading = false, _mapLoadTimer = null;
+function _recomputeMapLoading() {
+  const on = _gpxLoading || (_map && _map._urtnLayers || []).some(l => l && l._urtnLoading);
+  state.mapView.loading = on;
+  clearTimeout(_mapLoadTimer);
+  if (on) _mapLoadTimer = setTimeout(() => {
+    (_map && _map._urtnLayers || []).forEach(l => { if (l) l._urtnLoading = false; });
+    _gpxLoading = false; state.mapView.loading = false;
+  }, 25000);
+}
+function _bindTileLoad(lyr) {
+  lyr._urtnLoading = true;   // assume loading until its first 'load'
+  lyr.on('loading', () => { lyr._urtnLoading = true; _recomputeMapLoading(); });
+  lyr.on('load',    () => { lyr._urtnLoading = false; _recomputeMapLoading(); });
+}
 function _mapApplyBase() {
   if (!_map) return;
   (_map._urtnLayers || []).forEach(l => _map.removeLayer(l));
   _map._urtnLayers = [];
   const mt = state.mapTiles;
-  if (mt.mode === 'off') return;
+  if (mt.mode === 'off') { _recomputeMapLoading(); return; }
   if (mt.mode === 'online' || mt.format === 'raster') {
     const base = _rasterLayer();
-    base.on('tileerror', _onMapTileErr); base.addTo(_map); _map._urtnLayers.push(base);
+    base.on('tileerror', _onMapTileErr); _bindTileLoad(base); base.addTo(_map); _map._urtnLayers.push(base);
+    _recomputeMapLoading();
     return;
   }
   if (!window.protomapsL) return;
@@ -3299,9 +3489,11 @@ function _mapApplyBase() {
   for (const ly of layers) {
     const lyr = _vectorLayer(ly, ly.id === 'world');
     lyr.on('tileerror', _onMapTileErr);
+    _bindTileLoad(lyr);
     lyr.setZIndex(z++); lyr.addTo(_map);
     _map._urtnLayers.push(lyr);
   }
+  _recomputeMapLoading();
 }
 function _removePeerLayer(peer) {
   const ly = _mapLayers[peer];
@@ -3314,6 +3506,10 @@ function _removePeerLayer(peer) {
 // otherwise fit to all markers (first open only).
 function mapRefresh(focusPeer, focusLatLon, fit) {
   const L = window.L; if (!_map) return;
+  // Viewing a single track (opened from a message): show only that track, not
+  // the per-peer position markers - they would stack on the track's own
+  // start/end (the live-position arrow sits exactly on the last track point).
+  if (state.mapView.gpx) { for (const peer of Object.keys(_mapLayers)) _removePeerLayer(peer); return; }
   const seen = new Set();
   const bounds = [];
   for (const peer of Object.keys(state.conversations)) {
@@ -3321,21 +3517,22 @@ function mapRefresh(focusPeer, focusLatLon, fit) {
     if (!latest) { _removePeerLayer(peer); continue; }
     seen.add(peer);
     const latlng = [latest.tele.lat, latest.tele.lon];
-    const pts = peerTrackPoints(peer);
+    // Heading: the reported course, else inferred from the last live step.
+    const live = _mapTracks[peer] || [];
     let heading = (typeof latest.tele.bearing_deg === 'number') ? latest.tele.bearing_deg : undefined;
-    if (heading === undefined && pts.length >= 2) heading = bearingBetween(pts[pts.length - 2], latlng);
-    const color = latest.live ? '#f85149' : '#58a6ff';
+    if (heading === undefined && live.length >= 2)
+      heading = bearingBetween([live[live.length - 2].lat, live[live.length - 2].lon], latlng);
     let ly = _mapLayers[peer];
     if (!ly) {
+      // Markers only - the route lives in the message's GPX track, shown when
+      // the map is opened from that message, not stitched onto the global map.
       ly = _mapLayers[peer] = {
-        track: L.polyline(pts, { color, weight: 2, opacity: 0.6 }).addTo(_map),
         marker: L.marker(latlng, { icon: _peerIcon(heading, latest.live) }).addTo(_map),
       };
       ly.marker.bindPopup(_peerPopup(peer, latest));
     } else {
       ly.marker.setLatLng(latlng).setIcon(_peerIcon(heading, latest.live));
       ly.marker.setPopupContent(_peerPopup(peer, latest));
-      ly.track.setLatLngs(pts).setStyle({ color });
     }
     bounds.push(latlng);
   }
@@ -3345,17 +3542,46 @@ function mapRefresh(focusPeer, focusLatLon, fit) {
   else if (fit && bounds.length) _map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
   _map.invalidateSize();
 }
-// Open the map view. opts: { peer, latlon } to centre on a shared position.
+// Draw a GPX track (polyline + start/end dots), fetching + parsing the
+// attachment bytes. Replaces any previously drawn GPX track.
+async function _renderGpxOnMap(gpx) {
+  const L = window.L; if (!_map || !L) return;
+  if (_gpxLayer) { _map.removeLayer(_gpxLayer); _gpxLayer = null; }
+  if (!gpx) return;
+  _gpxLoading = true; _recomputeMapLoading();
+  try {
+    let text;
+    try {
+      const { blob } = await state.transport.fetchAttachment(state.identityId, gpx.filename);
+      text = await blob.text();
+    } catch (e) { toast('Could not load track: ' + (e.message || e), 'error'); return; }
+    const pts = parseGpx(text);
+    if (!pts.length) { toast('Track has no points', 'warn'); return; }
+    const grp = L.layerGroup();
+    if (pts.length >= 2) L.polyline(pts, { color: GPX_TRACK_COLOR, weight: 3, opacity: 0.9 }).addTo(grp);
+    L.circleMarker(pts[0], { radius: 5, color: '#fff', weight: 2, fillColor: GPX_START_COLOR, fillOpacity: 1 }).addTo(grp);
+    if (pts.length >= 2)
+      L.circleMarker(pts[pts.length - 1], { radius: 5, color: '#fff', weight: 2, fillColor: GPX_END_COLOR, fillOpacity: 1 }).addTo(grp);
+    grp.addTo(_map);
+    _gpxLayer = grp;
+    if (pts.length >= 2) _map.fitBounds(L.latLngBounds(pts).pad(0.2));
+    else _map.setView(pts[0], state.mapTiles.defaultZoom || 15);
+  } finally { _gpxLoading = false; _recomputeMapLoading(); }
+}
+// Open the map view. opts: { peer, latlon } to centre on a shared position,
+// or { gpx } (an attachment meta) to draw a track.
 function openMapView(opts) {
   opts = opts || {};
   state.mapView.open = true;
+  state.mapView.gpx = opts.gpx || null;
   _mapTileErrorShown = false;
   setTimeout(async () => {
     _mapInit();
     await fetchMapConfig();
     if (state.mapTiles.mode === 'sd' && state.mapTiles.format === 'vector') await fetchMapLayers();
     _mapApplyBase();
-    mapRefresh(opts.peer, opts.latlon, !opts.peer && !opts.latlon);
+    mapRefresh(opts.peer, opts.latlon, !opts.peer && !opts.latlon && !opts.gpx);
+    if (opts.gpx) await _renderGpxOnMap(opts.gpx);
     refreshMapExtract();   // resume the progress strip if a download is running
     // A definite config reason (no card / no maps) trumps a per-tile error,
     // so report it and suppress the tileerror toast.
@@ -3363,7 +3589,17 @@ function openMapView(opts) {
     if (reason) { _mapTileErrorShown = true; toast(reason, 'warn'); }
   }, 60);
 }
-function closeMapView() { _clearHighlight(); state.mapView.open = false; }
+function closeMapView() {
+  _clearHighlight();
+  if (_gpxLayer && _map) { _map.removeLayer(_gpxLayer); _gpxLayer = null; }
+  _gpxLoading = false; clearTimeout(_mapLoadTimer); state.mapView.loading = false;
+  state.mapView.gpx = null;
+  state.mapView.open = false;
+}
+// Save the currently-open GPX track to disk (reuses the attachment download).
+function downloadGpx() {
+  if (state.mapView.gpx) downloadAttachment(state.identityId, state.mapView.gpx);
+}
 // Live feed update: extend the peer's track and refresh the open map.
 function mapLive(ev) {
   if (!ev.tele || typeof ev.tele.lat !== 'number') return;
@@ -4500,6 +4736,11 @@ function attachmentMode(a) {
   const hasBlob = /^[0-9a-f]+_[0-9a-f]+_\d+\.bin$/.test(a.filename || '')
     || (!!a.filename && a.filename in state.attachmentBlobs);
   if (hasBlob && a.backend === 'sd' && state.sdPresent === false) return 'sd_unreachable';
+  // A GPX renders as a map track (fetched on demand), not a file chip.
+  if (isGpxAttachment(a)) {
+    if (a.backend === 'sd' && state.sdPresent === false) return 'sd_unreachable';
+    return 'gpx';
+  }
   if (hasBlob && (a.tag === 6 || a.tag === 7)) {
     const cached = a.filename in state.attachmentBlobs;
     if (state.prefs.autoDownloadAttachments || cached) {

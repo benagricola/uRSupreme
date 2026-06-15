@@ -791,9 +791,11 @@ namespace Web {
 #endif
       on_http(HTTP_GET, ApiRoutes::DIAG_TRANSPORT, handle_diag_transport);
       on_http(HTTP_GET, ApiRoutes::DIAG_ROUTES, handle_diag_routes);
+#if defined(URTN_DISPLAY_DIAG)
       // Live OLED framebuffer + messenger nav injection (testing).
       on_http(HTTP_GET, ApiRoutes::DIAG_DISPLAY, handle_diag_display_get);
       on_json_post(ApiRoutes::DIAG_DISPLAY,     handle_diag_display_post);
+#endif
 #if defined(URTN_HEAP_TRACE)
       on_http(HTTP_GET, ApiRoutes::DIAG_HEAPTRACE, handle_diag_heaptrace);
 #endif

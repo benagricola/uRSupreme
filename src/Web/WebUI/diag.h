@@ -365,6 +365,7 @@
       send_json(req, 200, doc);
     }
 
+#if defined(URTN_DISPLAY_DIAG)
     // GET /api/diag/display - the live OLED framebuffer as hex, plus
     // its geometry and the messenger's current page. The buffer is
     // SH1106 page-organized 1 bpp (128 cols x 8 pages, byte = 8
@@ -451,3 +452,4 @@
         send_error(req, 404, "not_available");
       #endif
     }
+#endif  // URTN_DISPLAY_DIAG

@@ -3301,6 +3301,9 @@ function ensureMapMeta() {
   })().catch(() => { _mapMetaPromise = null; });
   return _mapMetaPromise;
 }
+// Parsed points per GPX, in memory. Seeded once from the file; a live feed
+// extends it from the position carried in each telemetry_update (no re-fetch).
+const _gpxPts = {};
 async function loadGpxThumb(a, force) {
   if (!a || !a.filename) return;
   const f = a.filename;
@@ -3311,9 +3314,24 @@ async function loadGpxThumb(a, force) {
     const { blob } = await state.transport.fetchAttachment(state.identityId, f);
     const pts = parseGpx(await blob.text());
     if (!pts.length) { state.gpxState[f] = 'failed'; return; }
+    _gpxPts[f] = pts;
     state.gpxThumb[f] = await _renderGpxThumb(pts);
     state.gpxState[f] = 'ready';
   } catch (e) { state.gpxState[f] = 'failed'; }
+}
+// A live sample for an open/visible track: append the point the WS event
+// already carried (no file download) and redraw - the thumbnail from the
+// in-memory points, the open full track by extending its polyline.
+async function gpxLiveAppend(filename, lat, lon) {
+  const pts = _gpxPts[filename];
+  if (!pts) return;                       // not loaded yet; x-init will fetch it
+  const last = pts[pts.length - 1];
+  if (last && last[0] === lat && last[1] === lon) return;   // dedupe identical
+  pts.push([lat, lon]);
+  if (pts.length > 2000) pts.splice(0, pts.length - 2000);   // bound RAM
+  if (state.gpxState[filename] === 'ready')
+    state.gpxThumb[filename] = await _renderGpxThumb(pts);
+  if (_gpxLayer && _gpxLayer._urtnFile === filename) _gpxExtendLine(lat, lon);
 }
 function gpxState(a) { return (a && state.gpxState[a.filename]) || 'idle'; }
 // Slippy-map world pixel of a lat/lon at zoom z (matches the protomaps Static
@@ -3557,16 +3575,32 @@ async function _renderGpxOnMap(gpx) {
     } catch (e) { toast('Could not load track: ' + (e.message || e), 'error'); return; }
     const pts = parseGpx(text);
     if (!pts.length) { toast('Track has no points', 'warn'); return; }
+    _gpxPts[gpx.filename] = pts;
     const grp = L.layerGroup();
-    if (pts.length >= 2) L.polyline(pts, { color: GPX_TRACK_COLOR, weight: 3, opacity: 0.9 }).addTo(grp);
+    const line = (pts.length >= 2)
+      ? L.polyline(pts, { color: GPX_TRACK_COLOR, weight: 3, opacity: 0.9 }).addTo(grp) : null;
     L.circleMarker(pts[0], { radius: 5, color: '#fff', weight: 2, fillColor: GPX_START_COLOR, fillOpacity: 1 }).addTo(grp);
-    if (pts.length >= 2)
-      L.circleMarker(pts[pts.length - 1], { radius: 5, color: '#fff', weight: 2, fillColor: GPX_END_COLOR, fillOpacity: 1 }).addTo(grp);
+    const end = (pts.length >= 2)
+      ? L.circleMarker(pts[pts.length - 1], { radius: 5, color: '#fff', weight: 2, fillColor: GPX_END_COLOR, fillOpacity: 1 }).addTo(grp)
+      : null;
     grp.addTo(_map);
+    grp._urtnFile = gpx.filename; grp._urtnLine = line; grp._urtnEnd = end;
     _gpxLayer = grp;
     if (pts.length >= 2) _map.fitBounds(L.latLngBounds(pts).pad(0.2));
     else _map.setView(pts[0], state.mapTiles.defaultZoom || 15);
   } finally { _gpxLoading = false; _recomputeMapLoading(); }
+}
+// Extend the open track's polyline + move its end marker to a live point, with
+// no re-fetch and no re-fit (the view stays put as the track grows).
+function _gpxExtendLine(lat, lon) {
+  const L = window.L; if (!_gpxLayer || !L) return;
+  const ll = [lat, lon];
+  if (_gpxLayer._urtnLine) _gpxLayer._urtnLine.addLatLng(ll);
+  else _gpxLayer._urtnLine = L.polyline(_gpxPts[_gpxLayer._urtnFile] || [ll],
+    { color: GPX_TRACK_COLOR, weight: 3, opacity: 0.9 }).addTo(_gpxLayer);   // 1 pt -> line
+  if (_gpxLayer._urtnEnd) _gpxLayer._urtnEnd.setLatLng(ll);
+  else _gpxLayer._urtnEnd = L.circleMarker(ll,
+    { radius: 5, color: '#fff', weight: 2, fillColor: GPX_END_COLOR, fillOpacity: 1 }).addTo(_gpxLayer);
 }
 // Open the map view. opts: { peer, latlon } to centre on a shared position,
 // or { gpx } (an attachment meta) to draw a track.
@@ -7363,6 +7397,27 @@ function dispatchEvent(ev) {
       f.updatedAtMs = Date.now();
     } else {
       refreshTelemetryShares();   // feed we didn't know about yet
+    }
+    // Reflect the latest reading on the message that started this live feed -
+    // the most recent telemetry-bearing message from this peer - so its bubble
+    // tracks the live state like the top strip, and shows the last value once
+    // the feed ends. (Browser-side; the firmware persists the latest sample so
+    // it survives a reload.)
+    const conv = state.conversations[ev.peer];
+    if (conv && ev.tele && typeof ev.tele.lat === 'number') {
+      for (let i = conv.msgs.length - 1; i >= 0; i--) {
+        if (conv.msgs[i].tele) { conv.msgs[i].tele = ev.tele; break; }
+      }
+      if (state.openPeer === ev.peer) renderThread();
+    }
+    // The position in this event is the new track point - append it to the
+    // peer's live GPX in memory and redraw (thumbnail + open full track), with
+    // no file download. The firmware writes the same point to disk for reload;
+    // here we just extend what we already have. Only the most recent GPX-bearing
+    // message from the peer (the live one) is touched.
+    if (conv && typeof ev.tele.lat === 'number') for (let i = conv.msgs.length - 1; i >= 0; i--) {
+      const g = messageGpx(conv.msgs[i]);
+      if (g) { gpxLiveAppend(g.filename, ev.tele.lat, ev.tele.lon); break; }
     }
     mapLive(ev);                  // extend the peer's track + refresh the map
   } else if (ev.type === 'announce_seen') {

@@ -137,7 +137,21 @@ inline bool begin() {
 #ifndef URTN_SD_SPI_HZ
 #define URTN_SD_SPI_HZ 10000000
 #endif
-  if (!SD.begin(SD_CS, *bus, URTN_SD_SPI_HZ)) {
+  // Max simultaneously-open files. The Arduino default (5) is below a
+  // browser's per-host parallel-connection limit (Chrome/Firefox open up
+  // to 6), and each in-flight map-tile range response holds an SD File
+  // open for the whole stream, so the 6th concurrent open failed with a
+  // spurious 404 (blank tiles). The FATFS fd array is PSRAM-backed
+  // (CONFIG_FATFS_ALLOC_PREFER_EXTRAM=y, ~552 B/file, ~16 KB at 30), so
+  // PSRAM is not the limit. The real ceiling is the global VFS descriptor
+  // table (FD_SETSIZE = 64), shared by lwip sockets
+  // (CONFIG_LWIP_MAX_SOCKETS = 16) and the 3 std streams. 30 leaves the
+  // sockets comfortable headroom (30 + 16 + 3 = 49 < 64) while covering
+  // multiple browser tabs plus device-side file ops (persistence,
+  // download/extract writers, log appends). Default mountpoint "/sd"
+  // passed through to reach the max_files argument.
+  static constexpr uint8_t URTN_SD_MAX_OPEN_FILES = 30;
+  if (!SD.begin(SD_CS, *bus, URTN_SD_SPI_HZ, "/sd", URTN_SD_MAX_OPEN_FILES)) {
     _detail::last_status_ref() = "sd_begin_failed";
     NOTICE("SDCard: SD.begin() failed - card absent, wrong pinout, or unsupported FS (try FAT32)");
     _detail::present_ref() = false;

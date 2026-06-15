@@ -41,19 +41,8 @@
         }
       }
       doc["sd_available"]      = card && raster_ok;
-      const bool pm_ok = card && Storage::SDCard::exists(cfg.pmtiles.c_str());
-      doc["pmtiles_available"] = pm_ok;
-      // Report the basemap's own max zoom (header byte 101) so the web app
-      // can overzoom past it (render the coarsest data scaled) instead of
-      // going blank when zoomed in beyond the data.
-      if (pm_ok) {
-        File fp = Storage::SDCard::open_read(cfg.pmtiles.c_str());
-        if (fp) {
-          uint8_t hb[110]; size_t got;
-          { Storage::SDCard::BusGuard _bg; got = fp.read(hb, sizeof(hb)); fp.close(); }
-          if (got >= 102 && memcmp(hb, "PMTiles", 7) == 0) doc["pmtiles_maxzoom"] = (int)hb[101];
-        }
-      }
+      // Vector layer presence + per-layer extents/zoom are reported by
+      // GET /api/map/layers; config only carries the source settings.
       send_json(req, 200, doc);
     }
 
@@ -143,25 +132,69 @@
       req->send(resp);
     }
 
-    // GET /api/map/basemap.pmtiles - serve the configured vector basemap
-    // (.pmtiles) from SD with HTTP range support, which protomaps-leaflet
-    // relies on (it reads the header, directory and tiles via Range). The
-    // path ends in .pmtiles so protomaps-leaflet treats it as an archive to
-    // range-read, not a {z}/{x}/{y} tile template. The body is the requested
-    // byte slice, streamed from SD off-loop with the bus guard.
-    static void handle_map_pmtiles(AsyncWebServerRequest* req) {
-      {
-        RnsLockGuard _g;
-        if (require_auth(req).empty()) return;
+    // All vector layers live here: world.pmtiles (the rough base) plus one
+    // <name>.pmtiles per downloaded detail area. The web app stacks them,
+    // each clipped to its own bounds, so the world shows everywhere and
+    // street detail shows wherever an area was downloaded.
+    static constexpr const char* MAP_LAYERS_DIR = "/maps/layers";
+    static constexpr int MAP_MAX_LAYERS = 64;
+
+    // A layer file is "<stem>.pmtiles" where stem is letters/digits/_/-.
+    // Rejecting anything else also blocks path traversal through the param.
+    static bool valid_layer_file(const String& f) {
+      int ext = 0;
+      if (f.endsWith(".pmtiles")) ext = 8;       // the archive
+      else if (f.endsWith(".json")) ext = 5;     // the polygon sidecar
+      else return false;
+      const int stem = f.length() - ext;
+      if (stem <= 0 || stem > 48) return false;
+      for (int i = 0; i < stem; i++) {
+        char ch = f[i];
+        if (!(isalnum((unsigned char)ch) || ch == '_' || ch == '-')) return false;
       }
-      if (!Storage::SDCard::present()) { send_error(req, 404, "no_sd"); return; }
-      const std::string path = Web::MapConfig::config().pmtiles;
-      if (!Storage::SDCard::exists(path.c_str())) { send_error(req, 404, "pmtiles_not_found"); return; }
-      auto fp = std::make_shared<File>(Storage::SDCard::open_read(path.c_str()));
-      if (!*fp) { send_error(req, 500, "pmtiles_open_failed"); return; }
+      return true;
+    }
+    // Turn a user-typed name into a safe layer stem (or "" if nothing usable).
+    static std::string sanitize_layer_id(const char* in) {
+      std::string out;
+      if (in) for (const char* p = in; *p && out.size() < 48; p++) {
+        char ch = *p;
+        if (isalnum((unsigned char)ch) || ch == '-') out += ch;
+        else if (ch == ' ' || ch == '_')            out += '_';
+      }
+      while (!out.empty() && out.front() == '_') out.erase(out.begin());
+      while (!out.empty() && out.back()  == '_') out.pop_back();
+      return out;
+    }
+    // Short stable id for an unnamed area: FNV-1a over the geometry that
+    // defines it (bbox + zoom + any polygon vertices). The same area
+    // re-downloads to the same file; a different shape gets a new one. Opaque
+    // by design - the manage list identifies areas by their coordinate extent.
+    static std::string area_hash_id(double w, double s, double e, double n, int maxz,
+                                    const std::vector<double>& plon,
+                                    const std::vector<double>& plat) {
+      uint32_t h = 2166136261u;
+      auto mix = [&](double d) {
+        char buf[32];
+        int len = snprintf(buf, sizeof(buf), "%.5f", d);
+        for (int i = 0; i < len; i++) { h ^= (uint8_t)buf[i]; h *= 16777619u; }
+      };
+      mix(w); mix(s); mix(e); mix(n); mix((double)maxz);
+      for (size_t i = 0; i < plon.size(); i++) { mix(plon[i]); mix(plat[i]); }
+      char id[16]; snprintf(id, sizeof(id), "area-%08x", (unsigned)h);
+      return id;
+    }
+
+    // Stream a .pmtiles file from SD with HTTP range support (protomaps-leaflet
+    // reads header/dir/tiles via Range). Body is the requested byte slice,
+    // streamed off-loop with the bus guard. Shared by every layer.
+    static void serve_pmtiles_range(AsyncWebServerRequest* req, const char* path) {
+      // Open directly (no separate exists() probe - one fewer SD op per
+      // request under the burst of parallel tile reads). A missing file or a
+      // pulled card both surface as a failed open -> 404.
+      auto fp = std::make_shared<File>(Storage::SDCard::open_read(path));
+      if (!*fp) { send_error(req, 404, "layer_not_found"); return; }
       const size_t total = (size_t)fp->size();
-      // A single byte range ("bytes=start-end"); protomaps-leaflet always
-      // sends one. No Range -> serve the whole file (rare).
       size_t start = 0, end = (total ? total - 1 : 0);
       bool ranged = false;
       if (req->hasHeader("Range")) {
@@ -202,7 +235,13 @@
         return;
       }
       resp->addHeader("Accept-Ranges", "bytes");
-      resp->addHeader("Cache-Control", "no-store");   // the basemap file can be replaced
+      // Cache hard: a layer file is immutable for a given name + size, and the
+      // SPA appends the size as a cache-buster so a re-download is fetched
+      // fresh. Without this the browser re-requested every range on each
+      // pan/zoom, hammering the SD bus and causing transient misses.
+      char etag[20]; snprintf(etag, sizeof(etag), "\"%u\"", (unsigned)total);
+      resp->addHeader("ETag", etag);
+      resp->addHeader("Cache-Control", "public, max-age=604800");
       if (ranged) {
         resp->setCode(206);
         char cr[64];
@@ -210,6 +249,86 @@
         resp->addHeader("Content-Range", cr);
       }
       req->send(resp);
+    }
+
+    // GET /api/map/layer/{file} - serve one vector layer (world.pmtiles or a
+    // downloaded area). The path ends in .pmtiles so protomaps-leaflet treats
+    // it as an archive to range-read, not a {z}/{x}/{y} template.
+    static void handle_map_layer(AsyncWebServerRequest* req) {
+      { RnsLockGuard _g; if (require_auth(req).empty()) return; }
+      if (!Storage::SDCard::present()) { send_error(req, 404, "no_sd"); return; }
+      const String f = req->pathArg(0);
+      if (!valid_layer_file(f)) { send_error(req, 400, "bad_layer"); return; }
+      char path[96];
+      snprintf(path, sizeof(path), "%s/%s", MAP_LAYERS_DIR, f.c_str());
+      serve_pmtiles_range(req, path);
+    }
+
+    // DELETE /api/map/layer/{file} - remove a downloaded layer.
+    static void handle_map_layer_delete(AsyncWebServerRequest* req) {
+      { RnsLockGuard _g; if (require_auth(req).empty()) return; }
+      if (!Storage::SDCard::present()) { send_error(req, 404, "no_sd"); return; }
+      const String f = req->pathArg(0);
+      if (!valid_layer_file(f)) { send_error(req, 400, "bad_layer"); return; }
+      char path[96];
+      snprintf(path, sizeof(path), "%s/%s", MAP_LAYERS_DIR, f.c_str());
+      {
+        Storage::SDCard::BusGuard g;
+        SD.remove(path);
+        // remove the polygon sidecar alongside the archive
+        if (f.endsWith(".pmtiles")) {
+          char side[96];
+          snprintf(side, sizeof(side), "%s/%s.json", MAP_LAYERS_DIR,
+                   f.substring(0, f.length() - 8).c_str());
+          SD.remove(side);
+        }
+      }
+      Common::PsramJsonDocument doc; doc["ok"] = true;
+      send_json(req, 200, doc);
+    }
+
+    // GET /api/map/layers - every layer file with its extent (from the pmtiles
+    // header), zoom range and size, so the web app can stack and manage them.
+    // One shallow dir scan + a small header read per file, bounded by
+    // MAP_MAX_LAYERS, only on this infrequent call.
+    static void handle_map_layers(AsyncWebServerRequest* req) {
+      { RnsLockGuard _g; if (require_auth(req).empty()) return; }
+      Common::PsramJsonDocument doc;
+      const bool card = Storage::SDCard::present();
+      doc["sd_present"] = card;
+      JsonArray arr = doc["layers"].to<JsonArray>();
+      if (card) {
+        Storage::SDCard::BusGuard g;
+        File dir = SD.open(MAP_LAYERS_DIR);
+        if (dir && dir.isDirectory()) {
+          int n = 0;
+          for (File f = dir.openNextFile(); f && n < MAP_MAX_LAYERS; f = dir.openNextFile()) {
+            String nm = f.name();
+            int slash = nm.lastIndexOf('/'); if (slash >= 0) nm = nm.substring(slash + 1);
+            if (!f.isDirectory() && nm.endsWith(".pmtiles")) {
+              uint8_t hb[128]; size_t got = f.read(hb, sizeof(hb));
+              if (got >= 118 && memcmp(hb, "PMTiles", 7) == 0) {
+                auto i32 = [&](int o) {
+                  return (int32_t)((uint32_t)hb[o] | ((uint32_t)hb[o+1] << 8) |
+                                   ((uint32_t)hb[o+2] << 16) | ((uint32_t)hb[o+3] << 24));
+                };
+                JsonObject o = arr.add<JsonObject>();
+                o["file"]    = nm;
+                o["id"]      = nm.substring(0, nm.length() - 8);
+                o["size"]    = (double)f.size();
+                o["minzoom"] = (int)hb[100];
+                o["maxzoom"] = (int)hb[101];
+                o["w"] = i32(102) / 1e7; o["s"] = i32(106) / 1e7;
+                o["e"] = i32(110) / 1e7; o["n"] = i32(114) / 1e7;
+                n++;
+              }
+            }
+            f.close();
+          }
+          dir.close();
+        }
+      }
+      send_json(req, 200, doc);
     }
 
     // GET /api/map/download - status of the current (or last) download job:
@@ -246,7 +365,8 @@
           "No SD card is inserted: nowhere to save the map.");
         return;
       }
-      std::string dest = Web::MapConfig::config().pmtiles;
+      // A pre-made .pmtiles from a link becomes the world base by default.
+      std::string dest = std::string(MAP_LAYERS_DIR) + "/world.pmtiles";
       if (body["dest"].is<const char*>()) {
         const char* d = body["dest"].as<const char*>();
         if (d && *d) dest = Web::MapConfig::sanitize_file(d);
@@ -287,16 +407,17 @@
     }
 
     // POST /api/map/extract - extract a region from a remote planet pmtiles
-    // straight to the SD card. Body: {url, bbox:{w,s,e,n}, maxzoom, dest?}.
-    // `url` is the planet archive (the browser resolves the latest build);
-    // `dest` defaults to the configured basemap path. One map job at a time.
+    // straight to the SD card as a layer file. Body:
+    //   {url?, maxzoom, target?, name?, bbox:{w,s,e,n} | polygon:[[lon,lat]...]}
+    // `url` blank -> the device resolves the latest planet. `target` "world"
+    // writes the rough base; otherwise a detail area named by `name` (else
+    // its centre). A `polygon` clips to a shape (no surrounding sea); a `bbox`
+    // is the simple rectangle. One map job at a time.
     static void handle_map_extract_post(AsyncWebServerRequest* req, JsonVariant& body) {
       {
         RnsLockGuard _g;
         if (require_auth(req).empty()) return;
       }
-      // No url -> the device resolves the latest Protomaps planet. A given
-      // url (advanced) must be http(s)://.
       const char* url = body["url"].is<const char*>() ? body["url"].as<const char*>() : "";
       if (url && *url &&
           strncmp(url, "http://", 7) != 0 && strncmp(url, "https://", 8) != 0) {
@@ -304,20 +425,38 @@
           "Enter a full http:// or https:// planet link, or leave it blank.");
         return;
       }
-      if (!body["bbox"].is<JsonObject>()) {
-        send_error_with_message(req, 400, "bad_bbox", "An area is required.");
-        return;
-      }
-      JsonObject bb = body["bbox"].as<JsonObject>();
-      double w = bb["w"] | 999.0, s = bb["s"] | 999.0, e = bb["e"] | 999.0, n = bb["n"] | 999.0;
-      if (w < -180 || w > 180 || e < -180 || e > 180 || s < -90 || s > 90 || n < -90 || n > 90 ||
-          e <= w || n <= s) {
-        send_error_with_message(req, 400, "bad_bbox", "The map area is not valid.");
-        return;
-      }
       int maxz = body["maxzoom"] | 0;
       if (maxz < 1 || maxz > Web::MapConfig::MAX_ZOOM) {
         send_error_with_message(req, 400, "bad_zoom", "Choose a zoom between 1 and 15.");
+        return;
+      }
+      // Geometry: a polygon clips to a shape; otherwise a bbox rectangle. The
+      // polygon's own bounds become the bbox carried in the header.
+      std::vector<double> plon, plat;
+      double w = 999, s = 999, e = 999, n = 999;
+      if (body["polygon"].is<JsonArray>()) {
+        w = 180; s = 90; e = -180; n = -90;
+        for (JsonVariant v : body["polygon"].as<JsonArray>()) {
+          if (!v.is<JsonArray>() || v.size() < 2) continue;
+          double lo = v[0].as<double>(), la = v[1].as<double>();
+          if (lo < -180 || lo > 180 || la < -90 || la > 90) continue;
+          plon.push_back(lo); plat.push_back(la);
+          if (lo < w) w = lo; if (lo > e) e = lo; if (la < s) s = la; if (la > n) n = la;
+        }
+        if (plon.size() < 3) {
+          send_error_with_message(req, 400, "bad_polygon", "Draw an area with at least 3 points.");
+          return;
+        }
+      } else if (body["bbox"].is<JsonObject>()) {
+        JsonObject bb = body["bbox"].as<JsonObject>();
+        w = bb["w"] | 999.0; s = bb["s"] | 999.0; e = bb["e"] | 999.0; n = bb["n"] | 999.0;
+        if (w < -180 || w > 180 || e < -180 || e > 180 || s < -90 || s > 90 || n < -90 || n > 90 ||
+            e <= w || n <= s) {
+          send_error_with_message(req, 400, "bad_bbox", "The map area is not valid.");
+          return;
+        }
+      } else {
+        send_error_with_message(req, 400, "bad_area", "An area is required.");
         return;
       }
       if (!Storage::SDCard::present()) {
@@ -330,12 +469,18 @@
           "A map download is already running.");
         return;
       }
-      std::string dest = Web::MapConfig::config().pmtiles;
-      if (body["dest"].is<const char*>()) {
-        const char* d = body["dest"].as<const char*>();
-        if (d && *d) dest = Web::MapConfig::sanitize_file(d);
+      // Destination layer: "world" is the rough base; otherwise a detail area.
+      const char* target = body["target"].is<const char*>() ? body["target"].as<const char*>() : "area";
+      std::string dest;
+      if (strcmp(target, "world") == 0) {
+        dest = std::string(MAP_LAYERS_DIR) + "/world.pmtiles";
+      } else {
+        std::string id = sanitize_layer_id(body["name"].is<const char*>() ? body["name"].as<const char*>() : "");
+        if (id == "world") id = "world_area";   // reserve "world" for the base
+        if (id.empty()) id = area_hash_id(w, s, e, n, maxz, plon, plat);
+        dest = std::string(MAP_LAYERS_DIR) + "/" + id + ".pmtiles";
       }
-      if (!Web::MapExtract::start(url, dest, w, s, e, n, (uint8_t)maxz)) {
+      if (!Web::MapExtract::start(url, dest, w, s, e, n, (uint8_t)maxz, plon, plat)) {
         send_error_with_message(req, 409, "map_job_busy", "A map job is already running.");
         return;
       }

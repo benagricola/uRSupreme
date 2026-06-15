@@ -1246,9 +1246,22 @@
 <div id="map-view" class="map-view" x-data x-show="$store.s.mapView.open" x-cloak>
   <div id="map-canvas" class="map-view-canvas"></div>
   <div class="map-dl-ctl" x-show="$store.s.mapTiles.mode === 'sd' && $store.s.mapTiles.format === 'vector'">
-    <span class="map-dl-status" x-show="$store.s.mapExt.phase !== 'idle'" x-text="mapExtStatus()"></span>
-    <button type="button" @click="extractCurrentView()" x-show="!$store.s.mapExt.active">Download this view</button>
-    <button type="button" class="danger" @click="cancelMapExtract()" x-show="$store.s.mapExt.active">Cancel</button>
+    <span class="map-dl-status" x-show="$store.s.mapExt.phase !== 'idle' && !$store.s.mapDraw.on" x-text="mapExtStatus()"></span>
+    <template x-if="!$store.s.mapExt.active && !$store.s.mapDraw.on">
+      <span class="map-dl-actions">
+        <input class="map-dl-name" type="text" spellcheck="false" autocomplete="off" placeholder="name (optional)" x-model.trim="$store.s.mapDraw.name">
+        <button type="button" @click="extractCurrentView()">Download this view</button>
+        <button type="button" class="secondary" @click="startDrawArea()">Draw area</button>
+      </span>
+    </template>
+    <template x-if="$store.s.mapDraw.on">
+      <span class="map-dl-actions">
+        <span class="map-dl-status" x-text="$store.s.mapDraw.pts.length + ' points - tap to add, drag to move'"></span>
+        <button type="button" @click="finishDrawArea()" :disabled="$store.s.mapDraw.pts.length < 3">Download area</button>
+        <button type="button" class="secondary" @click="cancelDrawArea()">Cancel</button>
+      </span>
+    </template>
+    <button type="button" class="danger" @click="cancelMapExtract()" x-show="$store.s.mapExt.active">Cancel download</button>
   </div>
 </div>
 
@@ -1942,14 +1955,6 @@
             </div>
           </template>
 
-          <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.forms.map.format === 'vector'">
-            <div>
-              <label class="mt-3">Vector file on the card</label>
-              <input type="text" spellcheck="false" autocomplete="off" placeholder="/maps/basemap.pmtiles"
-                     x-model.trim="$store.s.forms.map.pmtiles" @change="saveMapConfig()">
-            </div>
-          </template>
-
           <template x-if="$store.s.forms.map.mode === 'online'">
             <div>
               <label class="mt-3">Tile URL</label>
@@ -2000,7 +2005,7 @@
                      placeholder="https://example.com/region.pmtiles"
                      x-model.trim="$store.s.forms.map.download_url"
                      :disabled="$store.s.mapDl.active">
-              <div class="muted mt-1 text-xs">Saves to <span x-text="$store.s.forms.map.pmtiles || '/maps/basemap.pmtiles'"></span></div>
+              <div class="muted mt-1 text-xs">A pre-made .pmtiles file. It becomes the world base.</div>
               <div class="row mt-2">
                 <button type="button" @click="startMapDownload()" x-show="!$store.s.mapDl.active" :disabled="!$store.s.forms.map.download_url">Download file</button>
                 <button type="button" class="danger" @click="cancelMapDownload()" x-show="$store.s.mapDl.active">Cancel</button>
@@ -2014,6 +2019,22 @@
                 </div>
               </template>
             </details>
+          </div>
+        </template>
+
+        <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.forms.map.format === 'vector' && $store.s.mapTiles.layers.length">
+          <div class="card">
+            <label>Downloaded maps</label>
+            <template x-for="ly in $store.s.mapTiles.layers" :key="ly.file">
+              <div class="layer-row">
+                <div class="layer-info">
+                  <div x-text="layerLabel(ly)"></div>
+                  <div class="muted text-xs" x-text="layerExtent(ly)"></div>
+                </div>
+                <button type="button" class="secondary" @click="flyToLayer(ly)">Show</button>
+                <button type="button" class="danger" @click="deleteMapLayer(ly.file)">Delete</button>
+              </div>
+            </template>
           </div>
         </template>
       </div>
@@ -2336,9 +2357,11 @@ let state = {
   // Map tile source, mirrored from /api/map/config. mode is off|sd|online;
   // online (the OSM fallback) is opt-in via the Map settings.
   mapTiles: { mode: 'sd', format: 'raster', sdPresent: false, sdAvailable: false,
-              pmtilesAvailable: false, pmtilesMaxzoom: 0, zooms: [], mapsDir: '/maps',
-              pmtiles: '/maps/basemap.pmtiles', defaultZoom: 16, online: false,
+              layers: [], zooms: [], mapsDir: '/maps',
+              defaultZoom: 16, online: false,
               onlineUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
+  // Polygon draw-to-download state for the map view.
+  mapDraw: { on: false, pts: [], name: '' },
   // Device-side map download job, mirrored from /api/map/download while a
   // download runs. phase is idle|running|done|error|cancelled.
   mapDl: { phase: 'idle', active: false, written: 0, total: -1, url: '', dest: '', error: '' },
@@ -2496,7 +2519,7 @@ let state = {
   forms: {
     bootstrap:       { ssid: '', psk: '', code: '' },
     map:             { mode: 'sd', format: 'raster', maps_dir: '/maps',
-                       pmtiles: '/maps/basemap.pmtiles', default_zoom: 16,
+                       default_zoom: 16,
                        online_url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                        download_url: '' },
     createIdent:     { name: '', pw1: '', pw2: '', code: '' },
@@ -3077,7 +3100,7 @@ function mapTilesEnabled() {
   const mt = state.mapTiles;
   if (mt.mode === 'off') return false;
   if (mt.mode === 'online') return !!mt.onlineUrl;
-  return mt.format === 'vector' ? !!mt.pmtilesAvailable : !!mt.sdAvailable;
+  return mt.format === 'vector' ? !!(mt.layers && mt.layers.length) : !!mt.sdAvailable;
 }
 // Raster tile URL: the opt-in online template, or the device SD route (token
 // in the query so an <img>/tile layer can load it).
@@ -3087,27 +3110,42 @@ function mapTileUrl(z, x, y) {
     return mt.onlineUrl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
   return API.MAP_TILE(z, x, y) + '?token=' + encodeURIComponent(state.token || '');
 }
-// Vector basemap URL: the online template/.pmtiles, or the device's range-
-// served .pmtiles route (token in the query).
-function mapPmtilesUrl() {
-  const mt = state.mapTiles;
-  if (mt.mode === 'online' && mt.onlineUrl) return mt.onlineUrl;
-  return API.MAP_PMTILES + '?token=' + encodeURIComponent(state.token || '');
+// Device range-served URL for one vector layer file (token in the query).
+function layerUrl(file) {
+  return API.MAP_LAYER(file) + '?token=' + encodeURIComponent(state.token || '');
 }
-// The Leaflet base layer for the current format: a raster tile layer, or the
-// protomaps-leaflet vector layer (dark flavor, to match the app chrome).
-function mapBaseLayer() {
+// Raster base layer (online template or the device SD route).
+function _rasterLayer() {
   const L = window.L;
-  if (state.mapTiles.format === 'vector' && window.protomapsL) {
-    // maxDataZoom = the basemap's own max zoom, so zooming in past it
-    // overzooms (renders the coarsest data scaled) instead of going blank.
-    // Lets a rough world basemap still be framed to pick an area to download.
-    const opts = { url: mapPmtilesUrl(), flavor: 'dark', lang: 'en' };
-    if (state.mapTiles.pmtilesMaxzoom > 0) opts.maxDataZoom = state.mapTiles.pmtilesMaxzoom;
-    return window.protomapsL.leafletLayer(opts);
-  }
   const Tiles = L.TileLayer.extend({ getTileUrl: function (c) { return mapTileUrl(c.z, c.x, c.y); } });
   return new Tiles('', { maxZoom: 19, attribution: mapAttribution() });
+}
+// One protomaps-leaflet vector layer for a layer descriptor. maxDataZoom =
+// the file's own max zoom, so zooming past it overzooms (coarse data scaled)
+// instead of blanking; downloaded areas are clipped to their bounds, the
+// world base stays global underneath them.
+function _vectorLayer(ly, isWorld) {
+  const L = window.L;
+  // &v=size busts the browser cache when a layer of the same name is
+  // re-downloaded (different size); within a session the URL is stable so
+  // tiles are served from cache and the SD isn't re-read on every pan.
+  // updateWhenIdle: load tiles when the pan/zoom stops, not continuously,
+  // so a slow SD card isn't thrashed fetching tiles you scroll straight past.
+  const opts = { url: layerUrl(ly.file) + '&v=' + (ly.size || 0), flavor: 'dark', lang: 'en',
+                 updateWhenIdle: true, keepBuffer: 3 };
+  if (ly.maxzoom > 0) opts.maxDataZoom = ly.maxzoom;
+  if (!isWorld && typeof ly.s === 'number')
+    opts.bounds = L.latLngBounds([ly.s, ly.w], [ly.n, ly.e]);
+  const lyr = window.protomapsL.leafletLayer(opts);
+  // The dark flavor paints each tile's background (#34373d, the water colour)
+  // before the land/features draw on top. The world base gets the app bg so a
+  // tile still loading from the slow SD blends into the theme instead of
+  // flashing a light-grey panel. Detail-area layers stay transparent: an opaque
+  // background on a layer stacked above the world would paint its whole bounding
+  // tile, hiding the world base everywhere the area's coarse low-zoom tile
+  // covers (a permanent blank over Europe/US at the world view).
+  lyr.backgroundColor = isWorld ? '#0d1117' : null;
+  return lyr;
 }
 function mapAttribution() {
   return state.mapTiles.mode === 'online' ? '&copy; OpenStreetMap contributors' : '';
@@ -3224,25 +3262,45 @@ function mapUnavailableReason() {
   if (mt.mode === 'online') return mt.onlineUrl ? '' : 'No online tile URL set. Settings, Map.';
   if (!mt.sdPresent)        return 'No SD card detected for map tiles. Settings, Map.';
   if (mt.format === 'vector')
-    return mt.pmtilesAvailable ? '' : 'Vector basemap not found on the card: ' + mt.pmtiles + '.';
+    return (mt.layers && mt.layers.length) ? '' : 'No maps on the card yet. Download one in Settings, Map.';
   return mt.sdAvailable ? '' : 'No map tiles found on the card in ' + mt.mapsDir + '.';
 }
 let _mapTileErrorShown = false;   // one missing-tile toast per open
+// A part of the map not loading (raster 404, vector tile fetch failure, or an
+// online server not responding) fires tileerror; warn once per open.
+function _onMapTileErr() {
+  if (_mapTileErrorShown) return;
+  _mapTileErrorShown = true;
+  toast('Some of the map could not be loaded.', 'warn');
+}
+// (Re)build the base layers for the current source. Vector + SD stacks one
+// layer per file: the world base, then each downloaded area clipped on top.
 function _mapApplyBase() {
   if (!_map) return;
-  if (_map._urtnBase) { _map.removeLayer(_map._urtnBase); _map._urtnBase = null; }
-  const base = mapBaseLayer();
-  if (base) {
-    // A part of the map not loading (raster 404, vector tile fetch failure,
-    // or an online server not responding) fires tileerror; warn once per
-    // open rather than per tile. Source-neutral: this can be SD or online.
-    base.on('tileerror', function () {
-      if (_mapTileErrorShown) return;
-      _mapTileErrorShown = true;
-      toast('Some of the map could not be loaded.', 'warn');
-    });
-    base.addTo(_map);
-    _map._urtnBase = base;
+  (_map._urtnLayers || []).forEach(l => _map.removeLayer(l));
+  _map._urtnLayers = [];
+  const mt = state.mapTiles;
+  if (mt.mode === 'off') return;
+  if (mt.mode === 'online' || mt.format === 'raster') {
+    const base = _rasterLayer();
+    base.on('tileerror', _onMapTileErr); base.addTo(_map); _map._urtnLayers.push(base);
+    return;
+  }
+  if (!window.protomapsL) return;
+  // World base at the bottom, then areas by max zoom ascending so the most
+  // detailed area is drawn last (on top): where areas overlap, the finer one
+  // wins instead of an arbitrary filesystem order.
+  const layers = (mt.layers || []).slice().sort((a, b) => {
+    if (a.id === 'world') return -1;
+    if (b.id === 'world') return 1;
+    return (a.maxzoom || 0) - (b.maxzoom || 0);
+  });
+  let z = 1;
+  for (const ly of layers) {
+    const lyr = _vectorLayer(ly, ly.id === 'world');
+    lyr.on('tileerror', _onMapTileErr);
+    lyr.setZIndex(z++); lyr.addTo(_map);
+    _map._urtnLayers.push(lyr);
   }
 }
 function _removePeerLayer(peer) {
@@ -3292,16 +3350,20 @@ function openMapView(opts) {
   opts = opts || {};
   state.mapView.open = true;
   _mapTileErrorShown = false;
-  setTimeout(() => {
-    _mapInit(); _mapApplyBase();
+  setTimeout(async () => {
+    _mapInit();
+    await fetchMapConfig();
+    if (state.mapTiles.mode === 'sd' && state.mapTiles.format === 'vector') await fetchMapLayers();
+    _mapApplyBase();
     mapRefresh(opts.peer, opts.latlon, !opts.peer && !opts.latlon);
-    // A definite config reason (no card / no file) trumps a per-tile error,
+    refreshMapExtract();   // resume the progress strip if a download is running
+    // A definite config reason (no card / no maps) trumps a per-tile error,
     // so report it and suppress the tileerror toast.
     const reason = mapUnavailableReason();
     if (reason) { _mapTileErrorShown = true; toast(reason, 'warn'); }
   }, 60);
 }
-function closeMapView() { state.mapView.open = false; }
+function closeMapView() { _clearHighlight(); state.mapView.open = false; }
 // Live feed update: extend the peer's track and refresh the open map.
 function mapLive(ev) {
   if (!ev.tele || typeof ev.tele.lat !== 'number') return;
@@ -3318,30 +3380,38 @@ function applyMapConfig(r) {
   mt.format           = r.format || 'raster';
   mt.sdPresent        = !!r.sd_present;
   mt.sdAvailable      = !!r.sd_available;
-  mt.pmtilesAvailable = !!r.pmtiles_available;
-  mt.pmtilesMaxzoom   = r.pmtiles_maxzoom || 0;
   mt.zooms            = r.zooms || [];
   mt.mapsDir          = r.maps_dir || '/maps';
-  mt.pmtiles          = r.pmtiles || '/maps/basemap.pmtiles';
   mt.defaultZoom      = r.default_zoom || 16;
   if (r.online_url) mt.onlineUrl = r.online_url;
   mt.online           = (mt.mode === 'online');
   const pf = state.forms.map || {};
   state.forms.map = { mode: mt.mode, format: mt.format, maps_dir: mt.mapsDir,
-                      pmtiles: mt.pmtiles, default_zoom: mt.defaultZoom, online_url: mt.onlineUrl,
+                      default_zoom: mt.defaultZoom, online_url: mt.onlineUrl,
                       download_url: pf.download_url || '' };
 }
 async function fetchMapConfig() {
   try { applyMapConfig(await state.transport._req(API.MAP_CONFIG)); }
   catch (e) { /* keep defaults */ }
 }
+// The downloaded vector layers (world base + detail areas), each with the
+// extent/zoom/size read from its pmtiles header. Drives both the manage list
+// and the stacked map layers.
+async function fetchMapLayers() {
+  try {
+    const r = await state.transport._req(API.MAP_LAYERS);
+    state.mapTiles.sdPresent = !!r.sd_present;
+    state.mapTiles.layers = r.layers || [];
+  } catch (e) { state.mapTiles.layers = []; }
+}
 async function saveMapConfig() {
   const f = state.forms.map;
   try {
     applyMapConfig(await state.transport._req(API.MAP_CONFIG, { method: 'POST', body: {
-      mode: f.mode, format: f.format, maps_dir: f.maps_dir, pmtiles: f.pmtiles,
+      mode: f.mode, format: f.format, maps_dir: f.maps_dir,
       default_zoom: f.default_zoom, online_url: f.online_url,
     }}));
+    if (f.mode === 'sd' && f.format === 'vector') fetchMapLayers();
   } catch (e) { toast('Could not save map settings: ' + (e.message || e), 'error'); }
 }
 // One-line status under the source picker in settings.
@@ -3350,9 +3420,12 @@ function mapSourceStatus() {
   if (f.mode === 'off')    return 'Positions show as coordinates only.';
   if (f.mode === 'online') return 'Your browser loads tiles from the URL below.';
   if (!mt.sdPresent)       return 'No SD card detected. Load a card, or use Online.';
-  if (f.format === 'vector')
-    return mt.pmtilesAvailable ? 'Serving the vector basemap from the card.'
-                               : 'Card present, but ' + f.pmtiles + ' was not found.';
+  if (f.format === 'vector') {
+    const nareas = (mt.layers || []).filter(l => l.id !== 'world').length;
+    const haveWorld = (mt.layers || []).some(l => l.id === 'world');
+    if (!(mt.layers || []).length) return 'Card present. Download a map below to start.';
+    return (haveWorld ? 'World base' : 'No world base') + (nareas ? (' + ' + nareas + ' detail area' + (nareas > 1 ? 's' : '')) : '') + '.';
+  }
   return mt.sdAvailable ? 'Serving raster tiles from the card (' + mt.zooms.length + ' zoom levels).'
                         : 'Card present, but no tiles found in ' + mt.mapsDir + '.';
 }
@@ -3405,9 +3478,7 @@ async function startMapDownload() {
   const url = (state.forms.map.download_url || '').trim();
   if (!/^https?:\/\//i.test(url)) { toast('Enter a full http:// or https:// link.', 'warn'); return; }
   try {
-    _mapDlApply(await state.transport._req(API.MAP_DOWNLOAD, { method: 'POST', body: {
-      url, dest: state.forms.map.pmtiles,
-    }}));
+    _mapDlApply(await state.transport._req(API.MAP_DOWNLOAD, { method: 'POST', body: { url }}));
     _mapDlStartPolling();
   } catch (e) { toast('Could not start download: ' + (e.message || e), 'error'); }
 }
@@ -3431,7 +3502,7 @@ function mapDlStatus() {
     if (d.total > 0) return _fmtBytes(d.written) + ' of ' + _fmtBytes(d.total) + ' (' + mapDlPct() + '%)';
     return 'Downloaded ' + _fmtBytes(d.written);
   }
-  if (d.phase === 'done')      return 'Saved ' + _fmtBytes(d.written) + ' to ' + (d.dest || state.forms.map.pmtiles) + '.';
+  if (d.phase === 'done')      return 'Saved ' + _fmtBytes(d.written) + ' to the card.';
   if (d.phase === 'error')     return 'Failed: ' + (d.error || 'unknown error') + '.';
   if (d.phase === 'cancelled') return 'Cancelled.';
   return '';
@@ -3463,7 +3534,7 @@ function _mapExtStartPolling() {
       if (wasActive) {
         if (state.mapExt.phase === 'done') {
           toast('Map saved to the card.', 'info');
-          fetchMapConfig().then(() => { if (state.mapView.open) mapRefresh(); });
+          fetchMapLayers().then(() => { if (state.mapView.open) { _mapApplyBase(); mapRefresh(); } });
         } else if (state.mapExt.phase === 'error') {
           toast('Map download failed: ' + (state.mapExt.error || 'unknown error'), 'error');
         } else if (state.mapExt.phase === 'cancelled') {
@@ -3479,28 +3550,141 @@ async function refreshMapExtract() {
   if (state.mapExt.active) _mapExtStartPolling();
 }
 function _mapJobBusy() { return state.mapExt.active || state.mapDl.active; }
-// Start an extract of a bbox at a max zoom. No url -> the device resolves the
-// latest planet. Saves to the configured basemap path so it serves at once.
-async function _startExtract(bbox, maxzoom) {
+// Start an extract. `body` carries target(world|area), maxzoom, an optional
+// name, and either a bbox or a clip polygon. No url -> the device resolves
+// the latest planet.
+async function _startExtract(body) {
   if (_mapJobBusy()) { toast('A map download is already running.', 'warn'); return; }
   try {
-    _mapExtApply(await state.transport._req(API.MAP_EXTRACT, { method: 'POST', body: {
-      bbox, maxzoom, dest: state.forms.map.pmtiles,
-    }}));
+    _mapExtApply(await state.transport._req(API.MAP_EXTRACT, { method: 'POST', body }));
     _mapExtStartPolling();
     toast('Downloading map. This can take a few minutes.', 'info');
   } catch (e) { toast('Could not start: ' + (e.message || e), 'error'); }
 }
-function extractWorld() { _startExtract({ w: -180, s: -85, e: 180, n: 85 }, 6); }
+// Detail zoom proportional to how far in the map is framed (no hard floor, so
+// a wide view downloads at a coarser, bounded zoom rather than blowing the cap).
+function _detailZoom() {
+  return _map ? Math.min(15, Math.max(Math.round(_map.getZoom()) + 3, 7)) : 12;
+}
+function extractWorld() { _startExtract({ target: 'world', maxzoom: 6, bbox: { w: -180, s: -85, e: 180, n: 85 } }); }
 function extractCurrentView() {
   if (!_map) return;
   const b = _map.getBounds();
-  const z = Math.min(15, Math.max(Math.round(_map.getZoom()) + 2, 12));
-  _startExtract({ w: b.getWest(), s: b.getSouth(), e: b.getEast(), n: b.getNorth() }, z);
+  _startExtract({ target: 'area', name: (state.mapDraw.name || '').trim(), maxzoom: _detailZoom(),
+                  bbox: { w: b.getWest(), s: b.getSouth(), e: b.getEast(), n: b.getNorth() } });
 }
 async function cancelMapExtract() {
   try { _mapExtApply(await state.transport._req(API.MAP_EXTRACT_CANCEL, { method: 'POST' })); }
   catch (e) { toast('Could not cancel: ' + (e.message || e), 'error'); }
+}
+
+// --- Draw-a-polygon area selection (precise, no surrounding sea) -----
+// Vertices are draggable markers; the shape (line at 2, filled polygon at 3)
+// is redrawn beneath them. Map panning is disabled while drawing so a tap
+// (even with a little mouse jitter) reliably drops a vertex instead of
+// panning the map; scroll-zoom still works.
+let _drawShape = null;
+let _drawMarkers = [];
+function _drawVertexIcon() {
+  return window.L.divIcon({ className: 'draw-vertex', iconSize: [14, 14], iconAnchor: [7, 7] });
+}
+function _drawClear() {
+  if (_map) {
+    if (_drawShape) _map.removeLayer(_drawShape);
+    _drawMarkers.forEach(m => _map.removeLayer(m));
+  }
+  _drawShape = null; _drawMarkers = [];
+}
+function _drawUpdateShape() {
+  const L = window.L; if (!_map) return;
+  if (_drawShape) { _map.removeLayer(_drawShape); _drawShape = null; }
+  const ll = state.mapDraw.pts.map(p => [p[1], p[0]]);   // [lat,lon]
+  if (ll.length >= 3)      _drawShape = L.polygon(ll,  { color: '#58a6ff', weight: 2, fillOpacity: 0.15 });
+  else if (ll.length >= 2) _drawShape = L.polyline(ll, { color: '#58a6ff', weight: 2 });
+  if (_drawShape) { _drawShape.addTo(_map); _drawShape.bringToBack(); }
+}
+function _drawAddVertex(lat, lon) {
+  const L = window.L;
+  state.mapDraw.pts.push([lon, lat]);
+  const m = L.marker([lat, lon], { draggable: true, icon: _drawVertexIcon(), keyboard: false, zIndexOffset: 1000 });
+  m.on('drag dragend', () => {
+    const i = _drawMarkers.indexOf(m); if (i < 0) return;
+    const p = m.getLatLng();
+    state.mapDraw.pts[i] = [p.lng, p.lat];
+    _drawUpdateShape();
+  });
+  m.addTo(_map); _drawMarkers.push(m);
+  _drawUpdateShape();
+}
+function _onDrawClick(e) { _drawAddVertex(e.latlng.lat, e.latlng.lng); }
+function startDrawArea() {
+  if (!_map) return;
+  cancelDrawArea();
+  _clearHighlight();
+  state.mapDraw.on = true; state.mapDraw.pts = [];
+  _map.dragging.disable();
+  _map.on('click', _onDrawClick);
+}
+function cancelDrawArea() {
+  state.mapDraw.on = false; state.mapDraw.pts = [];
+  if (_map) { _map.off('click', _onDrawClick); _map.dragging.enable(); }
+  _drawClear();
+}
+function finishDrawArea() {
+  if (state.mapDraw.pts.length < 3) { toast('Tap at least 3 points to make an area.', 'warn'); return; }
+  const polygon = state.mapDraw.pts.slice();
+  const name = (state.mapDraw.name || '').trim();
+  cancelDrawArea();
+  _startExtract({ target: 'area', name, maxzoom: _detailZoom(), polygon });
+}
+
+// --- Manage downloaded layers --------------------------------------
+async function deleteMapLayer(file) {
+  try {
+    await state.transport._req(API.MAP_LAYER(file), { method: 'DELETE' });
+    await fetchMapLayers();
+    if (state.mapView.open) _mapApplyBase();
+  } catch (e) { toast('Could not delete: ' + (e.message || e), 'error'); }
+}
+// Show a downloaded area on the map: fly to it and outline its true shape
+// (the drawn polygon from its sidecar, or the bbox rectangle) so the user
+// can see exactly what they'd be deleting.
+let _highlightLayer = null;
+function _clearHighlight() {
+  if (_highlightLayer && _map) _map.removeLayer(_highlightLayer);
+  _highlightLayer = null;
+}
+async function flyToLayer(ly) {
+  const L = window.L;
+  closeSettingsModal();
+  openMapView();
+  let poly = null;
+  if (ly.id !== 'world') {
+    try {
+      const r = await state.transport._req(API.MAP_LAYER(ly.id + '.json'));
+      if (r && Array.isArray(r.polygon) && r.polygon.length >= 3) poly = r.polygon;
+    } catch (e) { /* no sidecar -> outline the bbox instead */ }
+  }
+  setTimeout(() => {
+    if (!_map) return;
+    _clearHighlight();
+    _highlightLayer = (poly)
+      ? L.polygon(poly.map(p => [p[1], p[0]]), { color: '#f0a020', weight: 2, fill: false, dashArray: '5' })
+      : L.rectangle([[ly.s, ly.w], [ly.n, ly.e]], { color: '#f0a020', weight: 2, fill: false, dashArray: '5' });
+    _highlightLayer.addTo(_map);
+    _map.fitBounds([[ly.s, ly.w], [ly.n, ly.e]], { padding: [40, 40] });
+  }, 320);
+}
+function layerLabel(ly) {
+  if (ly.id === 'world') return 'World base';
+  // Hide the auto-generated id (area-<hash>, or the older area_<lat>_<lon>);
+  // the extent line below identifies it. A typed name is shown as-is.
+  if (/^area-[0-9a-f]{8}$/.test(ly.id) || /^area_-?\d+_-?\d+$/.test(ly.id)) return 'Downloaded area';
+  return ly.id;
+}
+function layerExtent(ly) {
+  const c = (a) => (typeof a === 'number' ? a.toFixed(2) : '?');
+  return c((ly.s + ly.n) / 2) + ', ' + c((ly.w + ly.e) / 2) + '  z' + ly.minzoom + '-' + ly.maxzoom + '  ' + _fmtBytes(ly.size || 0);
 }
 function mapExtPct() {
   const d = state.mapExt;
@@ -8119,7 +8303,7 @@ function selectSettingsTab(tabId) {
   if (tabId === 'time')         { populateTimeTab(); }
   if (tabId === 'identity')     { populateIdentityTab(); }
   if (tabId === 'telemetry')    { populateCollectorConfig(); }
-  if (tabId === 'map')          { fetchMapConfig(); refreshMapDownload(); refreshMapExtract(); }
+  if (tabId === 'map')          { fetchMapConfig(); fetchMapLayers(); refreshMapDownload(); refreshMapExtract(); }
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
   if (tabId === 'ui')           {
     state.forms.prefs.enterSends                = !!state.prefs.enterSends;

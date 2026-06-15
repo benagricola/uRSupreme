@@ -1152,11 +1152,26 @@ input[type="checkbox"]:focus-visible {
   display: flex; gap: 8px; align-items: center;
 }
 .map-dl-ctl button { width: auto; box-shadow: 0 1px 4px rgba(0,0,0,0.4); }
+.map-dl-actions { display: flex; gap: 8px; align-items: center; }
+.map-dl-name {
+  width: 130px; padding: 4px 8px; font-size: 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
 .map-dl-status {
   background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 6px;
   padding: 4px 8px; font-size: 12px; color: var(--text);
   box-shadow: 0 1px 4px rgba(0,0,0,0.4); max-width: 50vw;
 }
+/* Draggable polygon vertex while drawing an area. */
+.draw-vertex {
+  box-sizing: border-box; background: #58a6ff; border: 2px solid #fff;
+  border-radius: 50%; box-shadow: 0 0 3px rgba(0,0,0,0.7); cursor: grab;
+}
+.draw-vertex:active { cursor: grabbing; }
+/* Downloaded-maps manage rows in settings. */
+.layer-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.layer-row .layer-info { flex: 1 1 auto; min-width: 0; font-size: 13px; }
+.layer-row button { width: auto; flex: 0 0 auto; }
 /* Dark map backdrop before/behind tiles, so it doesn't flash white in the
    app's dark theme (Leaflet's container defaults to light). */
 .leaflet-container { background: var(--bg); }

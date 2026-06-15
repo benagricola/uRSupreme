@@ -72,6 +72,20 @@ static const size_t TINFL_FAILED       = (size_t)-1;
 // ~21.8k tiles, well under this.
 static const uint32_t MAX_REGION_TILES = 100000;
 
+// Planet TLS retries. Both the catalog resolve and opening the planet
+// archive (reading its header) talk to a remote host over TLS, and the
+// mbedTLS handshake needs a chunk of internal SRAM that this device runs
+// short of. When the user starts a download while looking at the map, the
+// browser is concurrently range-fetching tiles, and the handshake can lose
+// that internal-SRAM race and fail ("could not find a planet build" at the
+// catalog step, "fetch header failed" at the archive step). A few attempts
+// with a short backoff let the tile burst drain and the memory free, so the
+// fetch succeeds on a retry (reproduced: attempt 1 failed under load,
+// attempt 2 succeeded). Both run on the off-loop extract task, so the
+// backoff blocks nothing.
+static const int      PLANET_TLS_TRIES      = 4;
+static const uint32_t PLANET_TLS_BACKOFF_MS = 1500;
+
 enum Phase : int { IDLE = 0, SCANNING = 1, WRITING = 2, DONE = 3, ERROR = 4, CANCELLED = 5 };
 
 struct State {
@@ -83,7 +97,8 @@ struct State {
   std::string           url;
   std::string           dest;
   std::string           error;
-  double                w = 0, s = 0, e = 0, n = 0;   // bbox, degrees
+  double                w = 0, s = 0, e = 0, n = 0;   // bbox, degrees (also the polygon's bounds)
+  std::vector<double>   poly_lon, poly_lat;           // optional clip polygon; empty = use the bbox
   uint8_t               maxz = 0;
   TaskHandle_t          task = nullptr;
 };
@@ -261,6 +276,14 @@ inline uint32_t lat_to_y(double lat, uint8_t z) {
   if (v > my) v = my;
   return (uint32_t)v;
 }
+// Fractional tile coordinates (Web Mercator), for polygon scanline fill.
+inline double lon_to_xf(double lon, uint8_t z) { return (lon + 180.0) / 360.0 * (double)(1u << z); }
+inline double lat_to_yf(double lat, uint8_t z) {
+  if (lat >  85.05112878) lat =  85.05112878;
+  if (lat < -85.05112878) lat = -85.05112878;
+  double r = lat * M_PI / 180.0;
+  return (1.0 - log(tan(r) + 1.0 / cos(r)) / M_PI) / 2.0 * (double)(1u << z);
+}
 
 // ---- HTTP range reads -----------------------------------------------------
 
@@ -353,11 +376,17 @@ inline void _finish(int phase, const char* err, esp_http_client_handle_t c, File
   vTaskDelete(nullptr);
 }
 
-// Resolve the newest Protomaps planet build. The build catalog is a
-// chronological JSON array; the last "key" is the newest archive. The
-// browser cannot read it (no CORS), so the device does. Returns the full
-// https URL, or empty on failure.
-inline std::string resolve_latest_planet() {
+// Last planet URL resolved this session. Once the catalog has been read
+// once, a later flaky fetch falls back to this rather than failing the
+// download: old planet builds stay served for weeks, so a slightly stale
+// URL still works. Session-only (no persistence) to avoid an on-disk schema
+// change; the reported failure is a same-session retry.
+inline std::string& cached_planet_url() { static std::string u; return u; }
+
+// One catalog fetch. The build catalog is a chronological JSON array; the
+// last "key" is the newest archive. The browser cannot read it (no CORS),
+// so the device does. Returns the full https URL, or empty on failure.
+inline std::string fetch_planet_catalog() {
   const char* CATALOG = "https://build-metadata.protomaps.dev/builds.json";
   const char* BASE    = "https://build.protomaps.com/";
   esp_http_client_config_t cfg = {};
@@ -397,6 +426,22 @@ inline std::string resolve_latest_planet() {
   return out;
 }
 
+// Resolve the newest Protomaps planet build, retrying the catalog fetch: the
+// TLS handshake can lose the internal-SRAM race under concurrent tile
+// serving, and a short backoff lets that pressure subside. On total failure
+// fall back to the URL we resolved earlier this session, if any.
+inline std::string resolve_latest_planet() {
+  for (int attempt = 0; attempt < PLANET_TLS_TRIES; attempt++) {
+    std::string u = fetch_planet_catalog();
+    if (!u.empty()) { cached_planet_url() = u; return u; }
+    if (attempt + 1 < PLANET_TLS_TRIES) {
+      vTaskDelay(pdMS_TO_TICKS(PLANET_TLS_BACKOFF_MS));
+      RNS::Utilities::OS::reset_watchdog();
+    }
+  }
+  return cached_planet_url();
+}
+
 inline void task_fn(void*) {
   State& s = st();
 
@@ -415,11 +460,26 @@ inline void task_fn(void*) {
 #if defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE)
   cfg.crt_bundle_attach = esp_crt_bundle_attach;
 #endif
-  esp_http_client_handle_t c = esp_http_client_init(&cfg);
+  // 1. header. Open the archive and read its 127-byte header, retrying the
+  //    same way the catalog resolve does: the TLS handshake here can also
+  //    lose the internal-SRAM race under concurrent tile serving ("fetch
+  //    header failed"). A failed attempt drops the client and backs off so
+  //    the load can drain before the next handshake.
+  esp_http_client_handle_t c = nullptr;
+  uint8_t* hb = nullptr;
+  for (int attempt = 0; attempt < PLANET_TLS_TRIES; attempt++) {
+    c = esp_http_client_init(&cfg);
+    if (c) {
+      hb = fetch_range(c, 0, 127);
+      if (hb) break;                        // header read OK
+      esp_http_client_cleanup(c); c = nullptr;   // drop the failed connection
+    }
+    if (attempt + 1 < PLANET_TLS_TRIES) {
+      vTaskDelay(pdMS_TO_TICKS(PLANET_TLS_BACKOFF_MS));
+      RNS::Utilities::OS::reset_watchdog();
+    }
+  }
   if (!c) _finish(ERROR, "http init failed", nullptr, nullptr);
-
-  // 1. header
-  uint8_t* hb = fetch_range(c, 0, 127);
   if (!hb) _finish(ERROR, "fetch header failed", c, nullptr);
   Header h{}; bool okh = parse_header(hb, h); heap_caps_free(hb);
   if (!okh) _finish(ERROR, "not a pmtiles archive", c, nullptr);
@@ -433,23 +493,66 @@ inline void task_fn(void*) {
   if (maxz > h.max_zoom) maxz = h.max_zoom;
   const uint8_t minz = 0;
 
-  // 2. relevance: rasterize the bbox into a sorted tile-id list (z 0..maxz)
+  // 2. relevance: the set of wanted tiles (z 0..maxz) as a sorted tile-id
+  //    list. With a clip polygon, scanline-fill it per zoom so only tiles
+  //    inside the shape are kept (no surrounding sea); otherwise fill the
+  //    bbox rectangle. The cap guards both against runaway areas.
   Common::PsramVector<uint64_t> rel;
   {
+    const long axis_max = (1L << maxz);
+    const bool use_poly = (s.poly_lon.size() >= 3 && s.poly_lon.size() == s.poly_lat.size());
     uint64_t count = 0;
     for (uint8_t z = minz; z <= maxz; z++) {
-      uint32_t x0 = lon_to_x(s.w, z), x1 = lon_to_x(s.e, z);
-      uint32_t y0 = lat_to_y(s.n, z), y1 = lat_to_y(s.s, z);  // n -> smaller y
-      if (x1 < x0) { uint32_t t = x0; x0 = x1; x1 = t; }
-      if (y1 < y0) { uint32_t t = y0; y0 = y1; y1 = t; }
-      count += (uint64_t)(x1 - x0 + 1) * (uint64_t)(y1 - y0 + 1);
-      if (count > MAX_REGION_TILES) _finish(ERROR, "area too large; lower the zoom", c, nullptr);
-      for (uint32_t x = x0; x <= x1; x++)
-        for (uint32_t y = y0; y <= y1; y++)
-          rel.push_back(zxy_to_id(z, x, y));
+      if (use_poly) {
+        // project the polygon to fractional tile space at this zoom
+        const size_t nv = s.poly_lon.size();
+        Common::PsramVector<double> px, py;
+        px.reserve(nv); py.reserve(nv);
+        double ymin = 1e18, ymax = -1e18;
+        for (size_t i = 0; i < nv; i++) {
+          double X = lon_to_xf(s.poly_lon[i], z), Y = lat_to_yf(s.poly_lat[i], z);
+          px.push_back(X); py.push_back(Y);
+          if (Y < ymin) ymin = Y; if (Y > ymax) ymax = Y;
+        }
+        long y0 = (long)floor(ymin), y1 = (long)floor(ymax);
+        if (y0 < 0) y0 = 0; if (y1 > axis_max - 1) y1 = axis_max - 1;
+        Common::PsramVector<double> xs;
+        for (long y = y0; y <= y1; y++) {
+          const double yc = (double)y + 0.5;
+          xs.clear();
+          for (size_t i = 0, j = nv - 1; i < nv; j = i++) {
+            double yi = py[i], yj = py[j];
+            if ((yi <= yc && yj > yc) || (yj <= yc && yi > yc)) {
+              double t = (yc - yi) / (yj - yi);
+              xs.push_back(px[i] + t * (px[j] - px[i]));
+            }
+          }
+          std::sort(xs.begin(), xs.end());
+          for (size_t k = 0; k + 1 < xs.size(); k += 2) {
+            long xL = (long)floor(xs[k]), xR = (long)floor(xs[k + 1]);
+            if (xL < 0) xL = 0; if (xR > axis_max - 1) xR = axis_max - 1;
+            for (long x = xL; x <= xR; x++) {
+              if (++count > MAX_REGION_TILES) _finish(ERROR, "area too large; lower the zoom", c, nullptr);
+              rel.push_back(zxy_to_id(z, (uint32_t)x, (uint32_t)y));
+            }
+          }
+        }
+      } else {
+        uint32_t x0 = lon_to_x(s.w, z), x1 = lon_to_x(s.e, z);
+        uint32_t y0 = lat_to_y(s.n, z), y1 = lat_to_y(s.s, z);  // n -> smaller y
+        if (x1 < x0) { uint32_t t = x0; x0 = x1; x1 = t; }
+        if (y1 < y0) { uint32_t t = y0; y0 = y1; y1 = t; }
+        count += (uint64_t)(x1 - x0 + 1) * (uint64_t)(y1 - y0 + 1);
+        if (count > MAX_REGION_TILES) _finish(ERROR, "area too large; lower the zoom", c, nullptr);
+        for (uint32_t x = x0; x <= x1; x++)
+          for (uint32_t y = y0; y <= y1; y++)
+            rel.push_back(zxy_to_id(z, x, y));
+      }
     }
     std::sort(rel.begin(), rel.end());
+    rel.erase(std::unique(rel.begin(), rel.end()), rel.end());
   }
+  if (rel.empty()) _finish(ERROR, "no tiles in this area", c, nullptr);
   auto rel_contains = [&](uint64_t id) -> bool {
     return std::binary_search(rel.begin(), rel.end(), id);
   };
@@ -641,6 +744,25 @@ inline void task_fn(void*) {
     hf.close();
   }
 
+  // Sidecar: the clip polygon used, so the manage UI can show the area's true
+  // shape (not just its bbox) when deciding whether to delete it. Written next
+  // to the archive as <id>.json. Best-effort; a bbox-only area has no polygon.
+  if (!s.poly_lon.empty()) {
+    std::string side = s.dest;
+    size_t dot = side.rfind(".pmtiles");
+    if (dot != std::string::npos) side = side.substr(0, dot) + ".json";
+    std::string j = "{\"polygon\":[";
+    char num[48];
+    for (size_t i = 0; i < s.poly_lon.size(); i++) {
+      snprintf(num, sizeof(num), "%s[%.6f,%.6f]", i ? "," : "", s.poly_lon[i], s.poly_lat[i]);
+      j += num;
+    }
+    j += "]}";
+    Storage::SDCard::BusGuard g;
+    File sf = SD.open(side.c_str(), FILE_WRITE);
+    if (sf) { sf.write((const uint8_t*)j.data(), j.size()); sf.close(); }
+  }
+
   esp_http_client_cleanup(c);
   s.phase = DONE;
   s.task = nullptr;
@@ -648,14 +770,18 @@ inline void task_fn(void*) {
 }
 
 // Start an extract of bbox [w,s,e,n] (degrees) at zooms 0..maxz from the
-// planet at `url` into SD `dest`. False if a job is already running or the
-// task could not spawn.
+// planet at `url` into SD `dest`. An optional clip polygon (lon[]/lat[],
+// >=3 matching points) keeps only tiles inside the shape. False if a job is
+// already running or the task could not spawn.
 inline bool start(const std::string& url, const std::string& dest,
-                  double w, double s_, double e, double n, uint8_t maxz) {
+                  double w, double s_, double e, double n, uint8_t maxz,
+                  const std::vector<double>& poly_lon = {},
+                  const std::vector<double>& poly_lat = {}) {
   State& s = st();
   if (active()) return false;
   s.url = url; s.dest = dest; s.error.clear();
   s.w = w; s.s = s_; s.e = e; s.n = n; s.maxz = maxz;
+  s.poly_lon = poly_lon; s.poly_lat = poly_lat;
   s.tiles_total = 0; s.bytes_total = 0; s.bytes_done = 0;
   s.cancel = false; s.phase = SCANNING;
   // 16 KiB stack: HTTP + TLS handshake + inflate + std::sort; the big tables

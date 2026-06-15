@@ -962,7 +962,9 @@ namespace Web {
       on_uri(HTTP_GET, ApiRoutes::MAP_CONFIG, handle_map_config_get);
       on_json_post(ApiRoutes::MAP_CONFIG, handle_map_config_post);
       on_uri(HTTP_GET, ApiRoutes::MAP_TILE, handle_map_tile);
-      on_uri(HTTP_GET, ApiRoutes::MAP_PMTILES, handle_map_pmtiles);
+      on_uri(HTTP_GET, ApiRoutes::MAP_LAYERS, handle_map_layers);
+      on_uri(HTTP_GET, ApiRoutes::MAP_LAYER, handle_map_layer);
+      on_uri(HTTP_DELETE, ApiRoutes::MAP_LAYER, handle_map_layer_delete);
       on_uri(HTTP_GET, ApiRoutes::MAP_DOWNLOAD, handle_map_download_get);
       on_json_post(ApiRoutes::MAP_DOWNLOAD, handle_map_download_post);
       on_uri(HTTP_POST, ApiRoutes::MAP_DOWNLOAD_CANCEL, handle_map_download_cancel);

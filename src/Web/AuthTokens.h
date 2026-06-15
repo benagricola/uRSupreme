@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include <stdint.h>
+#include <cstring>
 
 extern microStore::FileSystem filesystem;
 
@@ -31,19 +32,26 @@ namespace Web {
     static constexpr size_t      TOKEN_BYTES     = 16;
     static constexpr size_t      TOKEN_HEX_LEN   = 32;
     static constexpr uint32_t    DEFAULT_TTL_S   = 30 * 24 * 60 * 60;  // 30 days inactivity
-    // Total active tokens cap. Bumped from 16 to 64 - bench testing
-    // with the WS migration uncovered the 4-tokens-per-identity cap
-    // evicting parallel test sessions. The headline cap defends
-    // against unbounded growth from a malicious / buggy client; the
-    // per-identity cap is gone since legitimate use (multiple browser
-    // tabs across phones, laptops, etc.) routinely needs more than 4.
-    static constexpr size_t      MAX_TOKENS      = 64;
+    // Total active tokens cap. Raised to 256 - parallel sessions (multiple
+    // browser tabs across phones/laptops, plus device test logins) churn
+    // tokens, and a tight cap evicts the globally-oldest, which can be an
+    // active session that just hasn't refreshed recently (it gets logged
+    // out). The cap only defends against unbounded growth from a malicious
+    // / buggy client. The store is PSRAM-backed (PsramVector + fixed-size
+    // POD entries, see below), so even a full store costs no internal SRAM,
+    // which the WiFi MAC and the WebSocket fight over.
+    static constexpr size_t      MAX_TOKENS      = 256;
+    // Fixed bound for the bound identity's id hex (Reticulum ids are well
+    // under this); copies are truncated to fit, never overflowed.
+    static constexpr size_t      IDENTITY_ID_MAX = 64;
 
+    // POD so the whole store sits in PSRAM with no per-entry std::string
+    // heap allocation on the default (internal-SRAM) heap.
     struct Token {
-      std::string       hex;
-      LXMF::IdentityId   identity_id;
-      uint32_t          created_ms;
-      uint32_t          last_seen_ms;
+      char     hex[TOKEN_HEX_LEN + 1];
+      char     identity_id[IDENTITY_ID_MAX + 1];
+      uint32_t created_ms;
+      uint32_t last_seen_ms;
     };
 
     static void load() {
@@ -55,12 +63,12 @@ namespace Web {
       if (deserializeJson(doc, data.data(), data.size()) != DeserializationError::Ok) return;
       if (!doc.is<JsonArray>()) return;
       for (JsonObject obj : doc.as<JsonArray>()) {
-        Token t;
-        t.hex          = (const char*)(obj["hex"]        | "");
-        t.identity_id   = (const char*)(obj["identity_id"] | "");
+        Token t{};
+        snprintf(t.hex,         sizeof(t.hex),         "%s", (const char*)(obj["hex"]         | ""));
+        snprintf(t.identity_id, sizeof(t.identity_id), "%s", (const char*)(obj["identity_id"] | ""));
         t.created_ms   = (uint32_t)(obj["created_ms"]    | 0);
         t.last_seen_ms = (uint32_t)(obj["last_seen_ms"]  | 0);
-        if (t.hex.size() == TOKEN_HEX_LEN && !t.identity_id.empty()) {
+        if (strlen(t.hex) == TOKEN_HEX_LEN && t.identity_id[0] != '\0') {
           _tokens().push_back(t);
         }
       }
@@ -121,9 +129,9 @@ namespace Web {
         store.erase(oldest);
       }
 
-      Token t;
-      t.hex          = random_hex();
-      t.identity_id   = identity_id;
+      Token t{};
+      snprintf(t.hex,         sizeof(t.hex),         "%s", random_hex().c_str());
+      snprintf(t.identity_id, sizeof(t.identity_id), "%s", identity_id.c_str());
       t.created_ms   = millis();
       t.last_seen_ms = t.created_ms;
       store.push_back(t);
@@ -192,8 +200,10 @@ namespace Web {
     }
 
   private:
-    static std::vector<Token>& _tokens() {
-      static std::vector<Token> v;
+    // PSRAM-backed: POD entries keep the whole store off the internal-SRAM
+    // heap, so the raised cap cannot starve the WiFi MAC / WebSocket.
+    static Common::PsramVector<Token>& _tokens() {
+      static Common::PsramVector<Token> v;
       return v;
     }
 

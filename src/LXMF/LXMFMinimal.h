@@ -31,6 +31,7 @@
 #include <vector>
 
 #include <Reticulum.h>
+#include "../Telemetry/Telemeter.h"
 #include <Identity.h>
 #include <Destination.h>
 #include <Packet.h>
@@ -498,10 +499,10 @@ namespace LXMF {
                       const std::vector<OutgoingAttachment>* attachments,
                       MessageRecord& out_rec,
                       const char** out_err = nullptr,
-                      const RNS::Bytes* telemetry = nullptr) {
+                      const ExtraFields* extra = nullptr) {
       PreparedMessage pm;
       if (!prepare_message(dest_hash, title, content, attachments, pm, out_rec,
-                           out_err, telemetry)) {
+                           out_err, extra)) {
         return false;
       }
       return send_prepared(dest_hash, pm, RNS::Bytes::NONE, out_rec, out_err);
@@ -510,10 +511,13 @@ namespace LXMF {
     // Pack the payload, compute the message id, and fill the outbox record
     // (including outbound attachment persistence). Does NOT sign or send -
     // see PreparedMessage. Takes ownership of any staging buffers in
-    // `attachments` (released on every exit path). `telemetry` is an
-    // optional pre-packed Telemeter blob carried verbatim as the
-    // FIELD_TELEMETRY value - the shape Sideband builds with
-    // fields[FIELD_TELEMETRY] = telemeter.packed() (core.py:1515).
+    // `attachments` (released on every exit path). `extra` carries the
+    // optional non-attachment fields: extra->telemetry is a pre-packed
+    // Telemeter blob carried as the FIELD_TELEMETRY bin value - the
+    // shape Sideband builds with fields[FIELD_TELEMETRY] =
+    // telemeter.packed() (core.py:1515); extra->commands and
+    // extra->custom_meta are pre-packed msgpack VALUES copied verbatim
+    // under FIELD_COMMANDS / FIELD_CUSTOM_META.
     bool prepare_message(const RNS::Bytes& dest_hash,
                          const std::string& title,
                          const std::string& content,
@@ -521,7 +525,9 @@ namespace LXMF {
                          PreparedMessage& pm,
                          MessageRecord& out_rec,
                          const char** out_err = nullptr,
-                         const RNS::Bytes* telemetry = nullptr) {
+                         const ExtraFields* extra = nullptr) {
+      const RNS::Bytes* telemetry =
+          (extra && extra->telemetry.size() > 0) ? &extra->telemetry : nullptr;
       auto fail = [&](const char* msg) { if (out_err) *out_err = msg; return false; };
       // prepare_message takes ownership of any staging buffers referenced
       // in `attachments` - they get released on every exit path so the
@@ -577,7 +583,8 @@ namespace LXMF {
       // inner [name, bytes] wrapping, +map header.
       const size_t mp_cap = 96 + title.size() + content.size()
                           + att_bytes + att_names_bytes + 16 * (attachments ? attachments->size() : 0)
-                          + (telemetry ? telemetry->size() + 8 : 0);
+                          + (telemetry ? telemetry->size() + 8 : 0)
+                          + (extra ? extra->commands.size() + extra->custom_meta.size() + 8 : 0);
       // Large attachments (multi-MB) won't fit in DRAM. Allocate the
       // working buffer from PSRAM when above an SRAM-safe threshold;
       // small messages stay on the heap for zero PSRAM pressure. The
@@ -622,7 +629,9 @@ namespace LXMF {
       // Group by tag first so multi-file messages produce ONE map entry
       // with an array value (not a malformed map with duplicate keys).
       const bool have_atts = attachments && !attachments->empty();
-      if (!have_atts && telemetry == nullptr) {
+      const bool have_commands = extra && extra->commands.size() > 0;
+      const bool have_meta     = extra && extra->custom_meta.size() > 0;
+      if (!have_atts && telemetry == nullptr && !have_commands && !have_meta) {
         mp[mp_pos++] = 0xC0;  // fields: nil
       } else {
         // Collect indices per tag in attachment order.
@@ -638,7 +647,9 @@ namespace LXMF {
         size_t field_count = (file_idxs.empty() ? 0 : 1)
                            + (image_idxs.empty() ? 0 : 1)
                            + (audio_idxs.empty() ? 0 : 1)
-                           + (telemetry ? 1 : 0);
+                           + (telemetry ? 1 : 0)
+                           + (have_commands ? 1 : 0)
+                           + (have_meta ? 1 : 0);
         n = Common::MsgPack::pack_map_header(&mp[mp_pos], mp_cap - mp_pos, field_count);
         if (n == 0) { ERROR("LXMF: send: map header pack failed"); return fail("Too many attachments."); }
         mp_pos += n;
@@ -651,6 +662,26 @@ namespace LXMF {
                                         telemetry->data(), telemetry->size());
           if (n == 0) { ERROR("LXMF: send: telemetry bin pack failed"); return fail("Internal error packing telemetry."); }
           mp_pos += n;
+        }
+
+        // FIELD_COMMANDS / FIELD_CUSTOM_META: the caller supplies the
+        // complete msgpack value (e.g. Sideband's telemetry-request
+        // array, or the live-update offer map); copy it verbatim.
+        auto pack_raw_field = [&](uint8_t key, const RNS::Bytes& raw,
+                                  const char* label) -> bool {
+          size_t m = Common::MsgPack::pack_uint8(&mp[mp_pos], mp_cap - mp_pos, key);
+          if (m == 0) { ERRORF("LXMF: send: %s key pack failed", label); return false; }
+          mp_pos += m;
+          if (mp_pos + raw.size() > mp_cap) { ERRORF("LXMF: send: %s overflow", label); return false; }
+          memcpy(&mp[mp_pos], raw.data(), raw.size());
+          mp_pos += raw.size();
+          return true;
+        };
+        if (have_commands && !pack_raw_field(FIELD_COMMANDS, extra->commands, "commands")) {
+          return fail("Internal error packing commands.");
+        }
+        if (have_meta && !pack_raw_field(FIELD_CUSTOM_META, extra->custom_meta, "custom meta")) {
+          return fail("Internal error packing custom meta.");
         }
 
         // Pack one [name_or_mode, bytes] pair. When the attachment was
@@ -752,6 +783,12 @@ namespace LXMF {
       out_rec.content      = content;
       out_rec.incoming     = false;
       out_rec.signature_ok = true;
+      if (telemetry != nullptr && telemetry->size() > 0) {
+        out_rec.has_telemetry = true;
+        if (telemetry->size() <= MAX_TELEMETRY_BLOB) {
+          out_rec.telemetry = *telemetry;
+        }
+      }
       // Outbox attachments. When the gateway has registered an
       // outbound-persist callback (and the per-identity toggle is on),
       // each attachment's bytes are copied to disk and the resulting
@@ -2281,7 +2318,11 @@ namespace LXMF {
       std::string title;
       std::string content;
       std::vector<FieldBlob> fields;
-      if (!_parse_lxmf_payload(payload, payload_len, &msg_ts, &title, &content, &fields)) {
+      RNS::Bytes telemetry;
+      RNS::Bytes commands;
+      RNS::Bytes custom_meta;
+      if (!_parse_lxmf_payload(payload, payload_len, &msg_ts, &title, &content,
+                               &fields, &telemetry, &commands, &custom_meta)) {
         WARNING("LXMF: malformed payload");
         return;
       }
@@ -2305,6 +2346,15 @@ namespace LXMF {
         // FIELD_AUDIO) under the calling identity's attachments dir
         // and annotate the record with metadata.
         _persist_attachments(packet_or_resource_hash, fields, rec.attachments);
+        // Attached telemetry (FIELD_TELEMETRY) -> rendered readings.
+        if (telemetry.size() > 0) {
+          rec.has_telemetry = true;
+          if (telemetry.size() <= MAX_TELEMETRY_BLOB) {
+            rec.telemetry = telemetry;
+          }
+        }
+        rec.commands = commands;
+        rec.custom_meta = custom_meta;
         try { _on_delivery(rec); }
         catch (const std::bad_alloc&) {
           ERROR("LXMF: delivery callback bad_alloc");
@@ -2399,7 +2449,10 @@ namespace LXMF {
 
     bool _parse_lxmf_payload(const uint8_t* data, size_t len,
                              double* out_ts, std::string* out_title, std::string* out_content,
-                             std::vector<FieldBlob>* out_fields = nullptr) {
+                             std::vector<FieldBlob>* out_fields = nullptr,
+                             RNS::Bytes* out_telemetry = nullptr,
+                             RNS::Bytes* out_commands = nullptr,
+                             RNS::Bytes* out_custom_meta = nullptr) {
       if (len < 2) return false;
       size_t off = 0;
       uint8_t tag = data[off++];
@@ -2498,6 +2551,30 @@ namespace LXMF {
             const size_t value_start = off;
             if (!Common::MsgPack::skip_element(data, len, off)) return true;
             const size_t value_end = off;
+            if (key_tag == FIELD_TELEMETRY && out_telemetry != nullptr) {
+              // The value is a bin wrapping the packed Telemeter map;
+              // hand the inner bytes to the caller (location decode
+              // happens at the delivery layer).
+              size_t voff = value_start;
+              const std::string inner =
+                  Common::MsgPack::read_bin_or_str(data, value_end, voff);
+              if (!inner.empty()) {
+                *out_telemetry = RNS::Bytes((const uint8_t*)inner.data(), inner.size());
+              }
+              continue;
+            }
+            if (key_tag == FIELD_COMMANDS && out_commands != nullptr) {
+              // Raw command array (Sideband flow); parsed by
+              // TelemetryShare at the delivery layer.
+              *out_commands = RNS::Bytes(&data[value_start], value_end - value_start);
+              continue;
+            }
+            if (key_tag == FIELD_CUSTOM_META && out_custom_meta != nullptr) {
+              // Raw custom-meta value - carries the live-update offer
+              // between two of these devices (TelemetryShare).
+              *out_custom_meta = RNS::Bytes(&data[value_start], value_end - value_start);
+              continue;
+            }
             const bool is_target_tag = (key_tag == FIELD_FILE_ATTACHMENTS
                                       || key_tag == FIELD_IMAGE
                                       || key_tag == FIELD_AUDIO);

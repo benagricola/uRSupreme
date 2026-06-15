@@ -63,6 +63,7 @@
         obj["id"]           = a->id;
         obj["display_name"] = a->display_name;
         obj["address"]      = a->address_hex();
+        obj["screen"]       = a->screen;
       }
       // Radio + transport status. Surfaced here so the SPA can render a
       // single status indicator without an extra round-trip on every
@@ -318,6 +319,18 @@
       send_json(req, 200, doc);
     }
 
+    // Compose-popover telemetry defaults, shared by the identity GET
+    // and the settings response.
+    static void fill_identity_telemetry(JsonObject obj, const LXMF::LXMFIdentity* a) {
+      JsonObject t = obj["telemetry"].to<JsonObject>();
+      t["location"]    = a ? a->telemetry_location    : true;
+      t["environment"] = a ? a->telemetry_environment : false;
+      t["battery"]     = a ? a->telemetry_battery     : false;
+      t["compass"]     = a ? a->telemetry_compass     : false;
+      t["share_s"]     = a ? a->telemetry_share_s     : 0;
+      t["rate_s"]      = a ? a->telemetry_rate_s      : 60;
+    }
+
     static void handle_get_identity(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);
@@ -333,6 +346,7 @@
       doc["persist_outbound_attachments"] = a->persist_outbound_attachments;
       doc["stamp_cost"]                   = a->stamp_cost;
       doc["enforce_stamps"]               = a->enforce_stamps;
+      doc["screen"]                       = a->screen;
       doc["inbox_size"]                   = a->inbox  ? (uint32_t)a->inbox->size()  : 0;
       doc["outbox_size"]                  = a->outbox ? (uint32_t)a->outbox->size() : 0;
       // Time until the next *auto* announce. 0 when auto-announce is
@@ -344,6 +358,7 @@
         next_in = (elapsed >= a->announce_interval_ms) ? 0 : (a->announce_interval_ms - elapsed);
       }
       doc["next_announce_in_ms"]  = next_in;
+      fill_identity_telemetry(doc.as<JsonObject>(), a);
       send_json(req, 200, doc);
     }
 
@@ -411,6 +426,48 @@
           return;
         }
       }
+      if (body["screen"].is<JsonVariant>()) {
+        const bool on = (bool)body["screen"];
+        if (on) {
+          // Pointing the OLED at an identity's messages requires
+          // physical presence: whoever holds the device can read them
+          // from then on, so the request must prove it holds the
+          // device now.
+          const std::string proof = (const char*)(body["identity_code"] | "");
+          const char* why = explain_identity_code_failure(proof);
+          if (why != nullptr) {
+            send_error_with_message(req, 403, "identity_code_required", why);
+            return;
+          }
+        }
+        const char* err = nullptr;
+        if (!LXMF::LXMFGateway::set_screen_identity(requested, on, &err)) {
+          send_error_with_message(req, 409, "screen_identity",
+            err ? err : "Could not change the screen identity.");
+          return;
+        }
+      }
+      if (body["telemetry"].is<JsonObject>()) {
+        // Compose-popover defaults: which items pre-select and the
+        // default share window. Absent keys keep their current value.
+        const LXMF::LXMFIdentity* cur = LXMF::LXMFGateway::identity_by_id(requested);
+        if (!cur) { send_error(req, 404, "unknown_identity"); return; }
+        JsonObject t = body["telemetry"];
+        uint32_t share_s = (uint32_t)(t["share_s"] | cur->telemetry_share_s);
+        if (share_s > 24 * 3600) share_s = 24 * 3600;
+        uint32_t rate_s = (uint32_t)(t["rate_s"] | cur->telemetry_rate_s);
+        if (rate_s < 15)   rate_s = 15;
+        if (rate_s > 3600) rate_s = 3600;
+        if (!LXMF::LXMFGateway::set_telemetry_defaults(requested,
+              (bool)(t["location"]    | cur->telemetry_location),
+              (bool)(t["environment"] | cur->telemetry_environment),
+              (bool)(t["battery"]     | cur->telemetry_battery),
+              (bool)(t["compass"]     | cur->telemetry_compass),
+              share_s, rate_s)) {
+          send_error(req, 404, "unknown_identity");
+          return;
+        }
+      }
       if (body["display_name"].is<JsonVariant>()) {
         // Trim leading/trailing whitespace; reject empty so peers always
         // see a meaningful label. The 96-byte clamp keeps the encoded
@@ -437,6 +494,8 @@
       doc["persist_outbound_attachments"]  = a ? a->persist_outbound_attachments : true;
       doc["stamp_cost"]                    = a ? a->stamp_cost : 0;
       doc["enforce_stamps"]                = a ? a->enforce_stamps : false;
+      doc["screen"]                        = a ? a->screen : false;
+      fill_identity_telemetry(doc.as<JsonObject>(), a);
       send_json(req, 200, doc);
     }
 

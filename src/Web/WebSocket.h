@@ -40,6 +40,7 @@
 #include "../LXMF/LXMFTypes.h"
 #include "../LXMF/AnnounceLog.h"
 #include "../Telemetry/Radio.h"
+#include "../Telemetry/Telemeter.h"
 #include "../Telemetry/Network.h"
 
 namespace LXMF { struct MessageRecord; }
@@ -268,6 +269,11 @@ namespace WS {
     // endpoint, so large bodies stayed unreadable from the UI even
     // though the bytes were on disk.
     msg["body"]            = m.content;
+    if (m.has_telemetry) msg["tel"] = true;
+    if (m.telemetry.size() > 0) {
+      Telemetry::Telemeter::decode_into(msg["tele"].to<JsonObject>(),
+                                        m.telemetry.data(), m.telemetry.size());
+    }
     msg["body_size"]       = m.body_size;
     msg["sig_ok"]          = m.signature_ok;
     // Delivery-stamp verdict - present only when an inbound stamp
@@ -307,6 +313,11 @@ namespace WS {
     msg["peer"]        = m.peer_hash.toHex();
     msg["title"]       = m.title;
     msg["body"]        = m.content;
+    if (m.has_telemetry) msg["tel"] = true;
+    if (m.telemetry.size() > 0) {
+      Telemetry::Telemeter::decode_into(msg["tele"].to<JsonObject>(),
+                                        m.telemetry.data(), m.telemetry.size());
+    }
     msg["body_size"]   = m.body_size;
     msg["in"]          = false;
     msg["status"]      = LXMF::outbox_status_name(m.status);
@@ -347,6 +358,19 @@ namespace WS {
     doc["bytes_done"]  = bytes_done;
     doc["bytes_total"] = bytes_total;
     doc["finished"]    = finished;
+    broadcast(doc, identity_id);
+  }
+
+  // Fresh readings for a live telemetry feed (TelemetryShare). The SPA
+  // strip above the conversation updates from these without polling.
+  inline void publish_telemetry_update(const LXMF::IdentityId& identity_id,
+                                       const RNS::Bytes& peer,
+                                       const RNS::Bytes& blob) {
+    Common::PsramJsonDocument doc;
+    doc["type"] = "telemetry_update";
+    doc["peer"] = peer.toHex();
+    Telemetry::Telemeter::decode_into(doc["tele"].to<JsonObject>(),
+                                      blob.data(), blob.size());
     broadcast(doc, identity_id);
   }
 

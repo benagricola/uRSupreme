@@ -47,7 +47,7 @@ float pmu_temperature = PMU_TEMP_MIN-1;
     }
   }
 
-  bool pmuInterrupt;
+  volatile bool pmuInterrupt;
   void setPmuFlag()
   {
       pmuInterrupt = true;
@@ -635,9 +635,17 @@ bool init_pmu() {
     PMU->setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
     PMU->setPowerKeyPressOnTime(XPOWERS_POWERON_128MS);
 
-    // disable all axp chip interrupt
+    // Power-key presses drive the OLED messenger: short = navigate,
+    // long (the 1 s IRQ level, far inside the 4 s power-off hold) =
+    // confirm the send. The ISR only sets pmuInterrupt - the main
+    // loop reads and clears the PMU's IRQ status over I2C
+    // (power_key_event below).
+    pinMode(PMU_IRQ, INPUT_PULLUP);
+    attachInterrupt(PMU_IRQ, setPmuFlag, FALLING);
     PMU->disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
     PMU->clearIrqStatus();
+    ((XPowersAXP2101*)PMU)->setIrqLevelTime(XPOWERS_AXP2101_IRQ_TIME_1S);
+    PMU->enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ | XPOWERS_AXP2101_PKEY_LONG_IRQ);
 
     // It is necessary to disable the detection function of the TS pin on the board
     // without the battery temperature detection function, otherwise it will cause abnormal charging
@@ -650,8 +658,44 @@ bool init_pmu() {
     ((XPowersAXP2101*)PMU)->enableTemperatureMeasure();
 
 
-    return true; 
+    return true;
   #else
     return false;
+  #endif
+}
+
+// Message-notification LED. The Supreme has no plain GPIO LED; the
+// AXP2101's charge LED is the one indicator, normally driven by the
+// charger (CTRL_CHG). Blink it while an unread message is on screen,
+// hand it back to the charger after. One I2C register write per
+// transition.
+void notify_led(bool blinking) {
+  #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+    if (PMU == NULL) return;
+    PMU->setChargingLedMode(blinking ? XPOWERS_CHG_LED_BLINK_4HZ
+                                     : XPOWERS_CHG_LED_CTRL_CHG);
+  #else
+    (void)blinking;
+  #endif
+}
+
+// Consume a power-key press. 0 = none, 1 = short tap, 2 = held past
+// the IRQ level (1 s - released long before the 4 s hardware
+// power-off). Reports exactly once per press: the ISR latches
+// pmuInterrupt off the PMU's IRQ line; this reads and clears the
+// chip's IRQ status (one I2C transaction, and only after a latched
+// edge).
+uint8_t power_key_event() {
+  #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+    if (!pmuInterrupt || PMU == NULL) return 0;
+    pmuInterrupt = false;
+    PMU->getIrqStatus();
+    uint8_t ev = 0;
+    if      (PMU->isPekeyShortPressIrq()) ev = 1;
+    else if (PMU->isPekeyLongPressIrq())  ev = 2;
+    PMU->clearIrqStatus();
+    return ev;
+  #else
+    return 0;
   #endif
 }

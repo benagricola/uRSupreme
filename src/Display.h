@@ -981,6 +981,13 @@ void draw_disp_area() {
       disp_area.printf("%lus left", (unsigned long)((remaining_ms + 999) / 1000));
       return;
     }
+    // Messenger mode pages (preset list / confirm / result). The
+    // identity code keeps priority above - it is single-use with a
+    // 60 s TTL, the messenger can wait.
+    if (LXMF::Messenger::active() && device_init_done && !firmware_update_mode) {
+      LXMF::Messenger::render(disp_area);
+      return;
+    }
   #endif
   if (!device_init_done || firmware_update_mode) {
     uint8_t p_by = 37;
@@ -1285,8 +1292,26 @@ void update_display(bool blank = false) {
           display.fillScreen(SSD1306_WHITE);
         #endif
 
-        update_stat_area();
-        update_disp_area();
+        #if defined(HAS_LXMF_GATEWAY)
+        if (LXMF::Messenger::active() && device_init_done && !firmware_update_mode
+            && disp_mode == DISP_MODE_PORTRAIT
+            && Web::WebUI::identity_code_for_display().empty()) {
+          // Messenger pages own the whole panel in portrait - both
+          // area slots, one tall canvas - so message text and the
+          // button hints get the full height. The identity-code page
+          // still wins (the normal path below renders it); landscape
+          // keeps the split layout via draw_disp_area's override.
+          static GFXcanvas1 messenger_full_area(64, 128);
+          LXMF::Messenger::render(messenger_full_area);
+          drawBitmap(p_ad_x, p_ad_y, messenger_full_area.getBuffer(),
+                     messenger_full_area.width(), messenger_full_area.height(),
+                     SSD1306_WHITE, SSD1306_BLACK);
+        } else
+        #endif
+        {
+          update_stat_area();
+          update_disp_area();
+        }
       }
       
       #if BOARD_MODEL == BOARD_TECHO
@@ -1308,6 +1333,36 @@ void update_display(bool blank = false) {
 
 void display_unblank() {
   last_unblank_event = millis();
+}
+
+// Live framebuffer copy for GET /api/diag/display (declared extern in
+// WebUI/diag.h, which compiles earlier in this TU). The SH1106 buffer
+// is page-organized 1 bpp: 128 columns x 8 pages, each byte one
+// 8-pixel column slice, LSB at the top. The copy is taken without a
+// lock - the main loop may be mid-draw, and a torn diagnostic frame
+// is acceptable.
+//
+// Refused while an identity code is on screen: the code proves
+// physical presence, and letting a bearer-token holder read it
+// remotely would let them consume a code the person at the device
+// generated for themselves.
+bool oled_capture(uint8_t* out, size_t cap, uint16_t* w, uint16_t* h) {
+  #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+    #if defined(HAS_LXMF_GATEWAY)
+      if (!Web::WebUI::identity_code_for_display().empty()) return false;
+    #endif
+    const size_t fb_len = (size_t)(128 * 64 / 8);
+    if (out == nullptr || cap < fb_len) return false;
+    uint8_t* buf = display.getBuffer();
+    if (buf == nullptr) return false;
+    memcpy(out, buf, fb_len);
+    if (w) *w = 128;
+    if (h) *h = 64;
+    return true;
+  #else
+    (void)out; (void)cap; (void)w; (void)h;
+    return false;
+  #endif
 }
 
 void ext_fb_enable() {

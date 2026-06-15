@@ -653,7 +653,7 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .cn-tcp-row .cn-tcp-info { flex: 1; min-width: 0; }
 .cn-tcp-row .cn-tcp-info .muted { font-size: 11px; }
 .cn-tcp-row label { display: flex; align-items: center; gap: 4px; font-size: 11px; margin: 0; }
-.cn-tcp-row label input { width: auto; min-height: auto; }
+.cn-tcp-row label input:not([type="checkbox"]) { width: auto; min-height: auto; }
 .cn-section > summary {
   list-style: none;
   cursor: pointer;
@@ -683,6 +683,44 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 .cn-section[open] > summary::after { transform: translateY(-50%) rotate(90deg); }
 .cn-section[open] > summary { border-bottom: 1px solid var(--bg-elev-2); }
 .cn-section-body { padding: 12px; }
+
+/* One device-message preset in Settings > Identity > Device messages.
+   A bordered card per preset: label + position toggle on the head
+   row, then destination + message, Remove tucked bottom-right. */
+.preset-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.preset-card .preset-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.preset-card .preset-head input[type=text] { flex: 1; }
+.preset-card .preset-head .toggle-row {
+  flex: 0 0 auto;
+  margin: 0;
+  white-space: nowrap;
+}
+.preset-card .preset-tel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+}
+.preset-card .preset-tel .toggle-row { margin: 0; }
+.preset-card .preset-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.preset-card .preset-foot button {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 4px 14px;
+  min-height: auto;
+}
 
 /* Row-level toggle on a `<summary>` - used for "Discoverable" on the
    LoRa accordion so the user can flip the broadcast on/off without
@@ -758,34 +796,27 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 }
 .info-tooltip a { color: var(--accent); }
 
-/* iOS/Material-style switch. Reusable - wrap a checkbox so the SPA
-   stops shipping bare browser-default checkboxes wherever a boolean
-   preference is being expressed. Usage:
-     <label class="switch">
-       <input type="checkbox">
-       <span class="switch-slider"></span>
-     </label>
-   The native checkbox stays in the DOM (form semantics, JS listens
-   to `change`), it's just visually replaced by the slider. */
-.switch {
-  position: relative;
-  display: inline-block;
+/* Every checkbox paints as a switch - the control for a boolean is a
+   toggle, never a browser-default checkbox. No wrapper markup needed:
+   the native input keeps its form semantics and `change` events; only
+   the painting is replaced. Overrides the global `input { width:100%;
+   min-height:36px }`. */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
   width: 34px; height: 18px;
+  min-height: auto;
   flex-shrink: 0;
-}
-.switch input {
-  opacity: 0; width: 0; height: 0;
-  position: absolute; pointer-events: none;
-}
-.switch-slider {
-  position: absolute; inset: 0;
+  margin: 0;
+  padding: 0;
+  position: relative;
   background: var(--bg-elev-2);
   border: 1px solid var(--border);
   border-radius: 999px;
   cursor: pointer;
   transition: background 0.18s ease, border-color 0.18s ease;
 }
-.switch-slider::before {
+input[type="checkbox"]::before {
   content: '';
   position: absolute;
   height: 12px; width: 12px;
@@ -796,20 +827,17 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   transition: transform 0.18s ease, background 0.18s ease;
   box-shadow: 0 1px 2px rgba(0,0,0,0.4);
 }
-.switch input:checked + .switch-slider {
+input[type="checkbox"]:checked {
   background: var(--accent);
   border-color: var(--accent);
 }
-.switch input:checked + .switch-slider::before {
+input[type="checkbox"]:checked::before {
   transform: translate(16px, -50%);
   background: #fff;
 }
-.switch input:focus-visible + .switch-slider {
+input[type="checkbox"]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-.switch input:disabled + .switch-slider {
-  opacity: 0.4; cursor: not-allowed;
 }
 
 /* ============================== STATUS INDICATOR + POPOVER ============================== */
@@ -958,9 +986,6 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   display: flex; align-items: center; gap: 6px;
   font-size: 12px; cursor: pointer; margin: 0;
 }
-.popover-config input[type="checkbox"] {
-  width: auto; min-height: auto; margin: 0;
-}
 .popover-config select {
   flex: 1; max-width: 140px; font-size: 12px;
 }
@@ -1031,6 +1056,104 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   font-size: 20px;
 }
 .emoji-cell:hover { background: var(--bg-hover); }
+
+/* ============================== CHROME ICON GLYPHS ============================== */
+/* Pictographs in UI chrome are icons, never emoji (emoji belong only
+   inside user-written message bodies). Defined ONCE here as CSS-mask
+   ::before classes - Feather outlines, currentColor, no icon font.
+   Add the class to any element; the glyph renders before its text. */
+.ico-pin::before, .ico-compass::before, .ico-thermo::before,
+.ico-battery::before, .ico-image::before, .ico-mic::before,
+.ico-file::before, .ico-activity::before {
+  content: '';
+  display: inline-block;
+  width: 13px; height: 13px;
+  background-color: currentColor;
+  vertical-align: -2px;
+  margin-right: 5px;
+  -webkit-mask: var(--ico-url) center / contain no-repeat;
+          mask: var(--ico-url) center / contain no-repeat;
+}
+.ico-pin      { --ico-url: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='white'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M21%2010c0%207-9%2013-9%2013s-9-6-9-13a9%209%200%200%201%2018%200z'/%3E%3Ccircle%20cx='12'%20cy='10'%20r='3'/%3E%3C/svg%3E"); }
+.ico-compass  { --ico-url: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='white'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Ccircle%20cx='12'%20cy='12'%20r='10'/%3E%3Cpolygon%20points='16.24%207.76%2014.12%2014.12%207.76%2016.24%209.88%209.88%2016.24%207.76'/%3E%3C/svg%3E"); }
+.ico-thermo   { --ico-url: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='white'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M14%2014.76V3.5a2.5%202.5%200%200%200-5%200v11.26a4.5%204.5%200%201%200%205%200z'/%3E%3C/svg%3E"); }
+.ico-battery  { --ico-url: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='white'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Crect%20x='1'%20y='6'%20width='18'%20height='12'%20rx='2'%20ry='2'/%3E%3Cline%20x1='23'%20y1='13'%20x2='23'%20y2='11'/%3E%3C/svg%3E"); }
+.ico-image    { --ico-url: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='white'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Crect%20x='3'%20y='3'%20width='18'%20height='18'%20rx='2'%20ry='2'/%3E%3Ccircle%20cx='8.5'%20cy='8.5'%20r='1.5'/%3E%3Cpolyline%20points='21%2015%2016%2010%205%2021'/%3E%3C/svg%3E"); }
+.ico-mic      { --ico-url: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='white'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M12%201a3%203%200%200%200-3%203v8a3%203%200%200%200%206%200V4a3%203%200%200%200-3-3z'/%3E%3Cpath%20d='M19%2010v2a7%207%200%200%201-14%200v-2'/%3E%3Cline%20x1='12'%20y1='19'%20x2='12'%20y2='23'/%3E%3Cline%20x1='8'%20y1='23'%20x2='16'%20y2='23'/%3E%3C/svg%3E"); }
+.ico-file     { --ico-url: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='white'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M13%202H6a2%202%200%200%200-2%202v16a2%202%200%200%200%202%202h12a2%202%200%200%200%202-2V9z'/%3E%3Cpolyline%20points='13%202%2013%209%2020%209'/%3E%3C/svg%3E"); }
+.ico-activity { --ico-url: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='white'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpolyline%20points='22%2012%2018%2012%2015%2021%209%203%206%2012%202%2012'/%3E%3C/svg%3E"); }
+
+/* Recording-in-progress dot (was an emoji). Same pulse as the live
+   strip, red. */
+.record-dot {
+  display: inline-block;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--danger-2);
+  animation: live-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+/* ============================== TELEMETRY DISPLAY ============================== */
+/* Decoded readings inside a message bubble - one compact line per
+   sensor group, same chip tone as attachments. */
+.telemetry-block {
+  display: flex; flex-direction: column; gap: 2px;
+  background: rgba(0,0,0,0.18);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.telemetry-block .tline { display: flex; align-items: center; gap: 6px; }
+.telemetry-block a.tline { color: var(--accent); text-decoration: none; }
+.telemetry-block a.tline:hover { text-decoration: underline; }
+
+/* Live-share strip above the thread: one row per active share with
+   the open peer (sending and/or receiving). */
+.live-strip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.live-strip .live-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent-3);
+  flex-shrink: 0;
+  animation: live-pulse 2s ease-in-out infinite;
+}
+@keyframes live-pulse { 50% { opacity: 0.35; } }
+.live-strip .live-label { font-weight: 600; flex-shrink: 0; }
+.live-strip .live-seg {
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0; overflow: hidden; white-space: nowrap;
+}
+.live-strip .live-seg + .live-seg {
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+}
+.live-strip .seg-label { color: var(--text-mute); flex-shrink: 0; }
+.live-strip button { flex: 0 0 auto; width: auto; min-height: auto; padding: 2px 10px; font-size: 11px; }
+
+/* ============================== TELEMETRY ATTACH POPUP ============================== */
+/* Positioned by toggleTelemetryPopover() above the compose pin button,
+   same anchoring scheme as #popup-emoji. */
+#popup-telemetry {
+  position: absolute;
+  bottom: 60px; left: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  width: 240px;
+  z-index: 50;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+/* Compose pin button while a telemetry attach is staged. */
+#btn-telemetry.telemetry-armed {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 
 /* ============================== TOASTS ============================== */
 #toast-reconnect {

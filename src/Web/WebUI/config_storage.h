@@ -121,9 +121,8 @@
       send_json(req, 200, doc);
     }
 
-    // GET /api/gps - last RMC fix. Returns valid flag, position,
-    // speed/heading, UTC, and how recent the fix was. Auth-gated so
-    // attackers on the LAN can't passively scrape location.
+    // POST /api/storage/migrate_flash_to_sd - move flash-resident
+    // attachments onto the SD card to free device flash.
     static void handle_migrate_flash_to_sd(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       LXMF::IdentityId caller = require_auth(req);

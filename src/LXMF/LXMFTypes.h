@@ -17,12 +17,19 @@ namespace LXMF {
   // LXMF fields-dict tags we recognise (LXMF-upstream/LXMF/LXMF.py).
   // Only the file-shaped tags are persisted on-device for now - other
   // inbound tags (FIELD_RENDERER / FIELD_TICKET / etc.) flow through
-  // as unparsed bytes. FIELD_TELEMETRY is outbound-only: the telemetry
-  // sender packs it for Sideband collectors (TelemetrySender.h).
+  // as unparsed bytes.
   static constexpr uint8_t FIELD_TELEMETRY        = 0x02;  // LXMF.py:9
   static constexpr uint8_t FIELD_FILE_ATTACHMENTS = 0x05;
   static constexpr uint8_t FIELD_IMAGE            = 0x06;
   static constexpr uint8_t FIELD_AUDIO            = 0x07;
+  static constexpr uint8_t FIELD_COMMANDS         = 0x09;  // LXMF.py:16
+  static constexpr uint8_t FIELD_CUSTOM_META      = 0xFD;  // LXMF.py:36
+
+  // Largest FIELD_TELEMETRY blob kept on a MessageRecord (and in the
+  // persisted inbox/outbox docs). Our own packs are <= 128 B; foreign
+  // telemeters with many sensors can be bigger, and anything beyond
+  // this stores as a bare has_telemetry flag.
+  static constexpr size_t MAX_TELEMETRY_BLOB = 512;
 
   // Identity identifier - the first 16 hex chars of an Identity's hexhash.
   using IdentityId = std::string;
@@ -155,6 +162,21 @@ namespace LXMF {
     bool          signature_ok = false;  // For incoming: did the Ed25519 signature verify against a known identity? For outgoing: always true.
     OutboxStatus  status      = OutboxStatus::Delivered;  // Only meaningful for outgoing messages; Delivered for incoming.
     RNS::Bytes    packet_hash;           // RNS packet hash, used to correlate delivery receipts.
+    // Attached telemetry (FIELD_TELEMETRY). has_telemetry marks any
+    // attach; the packed Telemeter blob itself rides along (and
+    // persists) so the web serializers can decode the full readings
+    // for display on BOTH ends - sender and receiver. Bounded: blobs
+    // over MAX_TELEMETRY_BLOB keep the flag but drop the bytes
+    // (foreign telemeters can carry far more sensors than ours).
+    bool   has_telemetry = false;
+    RNS::Bytes telemetry;
+    // Inbound FIELD_COMMANDS raw value (Sideband command flow, e.g.
+    // telemetry requests). Transient - consumed by the gateway's
+    // delivery path, never persisted.
+    RNS::Bytes commands;
+    // Inbound FIELD_CUSTOM_META raw value - carries the live-update
+    // offer between two of these devices. Transient like commands.
+    RNS::Bytes custom_meta;
     // LXMF delivery-stamp state, mirroring upstream LXMessage.stamp_value /
     // stamp_valid / stamp_checked. checked=false means no stamp policy
     // applied (no inbound cost configured, or an outbound send to a peer
@@ -166,6 +188,27 @@ namespace LXMF {
     bool          stamp_valid   = false;
     int16_t       stamp_value   = -1;
     PsVector<AttachmentMeta> attachments;  // Empty for messages without LXMF fields.
+  };
+
+  // Optional non-attachment LXMF fields riding on an outgoing message.
+  // telemetry is the packed Telemeter map (encoded as the bin content
+  // of FIELD_TELEMETRY); commands and custom_meta are pre-packed
+  // msgpack VALUES copied verbatim under FIELD_COMMANDS (0x09) and
+  // FIELD_CUSTOM_META (0xFD). A send with one of these and no
+  // title/content/attachments is machinery: it skips the outbox and
+  // the receiving end keeps it out of the inbox.
+  struct ExtraFields {
+    RNS::Bytes telemetry;
+    RNS::Bytes commands;
+    RNS::Bytes custom_meta;
+    // A user composed this send (compose bar, device preset) - it gets
+    // an outbox record and a bubble even with no text or attachments,
+    // unlike machinery sends (collector reports, live-update answers
+    // and requests), which stay out of the conversation.
+    bool visible = false;
+    bool empty() const {
+      return telemetry.size() == 0 && commands.size() == 0 && custom_meta.size() == 0;
+    }
   };
 
   // The inbox/outbox ring lives in PSRAM too - the record structs (and thus the

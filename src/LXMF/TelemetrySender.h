@@ -76,6 +76,7 @@ inline void load(microStore::FileSystem& fs) {
   c.include.battery     = doc["battery"]     | true;
   c.include.location    = doc["location"]    | true;
   c.include.environment = doc["environment"] | true;
+  c.include.magnetic    = doc["compass"]     | false;
 }
 
 inline void persist(microStore::FileSystem& fs) {
@@ -88,6 +89,7 @@ inline void persist(microStore::FileSystem& fs) {
   doc["battery"]     = c.include.battery;
   doc["location"]    = c.include.location;
   doc["environment"] = c.include.environment;
+  doc["compass"]     = c.include.magnetic;
   String out;
   serializeJson(doc, out);
   fs.writeFile(CONFIG_PATH,
@@ -140,15 +142,16 @@ inline bool send_now() {
   const size_t packed_len = Telemetry::Telemeter::pack(
       packed, sizeof(packed), c.include, now_epoch);
   if (packed_len == 0) {
-    return fail("pack_error", "Telemetry packing failed.");
+    return fail("no_readings", "No sensor readings available right now.");
   }
-  RNS::Bytes telemetry(packed, packed_len);
+  ExtraFields extra;
+  extra.telemetry = RNS::Bytes(packed, packed_len);
 
   MessageRecord rec;
   const char* err = nullptr;
   bool queued = false;
   const bool ok = LXMFGateway::send(iden, dest, "", "", nullptr, rec, &err,
-                                    &queued, /*use_seq=*/0, &telemetry);
+                                    &queued, /*use_seq=*/0, &extra);
   if (ok) {
     _detail::last_result()     = "sent";
     _detail::last_error()      = "";
@@ -211,6 +214,7 @@ inline void fill_status(JsonObject o) {
   o["battery"]     = c.include.battery;
   o["location"]    = c.include.location;
   o["environment"] = c.include.environment;
+  o["compass"]     = c.include.magnetic;
   o["last_result"] = _detail::last_result();
   if (!_detail::last_error().empty()) o["last_error"] = _detail::last_error();
   if (_detail::last_sent_epoch() > 0.0) {

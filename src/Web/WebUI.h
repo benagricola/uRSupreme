@@ -45,7 +45,7 @@ extern char             wr_hostname[10];
 #include "../Clock/Manager.h"
 #include "ApiRoutes.h"
 #include "WebSocket.h"
-#include "../Sensors/Position/L76K.h"
+#include "../Sensors/Position/Gnss.h"
 #include "../Sensors/Clock/PCF8563.h"
 #include "../Storage/SDCard.h"
 #include "../Sensors/Environment/BME280.h"
@@ -67,6 +67,8 @@ extern char             wr_hostname[10];
 #include "../LXMF/LXMFGateway.h"
 #include "../LXMF/LXMFTypes.h"
 #include "../LXMF/TelemetrySender.h"
+#include "../LXMF/TelemetryShare.h"
+#include "../LXMF/Messenger.h"
 #include "../LXMF/AnnounceLog.h"
 #include "AuthTokens.h"
 #include "BootCounter.h"
@@ -111,6 +113,9 @@ extern float    st_airtime_limit; // short-term duty-cycle cap (0..1, 0=disabled
 extern float    lt_airtime_limit; // long-term duty-cycle cap (0..1, 0=disabled)
 extern bool     airtime_lock;     // true when current airtime exceeds the cap; TX blocked
 extern bool     kiss_serial_output;  // toggle KISS-framed bytes on USB UART
+// Live OLED framebuffer copy for /api/diag/display. Defined in
+// Display.h, which compiles after this file in the firmware TU.
+extern bool oled_capture(uint8_t* out, size_t cap, uint16_t* w, uint16_t* h);
 
 #include <algorithm>
 #include <vector>
@@ -310,7 +315,7 @@ namespace Web {
     // (~50 Hz), so we must not allocate. Returns 0 for kinds whose
     // last reading hasn't lit up yet.
     static uint32_t sensor_taken_ms(const char* kind) {
-      if (strcmp(kind, "gps")          == 0) return Sensors::L76K::last_fix().fix_received_ms;
+      if (strcmp(kind, "gps")          == 0) return Sensors::Gnss::last_fix().fix_received_ms;
       if (strcmp(kind, "environment")  == 0) return Sensors::BME280::last_reading().taken_ms;
       if (strcmp(kind, "magnetometer") == 0) return Sensors::QMC6310::last_reading().taken_ms;
       if (strcmp(kind, "imu")          == 0) return Sensors::QMI8658::last_reading().taken_ms;
@@ -527,13 +532,13 @@ namespace Web {
       auto& u = id_code();
       const uint32_t now = millis();
       if (u.hex6.empty()) {
-        return "No identity code is pending on this device. Press the device's program button: long-press (~1s), release, then short-press within 2s. Read the 6 hex chars from the OLED or serial console.";
+        return "No identity code is pending on this device. Press the device's BOOT button: long-press (~1s), release, then short-press within 2s. Read the 6 hex chars from the OLED or serial console.";
       }
       if (u.consumed) {
-        return "The pending identity code was already used. Press the device button again to generate a fresh one.";
+        return "The pending identity code was already used. Press the BOOT button again to generate a fresh one.";
       }
       if (now > u.expires_ms) {
-        return "The identity code expired (60s lifetime). Press the device button again to generate a fresh one.";
+        return "The identity code expired (60s lifetime). Press the BOOT button again to generate a fresh one.";
       }
       if (proof.empty()) {
         return "Identity code is required for this operation. Type the 6 hex chars currently displayed on the device.";
@@ -786,6 +791,11 @@ namespace Web {
 #endif
       on_http(HTTP_GET, ApiRoutes::DIAG_TRANSPORT, handle_diag_transport);
       on_http(HTTP_GET, ApiRoutes::DIAG_ROUTES, handle_diag_routes);
+#if defined(URTN_DISPLAY_DIAG)
+      // Live OLED framebuffer + messenger nav injection (testing).
+      on_http(HTTP_GET, ApiRoutes::DIAG_DISPLAY, handle_diag_display_get);
+      on_json_post(ApiRoutes::DIAG_DISPLAY,     handle_diag_display_post);
+#endif
 #if defined(URTN_HEAP_TRACE)
       on_http(HTTP_GET, ApiRoutes::DIAG_HEAPTRACE, handle_diag_heaptrace);
 #endif
@@ -831,6 +841,11 @@ namespace Web {
       on_http(HTTP_GET, ApiRoutes::TELEMETRY_CONFIG, handle_telemetry_config_get);
       on_json_post(ApiRoutes::TELEMETRY_CONFIG,     handle_telemetry_config_post);
       on_json_post(ApiRoutes::TELEMETRY_SEND,       handle_telemetry_send);
+      on_http(HTTP_GET, ApiRoutes::TELEMETRY_SHARES, handle_telemetry_shares_get);
+      on_json_post(ApiRoutes::TELEMETRY_SHARES_STOP, handle_telemetry_shares_stop);
+      // OLED messenger presets.
+      on_http(HTTP_GET, ApiRoutes::MESSENGER_PRESETS, handle_messenger_presets_get);
+      on_json_post(ApiRoutes::MESSENGER_PRESETS,   handle_messenger_presets_post);
       // Global inbox capacity + wall-clock TTL pruning.
       on_http(HTTP_GET, ApiRoutes::INBOX_CONFIG, handle_inbox_config_get);
       on_json_post(ApiRoutes::INBOX_CONFIG,         handle_inbox_config_post);
@@ -944,6 +959,7 @@ namespace Web {
     #include "WebUI/time_gps.h"
     #include "WebUI/config_storage.h"
     #include "WebUI/telemetry.h"
+    #include "WebUI/messenger.h"
     #include "WebUI/wifi.h"
     #include "WebUI/radio.h"
     #include "WebUI/discovery.h"

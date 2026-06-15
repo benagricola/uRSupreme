@@ -5,6 +5,10 @@
 // remain implicit-inline because they sit inside a class body via
 // the surrounding #include directive.
 
+    // GET /api/time - returns the current calibrated time, the source
+    // that set it, and the source-priority/enable config. Open to any
+    // authenticated session (the time itself is also exposed via
+    // /api/info -> clock.now_ms, so this just adds source detail).
     static void handle_time_get(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
@@ -115,9 +119,9 @@
     static uint32_t fill_sensor_block(JsonObject parent, const char* kind) {
       JsonObject o = parent[kind].to<JsonObject>();
       if (strcmp(kind, "gps") == 0) {
-        const Sensors::L76K::Fix f = Sensors::L76K::last_fix();
-        o["model"]        = Sensors::L76K::model_name();
-        o["available"]    = Sensors::L76K::has_serial();
+        const Sensors::Gnss::Fix f = Sensors::Gnss::last_fix();
+        o["model"]        = Sensors::Gnss::module_name();
+        o["available"]    = Sensors::Gnss::has_serial();
         // GPS is presented as a sensor in the popover (enable/interval
         // controls alongside BME280/QMC6310/IMU), but its config is
         // owned by TimeManager since it doubles as a time source. Pull
@@ -142,9 +146,28 @@
         o["fix_received_ms"] = f.fix_received_ms == 0 ? -1 : (long)f.fix_received_ms;
         o["last_valid_fix_ms"] = f.last_valid_fix_ms == 0 ? -1 : (long)f.last_valid_fix_ms;
         o["last_byte_ms"]    = f.last_byte_ms    == 0 ? -1 : (long)f.last_byte_ms;
-        o["powered"]      = Sensors::L76K::is_powered();
-        switch (Sensors::L76K::pulse_state()) {
-          case Sensors::L76K::PulseState::Acquiring: o["pulse_state"] = "acquiring"; break;
+        // Satellite + signal numbers are emitted unconditionally
+        // (zeros included) so the popover lines have stable presence
+        // and a constant format - they never jump into existence on
+        // the first reading.
+        o["sats"]         = f.sats;
+        o["sats_visible"] = f.sats_visible;
+        o["snr_db"]       = f.best_snr_db;
+        if (f.acc_valid) {
+          o["hacc_m"] = f.hacc_m;
+          o["vacc_m"] = f.vacc_m;
+        }
+        if (Sensors::Gnss::module() == Sensors::Gnss::Module::MAXM10) {
+          const auto rf = Sensors::MaxM10::rf_status();
+          static const char* JAM[] = { "unknown", "none", "warning", "critical" };
+          o["jamming"]    = JAM[rf.valid ? (rf.jamming_state & 0x03) : 0];
+          o["cw_jamming"] = rf.valid ? rf.cw_jam : 0;
+          o["noise"]      = rf.valid ? rf.noise_per_ms : 0;
+          o["agc_pct"]    = rf.valid ? (uint8_t)((uint32_t)rf.agc * 100 / 8191) : 0;
+        }
+        o["powered"]      = Sensors::Gnss::is_powered();
+        switch (Sensors::Gnss::pulse_state()) {
+          case Sensors::Gnss::PulseState::Acquiring: o["pulse_state"] = "acquiring"; break;
           default:                              o["pulse_state"] = "idle";      break;
         }
         return f.fix_received_ms;
@@ -206,17 +229,17 @@
       return 0;
     }
 
-    // Build the system-status payload (storage / rtc / sensors /
-    // outbound_caps / battery) into `root`. Single source of truth
-    // shared between the WS `hello` frame and the periodic
-    // `system_update` event. /api/system_status used to call this too
-    // but the REST endpoint is retired - WS delivery is canonical.
+    // GET /api/gps - the current fix. Returns valid flag, position,
+    // speed/heading, UTC, fix age, plus the module name and (MAX-M10
+    // only) accuracy estimates and the jamming monitor. Auth-gated so
+    // attackers on the LAN can't passively scrape location.
     static void handle_gps_get(AsyncWebServerRequest* req) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
       Common::PsramJsonDocument doc;
-      const Sensors::L76K::Fix f = Sensors::L76K::last_fix();
-      doc["available"]   = Sensors::L76K::has_serial();
+      const Sensors::Gnss::Fix f = Sensors::Gnss::last_fix();
+      doc["available"]   = Sensors::Gnss::has_serial();
+      doc["module"]      = Sensors::Gnss::module_name();
       doc["valid"]       = f.valid;
       doc["latitude"]    = f.latitude_deg;
       doc["longitude"]   = f.longitude_deg;
@@ -225,6 +248,21 @@
       doc["speed_knots"] = f.speed_knots;
       doc["heading"]     = f.heading_deg;
       doc["unix_ms"]     = (uint64_t)(f.unix_epoch * 1000.0);
+      doc["sats"]         = f.sats;
+      doc["sats_visible"] = f.sats_visible;
+      doc["snr_db"]       = f.best_snr_db;
+      if (f.acc_valid) {
+        doc["hacc_m"] = f.hacc_m;
+        doc["vacc_m"] = f.vacc_m;
+      }
+      if (Sensors::Gnss::module() == Sensors::Gnss::Module::MAXM10) {
+        const auto rf = Sensors::MaxM10::rf_status();
+        static const char* JAM[] = { "unknown", "none", "warning", "critical" };
+        doc["jamming"]    = JAM[rf.valid ? (rf.jamming_state & 0x03) : 0];
+        doc["cw_jamming"] = rf.valid ? rf.cw_jam : 0;
+        doc["noise"]      = rf.valid ? rf.noise_per_ms : 0;
+        doc["agc_pct"]    = rf.valid ? (uint8_t)((uint32_t)rf.agc * 100 / 8191) : 0;
+      }
       doc["fix_age_ms"]  = f.fix_received_ms == 0 ? -1
                             : (long)(millis() - f.fix_received_ms);
       doc["last_byte_ms"] = f.last_byte_ms == 0 ? -1

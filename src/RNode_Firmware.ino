@@ -34,6 +34,9 @@
 #include "LXMF/LXMFGateway.h"
 #include "LXMF/TelemetrySender.h"
 #include "LXMF/AnnounceLog.h"
+#include "LXMF/ScreenNotify.h"
+#include "LXMF/Messenger.h"
+#include "LXMF/TelemetryShare.h"
 #include "LXMF/RatchetBridge.h"
 #include "Common/LoopTiming.h"
 #if HAS_WIFI
@@ -41,7 +44,7 @@
 #endif
 #include "Web/WebUI.h"
 #include "Sensors/Clock/PCF8563.h"
-#include "Sensors/Position/L76K.h"
+#include "Sensors/Position/Gnss.h"
 #include "Clock/Ntp.h"
 #include "Storage/SDCard.h"
 #include "Storage/FreeSpace.h"
@@ -1108,12 +1111,13 @@ void setup() {
         }
       });
     }
-    // GPS - L76K on UART1, pins 8/9, EN on 7. Pumps NMEA into
-    // the parser; valid RMC fixes call TimeManager::report_time
-    // (Source::GPS) per the user-configured interval.
+    // GNSS - L76K or MAX-M10 (identified at runtime by Gnss::begin's
+    // probe) on UART1, pins 8/9, EN on 7. Pumps NMEA into the parser;
+    // valid RMC fixes call TimeManager::report_time (Source::GPS) per
+    // the user-configured interval.
     {
-      Sensors::L76K::Pins pins{ /*rx=*/9, /*tx=*/8, /*en=*/7, /*baud=*/9600 };
-      Sensors::L76K::begin(Serial1, pins);
+      Sensors::Gnss::Pins pins{ /*rx=*/9, /*tx=*/8, /*en=*/7, /*baud=*/9600 };
+      Sensors::Gnss::begin(Serial1, pins);
     }
     // NTP - non-blocking SNTP against pool.ntp.org. Sync
     // happens when WiFi STA becomes ready; pump() handles adoption.
@@ -1269,6 +1273,10 @@ void setup() {
     // Telemetry-to-collector config. No-op if /lxmf/telemetry.json
     // doesn't exist yet (feature defaults to off).
     LXMF::TelemetrySender::load(filesystem);
+    // OLED messenger boot cleanup (removes the legacy device-wide
+    // presets file; the screen identity's own store is loaded by the
+    // gateway's identity load path).
+    LXMF::Messenger::boot(filesystem);
 #endif
 
     // Remove legacy files
@@ -3092,7 +3100,7 @@ void loop() {
   // parser only touches its own static state and TimeManager (whose
   // adopt path is reentrant-safe).
 #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
-  Sensors::L76K::pump();
+  Sensors::Gnss::pump();
   // NTP - cheap when no transition; checks SNTP sync status
   // and forwards to TimeManager when a fresh epoch lands. Gated on
   // WiFi STA connection internally.
@@ -3115,6 +3123,22 @@ void loop() {
   // tick packs ~100 bytes from cached sensor reads and hands off to
   // the LXMF send path.
   LXMF::TelemetrySender::tick();
+  // Power-key presses drive the OLED messenger: tap = enter / pick,
+  // hold (1 s) = confirm the send. Cheap - one latched-flag check; the
+  // I2C IRQ-status read only happens after a real press.
+  {
+    const uint8_t pk = power_key_event();
+    if (pk != 0) {
+      if (display_blanked) display_unblank();
+      if (pk == 1) LXMF::Messenger::on_power_key();
+      else         LXMF::Messenger::on_power_key_hold();
+    }
+  }
+  // Messenger housekeeping (auto-dismiss of the result page).
+  LXMF::Messenger::tick();
+  // Answer pending telemetry requests from peers holding a live-share
+  // grant. Cheap on the no-op path (empty pending queue).
+  LXMF::TelemetryShare::tick();
 
   // Retention prune. Time-based expirations fire even when no fresh
   // messages are arriving - without this, an idle device with TTL-
@@ -3337,6 +3361,21 @@ void button_event(uint8_t event, unsigned long duration) {
     // press for action dispatch.
     bool was_blanked = display_blanked;
     if (was_blanked) display_unblank();
+
+    #if defined(HAS_LXMF_GATEWAY)
+      // Mode-local remap: while the messenger is on screen, the user
+      // button drives it (short = next, hold = back). The global
+      // gestures (sleep, BT toggle, console, identity code) stay
+      // outside the mode; presses past 5 s exit it and fall through
+      // so pairing and the console remain reachable.
+      if (LXMF::Messenger::active()) {
+        if (duration <= 5000) {
+          LXMF::Messenger::on_user_button(duration);
+          return;
+        }
+        LXMF::Messenger::exit_mode();
+      }
+    #endif
 
     if (duration > 10000) {
       #if HAS_CONSOLE

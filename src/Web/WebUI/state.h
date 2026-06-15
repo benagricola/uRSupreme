@@ -32,6 +32,10 @@
         }
         me["next_announce_in_ms"] = next_in;
       }
+      // Compose-popover telemetry defaults: the SPA seeds the attach
+      // popover from identity.telemetry on first open, which can
+      // happen before the Settings tab ever fetches /api/identity.
+      fill_identity_telemetry(me, a);
 
       // Conversation list: group recent inbox+outbox messages by peer.
       // Each conversation gets last_msg/last_ts/direction and a message
@@ -103,6 +107,11 @@
           mo["received_ms"] = m.received_ms;
           mo["title"]       = m.title;
           mo["body"]        = m.content;
+          if (m.has_telemetry) mo["tel"] = true;
+          if (m.telemetry.size() > 0) {
+            Telemetry::Telemeter::decode_into(mo["tele"].to<JsonObject>(),
+                                              m.telemetry.data(), m.telemetry.size());
+          }
           mo["in"]          = m.incoming;
           mo["sig_ok"]      = m.signature_ok;
           mo["status"]      = LXMF::outbox_status_name(m.status);

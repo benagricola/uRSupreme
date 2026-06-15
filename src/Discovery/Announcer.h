@@ -43,7 +43,7 @@
 
 // LoRa-radio + GPS state we sample for outbound announces. Per-device
 // extern globals live in Config.h / RNode_Firmware.ino.
-#include "../Sensors/Position/L76K.h"
+#include "../Sensors/Position/Gnss.h"
 extern uint32_t lora_freq;
 extern uint32_t lora_bw;
 extern int      lora_sf;
@@ -118,7 +118,7 @@ namespace _detail {
     // GPS - include lat/lon only when we actually have a fix.
     // Skip if invalid to avoid lighting up (0, 0) on the map for
     // devices that never got a fix.
-    const auto fix = Sensors::L76K::last_fix();
+    const auto fix = Sensors::Gnss::last_fix();
     if (fix.valid) {
       b.lat(fix.latitude_deg);
       b.lon(fix.longitude_deg);

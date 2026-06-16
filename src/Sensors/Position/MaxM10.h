@@ -55,6 +55,11 @@ inline constexpr uint8_t  ID_MON_VER = 0x04;
 inline constexpr uint8_t  ID_MON_RF  = 0x38;
 inline constexpr uint8_t  CLS_CFG = 0x06;
 inline constexpr uint8_t  ID_CFG_VALSET = 0x8A;
+inline constexpr uint8_t  CLS_ACK = 0x05;
+inline constexpr uint8_t  ID_ACK_NAK = 0x00;
+inline constexpr uint8_t  ID_ACK_ACK = 0x01;
+inline constexpr uint8_t  CLS_RXM = 0x02;
+inline constexpr uint8_t  ID_RXM_PMREQ = 0x41;
 
 inline constexpr uint32_t KEY_MSGOUT_NAV_PVT_UART1 = 0x20910007;
 inline constexpr uint32_t KEY_MSGOUT_MON_RF_UART1  = 0x2091035a;
@@ -90,6 +95,11 @@ namespace _detail {
   };
   inline Frame& frame() { static Frame f; return f; }
   inline bool& seen_mon_ver() { static bool b = false; return b; }
+  // Monotonic VALSET acknowledgement counters. A caller snapshots
+  // valset_acks() before sending and watches for the increment - the
+  // non-blocking alternative to waiting on the reply in place.
+  inline uint32_t& valset_acks() { static uint32_t v = 0; return v; }
+  inline uint32_t& valset_naks() { static uint32_t v = 0; return v; }
 
   inline void ck(Frame& f, uint8_t b) { f.ck_a += b; f.ck_b += f.ck_a; }
 }
@@ -109,6 +119,42 @@ inline void send_frame(HardwareSerial& s, uint8_t cls, uint8_t id,
 
 inline void poll_mon_ver(HardwareSerial& s) {
   send_frame(s, CLS_MON, ID_MON_VER, nullptr, 0);
+}
+
+inline uint32_t valset_acks() { return _detail::valset_acks(); }
+inline uint32_t valset_naks() { return _detail::valset_naks(); }
+
+// Wake a possibly-PSMOO-inactive receiver. A sleeping M10 wakes on
+// UART activity but DISCARDS the bytes that woke it, so configuration
+// sent cold is silently lost. Callers write this dummy byte, give the
+// receiver ~100 ms to come up, then send the real frame (the pacing
+// lives in the caller's state machine - nothing here blocks).
+inline void wake(HardwareSerial& s) {
+  s.write((uint8_t)0xFF);
+}
+
+// UBX-RXM-PMREQ (version 0, 16 B): put the receiver into backup for
+// duration_ms with the rail held up - BBR stays warm, so the next
+// acquisition hot-starts. wakeupSources keeps UART RX as a wake path
+// (the wake bytes are discarded, as above). Field layout per the
+// interface description 3.17.3: version@0, duration@4 U4 ms, flags@8
+// U4 (bit1 backup, bit2 force), wakeupSources@12 U4 (bit3 uartrx).
+// VERIFY ON HARDWARE: confirmed by observing the NMEA stream stop for
+// the requested duration and resume.
+// RXM-PMREQ payload fields (interface description 3.17.3).
+inline constexpr uint32_t PMREQ_FLAG_BACKUP      = 1u << 1;  // enter backup, BBR retained
+inline constexpr uint32_t PMREQ_FLAG_FORCE       = 1u << 2;  // enter even without a fix
+inline constexpr uint32_t PMREQ_WAKEUP_UARTRX    = 1u << 3;  // UART RX edge wakes (bytes discarded)
+inline constexpr uint16_t PMREQ_PAYLOAD_LEN      = 16;       // version-0 long form
+
+inline void sleep_for(HardwareSerial& s, uint32_t duration_ms) {
+  uint8_t p[PMREQ_PAYLOAD_LEN] = {0};
+  memcpy(&p[4], &duration_ms, 4);
+  const uint32_t flags = PMREQ_FLAG_BACKUP | PMREQ_FLAG_FORCE;
+  memcpy(&p[8], &flags, 4);
+  const uint32_t wakeup = PMREQ_WAKEUP_UARTRX;
+  memcpy(&p[12], &wakeup, 4);
+  send_frame(s, CLS_RXM, ID_RXM_PMREQ, p, sizeof(p));
 }
 
 // CFG-VALSET with one or two key/value pairs (version 0, RAM+BBR).
@@ -256,6 +302,10 @@ inline bool consume_byte(uint8_t b, Nmea::Fix& f) {
         } else if (fr.cls == CLS_MON && fr.id == ID_MON_RF
                    && fr.len <= sizeof(fr.payload)) {
           _handle_mon_rf(fr.payload, fr.len);
+        } else if (fr.cls == CLS_ACK && fr.len == 2
+                   && fr.payload[0] == CLS_CFG && fr.payload[1] == ID_CFG_VALSET) {
+          if (fr.id == ID_ACK_ACK) _detail::valset_acks() = _detail::valset_acks() + 1;
+          else if (fr.id == ID_ACK_NAK) _detail::valset_naks() = _detail::valset_naks() + 1;
         }
       }
       return true;

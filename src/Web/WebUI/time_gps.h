@@ -122,15 +122,17 @@
         const Sensors::Gnss::Fix f = Sensors::Gnss::last_fix();
         o["model"]        = Sensors::Gnss::module_name();
         o["available"]    = Sensors::Gnss::has_serial();
-        // GPS is presented as a sensor in the popover (enable/interval
-        // controls alongside BME280/QMC6310/IMU), but its config is
-        // owned by TimeManager since it doubles as a time source. Pull
-        // those fields here so the SPA's sensor-config row can render
-        // without a second fetch.
+        // Two separate GPS settings ride this block: enabled +
+        // interval_ms are the LOCATION policy (sensor power; 0 =
+        // always on), clock_interval_s is how often a live fix may
+        // resync the clock (Clock::Manager; no power meaning). The
+        // popover renders both without a second fetch.
         {
+          const auto& pc = Sensors::Gnss::power_config();
+          o["enabled"]     = pc.enabled;
+          o["interval_ms"] = pc.interval_s * 1000UL;
           const auto gcfg = Clock::Manager::get_config(Clock::Manager::Source::GPS);
-          o["enabled"]     = gcfg.enabled;
-          o["interval_ms"] = (uint32_t)gcfg.interval_s * 1000UL;
+          o["clock_interval_s"] = gcfg.interval_s;
         }
         o["valid"]        = f.valid;
         o["latitude"]     = f.latitude_deg;
@@ -198,11 +200,14 @@
         o["interval_ms"] = (uint32_t)Sensors::QMC6310::interval_ms();
         o["valid"]       = r.valid;
         if (r.valid) {
-          o["heading_deg"] = r.heading_deg;
-          o["x_uT"]        = r.x_uT;
-          o["y_uT"]        = r.y_uT;
-          o["z_uT"]        = r.z_uT;
-          o["taken_ms"]    = (uint32_t)r.taken_ms;
+          o["heading_deg"]  = r.heading_deg;
+          o["x_uT"]         = r.x_uT;
+          o["y_uT"]         = r.y_uT;
+          o["z_uT"]         = r.z_uT;
+          o["field_uT"]     = r.field_uT;     // hard/soft-iron corrected |B|
+          o["cal_ready"]    = r.cal_ready;
+          o["cal_progress"] = r.cal_progress;
+          o["taken_ms"]     = (uint32_t)r.taken_ms;
         }
         if (Sensors::QMC6310::present()) o["address"] = Sensors::QMC6310::address();
         return r.taken_ms;
@@ -262,6 +267,22 @@
         doc["cw_jamming"] = rf.valid ? rf.cw_jam : 0;
         doc["noise"]      = rf.valid ? rf.noise_per_ms : 0;
         doc["agc_pct"]    = rf.valid ? (uint8_t)((uint32_t)rf.agc * 100 / 8191) : 0;
+        doc["agc_raw"]    = rf.valid ? rf.agc : 0;
+        doc["valset_acks"] = Sensors::MaxM10::valset_acks();
+        doc["valset_naks"] = Sensors::MaxM10::valset_naks();
+      }
+      // Acquisition + power-mode state: the counters that separate an RF
+      // problem (sees sats, never fixes) from a power one (cycling).
+      {
+        const auto a = Sensors::Gnss::acq_status();
+        static const char* MODE[] = { "off", "always_on", "pulsed" };
+        static const char* M10P[] = { "not_applied", "full", "psmoo" };
+        static const char* PST[]  = { "idle", "acquiring" };
+        doc["mode"]          = MODE[(uint8_t)a.mode];
+        doc["pulse_state"]   = PST[(uint8_t)a.state];
+        doc["m10_power"]     = M10P[(uint8_t)a.m10];
+        doc["ever_fixed"]    = a.ever_fixed;
+        doc["backoff_count"] = a.backoff_count;
       }
       doc["fix_age_ms"]  = f.fix_received_ms == 0 ? -1
                             : (long)(millis() - f.fix_received_ms);
@@ -269,4 +290,35 @@
                             : (long)(millis() - f.last_byte_ms);
       send_json(req, 200, doc);
     }
+
+#ifdef URTN_GPS_INJECT
+    // POST /api/diag/gps?lat=&lon=[&alt=&speed=&heading=] - feed a
+    // synthetic GPS fix so location features can be exercised indoors
+    // without sky view. Diag-only: the route is ROUTE_OPT and the whole
+    // handler is compiled in only under -DURTN_GPS_INJECT, so a default
+    // build neither registers the route nor carries this code.
+    static void handle_gps_inject(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      auto num = [&](const char* k, double dflt) -> double {
+        if (req->hasParam(k))       return req->getParam(k)->value().toDouble();
+        if (req->hasParam(k, true)) return req->getParam(k, true)->value().toDouble();
+        return dflt;
+      };
+      if (!req->hasParam("lat") && !req->hasParam("lat", true)) {
+        send_error_with_message(req, 400, "missing_lat_lon",
+          "lat and lon query params are required.");
+        return;
+      }
+      const double lat = num("lat", 0.0), lon = num("lon", 0.0);
+      Sensors::Gnss::inject_fix(lat, lon, num("alt", 0.0),
+                                num("speed", 0.0), num("heading", 0.0));
+      NOTICEF("WebUI: GPS fix injected lat=%.6f lon=%.6f", lat, lon);
+      Common::PsramJsonDocument doc;
+      doc["injected"]  = true;
+      doc["latitude"]  = lat;
+      doc["longitude"] = lon;
+      send_json(req, 200, doc);
+    }
+#endif
 

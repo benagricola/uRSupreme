@@ -73,6 +73,10 @@ extern char             wr_hostname[10];
 #include "AuthTokens.h"
 #include "BootCounter.h"
 #include "PasswordHash.h"
+#include "FileStreamResponse.h"
+#include "MapConfig.h"
+#include "MapDownload.h"
+#include "MapExtract.h"
 #include "SPAEmbedded.h"
 
 // EEPROM helpers + WiFi config constants from the existing firmware.
@@ -161,10 +165,14 @@ namespace Web {
       if (_started) return;
       _started = true;
       AuthTokens::load();
+      // While the SPA sensors popover is open it sends {"type":
+      // "sensor_live"} over the WS; honour it by polling those sensors
+      // fast and draining at a faster cadence (the OLED screens use the
+      // same per-sensor request_live demand).
+      Web::WS::on_client_message() = [](const char* data, size_t len) {
+        on_ws_client_message(data, len);
+      };
       BootCounter::init();  // emit the log line; current() is otherwise lazy
-      // Restore time-source priority/enable/interval from
-      // /lxmf/time.json.
-      Clock::Manager::load_config(filesystem);
       register_routes();
       server.begin();
       // Wire AnnounceLog → WebSocket. Every new announce / path now
@@ -295,9 +303,19 @@ namespace Web {
         // pass walks the sensor kinds; any that have a fresh reading
         // since the last drain land in a single multi-kind frame.
         // Nothing changes → nothing sent.
-        if (now - _last_sensor_drain >= SENSOR_DRAIN_PERIOD_MS) {
+        const uint32_t drain_period =
+            (now < _sensor_ws_live_until) ? SENSOR_DRAIN_LIVE_MS
+                                          : SENSOR_DRAIN_PERIOD_MS;
+        if (now - _last_sensor_drain >= drain_period) {
           _last_sensor_drain = now;
           drain_sensor_updates();
+          // Push the live-demand set when it changes - device live screens
+          // demand sensors directly, so the web view tracks them too.
+          const uint32_t sig = sensor_live_signature();
+          if (sig != _last_live_sig) {
+            _last_live_sig = sig;
+            Web::WS::publish_sensor_live([](JsonObject s){ fill_sensor_live(s); });
+          }
         }
         // Full system snapshot every 30 s - battery decay, storage
         // usage drift, outbound_caps shifts on SD insert/eject. Cheap
@@ -327,6 +345,60 @@ namespace Web {
     // changed (no allocation on the no-op path - important because
     // this runs every SENSOR_DRAIN_PERIOD_MS while any client is
     // connected).
+    // Honour a sensors-popover live demand: poll the I2C sensors fast
+    // and renew a window during which the drain runs at SENSOR_DRAIN_
+    // LIVE_MS. GPS is not demanded here - it runs on its own schedule.
+    // Per-sensor live-demand state: which sensors are being fast-polled
+    // right now, by either the web popover or a device live screen (both
+    // renew the same per-sensor window). GPS runs on its own power
+    // schedule rather than a live window, so it reports power state.
+    static void fill_sensor_live(JsonObject s) {
+      auto put = [&](const char* k, bool live, uint32_t ttl) {
+        JsonObject o = s[k].to<JsonObject>();
+        o["live"] = live;
+        if (live) o["ttl_ms"] = ttl;
+      };
+      put("environment",  Sensors::BME280::live(),  Sensors::BME280::live_remaining_ms());
+      put("magnetometer", Sensors::QMC6310::live(), Sensors::QMC6310::live_remaining_ms());
+      put("imu",          Sensors::QMI8658::live(), Sensors::QMI8658::live_remaining_ms());
+      JsonObject g = s["gps"].to<JsonObject>();
+      g["powered"] = Sensors::Gnss::is_powered();
+      static const char* MODE[] = { "off", "always_on", "pulsed" };
+      g["mode"] = MODE[(uint8_t)Sensors::Gnss::acq_status().mode];
+    }
+
+    // A compact bitmask of the current live set, so the drain loop can
+    // detect a change (e.g. a device screen demanding sensors) and push
+    // a fresh sensor_live_state without re-broadcasting every tick.
+    static uint32_t sensor_live_signature() {
+      return (Sensors::BME280::live()  ? 1u : 0u)
+           | (Sensors::QMC6310::live() ? 2u : 0u)
+           | (Sensors::QMI8658::live() ? 4u : 0u)
+           | (Sensors::Gnss::is_powered() ? 8u : 0u)
+           | ((uint32_t)Sensors::Gnss::acq_status().mode << 4);
+    }
+
+    static void on_ws_client_message(const char* data, size_t len) {
+      if (!data || len == 0) return;
+      const std::string m(data, len);
+      if (m.find("\"sensor_live\"") == std::string::npos) return;
+      const bool on = m.find("\"on\":true") != std::string::npos
+                   || m.find("\"on\": true") != std::string::npos;
+      if (!on) {
+        _sensor_ws_live_until = 0;
+      } else {
+        Sensors::BME280::request_live(SENSOR_WS_LIVE_TTL_MS);
+        Sensors::QMC6310::request_live(SENSOR_WS_LIVE_TTL_MS);
+        Sensors::QMI8658::request_live(SENSOR_WS_LIVE_TTL_MS);
+        _sensor_ws_live_until = millis() + SENSOR_WS_LIVE_TTL_MS;
+      }
+      // Reply with the resulting live set so the client knows exactly
+      // what is being fast-polled (its own demand plus any device-screen
+      // demand). The change-detect in the drain loop keeps it current.
+      _last_live_sig = sensor_live_signature();
+      Web::WS::publish_sensor_live([](JsonObject s){ fill_sensor_live(s); });
+    }
+
     static void drain_sensor_updates() {
       static constexpr const char* KINDS[]  = { "gps", "environment", "magnetometer", "imu" };
       uint32_t* const last_pub[] = { &_last_pub_gps_ms, &_last_pub_bme_ms,
@@ -498,6 +570,14 @@ namespace Web {
       if (u.hex6.empty() || u.consumed) return empty;
       if (millis() > u.expires_ms) return empty;
       return u.hex6;
+    }
+
+    // Cancel a pending code from the device side (a button tap on the
+    // code page). The web flow that requested it just sees the code
+    // expire; nothing is consumed.
+    static void dismiss_identity_code() {
+      id_code().hex6.clear();
+      id_code().consumed = false;
     }
 
     static uint32_t identity_code_remaining_ms() {
@@ -778,6 +858,9 @@ namespace Web {
       server.on("/index.html",    HTTP_GET, handle_spa);
       server.on("/styles.css",    HTTP_GET, handle_styles_css);
       server.on("/alpine.min.js", HTTP_GET, handle_alpine_js);
+      server.on("/leaflet.min.js",HTTP_GET, handle_leaflet_js);
+      server.on("/leaflet.css",   HTTP_GET, handle_leaflet_css);
+      server.on("/protomaps-leaflet.js", HTTP_GET, handle_protomaps_js);
       // Public
       on_http(HTTP_GET, ApiRoutes::INFO, handle_info);
       // Diagnostics (bearer-gated). GET reads heap headroom; POST resets
@@ -830,6 +913,11 @@ namespace Web {
       on_json_post(ApiRoutes::TIME_SOURCES,         handle_time_sources_set);
       // GPS fix - last RMC sentence parsed.
       on_http(HTTP_GET, ApiRoutes::GPS, handle_gps_get);
+#ifdef URTN_GPS_INJECT
+      // Diag-only synthetic fix injection (indoor testing). Registered
+      // only under the build flag; absent from default/production builds.
+      on_http(HTTP_POST, ApiRoutes::DIAG_GPS, handle_gps_inject);
+#endif
       // RTC diagnostics - raw chip state.
       on_http(HTTP_GET, ApiRoutes::RTC, handle_rtc_get);
       // Aggregated device status: storage + clock + sensors.
@@ -878,6 +966,18 @@ namespace Web {
       on_json_post(ApiRoutes::CONVERSATION_CONFIG,
                    handle_conversation_config_post);
       on_uri(HTTP_GET, ApiRoutes::ATTACHMENT_DOWNLOAD, handle_attachment_get);
+      on_uri(HTTP_GET, ApiRoutes::MAP_CONFIG, handle_map_config_get);
+      on_json_post(ApiRoutes::MAP_CONFIG, handle_map_config_post);
+      on_uri(HTTP_GET, ApiRoutes::MAP_TILE, handle_map_tile);
+      on_uri(HTTP_GET, ApiRoutes::MAP_LAYERS, handle_map_layers);
+      on_uri(HTTP_GET, ApiRoutes::MAP_LAYER, handle_map_layer);
+      on_uri(HTTP_DELETE, ApiRoutes::MAP_LAYER, handle_map_layer_delete);
+      on_uri(HTTP_GET, ApiRoutes::MAP_DOWNLOAD, handle_map_download_get);
+      on_json_post(ApiRoutes::MAP_DOWNLOAD, handle_map_download_post);
+      on_uri(HTTP_POST, ApiRoutes::MAP_DOWNLOAD_CANCEL, handle_map_download_cancel);
+      on_uri(HTTP_GET, ApiRoutes::MAP_EXTRACT, handle_map_extract_get);
+      on_json_post(ApiRoutes::MAP_EXTRACT, handle_map_extract_post);
+      on_uri(HTTP_POST, ApiRoutes::MAP_EXTRACT_CANCEL, handle_map_extract_cancel);
       on_http(HTTP_POST, ApiRoutes::STORAGE_MIGRATE, handle_migrate_flash_to_sd);
       // Paths - per-destination lookup + transmit-ETA estimate.
       // `uri()` forces an exact match on /estimate. Without it the
@@ -966,6 +1066,7 @@ namespace Web {
     #include "WebUI/tcp_clients.h"
     #include "WebUI/paths.h"
     #include "WebUI/conversations.h"
+    #include "WebUI/map.h"
     #include "WebUI/state.h"
 
   private:
@@ -976,6 +1077,13 @@ namespace Web {
     // in the SPA, so the SPA never sees a fresh sensor reading sit
     // for longer than one drain period before getting through to it.
     static constexpr uint32_t SENSOR_DRAIN_PERIOD_MS = 1000;
+    // Faster drain + sensor TTL while a client demands live data.
+    static constexpr uint32_t SENSOR_DRAIN_LIVE_MS  = 250;
+    static constexpr uint32_t SENSOR_WS_LIVE_TTL_MS = 3000;
+    static inline uint32_t _sensor_ws_live_until = 0;
+    // Last broadcast live-demand signature (see sensor_live_signature),
+    // so the drain loop only re-publishes sensor_live_state on change.
+    static inline uint32_t _last_live_sig = 0;
 
     // Per-sensor `taken_ms` snapshots, used by drain_sensor_updates
     // to dedupe WS broadcasts. Reading a sensor twice per second when

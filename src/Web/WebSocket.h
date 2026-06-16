@@ -31,6 +31,7 @@
 #include <ArduinoJson.h>
 #include "../Common/PsramAllocator.h"
 #include <vector>
+#include <functional>
 #include <string>
 #include <cstring>      // strlen / memcpy for text_psram()
 #include <stdint.h>
@@ -47,6 +48,13 @@ namespace LXMF { struct MessageRecord; }
 
 namespace Web {
 namespace WS {
+
+// Optional handler for client->server text frames (beyond ping).
+// WebUI registers one to honour the sensors-popover live demand.
+inline std::function<void(const char*, size_t)>& on_client_message() {
+  static std::function<void(const char*, size_t)> f;
+  return f;
+}
 
   inline AsyncWebSocket& server() {
     static AsyncWebSocket s(ApiRoutes::WS);
@@ -436,6 +444,19 @@ namespace WS {
     broadcast(doc);
   }
 
+  // Live-demand state - which sensors are being fast-polled right now,
+  // from either the web popover or a device live screen (both feed the
+  // same per-sensor window). Sent in reply to a sensor_live request and
+  // whenever the live set changes, so the SPA can show what is live.
+  // Shape: { type:"sensor_live_state", sensors:{ environment:{live,ttl_ms}, ... } }
+  inline void publish_sensor_live(const std::function<void(JsonObject)>& fill) {
+    Common::PsramJsonDocument doc;
+    doc["type"] = "sensor_live_state";
+    JsonObject sensors = doc["sensors"].to<JsonObject>();
+    fill(sensors);
+    broadcast(doc);
+  }
+
   // Hook fired once per connected client right after auth succeeds,
   // before the `hello` frame is sent. Lets WebUI inject a fresh
   // snapshot of all sensors / clock / etc into the hello payload so
@@ -657,7 +678,9 @@ namespace WS {
       std::string s((const char*)data, len);
       if (s.find("\"ping\"") != std::string::npos) {
         text_psram(client, "{\"type\":\"pong\"}");
+        return;
       }
+      if (on_client_message()) on_client_message()(data ? (const char*)data : "", len);
     }
   }
 

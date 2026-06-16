@@ -40,6 +40,18 @@
       // Convenience boolean for "the softAP at 10.0.0.1 is also reachable
       // right now" - true in any APSTA phase, false elsewhere.
       doc["ap_active"] = (wifi_mode == WR_WIFI_AP || wifi_mode == WR_WIFI_APSTA);
+      // Bluetooth: whether it is enabled in config (EEPROM ADDR_CONF_BT)
+      // and its runtime link state. Surfaced so radio-coexistence
+      // questions (does BT desense GPS?) can be answered without serial.
+      {
+        JsonObject bt = doc["bluetooth"].to<JsonObject>();
+        bt["enabled"] = bt_enabled;
+        bt["state"]   = bt_state == BT_STATE_OFF       ? "off"
+                      : bt_state == BT_STATE_ON        ? "on"
+                      : bt_state == BT_STATE_PAIRING   ? "pairing"
+                      : bt_state == BT_STATE_CONNECTED ? "connected"
+                      : "na";
+      }
       // Heap diagnostics deliberately do NOT live here. /api/info is the
       // unauthed bootstrap endpoint (login screen + redirect probe), so
       // exposing internal-SRAM internals would be an unauthenticated

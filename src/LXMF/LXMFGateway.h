@@ -9,6 +9,7 @@
 #include "../Storage/SDCard.h"
 #include "../Storage/OutboundStaging.h"
 #include "../Storage/Streaming.h"
+#include "GpxTrack.h"
 #include <SD.h>
 
 #include <deque>
@@ -100,6 +101,10 @@ namespace LXMF {
     void on_telemetry(const IdentityId& iden, const RNS::Bytes& peer,
                       const RNS::Bytes& blob);
     bool meta_marks_message(const RNS::Bytes& raw);
+    bool has_feed(const IdentityId& iden, const RNS::Bytes& peer);
+    bool location_from_blob(const RNS::Bytes& blob, double& lat, double& lon);
+    void set_feed_gpx(const IdentityId& iden, const RNS::Bytes& peer,
+                      const std::string& path, bool use_sd, double lat, double lon);
   }
 }
 
@@ -1514,6 +1519,40 @@ namespace LXMF {
         local.seq = 0;
         local.commands    = RNS::Bytes{};   // transient; not for storage
         local.custom_meta = RNS::Bytes{};
+        // Live position share: if this message started a live feed (it carried
+        // an urtn_live offer, so we now hold a feed) and has a position, begin
+        // a GPX track - create the file with this first point and attach it to
+        // the record, then grow it one <trkpt> per later sample
+        // (TelemetryShare::on_telemetry). It persists + renders like any .gpx.
+        if (rec.has_telemetry && TelemetryShare::has_feed(p->id, rec.peer_hash)) {
+          double lat, lon;
+          if (TelemetryShare::location_from_blob(rec.telemetry, lat, lon)) {
+            const uint32_t seq = p->inbox->reserve_seq();
+            local.seq = seq;
+            const bool use_sd = Storage::SDCard::present();
+            const std::string att_dir = p->dir() + "/attachments";
+            if (!filesystem.isDirectory(att_dir.c_str())) filesystem.mkdir(att_dir.c_str());
+            char name[80];
+            snprintf(name, sizeof(name), "%s_%08x.bin",
+                     rec.peer_hash.toHex().c_str(), (unsigned)seq);
+            const std::string full = att_dir + "/" + name;
+            RNS::Utilities::OS::reset_watchdog();
+            const size_t gsz = LXMF::GpxTrack::create(full.c_str(), use_sd, lat, lon);
+            RNS::Utilities::OS::reset_watchdog();
+            if (gsz > 0) {
+              AttachmentMeta meta;
+              meta.tag          = LXMF::FIELD_FILE_ATTACHMENTS;
+              meta.size         = (uint32_t)gsz;
+              meta.filename     = name;
+              meta.display_name = LXMF::GpxTrack::download_name(seq);
+              meta.mime         = "application/gpx+xml";
+              meta.backend      = use_sd ? "sd" : "flash";
+              local.attachments.push_back(meta);
+              TelemetryShare::set_feed_gpx(p->id, rec.peer_hash, full, use_sd, lat, lon);
+              NOTICEF("LXMF: live GPX track started %s (backend=%s)", name, meta.backend.c_str());
+            }
+          }
+        }
         p->inbox->append(local);
         // Push to any WS client subscribed to this identity. SSE
         // pollers still pick up the same record via inbox->since().

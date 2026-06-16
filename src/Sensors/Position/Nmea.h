@@ -40,6 +40,7 @@ struct Fix {
   float    hdop            = 0.0f;   // Horizontal dilution of precision (GGA field 7)
   bool     hdop_valid      = false;  // True once a fixed GGA carried an HDOP value
   uint8_t  sats_visible    = 0;      // Satellites in view, summed across constellations (GSV)
+  uint8_t  sats_tracked    = 0;      // Satellites actually heard (GSV C/N0 > 0), summed
   uint8_t  best_snr_db     = 0;      // Strongest C/N0 seen in the current GSV cycle
   // Accuracy estimates. Only the MAX-M10 fills these (UBX-NAV-PVT
   // hAcc/vAcc); the L76K's NMEA stream carries no direct accuracy.
@@ -67,6 +68,7 @@ namespace _detail {
   struct GsvState {
     char    talker[GSV_TALKERS][2] = {};
     uint8_t in_view[GSV_TALKERS]   = {};
+    uint8_t tracked[GSV_TALKERS]   = {};   // sats heard (C/N0 > 0) per talker
     uint8_t best_snr = 0;
     uint32_t last_ms = 0;
   };
@@ -182,33 +184,46 @@ inline Sentence parse_line(char* line, size_t len, Fix& f, const char** out_txt 
     if (now - g.last_ms > _detail::GSV_CYCLE_MS) {
       // New reporting cycle after silence - drop stale aggregates.
       memset(g.in_view, 0, sizeof(g.in_view));
+      memset(g.tracked, 0, sizeof(g.tracked));
       memset(g.talker, 0, sizeof(g.talker));
       g.best_snr = 0;
     }
     g.last_ms = now;
-    // Record this talker's in-view total.
+    // Find/assign this talker's slot and record its in-view total.
+    int slot = -1;
     for (size_t i = 0; i < _detail::GSV_TALKERS; ++i) {
       const bool empty = (g.talker[i][0] == 0);
       if (empty || (g.talker[i][0] == p[0] && g.talker[i][1] == p[1])) {
         g.talker[i][0] = p[0];
         g.talker[i][1] = p[1];
         g.in_view[i]   = (uint8_t)atoi(fields[2]);
+        slot = (int)i;
         break;
       }
     }
-    // Track the strongest C/N0 in the quads (field 4 of each; may be
-    // empty when a satellite is searched but not tracked).
+    // msgNum 1 begins this constellation's GSV set; reset its heard count
+    // so the multi-sentence set accumulates without double-counting (the
+    // 5 s cycle window spans several 1 Hz bursts, so a naive sum would
+    // multiply).
+    if (slot >= 0 && fields[1] && atoi(fields[1]) == 1) g.tracked[slot] = 0;
+    // Each quad's field 4 is C/N0, empty when a satellite is searched but
+    // not yet tracked. Count the ones actually heard and keep the max.
     for (size_t q = 3; q + 3 < nfields; q += 4) {
       if (fields[q + 3] && fields[q + 3][0] != '\0') {
         const int snr = atoi(fields[q + 3]);
-        if (snr > 0 && snr <= 99 && (uint8_t)snr > g.best_snr) {
-          g.best_snr = (uint8_t)snr;
+        if (snr > 0 && snr <= 99) {
+          if (slot >= 0 && g.tracked[slot] < 255) g.tracked[slot]++;
+          if ((uint8_t)snr > g.best_snr) g.best_snr = (uint8_t)snr;
         }
       }
     }
-    uint16_t total = 0;
-    for (size_t i = 0; i < _detail::GSV_TALKERS; ++i) total += g.in_view[i];
+    uint16_t total = 0, heard = 0;
+    for (size_t i = 0; i < _detail::GSV_TALKERS; ++i) {
+      total += g.in_view[i];
+      heard += g.tracked[i];
+    }
     f.sats_visible = (uint8_t)(total > 255 ? 255 : total);
+    f.sats_tracked = (uint8_t)(heard > 255 ? 255 : heard);
     f.best_snr_db  = g.best_snr;
     return Sentence::Gsv;
   }

@@ -39,6 +39,7 @@
 #include "LXMF/TelemetryShare.h"
 #include "LXMF/RatchetBridge.h"
 #include "Common/LoopTiming.h"
+#include "Sensors/View.h"     // before WebUI.h: diag.h drives the view
 #if HAS_WIFI
 #include "WifiRxWatchdog.h"   // before WebUI.h: diag.h surfaces its counters
 #endif
@@ -1266,13 +1267,38 @@ void setup() {
     // Its begin() reuses SDCard::ensure_shared_bus() so we don't
     // double-init the bus.
     Sensors::QMI8658::begin();
+    // Restore time-source priority/enable/interval from
+    // /lxmf/time.json. Must precede the sensor config load: the GPS
+    // location/clock split migrates its default from this config.
+    Clock::Manager::load_config(filesystem);
     // Restore user-configured enable/interval overrides on
     // top of the driver defaults. No-op if /lxmf/sensors.json doesn't
     // exist yet (factory state).
     Sensors::SensorConfig::load(filesystem);
+    // Restore the saved magnetometer calibration so the compass works
+    // from boot without re-waving the device. No-op if never calibrated.
+    Sensors::SensorConfig::load_mag_cal(filesystem);
+    // Screen rotation for the OLED framework (BOOT-tap order). Status is
+    // page 0, the home: tap cycles status -> transport -> radio ->
+    // messenger -> sensors -> status, and BOOT-hold backs out to it.
+    Display::Screens::set_screens({
+      &STATUS_PAGE,
+      &TRANSPORT_PAGE,
+      &RADIO_PAGE,
+      &LXMF::Messenger::MESSENGER_PAGE,
+      &Sensors::View::GPS_PAGE,
+      &Sensors::View::HEADING_PAGE,
+      &Sensors::View::ENVIRONMENT_PAGE,
+    });
+    // Start on the status home so the framework owns the panel from boot
+    // (the legacy -1 split is now only the landscape / pre-init path).
+    Display::Screens::activate(&STATUS_PAGE);
     // Telemetry-to-collector config. No-op if /lxmf/telemetry.json
     // doesn't exist yet (feature defaults to off).
     LXMF::TelemetrySender::load(filesystem);
+    // Map tile settings (source / dir / zoom / online URL). No-op if
+    // /map.json doesn't exist yet (defaults to SD source, /maps).
+    Web::MapConfig::load(filesystem);
     // OLED messenger boot cleanup (removes the legacy device-wide
     // presets file; the screen identity's own store is loaded by the
     // gateway's identity load path).
@@ -3111,6 +3137,9 @@ void loop() {
   // QMC6310 magnetometer + QMI8658 IMU - same pattern.
   Sensors::QMC6310::pump();
   Sensors::QMI8658::pump();
+  // Persist the compass calibration the once it completes (or is reset).
+  // Rare, small write; take_cal_dirty() is false on every other tick.
+  if (Sensors::QMC6310::take_cal_dirty()) Sensors::SensorConfig::save_mag_cal(filesystem);
   // Battery: voltage + state + sliding-window slope. Cheap - only
   // hits the PMU once per SAMPLE_PERIOD_MS, otherwise no-op.
   Telemetry::Battery::tick();
@@ -3130,11 +3159,12 @@ void loop() {
     const uint8_t pk = power_key_event();
     if (pk != 0) {
       if (display_blanked) display_unblank();
-      if (pk == 1) LXMF::Messenger::on_power_key();
-      else         LXMF::Messenger::on_power_key_hold();
+      Display::Screens::handle_power(pk);
     }
   }
-  // Messenger housekeeping (auto-dismiss of the result page).
+  // Screen housekeeping: framework TTLs + the messenger's own
+  // result/incoming auto-dismiss.
+  Display::Screens::tick();
   LXMF::Messenger::tick();
   // Answer pending telemetry requests from peers holding a live-share
   // grant. Cheap on the no-op path (empty pending queue).
@@ -3363,19 +3393,34 @@ void button_event(uint8_t event, unsigned long duration) {
     if (was_blanked) display_unblank();
 
     #if defined(HAS_LXMF_GATEWAY)
-      // Mode-local remap: while the messenger is on screen, the user
-      // button drives it (short = next, hold = back). The global
-      // gestures (sleep, BT toggle, console, identity code) stay
-      // outside the mode; presses past 5 s exit it and fall through
-      // so pairing and the console remain reachable.
-      if (LXMF::Messenger::active()) {
-        if (duration <= 5000) {
-          LXMF::Messenger::on_user_button(duration);
-          return;
-        }
-        LXMF::Messenger::exit_mode();
+      // While the identity code is on screen it owns the panel (its
+      // render outranks the screen framework), so it must own the
+      // button too: any tap dismisses it. Without this, taps navigate
+      // the framework invisibly underneath for the code's full 60 s
+      // TTL - the "BOOT tap does nothing" trap.
+      if (duration <= 700 && !Web::WebUI::identity_code_for_display().empty()) {
+        Web::WebUI::dismiss_identity_code();
+        return;
+      }
+      // Identity-code gesture: a 0.7-5 s hold arms it (below); the
+      // next tap inside the window fires it, taking priority over the
+      // screen framework's tap handling.
+      if (duration <= 700 && lxmf_long_press_armed_ms != 0 &&
+          (millis() - lxmf_long_press_armed_ms) < LXMF_GESTURE_WINDOW_MS) {
+        lxmf_long_press_armed_ms = 0;
+        Web::WebUI::on_button_request_identity_code();
+        return;
       }
     #endif
+    // Screen framework: BOOT tap cycles the registered screens, BOOT
+    // hold goes back one level / exits. Returns false for presses it
+    // does not own (>5 s, or holds while no screen is active) so the
+    // global gestures below stay reachable. The old idle-tap BT
+    // toggle is retired by this routing (BT-on stays reachable via
+    // the pairing hold; BT-off lives in the web UI).
+    if (Display::Screens::handle_boot(duration)) {
+      return;
+    }
 
     if (duration > 10000) {
       #if HAS_CONSOLE
@@ -3401,27 +3446,10 @@ void button_event(uint8_t event, unsigned long duration) {
         lxmf_long_press_armed_ms = millis();
       #endif
     } else {
-      #if defined(HAS_LXMF_GATEWAY)
-        unsigned long now = millis();
-        if (lxmf_long_press_armed_ms != 0 &&
-            (now - lxmf_long_press_armed_ms) < LXMF_GESTURE_WINDOW_MS) {
-          lxmf_long_press_armed_ms = 0;
-          Web::WebUI::on_button_request_identity_code();
-          // Gesture consumed - don't also toggle BT this press.
-          return;
-        }
-      #endif
-      #if HAS_BLUETOOTH || HAS_BLE
-      if (!was_blanked && bt_state != BT_STATE_CONNECTED) {
-        if (bt_state == BT_STATE_OFF) {
-          bt_start();
-          bt_conf_save(true);
-        } else {
-          bt_stop();
-          bt_conf_save(false);
-        }
-      }
-      #endif
+      // Taps that reach here were not consumed by the identity-code
+      // gesture or the screen framework (e.g. zero registered
+      // screens); nothing else owns a bare tap.
+      (void)was_blanked;
     }
   #endif
 }

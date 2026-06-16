@@ -43,3 +43,37 @@
       req->send(resp);
     }
 
+    // Leaflet (the map renderer) is vendored + embedded so the map view
+    // works fully offline. Immutable cache; a new firmware ship reships it.
+    static void handle_leaflet_js(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      AsyncWebServerResponse* resp = req->beginResponse_P(
+          200, "application/javascript",
+          Web::SPA_LEAFLET_JS_GZ, Web::SPA_LEAFLET_JS_GZ_LEN);
+      resp->addHeader("Content-Encoding", "gzip");
+      resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
+      req->send(resp);
+    }
+
+    static void handle_leaflet_css(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      AsyncWebServerResponse* resp = req->beginResponse_P(
+          200, "text/css",
+          Web::SPA_LEAFLET_CSS_GZ, Web::SPA_LEAFLET_CSS_GZ_LEN);
+      resp->addHeader("Content-Encoding", "gzip");
+      resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
+      req->send(resp);
+    }
+
+    // protomaps-leaflet: the vector basemap renderer, used when the map
+    // source is a .pmtiles. Vendored + embedded like Leaflet.
+    static void handle_protomaps_js(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      AsyncWebServerResponse* resp = req->beginResponse_P(
+          200, "application/javascript",
+          Web::SPA_PROTOMAPS_JS_GZ, Web::SPA_PROTOMAPS_JS_GZ_LEN);
+      resp->addHeader("Content-Encoding", "gzip");
+      resp->addHeader("Cache-Control", "public, max-age=31536000, immutable");
+      req->send(resp);
+    }
+

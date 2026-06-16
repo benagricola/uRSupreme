@@ -63,6 +63,7 @@ namespace _detail {
   inline bool&     present_ref()     { static bool v = false; return v; }
   inline Reading&  last_ref()        { static Reading r; return r; }
   inline uint32_t& interval_ms_ref() { static uint32_t v = 60000; return v; }
+  inline uint32_t& live_until_ref()  { static uint32_t v = 0; return v; }
   inline bool&     enabled_ref()     { static bool v = true; return v; }
   // millis() when we last fired a motion notification. 0 = never.
   inline uint32_t& last_motion_ms_ref() { static uint32_t v = 0; return v; }
@@ -111,15 +112,21 @@ inline bool begin() {
 #endif
 }
 
+// Fast poll period while a live demand is active. 10 Hz keeps the gyro
+// fresh for the compass complementary filter.
+inline constexpr uint32_t LIVE_POLL_MS = 100;
+
 inline void pump() {
   if (!_detail::present_ref()) return;
   if (!_detail::enabled_ref()) return;
   const uint32_t now = millis();
   const auto& last = _detail::last_ref();
+  const bool live = now < _detail::live_until_ref();
+  const uint32_t eff_interval = live ? LIVE_POLL_MS : _detail::interval_ms_ref();
   // interval_ms == 0 → "boot-read only" (single read, then idle until
   // reboot). See Bme280.h pump() for the same handling.
-  if (_detail::interval_ms_ref() == 0 && last.taken_ms != 0) return;
-  if (last.taken_ms != 0 && (now - last.taken_ms) < _detail::interval_ms_ref()) return;
+  if (!live && _detail::interval_ms_ref() == 0 && last.taken_ms != 0) return;
+  if (last.taken_ms != 0 && (now - last.taken_ms) < eff_interval) return;
 
   IMUdata acc{};
   IMUdata gyr{};
@@ -177,6 +184,15 @@ inline bool      present()       { return _detail::present_ref(); }
 inline Reading   last_reading()  { return _detail::last_ref(); }
 inline uint32_t  interval_ms()   { return _detail::interval_ms_ref(); }
 inline void      set_interval_ms(uint32_t ms) { _detail::interval_ms_ref() = ms; }
+// While live (a screen/popover showing the IMU is open), poll fast.
+inline void request_live(uint32_t ttl_ms = 1500) { _detail::live_until_ref() = millis() + ttl_ms; }
+// Whether a live-poll window is currently active (web popover or a
+// device live screen renew the same window).
+inline bool live() { return millis() < _detail::live_until_ref(); }
+inline uint32_t live_remaining_ms() {
+  const uint32_t u = _detail::live_until_ref(), n = millis();
+  return u > n ? u - n : 0;
+}
 inline bool      enabled()       { return _detail::enabled_ref(); }
 inline void      set_enabled(bool on) { _detail::enabled_ref() = on; }
 

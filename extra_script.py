@@ -50,6 +50,9 @@ def embed_spa(env):
     src = os.path.join(web_dir, "spa", "index.html")
     css = os.path.join(web_dir, "spa", "styles.css")
     alpine = os.path.join(web_dir, "spa", "alpine.min.js")
+    leaflet_js = os.path.join(web_dir, "spa", "leaflet.min.js")
+    leaflet_css = os.path.join(web_dir, "spa", "leaflet.css")
+    protomaps_js = os.path.join(web_dir, "spa", "protomaps-leaflet.js")
     dst = os.path.join(web_dir, "SPAEmbedded.h")
     if not os.path.exists(src):
         return
@@ -58,6 +61,12 @@ def embed_spa(env):
         src_mtime = max(src_mtime, os.path.getmtime(css))
     if os.path.exists(alpine):
         src_mtime = max(src_mtime, os.path.getmtime(alpine))
+    if os.path.exists(leaflet_js):
+        src_mtime = max(src_mtime, os.path.getmtime(leaflet_js))
+    if os.path.exists(leaflet_css):
+        src_mtime = max(src_mtime, os.path.getmtime(leaflet_css))
+    if os.path.exists(protomaps_js):
+        src_mtime = max(src_mtime, os.path.getmtime(protomaps_js))
     routes_def = os.path.join(web_dir, "api_routes.def")
     if os.path.exists(routes_def):
         src_mtime = max(src_mtime, os.path.getmtime(routes_def))
@@ -112,6 +121,42 @@ def embed_spa(env):
             "  };\n"
         )
         print(f"*** Embedded Alpine: {len(js)} bytes -> {len(gz_js)} bytes gzipped")
+    if os.path.exists(leaflet_js):
+        with open(leaflet_js, "rb") as f:
+            ljs = f.read()
+        gz_ljs = gzip.compress(ljs, compresslevel=9)
+        ljs_body = ", ".join("0x{:02x}".format(b) for b in gz_ljs)
+        header += (
+            f"  static const size_t SPA_LEAFLET_JS_GZ_LEN = {len(gz_ljs)};\n"
+            "  static const uint8_t SPA_LEAFLET_JS_GZ[] PROGMEM = {\n"
+            f"    {ljs_body}\n"
+            "  };\n"
+        )
+        print(f"*** Embedded Leaflet JS:  {len(ljs)} bytes -> {len(gz_ljs)} bytes gzipped")
+    if os.path.exists(leaflet_css):
+        with open(leaflet_css, "rb") as f:
+            lcss = f.read()
+        gz_lcss = gzip.compress(lcss, compresslevel=9)
+        lcss_body = ", ".join("0x{:02x}".format(b) for b in gz_lcss)
+        header += (
+            f"  static const size_t SPA_LEAFLET_CSS_GZ_LEN = {len(gz_lcss)};\n"
+            "  static const uint8_t SPA_LEAFLET_CSS_GZ[] PROGMEM = {\n"
+            f"    {lcss_body}\n"
+            "  };\n"
+        )
+        print(f"*** Embedded Leaflet CSS: {len(lcss)} bytes -> {len(gz_lcss)} bytes gzipped")
+    if os.path.exists(protomaps_js):
+        with open(protomaps_js, "rb") as f:
+            pjs = f.read()
+        gz_pjs = gzip.compress(pjs, compresslevel=9)
+        pjs_body = ", ".join("0x{:02x}".format(b) for b in gz_pjs)
+        header += (
+            f"  static const size_t SPA_PROTOMAPS_JS_GZ_LEN = {len(gz_pjs)};\n"
+            "  static const uint8_t SPA_PROTOMAPS_JS_GZ[] PROGMEM = {\n"
+            f"    {pjs_body}\n"
+            "  };\n"
+        )
+        print(f"*** Embedded Protomaps JS: {len(pjs)} bytes -> {len(gz_pjs)} bytes gzipped")
     header += "}\n"
     with open(dst, "w") as f:
         f.write(header)

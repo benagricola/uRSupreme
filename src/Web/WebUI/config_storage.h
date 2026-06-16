@@ -87,11 +87,12 @@
       handle_storage_config_get(req);
     }
 
-    // POST /api/sensors/config - body = {"sensor":"environment|magnetometer|imu",
-    // "enabled":bool, "interval_s":uint}. Applies the override to the
-    // running driver and persists to /lxmf/sensors.json so it survives
-    // reboot. GPS isn't routed through here - its enable/interval are
-    // bound to the time-source priority list (see /api/time/sources).
+    // POST /api/sensors/config - body = {"sensor":"environment|
+    // magnetometer|imu|gps", "enabled":bool, "interval_s":uint}.
+    // Applies the override to the running driver and persists to
+    // /lxmf/sensors.json so it survives reboot. For gps this is the
+    // LOCATION cadence (receiver power); the clock-sync cadence lives
+    // in /api/time/sources.
     static void handle_sensors_config_post(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
@@ -100,7 +101,7 @@
       const uint32_t iv_s   = (uint32_t)(body["interval_s"] | 60);
       if (!*key) {
         send_error_with_message(req, 400, "missing_sensor",
-          "Body must include `sensor` (one of environment, magnetometer, imu).");
+          "Body must include `sensor` (one of environment, magnetometer, imu, gps).");
         return;
       }
       if (iv_s > 7 * 24 * 3600UL) {
@@ -110,7 +111,7 @@
       }
       if (!Sensors::SensorConfig::update_one(filesystem, key, enabled, iv_s)) {
         send_error_with_message(req, 400, "unknown_sensor",
-          "Unknown sensor key. Expected bme280, magnetometer, or imu.");
+          "Unknown sensor key. Expected environment, magnetometer, imu, or gps.");
         return;
       }
       Common::PsramJsonDocument doc;

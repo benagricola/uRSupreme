@@ -14,6 +14,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "Graphics.h"
+#include "Display/ScreenFramework.h"
+#include "Sensors/View.h"
 #include <Adafruit_GFX.h>
 
 #if defined(HAS_LXMF_GATEWAY)
@@ -44,12 +46,10 @@
 #endif
 
 #include "Fonts/Org_01.h"
-// Picopixel is a 4x6 *monospace* font from Adafruit_GFX. Used for the
-// 6-char identity code render - Org_01 (the SMALL_FONT default) is
-// variable-width, so different hex digits produce different total
-// widths, causing the code to overflow the 64-px disp_area on some
-// glyph combinations.
-#include "Fonts/Picopixel.h"
+// The OLED fixed-width font (Common::OledText::OLED_FONT, pulled in via
+// ScreenFramework.h above) is monospace, so the 6-char identity code
+// renders at a constant width - Org_01 (the SMALL_FONT default) is
+// variable-width and overflows the 64-px disp_area on some hex runs.
 #include "Common/Status.h"     // marquee strip at the bottom of stat_area
 #define DISP_W 128
 #define DISP_H 64
@@ -155,6 +155,9 @@ bool display_blanked = false;
 bool display_tx = false;
 bool recondition_display = false;
 int disp_update_interval = 1000/disp_target_fps;
+// Redraw period while a live (animated) framework screen is up.
+static constexpr int LIVE_SCREEN_INTERVAL_MS = 80;   // ~12 fps
+
 int epd_update_interval = 1000/disp_target_fps;
 uint32_t last_page_flip = 0;
 int page_interval = 4000;
@@ -839,7 +842,7 @@ static bool draw_status_marquee(int px, int py, int width, int height) {
   }
 
   // Measure text in Picopixel.
-  stat_area.setFont(&Picopixel);
+  stat_area.setFont(Common::OledText::OLED_FONT);
   stat_area.setTextSize(1);
   stat_area.setTextWrap(false);
   int16_t  bx, by;
@@ -970,7 +973,7 @@ void draw_disp_area() {
       // so 6 chars = 48 px regardless of which hex digits land. The Y
       // origin convention also differs (GFX custom fonts draw above the
       // cursor's baseline rather than below it), hence the cursor shift.
-      disp_area.setFont(&Picopixel);
+      disp_area.setFont(Common::OledText::OLED_FONT);
       disp_area.setTextSize(2);
       disp_area.setCursor(8, 36);
       disp_area.print(id_code.c_str());
@@ -984,8 +987,8 @@ void draw_disp_area() {
     // Messenger mode pages (preset list / confirm / result). The
     // identity code keeps priority above - it is single-use with a
     // 60 s TTL, the messenger can wait.
-    if (LXMF::Messenger::active() && device_init_done && !firmware_update_mode) {
-      LXMF::Messenger::render(disp_area);
+    if (Display::Screens::active() && device_init_done && !firmware_update_mode) {
+      Display::Screens::render(disp_area);
       return;
     }
   #endif
@@ -1130,7 +1133,7 @@ void draw_disp_area() {
         free(pin_str);
       } else {
         if (millis()-last_page_flip >= page_interval) {
-          disp_page = (++disp_page%pages);
+          disp_page = (disp_page + 1) % pages;
           last_page_flip = millis();
           if (not community_fw and disp_page == 0) disp_page = 1;
         }
@@ -1186,6 +1189,437 @@ void update_disp_area() {
   }
 }
 
+#if defined(HAS_LXMF_GATEWAY)
+// ---- Status + Radio as ScreenFramework pages ----
+// Shared no-op handlers: these pages have no internal levels or POWER
+// actions, so on_enter/exit/next/select do nothing and on_back returns
+// false (the framework then returns to status). is_live tracks the
+// radio so the chrome spinner runs and the stats redraw.
+inline void page_noop() {}
+inline bool page_no_back() { return false; }
+inline bool page_radio_live() { return radio_online; }
+
+// Status (page 0, the home): the RNode device-info header (logo + address /
+// WiFi IP) on top, the icon + waterfall + battery/signal panel below. The
+// transport stats moved to their own page; this page always shows the device
+// view that the legacy panel only showed when transport was off. Hold POWER
+// reveals the device identity code (shown big by the legacy fallback path in
+// update_display for its TTL; a BOOT tap dismisses it). POWER is used because
+// the framework owns BOOT, so the old hold-then-tap BOOT gesture could never
+// arm while a screen was active.
+inline void status_header(const uint8_t** glyph, const char** title) {
+  *glyph = Display::Screens::GLYPH_HOUSE;
+  *title = "STATUS";
+}
+inline size_t status_hints(const char** out, size_t max) {
+  if (max < 2) { if (max < 1) return 0; out[0] = "Tap BOOT: next"; return 1; }
+  out[0] = "Tap BOOT: next";
+  out[1] = "Hold POWER: ID";
+  return 2;
+}
+inline void status_on_select() { Web::WebUI::on_button_request_identity_code(); }
+// The logo (23 px) + one info line + the 64 px panel sum to the body height,
+// so the panel is bottom-aligned and the device info fills the strip above it
+// with no overlap. The info line prefers the WiFi IP (so the web app is
+// reachable); it falls back to the short device address when WiFi is down.
+inline void status_render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+  draw_stat_area();   // icon + waterfall + battery/signal panel -> stat_area (64x64)
+  if (device_signatures_ok()) area.drawBitmap(0, y_top, bm_def_lc, 64, 23, SSD1306_WHITE, SSD1306_BLACK);
+  else                        area.drawBitmap(0, y_top, bm_def,    64, 23, SSD1306_WHITE, SSD1306_BLACK);
+  char info[22] = {0};
+  #if HAS_WIFI
+    if (wifi_is_connected()) {
+      snprintf(info, sizeof(info), "%u.%u.%u.%u",
+               (unsigned)wr_device_ip[0], (unsigned)wr_device_ip[1],
+               (unsigned)wr_device_ip[2], (unsigned)wr_device_ip[3]);
+    }
+  #endif
+  #if HAS_BT
+    if (!info[0]) snprintf(info, sizeof(info), "Addr %02X%02X", (uint8_t)bt_dh[14], (uint8_t)bt_dh[15]);
+  #endif
+  if (info[0]) Common::OledText::line(area, (int16_t)(y_top + 30), info);
+  area.drawBitmap(0, (int16_t)(y_bottom - 64), stat_area.getBuffer(),
+                  64, 64, SSD1306_WHITE, SSD1306_BLACK);
+}
+inline const Display::Screens::ScreenPage STATUS_PAGE = {
+  status_header, status_hints, status_render_body,
+  page_noop, page_noop, page_noop, status_on_select,   // POWER hold -> ID code
+  page_no_back, page_radio_live, nullptr, /*ttl_ms=*/0,
+};
+
+// Transport (its own page, after status). The link-layer stats that used to
+// crowd the status panel: rolling history of radio airtime and channel
+// utilisation, plus the packet counters and bitrate. The two graphs scroll
+// left at 1 Hz so the page reads as live even when the numbers hold steady.
+inline void transport_header(const uint8_t** glyph, const char** title) {
+  *glyph = Display::Screens::GLYPH_CHART;
+  *title = "TRANSPORT";
+}
+inline size_t transport_hints(const char** out, size_t max) {
+  if (max < 1) return 0;
+  out[0] = "Tap BOOT: next";
+  return 1;
+}
+inline void transport_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+  (void)y_bottom;
+  const int16_t W = area.width();
+  if (!radio_online) {
+    Common::OledText::line(area, (int16_t)(y_top + 8), "Radio offline");
+    return;
+  }
+  const uint32_t now = millis();
+  // 1 Hz rolling history of airtime + channel utilisation (short-term), each
+  // a 0..1 fraction stored as a byte. 56 samples is bounded and ~= a minute.
+  static constexpr int TN = 56;
+  static uint8_t air_h[TN], load_h[TN];
+  static int tidx = 0, tcnt = 0;
+  static uint32_t tms = 0;
+  if (tms == 0 || now - tms >= 1000) {
+    tms = now;
+    float a = airtime;            if (a < 0) a = 0; if (a > 1) a = 1;
+    float l = total_channel_util; if (l < 0) l = 0; if (l > 1) l = 1;
+    air_h[tidx]  = (uint8_t)(a * 255.0f);
+    load_h[tidx] = (uint8_t)(l * 255.0f);
+    tidx = (tidx + 1) % TN;
+    if (tcnt < TN) tcnt++;
+  }
+  char buf[24];
+  snprintf(buf, sizeof(buf), "%.1f Kbps", (float)lora_bitrate / 1000.0f);
+  Common::OledText::line_at(area, 2, (int16_t)(y_top + 5), buf);
+  // A labeled rolling-history bar graph filling the panel width: title on the
+  // left, current value right-aligned, framed bar strip beneath.
+  auto graph = [&](const char* label, const uint8_t* hist, float cur, int16_t ly) {
+    Common::OledText::line_at(area, 2, ly, label);
+    char r[8];
+    snprintf(r, sizeof(r), "%.0f%%", cur * 100.0f);
+    int16_t bx, by; uint16_t bw, bh2;
+    area.getTextBounds(r, 0, 0, &bx, &by, &bw, &bh2);
+    Common::OledText::line_at(area, (int16_t)(W - 2 - (int16_t)bw), ly, r);
+    const int16_t fy = (int16_t)(ly + 3), fh = 18;
+    area.drawRect(0, fy, W, fh, 1);
+    const int16_t baseY  = (int16_t)(fy + fh - 2);
+    const int16_t innerW = (int16_t)(W - 4), innerH = (int16_t)(fh - 4);
+    for (int i = 0; i < tcnt; ++i) {
+      const int s = (tidx - tcnt + i + TN * 2) % TN;
+      const float f = hist[s] / 255.0f;
+      const int16_t hh = (int16_t)(f * innerH);
+      const int16_t x  = (int16_t)(2 + (int)((float)i * innerW / tcnt));
+      area.drawFastVLine(x, (int16_t)(baseY - hh), (int16_t)(hh + 1), 1);
+    }
+  };
+  graph("AIRTIME",   air_h,  airtime,             (int16_t)(y_top + 16));
+  graph("CHAN LOAD", load_h, total_channel_util,  (int16_t)(y_top + 42));
+  #ifdef HAS_RNS
+    snprintf(buf, sizeof(buf), "RX %u    TX %u",
+             (unsigned)RNS::Transport::packets_received(),
+             (unsigned)RNS::Transport::packets_sent());
+  #else
+    snprintf(buf, sizeof(buf), "RX -    TX -");
+  #endif
+  Common::OledText::line_at(area, 2, (int16_t)(y_top + 74), buf);
+}
+inline const Display::Screens::ScreenPage TRANSPORT_PAGE = {
+  transport_header, transport_hints, transport_body,
+  page_noop, page_noop, page_noop, page_noop,
+  page_no_back, page_radio_live, nullptr, /*ttl_ms=*/0,
+};
+
+// Radio (page 1, just after status). Two levels mirroring the GPS page:
+// the hero is a radar scope (a sweep over the stations we hear); POWER
+// drops to the numbers behind it.
+// Radio (page 1, just after status). Two levels mirroring the GPS page: a
+// vintage receiver panel (the hero) and the numbers behind it (POWER).
+inline bool& radio_detail_ref() { static bool v = false; return v; }
+inline void radio_header(const uint8_t** glyph, const char** title) {
+  *glyph = Display::Screens::GLYPH_ANTENNA;
+  *title = radio_detail_ref() ? "RADIO INFO" : "RADIO";
+}
+inline size_t radio_hints(const char** out, size_t max) {
+  if (radio_detail_ref()) {
+    if (max < 2) return 0;
+    out[0] = "Hold POWER: radio";
+    out[1] = "Hold BOOT: back";
+    return 2;
+  }
+  if (max < 3) { if (max < 1) return 0; out[0] = "Tap BOOT: next"; return 1; }
+  out[0] = "Tap BOOT: next";
+  out[1] = "Hold BOOT: back";
+  out[2] = "Hold POWER: info";
+  return 3;
+}
+inline void radio_on_select() { radio_detail_ref() = !radio_detail_ref(); }
+inline bool radio_on_back() {
+  if (radio_detail_ref()) { radio_detail_ref() = false; return true; }
+  return false;
+}
+inline void radio_on_exit() { radio_detail_ref() = false; }
+
+// Signal-validity guards: before any packet the radio's last_rssi/last_snr
+// hold uninitialised values; treat out-of-range readings as "no signal".
+inline bool  radio_rssi_valid() { return last_rssi > -130 && last_rssi < 0; }
+inline float radio_snr_db()     { return (float)((signed char)last_snr_raw) * 0.25f; }
+inline bool  radio_snr_valid()  { const float s = radio_snr_db(); return s > -30.0f && s < 30.0f; }
+inline int radio_recent_contacts() {
+  const uint32_t now = millis();
+  int n = 0;
+  for (const auto& rec : LXMF::AnnounceLog::announces())
+    if (now - rec.received_ms < 30UL * 60UL * 1000UL) n++;
+  return n;
+}
+
+// ---- vintage-panel drawing helpers ----
+inline void radio_dith(GFXcanvas1& a, int16_t x, int16_t y, float level) {
+  if (level <= 0.0f) return;
+  if ((Sensors::PlanetView::BAYER[((y & 3) << 2) | (x & 3)] + 0.5f) / 16.0f < level)
+    a.drawPixel(x, y, 1);
+}
+inline void radio_disc(GFXcanvas1& a, int16_t cx, int16_t cy, int r, uint8_t col) {
+  for (int yy = -r; yy <= r; ++yy)
+    for (int xx = -r; xx <= r; ++xx)
+      if (xx * xx + yy * yy <= r * r) a.drawPixel((int16_t)(cx + xx), (int16_t)(cy + yy), col);
+}
+// Recessed dial window: black face, white bezel, top highlight (emboss).
+inline void radio_window(GFXcanvas1& a, int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
+  a.fillRect(x0, y0, (int16_t)(x1 - x0 + 1), (int16_t)(y1 - y0 + 1), 0);
+  a.drawRect(x0, y0, (int16_t)(x1 - x0 + 1), (int16_t)(y1 - y0 + 1), 1);
+  a.drawFastHLine((int16_t)(x0 + 1), (int16_t)(y0 + 1), (int16_t)(x1 - x0 - 1), 1);
+}
+// Shaded 3D dome knob (Lambert dither, like the globe) with a pointer.
+inline void radio_knob(GFXcanvas1& a, int16_t cx, int16_t cy, int r, float ang) {
+  for (int yy = -r; yy <= r; ++yy)
+    for (int xx = -r; xx <= r; ++xx) {
+      const float d2 = (float)(xx * xx + yy * yy) / (float)(r * r);
+      if (d2 > 1.0f) continue;
+      const float nz = sqrtf(fmaxf(0.0f, 1.0f - d2));
+      float lit = 0.5f * nz + 0.45f * (-(float)xx / r) + 0.2f * (-(float)yy / r);
+      if (lit < 0.0f) lit = 0.0f;
+      if (lit > 0.95f) lit = 0.95f;
+      a.drawPixel((int16_t)(cx + xx), (int16_t)(cy + yy), 0);   // clear panel under the knob
+      radio_dith(a, (int16_t)(cx + xx), (int16_t)(cy + yy), lit);
+    }
+  a.drawCircle(cx, cy, r, 1);
+  a.drawLine(cx, cy, (int16_t)(cx + (r - 2) * cosf(ang)), (int16_t)(cy + (r - 2) * sinf(ang)), 0);
+  radio_disc(a, cx, cy, 1, 1);
+}
+
+// A glowing vacuum valve: the constant-motion "alive" cue. The envelope is
+// fixed; the internal glow dither breathes with time, so it pulses every
+// frame even when no value is changing (and confirms the screen is live).
+inline void radio_valve(GFXcanvas1& a, int16_t cx, int16_t topy, uint32_t now) {
+  const int hw = 5, h = 17;
+  const int16_t y0 = topy, y1 = (int16_t)(topy + h);
+  const float glow = 0.40f + 0.34f * sinf((float)now * 0.006f);   // breathes ~1 Hz
+  for (int16_t y = (int16_t)(y0 + 2); y < (int16_t)(y1 - 2); ++y)
+    for (int16_t x = (int16_t)(cx - hw + 1); x <= (int16_t)(cx + hw - 1); ++x)
+      radio_dith(a, x, y, glow);
+  a.drawFastVLine((int16_t)(cx - hw), (int16_t)(y0 + 2), (int16_t)(h - 3), 1);
+  a.drawFastVLine((int16_t)(cx + hw), (int16_t)(y0 + 2), (int16_t)(h - 3), 1);
+  a.drawLine((int16_t)(cx - hw), (int16_t)(y0 + 2), (int16_t)(cx - 1), y0, 1);
+  a.drawLine((int16_t)(cx + hw), (int16_t)(y0 + 2), (int16_t)(cx + 1), y0, 1);
+  a.drawFastHLine((int16_t)(cx - 1), y0, 2, 1);
+  a.drawFastHLine((int16_t)(cx - hw), (int16_t)(y1 - 1), (int16_t)(2 * hw + 1), 1);  // base
+  a.drawFastVLine((int16_t)(cx - 2), y1, 2, 1);                                       // pins
+  a.drawFastVLine((int16_t)(cx + 2), y1, 2, 1);
+  a.drawFastVLine(cx, (int16_t)(y0 + 4), (int16_t)(h - 7), 1);                        // filament
+}
+
+// The hero: a vintage short-wave receiver panel. A brushed-metal dithered
+// panel + embossed bezels give it the style; an analog S-meter needle
+// (RSSI), a live scrolling signal band (recent RSSI) with the frequency,
+// shaded knobs, and TX/RX lamps. Driven per render (the page is live).
+inline void radio_panel_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+  const int16_t W = area.width();
+  if (!radio_online) {
+    Common::OledText::line(area, (int16_t)(y_top + 8), "Radio offline");
+    return;
+  }
+  const uint32_t now = millis();
+  constexpr float D2R = 0.01745329f;
+  // brushed-metal panel: vertical dither gradient (light top -> dark base)
+  for (int16_t y = y_top; y < y_bottom; ++y) {
+    const float lv = 0.42f - 0.34f * ((float)(y - y_top) / (float)(y_bottom - y_top));
+    for (int16_t x = 0; x < W; ++x) radio_dith(area, x, y, lv);
+  }
+  // --- S-meter window (RSSI needle). Left 2 px of panel dither above it so
+  // it does not butt against the header bar. ---
+  const int16_t mTop = (int16_t)(y_top + 2), mBot = (int16_t)(y_top + 30);
+  radio_window(area, 2, mTop, (int16_t)(W - 3), mBot);
+  const int16_t pivx = (int16_t)(W / 2), pivy = (int16_t)(mBot - 3);
+  const int R = 21;
+  const float a0 = 150 * D2R, a1 = 30 * D2R;
+  for (int t = 0; t <= 100; ++t) {
+    const float a = a0 + (a1 - a0) * t / 100;
+    area.drawPixel((int16_t)(pivx + R * cosf(a)), (int16_t)(pivy - R * sinf(a)), 1);
+  }
+  for (int t = 0; t <= 10; ++t) {
+    const float a = a0 + (a1 - a0) * t / 10;
+    const int r2 = R - ((t & 1) ? 2 : 4);
+    area.drawLine((int16_t)(pivx + r2 * cosf(a)), (int16_t)(pivy - r2 * sinf(a)),
+                  (int16_t)(pivx + R * cosf(a)), (int16_t)(pivy - R * sinf(a)), 1);
+  }
+  // Needle eased toward the current RSSI, scaled -130..-10 dBm so a strong
+  // (close) signal sits high but never pegs; smooth ballistic movement.
+  float target = radio_rssi_valid() ? ((float)(last_rssi + 130) / 120.0f) : 0.0f;
+  if (target < 0) target = 0;
+  if (target > 1) target = 1;
+  static float mv = 0.0f;
+  mv += (target - mv) * 0.25f;
+  const float an = a0 + (a1 - a0) * mv;
+  area.drawLine(pivx, pivy, (int16_t)(pivx + (R - 3) * cosf(an)), (int16_t)(pivy - (R - 3) * sinf(an)), 1);
+  radio_disc(area, pivx, pivy, 1, 1);
+  Common::OledText::line_at(area, 5, (int16_t)(mTop + 9), "SIG");
+  // --- middle window: channel-load history (left) + SNR & frequency (right).
+  // The S-meter already shows RSSI, so this shows different things: how busy
+  // the airwaves are, the link quality, and the band.
+  const int16_t bTop = (int16_t)(y_top + 32), bBot = (int16_t)(y_top + 52);
+  radio_window(area, 2, bTop, (int16_t)(W - 3), bBot);
+  static constexpr int BN = 14;
+  static uint8_t bhist[BN];
+  static int bidx = 0, bcnt = 0;
+  static uint32_t bms = 0;
+  if (now - bms >= 400) {
+    bms = now;
+    float u = total_channel_util; if (u < 0) u = 0; if (u > 1) u = 1;
+    bhist[bidx] = (uint8_t)(u * 255.0f); bidx = (bidx + 1) % BN; if (bcnt < BN) bcnt++;
+  }
+  Common::OledText::line_at(area, 5, (int16_t)(bTop + 8), "LOAD");
+  const int16_t gx = 5, gw = 22, baseY = (int16_t)(bBot - 2), gh = (int16_t)(bBot - bTop - 13);
+  area.drawFastHLine(gx, (int16_t)(baseY + 1), gw, 1);
+  for (int i = 0; i < bcnt; ++i) {
+    const int s = (bidx - bcnt + i + BN * 2) % BN;
+    const float f = bhist[s] / 255.0f;
+    const int16_t hh = (int16_t)(f * gh);
+    const int16_t x = (int16_t)(gx + (int)((float)i * gw / bcnt));
+    area.drawFastVLine(x, (int16_t)(baseY - hh), (int16_t)(hh + 1), 1);
+  }
+  area.drawFastVLine((int16_t)(W / 2 + 1), (int16_t)(bTop + 2), (int16_t)(bBot - bTop - 3), 1);
+  char r1[12], r2[12];
+  if (radio_snr_valid()) snprintf(r1, sizeof(r1), "SNR %.0f", radio_snr_db());
+  else                   snprintf(r1, sizeof(r1), "SNR --");
+  if (lora_freq > 0) snprintf(r2, sizeof(r2), "%luM", (unsigned long)((lora_freq + 500000UL) / 1000000UL));
+  else               snprintf(r2, sizeof(r2), "--M");
+  const int16_t rx0 = (int16_t)(W / 2 + 5);
+  Common::OledText::line_at(area, rx0, (int16_t)(bTop + 9), r1);
+  Common::OledText::line_at(area, rx0, (int16_t)(bTop + 17), r2);
+  // --- knob (left) + a valve in its own recessed viewing window (right), so
+  // the valve reads as mounted/exposed behind glass, not floating ---
+  radio_knob(area, 12, (int16_t)(y_top + 70), 9, -0.8f);
+  radio_window(area, 44, (int16_t)(y_top + 55), (int16_t)(W - 3), (int16_t)(y_top + 80));
+  radio_valve(area, 52, (int16_t)(y_top + 58), now);
+  #ifdef HAS_RNS
+  const uint32_t tx = (uint32_t)RNS::Transport::packets_sent();
+  const uint32_t rx = (uint32_t)RNS::Transport::packets_received();
+  #else
+  const uint32_t tx = 0, rx = 0;
+  #endif
+  static uint32_t ltx = 0, lrx = 0;
+  static int txp = 0, rxp = 0;
+  if (ltx == 0) ltx = tx;
+  if (lrx == 0) lrx = rx;
+  if (tx != ltx) { txp = 4; ltx = tx; }
+  if (rx != lrx) { rxp = 4; lrx = rx; }
+  const int16_t lx = 26;
+  for (int k = 0; k < 2; ++k) {
+    const int16_t ly = (int16_t)(y_top + 58 + k * 11);
+    const bool on = k == 0 ? (txp > 0) : (rxp > 0);
+    area.fillRect((int16_t)(lx - 2), ly, 18, 9, 0);     // clear a slot over the panel
+    if (on) radio_disc(area, (int16_t)(lx + 1), (int16_t)(ly + 4), 3, 1);
+    else    area.drawCircle((int16_t)(lx + 1), (int16_t)(ly + 4), 3, 1);
+    Common::OledText::line_at(area, (int16_t)(lx + 7), (int16_t)(ly + 6), k == 0 ? "TX" : "RX");
+  }
+  if (txp > 0) txp--;
+  if (rxp > 0) rxp--;
+  // --- footer: signal + stations heard, on a cleared strip ---
+  char fo[24];
+  const int c = radio_recent_contacts();
+  if (radio_rssi_valid()) snprintf(fo, sizeof(fo), "%d dBm  %d stn", last_rssi, c);
+  else                    snprintf(fo, sizeof(fo), "%d stn", c);
+  area.fillRect(0, (int16_t)(y_bottom - 7), W, 7, 0);
+  Common::OledText::line_at(area, 2, (int16_t)(y_bottom - 2), fo);
+}
+
+// Numbers (POWER): the radio values behind the panel.
+inline void radio_detail_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+  (void)y_bottom;
+  const int16_t W = area.width();
+  if (!radio_online) {
+    Common::OledText::line(area, (int16_t)(y_top + 8), "Radio offline");
+    return;
+  }
+  // RSSI history ring, sampled ~2 Hz while the page renders, so the
+  // sparkline traces the recent link strength as a live graph.
+  static constexpr int HN = 60;
+  static int8_t   hist[HN];
+  static int      hidx = 0, hcnt = 0;
+  static uint32_t hms = 0;
+  const uint32_t now = millis();
+  if (now - hms >= 500) {
+    hms = now;
+    int r = last_rssi;
+    if (r > -10)  r = -10;
+    if (r < -130) r = -130;
+    hist[hidx] = (int8_t)r;
+    hidx = (hidx + 1) % HN;
+    if (hcnt < HN) hcnt++;
+  }
+  char buf[24];
+  int16_t y = (int16_t)(y_top + 6);
+  // RSSI value + a live sparkline of recent samples.
+  if (radio_rssi_valid()) snprintf(buf, sizeof(buf), "RSSI %d dBm", last_rssi);
+  else                    snprintf(buf, sizeof(buf), "RSSI --");
+  Common::OledText::line(area, y, buf);
+  const int16_t gx = 2, gw = (int16_t)(W - 4), gh = 15, gtop = (int16_t)(y + 3);
+  area.drawFastHLine(gx, (int16_t)(gtop + gh), gw, 1);
+  for (int i = 0; i < hcnt; ++i) {
+    const int s = (hidx - hcnt + i + HN * 2) % HN;
+    float frac = (float)(hist[s] + 130) / 120.0f;   // -130..-10 dBm -> 0..1
+    if (frac < 0.0f) frac = 0.0f;
+    if (frac > 1.0f) frac = 1.0f;
+    const int16_t bh  = (int16_t)(frac * (gh - 1)) + 1;
+    const int16_t bxp = (int16_t)(gx + (int)((float)i * gw / hcnt));
+    area.drawFastVLine(bxp, (int16_t)(gtop + gh - bh), bh, 1);
+  }
+  y = (int16_t)(gtop + gh + 7);
+  // Airtime + channel-load as full-width gauges.
+  auto gauge = [&](const char* label, float pct) {
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 100.0f) pct = 100.0f;
+    char l[20];
+    snprintf(l, sizeof(l), "%s %.0f%%", label, pct);
+    Common::OledText::line(area, y, l);
+    y += 3;
+    area.drawRect(2, y, (int16_t)(W - 4), 5, 1);
+    area.fillRect(2, y, (int16_t)((float)(W - 4) * pct / 100.0f), 5, 1);
+    y += 11;
+  };
+  gauge("Air",  airtime * 100.0f);
+  gauge("Load", total_channel_util * 100.0f);
+  // Counters + link detail.
+  #ifdef HAS_RNS
+  snprintf(buf, sizeof(buf), "RX %u  TX %u",
+           (unsigned)RNS::Transport::packets_received(),
+           (unsigned)RNS::Transport::packets_sent());
+  Common::OledText::line(area, y, buf); y += 7;
+  #endif
+  snprintf(buf, sizeof(buf), "%.1f kbps", (float)lora_bitrate / 1000.0f);
+  Common::OledText::line(area, y, buf); y += 7;
+  if (radio_snr_valid()) snprintf(buf, sizeof(buf), "SNR %.1f  N%d", radio_snr_db(), noise_floor);
+  else                   snprintf(buf, sizeof(buf), "SNR --  N%d", noise_floor);
+  Common::OledText::line(area, y, buf);
+}
+
+// Router: the panel hero, or the numbers behind it (POWER).
+inline void radio_render_body(GFXcanvas1& area, int16_t y_top, int16_t y_bottom) {
+  if (radio_detail_ref()) radio_detail_body(area, y_top, y_bottom);
+  else                    radio_panel_body(area, y_top, y_bottom);
+}
+inline const Display::Screens::ScreenPage RADIO_PAGE = {
+  radio_header, radio_hints, radio_render_body,
+  page_noop, radio_on_exit, page_noop, radio_on_select,
+  radio_on_back, page_radio_live, nullptr, /*ttl_ms=*/0,
+};
+#endif
+
 void display_recondition() {
   #if PLATFORM == PLATFORM_ESP32
     for (uint8_t iy = 0; iy < disp_area.height(); iy++) {
@@ -1223,7 +1657,8 @@ void update_display(bool blank = false) {
   if (blank == true) {
     last_disp_update = millis()-disp_update_interval-1;
   } else {
-    if (display_blanking_enabled && millis()-last_unblank_event >= display_blanking_timeout) {
+    if (display_blanking_enabled && millis()-last_unblank_event >= display_blanking_timeout
+        && !Display::Screens::active()) {
       blank = true;
       display_blanked = true;
       if (display_intensity != 0) {
@@ -1268,7 +1703,11 @@ void update_display(bool blank = false) {
     }
 
   } else {
-    if (millis()-last_disp_update >= disp_update_interval) {
+    // Animated framework screens (the GPS globe) want a faster redraw
+    // than the idle status cadence; only while one is actually showing.
+    int eff_interval = disp_update_interval;
+    if (Display::Screens::active_live()) eff_interval = LIVE_SCREEN_INTERVAL_MS;
+    if (millis()-last_disp_update >= (uint32_t)eff_interval) {
       uint32_t current = millis();
       if (display_contrast != display_intensity) {
         display_contrast = display_intensity;
@@ -1293,18 +1732,18 @@ void update_display(bool blank = false) {
         #endif
 
         #if defined(HAS_LXMF_GATEWAY)
-        if (LXMF::Messenger::active() && device_init_done && !firmware_update_mode
+        if (Display::Screens::active() && device_init_done && !firmware_update_mode
             && disp_mode == DISP_MODE_PORTRAIT
             && Web::WebUI::identity_code_for_display().empty()) {
-          // Messenger pages own the whole panel in portrait - both
-          // area slots, one tall canvas - so message text and the
-          // button hints get the full height. The identity-code page
-          // still wins (the normal path below renders it); landscape
-          // keeps the split layout via draw_disp_area's override.
-          static GFXcanvas1 messenger_full_area(64, 128);
-          LXMF::Messenger::render(messenger_full_area);
-          drawBitmap(p_ad_x, p_ad_y, messenger_full_area.getBuffer(),
-                     messenger_full_area.width(), messenger_full_area.height(),
+          // Framework screens own the whole panel in portrait - both
+          // area slots, one tall canvas - so bodies and the hint bar
+          // get the full height. The identity-code page still wins
+          // (the normal path below renders it); landscape keeps the
+          // split layout via draw_disp_area's override.
+          static GFXcanvas1 screens_full_area(64, 128);
+          Display::Screens::render(screens_full_area);
+          drawBitmap(p_ad_x, p_ad_y, screens_full_area.getBuffer(),
+                     screens_full_area.width(), screens_full_area.height(),
                      SSD1306_WHITE, SSD1306_BLACK);
         } else
         #endif

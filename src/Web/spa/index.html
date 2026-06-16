@@ -604,11 +604,12 @@
               </template>
               <template x-for="(l, li) in telemetryLines(m)" :key="li">
                 <span class="display-contents">
-                  <template x-if="l.href">
-                    <a class="tline" :class="l.ico" target="_blank" rel="noopener"
-                       :href="l.href" x-text="l.txt"></a>
+                  <template x-if="l.latlon">
+                    <a class="tline" :class="l.ico" role="button"
+                       @click="openMapView({ peer: m.peer, latlon: l.latlon })"
+                       x-text="l.txt"></a>
                   </template>
-                  <template x-if="!l.href">
+                  <template x-if="!l.latlon">
                     <div class="tline" :class="l.ico" x-text="l.txt"></div>
                   </template>
                 </span>
@@ -3091,9 +3092,7 @@ function telemetryLines(m) {
     let txt = t.lat.toFixed(5) + ', ' + t.lon.toFixed(5);
     if (typeof t.acc_m === 'number' && t.acc_m > 0) txt += ' ±' + Math.round(t.acc_m) + ' m';
     if (typeof t.speed_kmh === 'number' && t.speed_kmh >= 1) txt += ' · ' + Math.round(t.speed_kmh) + ' km/h';
-    L.push({ ico: 'ico-pin', txt,
-             href: 'https://www.openstreetmap.org/?mlat=' + t.lat + '&mlon=' + t.lon
-                 + '#map=16/' + t.lat + '/' + t.lon });
+    L.push({ ico: 'ico-pin', txt, latlon: [t.lat, t.lon] });
     // Distance from the peer's position to ours - only when our own GPS has a
     // fix (the device this app is talking to).
     const sg = state.system && state.system.sensors && state.system.sensors.gps;

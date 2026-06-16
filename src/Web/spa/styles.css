@@ -1111,7 +1111,7 @@ input[type="checkbox"]:focus-visible {
   font-size: 12px;
 }
 .telemetry-block .tline { display: flex; align-items: center; gap: 6px; }
-.telemetry-block a.tline { color: var(--accent); text-decoration: none; }
+.telemetry-block a.tline { color: var(--accent); text-decoration: none; cursor: pointer; }
 .telemetry-block a.tline:hover { text-decoration: underline; }
 
 /* Inline location preview in a bubble: a static slippy-tile grid with a

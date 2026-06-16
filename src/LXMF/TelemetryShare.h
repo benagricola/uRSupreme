@@ -39,7 +39,9 @@
 
 #include "../Common/MsgPack.h"
 #include "../Common/RnsLock.h"
+#include "../Common/PsramAllocator.h"
 #include "../Telemetry/Telemeter.h"
+#include "GpxTrack.h"
 #include "LXMFTypes.h"
 #include "LXMFGateway.h"
 
@@ -89,6 +91,12 @@ struct Feed {
   uint32_t   misses        = 0;
   RNS::Bytes latest;                 // newest packed Telemeter blob
   uint32_t   latest_ms     = 0;      // millis() of the newest blob
+  // Live GPX track this feed grows: the .gpx attached to the live-share
+  // message (empty = none). Each location sample appends one point.
+  std::string gpx_path;
+  bool        gpx_use_sd   = false;
+  uint32_t    gpx_points   = 0;
+  double      gpx_last_lat = 999.0, gpx_last_lon = 999.0;   // dedupe identical
 };
 
 namespace _detail {
@@ -391,8 +399,42 @@ inline void on_live_offer(const IdentityId& iden, const RNS::Bytes& peer,
   }
 }
 
-// Inbound telemetry from a peer we hold a feed for: keep the latest
-// blob for the UI and push it over the WS.
+// Decode a packed Telemeter blob's position, if any. Returns false when the
+// blob carries no location (e.g. an environment-only reading).
+inline bool location_from_blob(const RNS::Bytes& blob, double& lat, double& lon) {
+  Common::PsramJsonDocument doc;
+  Telemetry::Telemeter::decode_into(doc.to<JsonObject>(), blob.data(), blob.size());
+  if (!doc["lat"].is<double>() || !doc["lon"].is<double>()) return false;
+  lat = doc["lat"].as<double>();
+  lon = doc["lon"].as<double>();
+  return true;
+}
+
+// Whether we hold an active live feed from this peer (i.e. their last message
+// carried a live-update offer). The gateway uses this to decide whether a
+// location-bearing message should start a GPX track.
+inline bool has_feed(const IdentityId& iden, const RNS::Bytes& peer) {
+  return _detail::find_feed(iden, peer) != nullptr;
+}
+
+// Bind a live GPX track file to a peer's feed: subsequent location samples
+// append to it. Called once when the live-share message is appended (with the
+// file already created carrying the first point).
+inline void set_feed_gpx(const IdentityId& iden, const RNS::Bytes& peer,
+                         const std::string& path, bool use_sd,
+                         double first_lat, double first_lon) {
+  Feed* f = _detail::find_feed(iden, peer);
+  if (f == nullptr) return;
+  f->gpx_path     = path;
+  f->gpx_use_sd   = use_sd;
+  f->gpx_points   = 1;            // the create() call wrote the first point
+  f->gpx_last_lat = first_lat;
+  f->gpx_last_lon = first_lon;
+}
+
+// Inbound telemetry from a peer we hold a feed for: keep the latest blob for
+// the UI, push it over the WS, and - if this feed is growing a GPX track -
+// append the position to that file (constant-time, deduped, capped).
 inline void on_telemetry(const IdentityId& iden, const RNS::Bytes& peer,
                          const RNS::Bytes& blob) {
   Feed* f = _detail::find_feed(iden, peer);
@@ -402,6 +444,16 @@ inline void on_telemetry(const IdentityId& iden, const RNS::Bytes& peer,
   f->latest_ms = millis();
   f->awaiting  = false;
   f->misses    = 0;
+  if (!f->gpx_path.empty() && f->gpx_points < GpxTrack::MAX_POINTS) {
+    double lat, lon;
+    if (location_from_blob(blob, lat, lon)
+        && (lat != f->gpx_last_lat || lon != f->gpx_last_lon)
+        && GpxTrack::append(f->gpx_path.c_str(), f->gpx_use_sd, lat, lon)) {
+      f->gpx_points++;
+      f->gpx_last_lat = lat;
+      f->gpx_last_lon = lon;
+    }
+  }
   Web::WS::publish_telemetry_update(iden, peer, blob);
 }
 

@@ -113,9 +113,14 @@ I'd otherwise never finish.
   - *Connectivity*: LoRa region and manual radio params, WiFi
     credentials, TCP clients, BLE, serial / KISS diagnostics.
   - *Discovery*: master toggle, advertised name, cadence, stamp cost.
-  - *Time*: GPS / RTC / NTP source priority.
+  - *Telemetry*: which sensors to share, send cadence, and device-report
+    collectors (push telemetry to fixed targets).
+  - *Map*: tile source (offline SD or online), downloaded detail areas,
+    and on-device region downloads.
+  - *Time*: GPS / RTC / NTP / browser source priority, and the GPS
+    clock-sync cadence.
   - *App*: UI prefs, per-chat retention defaults.
-  - *Activity*: telemetry, max send / receive size sliders.
+  - *Activity*: max send / receive size limits.
   - *Reset*: per-identity delete and factory reset.
 - **Live status** in the top bar. Battery icon, radio status pill
   (online / offline / not-configured), and a system popover with LoRa
@@ -125,18 +130,89 @@ I'd otherwise never finish.
   gating for actions that require physical-presence proof, like WiFi
   reconfig or factory reset.
 
+### Maps
+
+- **Offline vector maps.** The web app shows a real map with no
+  internet connection, rendered from vector tiles on the device's SD
+  card. Maps need an SD card.
+- **Build maps on the device.** Draw an area and the device pulls just
+  that region from the global Protomaps planet over the internet, then
+  serves it offline from then on. A coarse world base layer plus any
+  number of downloaded detail areas combine into one map. The whole
+  planet is far too large to mirror (about 127 GB), so you download
+  only the regions you want.
+- **Tracks.** A live-shared location grows a GPX track that renders on
+  the map and as a thumbnail in the chat bubble, with a download. A
+  `.gpx` file someone sends you renders the same way.
+- **Two ways in.** Open the map from the top bar to see every peer's
+  latest position, or open it from a location message to focus on that
+  peer and their track.
+
 ### Sensors and telemetry
 
 - **Battery** (AXP2101): voltage, charge / discharge current,
   percentage, charger state, USB-power detect.
-- **Position** (L76K GPS): lat, lon, altitude, fix quality, HDOP,
-  satellite count. Used to discipline the RTC and tag discovery
-  announces.
-- **Clock** (PCF8563 hardware RTC): synced from GPS or NTP. Source
-  priority configurable.
-- **Environment** (BME280): temperature, humidity, pressure.
+- **Position** (L76K or MAX-M10 GPS, auto-detected): lat, lon,
+  altitude, fix quality, HDOP, satellite count. Location power and
+  clock sync are two separate controls now (see GPS power below). Used
+  to tag discovery announces and, as a time source, to set the clock.
+- **Clock** (PCF8563 hardware RTC): synced from GPS, NTP, or the
+  browser. Source priority is set in Settings → Time.
+- **Environment** (BME280): temperature, humidity, pressure, with a
+  pressure trend.
 - **Motion** (QMI8658 IMU): orientation and tilt.
-- **Compass** (QMC6310): heading.
+- **Compass** (QMC6310): tilt-compensated heading, fused with the IMU,
+  with on-device calibration that persists across reboots.
+- **Telemetry sharing.** Attach your sensors (location, environment,
+  battery, compass) to a message, or share them live with another
+  device. A live share streams updates to the other side at the rate
+  they ask for, and either side can stop it. A shared location can grow
+  a track (see Maps). Separately, device-report collectors can push
+  telemetry to one or more fixed targets on a schedule.
+
+#### Sensor timing: live vs configured interval
+
+Each sensor has a configured refresh interval. That interval is the
+**idle** cadence: how often the sensor reads when nobody is looking.
+
+Sensors refresh **live** (much faster) whenever they are actually being
+watched:
+
+- the sensor screen is open on the device's OLED, or
+- the sensors popover is open in the web app, or
+- another device holds a live share of that sensor.
+
+When none of those is true, the sensor drops back to its configured
+interval. So readings are instant while you watch or share them,
+without polling the hardware (and spending power) the rest of the time.
+Battery is always cheap to read. Location is the exception: it follows
+the GPS power schedule below, not this live / idle rule.
+
+#### GPS power: location updates vs clock sync
+
+Location power and clock sync used to be one setting. They are now
+independent:
+
+- **Location updates** (the GPS section of the sensors popover): how
+  often the receiver is awake producing fixes. **Always on** (the
+  default) keeps it powered continuously. **Every 5 / 15 / 30 / 60
+  min** duty-cycles it: after the first fix the receiver sleeps between
+  fixes to save power and wakes to refresh.
+- **Clock sync** (Settings → Time): how often a live fix may resync the
+  clock. GPS here is just one time source, ranked against NTP and the
+  browser. It is independent of how often location updates.
+
+### On-device display (OLED)
+
+- **Screen framework.** The OLED is a small app of its own: status,
+  messenger, and sensor screens with a shared header, a nav hint, and a
+  two-button gesture map (the POWER and BOOT keys).
+- **Status** shows identity, radio, GPS, and battery at a glance.
+- **Messenger** reads and sends short messages from the device itself.
+- **Sensors** has a GPS screen that draws the real Earth as a globe
+  with your position pinned and satellites in view, a tilt-compensated
+  compass dial, and an environment screen. These screens refresh live
+  while you are looking at them (see Sensor timing above).
 
 ### Storage
 
@@ -150,7 +226,7 @@ I'd otherwise never finish.
 
 Both primary targets are ESP32-S3 with 8 MB PSRAM, shipped with the
 full sensor and power-management complement (OLED, AXP2101, BME280,
-QMI8658, QMC6310, L76K, PCF8563):
+QMI8658, QMC6310, L76K or MAX-M10 GPS, PCF8563):
 
 - **LilyGo T-Beam Supreme SX1262.** PIO env `ttgo-t-beam-supreme`.
 - **LilyGo T-Beam Supreme LR1121.** PIO env
@@ -256,6 +332,12 @@ Quick start section uses.
 - Stamp PoW is on by default (cost 14). Disabling it (cost 0 in
   Settings → Discovery) will cause strict listeners like rmap.world
   to drop the announce.
+- GPS pulsed power-save (location updates set to 5 min or longer) is
+  new. The duty-cycle and wake logic are verified indoors; the warm
+  re-acquire after a power-save sleep is still being checked outdoors.
+  Always on is the default and is unaffected.
+- Maps need an SD card, and building a region downloads it from the
+  internet once before it works offline.
 - The non-Supreme build envs are inherited from upstream and are not
   routinely tested here. If something on a non-Supreme board breaks,
   please open an issue, but expect a slower turnaround than for

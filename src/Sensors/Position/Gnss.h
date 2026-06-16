@@ -171,6 +171,12 @@ namespace _detail {
   inline uint8_t&        m10_cfg_tries_ref()  { static uint8_t v = 0; return v; }
   inline M10Power&       m10_cfg_want_ref()   { static M10Power v = M10Power::NotApplied; return v; }
   inline uint32_t&       m10_cfg_iv_ref()     { static uint32_t v = 0; return v; }
+#ifdef URTN_GPS_INJECT
+  // Test-only synthetic fix. Compiled in only under -DURTN_GPS_INJECT, a
+  // diag build flag that is never set in a default/production build.
+  inline bool&           inject_active_ref()  { static bool v = false; return v; }
+  inline Fix&            inject_fix_ref()      { static Fix f{}; return f; }
+#endif
 }
 
 inline PowerConfig& power_config() { static PowerConfig c; return c; }
@@ -481,6 +487,21 @@ inline void pump() {
   const uint32_t  now  = millis();
   Fix&            f    = _detail::fix_ref();
 
+#ifdef URTN_GPS_INJECT
+  // Re-assert a synthetic fix every pump so consumers (the telemetry
+  // packer, the web GPS view) see a live receiver. Skips the real serial
+  // drain entirely while injection is active.
+  if (_detail::inject_active_ref()) {
+    f = _detail::inject_fix_ref();
+    f.fix_received_ms          = now;
+    f.last_valid_fix_ms        = now;
+    f.last_byte_ms             = now;
+    _detail::last_fix_ms_ref() = now;
+    _detail::ever_fixed_ref()  = true;
+    return;
+  }
+#endif
+
   // ---- power-mode transitions (location config only) ----
   if (mode == PowerMode::Off) {
     if (_detail::hw_powered_ref()) power_off();
@@ -568,6 +589,27 @@ inline void pump() {
 
 // Read access for /api/gps. Caller gets a copy of the current fix.
 inline Fix last_fix() { return _detail::fix_ref(); }
+
+#ifdef URTN_GPS_INJECT
+// Test-only: feed a synthetic fix that pump() then re-asserts every tick,
+// so GPS-dependent features (location telemetry, the web map) can be
+// exercised indoors without sky view. Behind -DURTN_GPS_INJECT only.
+inline void inject_fix(double lat, double lon, double alt_m,
+                       double speed_knots, double heading_deg) {
+  Fix& f = _detail::inject_fix_ref();
+  f.valid          = true;
+  f.latitude_deg   = lat;
+  f.longitude_deg  = lon;
+  f.altitude_m     = alt_m;
+  f.altitude_valid = true;
+  f.speed_knots    = speed_knots;
+  f.heading_deg    = heading_deg;
+  f.sats           = 12;
+  f.sats_visible   = 12;
+  f.best_snr_db    = 40;
+  _detail::inject_active_ref() = true;
+}
+#endif
 // Acquisition/power snapshot for on-device display and diagnostics.
 struct AcqStatus {
   PowerMode  mode;

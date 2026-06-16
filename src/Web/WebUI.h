@@ -911,6 +911,11 @@ namespace Web {
       on_json_post(ApiRoutes::TIME_SOURCES,         handle_time_sources_set);
       // GPS fix - last RMC sentence parsed.
       on_http(HTTP_GET, ApiRoutes::GPS, handle_gps_get);
+#ifdef URTN_GPS_INJECT
+      // Diag-only synthetic fix injection (indoor testing). Registered
+      // only under the build flag; absent from default/production builds.
+      on_http(HTTP_POST, ApiRoutes::DIAG_GPS, handle_gps_inject);
+#endif
       // RTC diagnostics - raw chip state.
       on_http(HTTP_GET, ApiRoutes::RTC, handle_rtc_get);
       // Aggregated device status: storage + clock + sensors.

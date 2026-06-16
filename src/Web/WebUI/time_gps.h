@@ -291,3 +291,34 @@
       send_json(req, 200, doc);
     }
 
+#ifdef URTN_GPS_INJECT
+    // POST /api/diag/gps?lat=&lon=[&alt=&speed=&heading=] - feed a
+    // synthetic GPS fix so location features can be exercised indoors
+    // without sky view. Diag-only: the route is ROUTE_OPT and the whole
+    // handler is compiled in only under -DURTN_GPS_INJECT, so a default
+    // build neither registers the route nor carries this code.
+    static void handle_gps_inject(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      auto num = [&](const char* k, double dflt) -> double {
+        if (req->hasParam(k))       return req->getParam(k)->value().toDouble();
+        if (req->hasParam(k, true)) return req->getParam(k, true)->value().toDouble();
+        return dflt;
+      };
+      if (!req->hasParam("lat") && !req->hasParam("lat", true)) {
+        send_error_with_message(req, 400, "missing_lat_lon",
+          "lat and lon query params are required.");
+        return;
+      }
+      const double lat = num("lat", 0.0), lon = num("lon", 0.0);
+      Sensors::Gnss::inject_fix(lat, lon, num("alt", 0.0),
+                                num("speed", 0.0), num("heading", 0.0));
+      NOTICEF("WebUI: GPS fix injected lat=%.6f lon=%.6f", lat, lon);
+      Common::PsramJsonDocument doc;
+      doc["injected"]  = true;
+      doc["latitude"]  = lat;
+      doc["longitude"] = lon;
+      send_json(req, 200, doc);
+    }
+#endif
+

@@ -447,6 +447,7 @@ namespace LXMF {
         for (auto it = q.begin(); it != q.end(); ) {
           if (it->iden_id == iden_id) {
             Discovery::Stamp::cancel(it->message_id);
+            if (it->sidecar_handle) Storage::SdWriter::release(it->sidecar_handle);
             remove_pending_stamp_sidecar(it->sidecar);
             it = q.erase(it);
           } else {
@@ -908,7 +909,8 @@ namespace LXMF {
       uint32_t    outbox_seq = 0;
       uint8_t     cost = 0;
       std::string sidecar;           // on-disk payload copy ("" = RAM fallback)
-      RNS::Bytes  payload;           // only when the sidecar write failed
+      Storage::SdWriter::Handle sidecar_handle = 0;  // in-flight off-task SD stream write (0 = resolved/none)
+      RNS::Bytes  payload;           // held until the sidecar write confirms; kept as fallback if it failed
       bool        submitted = false; // generation handed to the PoW worker
       RNS::Bytes  stamp;             // non-empty once generated → dispatch phase
       uint32_t    stamp_value = 0;
@@ -977,6 +979,36 @@ namespace LXMF {
       }
       filesystem.remove(path.c_str());
       return false;
+    }
+
+    // Start an off-task SD stream write of the sidecar (header + payload, the
+    // payload fed straight from the PSRAM Bytes). The shared writer drains it on
+    // its own ring (MAX_STREAMS=2, so it coexists with an upload) off the send
+    // task. Returns the job handle to poll for completion, or 0 if SD is absent
+    // or no ring is free, so the caller falls back to the inline write.
+    static Storage::SdWriter::Handle begin_sd_stamp_sidecar(
+        const std::string& path, const RNS::Bytes& dest, uint8_t cost,
+        const RNS::Bytes& message_id, const RNS::Bytes& payload) {
+      if (!Storage::SDCard::present()) return 0;
+      if (dest.size() != 16 || message_id.size() != 32 || payload.size() == 0) return 0;
+      uint8_t hdr[STAMP_SIDECAR_HDR];
+      memcpy(hdr, "LXSP", 4);
+      hdr[4] = 1;
+      memcpy(hdr + 5, dest.data(), 16);
+      hdr[21] = cost;
+      memcpy(hdr + 22, message_id.data(), 32);
+      Storage::SdWriter::Handle h = Storage::SdWriter::open(
+          path.c_str(), Storage::SdWriter::Op::Truncate, 0,
+          Storage::SdWriter::Kind::Sidecar, Storage::SdWriter::PRIO_NORMAL,
+          /*want_sha=*/false, /*keep=*/true);
+      if (!h) return 0;
+      if (!Storage::SdWriter::feed(h, hdr, sizeof(hdr)) ||
+          !Storage::SdWriter::feed(h, payload.data(), payload.size())) {
+        Storage::SdWriter::release(h);
+        return 0;
+      }
+      Storage::SdWriter::finish(h);
+      return h;
     }
 
     // Read a sidecar back. out_payload may be null for a header-only
@@ -1057,6 +1089,7 @@ namespace LXMF {
         });
       }
       Web::WS::publish_outbox_status_seq(f.iden_id, f.outbox_seq, "failed", RNS::Bytes());
+      if (f.sidecar_handle) Storage::SdWriter::release(f.sidecar_handle);
       remove_pending_stamp_sidecar(f.sidecar);
     }
 
@@ -1070,6 +1103,7 @@ namespace LXMF {
       for (auto it = q.begin(); it != q.end(); ++it) {
         if (it->iden_id != iden_id || it->outbox_seq != seq) continue;
         Discovery::Stamp::cancel(it->message_id);
+        if (it->sidecar_handle) Storage::SdWriter::release(it->sidecar_handle);
         remove_pending_stamp_sidecar(it->sidecar);
         NOTICEF("LXMF: cancelled stamp generation for outbox seq %lu (record removed)",
                 (unsigned long)seq);
@@ -1129,11 +1163,23 @@ namespace LXMF {
       p.outbox_seq = out_rec.seq;
       p.cost       = cost;
       const std::string path = pending_stamp_sidecar_path(*a, out_rec.seq);
-      if (write_pending_stamp_sidecar(path, dest_hash, cost, pm.message_id, pm.payload)) {
+      Storage::SdWriter::Handle sc_h =
+          begin_sd_stamp_sidecar(path, dest_hash, cost, pm.message_id, pm.payload);
+      if (sc_h) {
+        // Off-task SD stream write in flight. Hold the payload in PSRAM until
+        // tick confirms it landed (then freed - the same "no payload in RAM
+        // during PoW" outcome, resolved one tick later), or kept as the RAM
+        // fallback if it failed.
+        p.sidecar        = path;
+        p.sidecar_handle = sc_h;
+        p.payload        = pm.payload;
+      } else if (write_pending_stamp_sidecar(path, dest_hash, cost, pm.message_id, pm.payload)) {
+        // No SD (synchronous flash) or no ring free (inline SD fallback): the
+        // payload is on disk, so the RAM is freed now.
         p.sidecar = path;
       } else {
-        // Disk full / no backend: hold the payload in PSRAM. The send
-        // still completes, it just won't survive a reboot mid-search.
+        // Disk full / no backend: hold the payload in PSRAM. The send still
+        // completes, it just will not survive a reboot mid-search.
         WARNING("LXMF: pending-stamp sidecar write failed - holding payload in PSRAM");
         p.payload = pm.payload;
       }
@@ -1160,11 +1206,25 @@ namespace LXMF {
       if (!a || !a->outbox) {
         // Identity deleted while queued. Abort + drop.
         Discovery::Stamp::cancel(f.message_id);
+        if (f.sidecar_handle) Storage::SdWriter::release(f.sidecar_handle);
         remove_pending_stamp_sidecar(f.sidecar);
         q.pop_front();
         return;
       }
       const uint64_t now = (uint64_t)millis();
+      // Resolve the off-task sidecar write before anything else: once it is
+      // durable, free the held payload (frees RAM for the multi-second PoW); if
+      // it failed, keep the payload as the RAM fallback. While it is still in
+      // flight (ms) wait, so dispatch never races the write and the ring handle
+      // is always released here (never leaked).
+      if (f.sidecar_handle) {
+        const int w = Storage::SdWriter::poll(f.sidecar_handle);
+        if (w < 0) return;                       // still writing; resolve next tick
+        Storage::SdWriter::release(f.sidecar_handle);
+        f.sidecar_handle = 0;
+        if (w == 1) f.payload = RNS::Bytes();     // durable on disk; free the RAM
+        else        f.sidecar.clear();            // write failed; f.payload is the fallback
+      }
       if (f.stamp.size() == 0) {
         if (!f.submitted) {
           f.submitted = Discovery::Stamp::submit_lxmf_generate(f.message_id, f.cost);

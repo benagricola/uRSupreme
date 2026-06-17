@@ -868,6 +868,7 @@ namespace Web {
       on_http(HTTP_GET, ApiRoutes::DIAG_MEM, handle_diag_mem);
       on_json_post(ApiRoutes::DIAG_MEM,     handle_diag_mem_reset);
       on_http(HTTP_GET, ApiRoutes::DIAG_STORAGE, handle_diag_storage);
+      on_json_post(ApiRoutes::DIAG_STORAGE, handle_diag_storage_reset);
 #if defined(URTN_LOOP_DIAG)
       on_http(HTTP_GET, ApiRoutes::DIAG_LOOP, handle_diag_loop);
       on_json_post(ApiRoutes::DIAG_LOOP,    handle_diag_loop_reset);
@@ -917,6 +918,11 @@ namespace Web {
       // Diag-only synthetic fix injection (indoor testing). Registered
       // only under the build flag; absent from default/production builds.
       on_http(HTTP_POST, ApiRoutes::DIAG_GPS, handle_gps_inject);
+#endif
+#ifdef URTN_SDW_INJECT
+      // Diag-only synthetic blob injection (shared-writer head-of-line test).
+      // Registered only under the build flag; absent from production builds.
+      on_http(HTTP_POST, ApiRoutes::DIAG_SDWRITER, handle_sdwriter_inject);
 #endif
       // RTC diagnostics - raw chip state.
       on_http(HTTP_GET, ApiRoutes::RTC, handle_rtc_get);

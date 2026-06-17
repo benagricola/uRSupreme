@@ -172,7 +172,7 @@
       doc["sd_total_kb"]   = (uint32_t)(total / 1024);
       doc["sd_used_kb"]    = (uint32_t)(used / 1024);
       doc["sd_free_kb"]    = (uint32_t)((total > used ? total - used : 0) / 1024);
-      namespace W = Storage::OutboundStaging::_sdwriter;
+      namespace W = Storage::SdWriter;
       doc["sd_bytes_written"]     = (uint32_t)(W::bytes_written() / 1024);
       doc["sd_write_errors"]      = (uint32_t)W::write_errors();
       doc["sd_ring_timeouts"]     = (uint32_t)W::ring_timeouts();
@@ -180,8 +180,137 @@
       doc["sd_feed_slow_blocks"]  = (uint32_t)W::feed_slow_blocks();
       doc["sd_finish_max_ms"]     = (uint32_t)W::finish_max_ms();
       doc["sd_writer_stack_free"] = (uint32_t)W::stack_low_water();
+      // Shared-writer job scheduler (GPX/attachment/sidecar writes interleaved
+      // with uploads by priority). sd_queue_wait_* is the head-of-line latency a
+      // small write waited behind a bigger one; sd_service_max_ms is the write
+      // itself. High wait + low service = queue contention; high service = a
+      // stalling card. sd_jobs_preempted > 0 confirms a write preempted a stream
+      // that had data ready. The *_win, slow count and by-kind reset on POST.
+      doc["sd_jobs_done"]            = (uint32_t)W::jobs_done();
+      doc["sd_jobs_preempted"]       = (uint32_t)W::jobs_preempted();
+      doc["sd_job_errors"]           = (uint32_t)W::job_errors();
+      doc["sd_jobs_dropped"]         = (uint32_t)W::jobs_dropped();
+      doc["sd_jobs_inflight_max"]    = (uint32_t)W::jobs_inflight_max();
+      doc["sd_inline_bytes"]         = (uint32_t)W::inline_bytes().load();
+      doc["sd_queue_wait_max_ms"]    = (uint32_t)W::queue_wait_max_ms();
+      doc["sd_queue_wait_win_ms"]    = (uint32_t)W::queue_wait_win_ms();
+      doc["sd_queue_slow_jobs"]      = (uint32_t)W::queue_slow_jobs();
+      doc["sd_service_max_ms"]       = (uint32_t)W::service_max_ms();
+      doc["sd_latency_max_ms"]       = (uint32_t)W::latency_max_ms();
+      JsonObject byk = doc["sd_wait_by_kind"].to<JsonObject>();
+      for (uint8_t k = 0; k < (uint8_t)W::Kind::_Count; ++k)
+        byk[W::kind_name(k)] = (uint32_t)W::wait_by_kind()[k];
       send_json(req, 200, doc);
     }
+
+    // POST /api/diag/storage - reset the resettable blob-queue window
+    // (sd_queue_wait_win_ms, sd_queue_slow_jobs, sd_wait_by_kind) so a test can
+    // measure a clean window without rebooting. The since-boot maxima persist.
+    static void handle_diag_storage_reset(AsyncWebServerRequest* req, JsonVariant& /*body*/) {
+      if (require_auth(req).empty()) return;
+      Storage::SdWriter::reset_window();
+      Common::PsramJsonDocument doc;
+      doc["status"] = "reset";
+      send_json(req, 200, doc);
+    }
+
+#ifdef URTN_SDW_INJECT
+    // POST /api/diag/sdwriter - exercise the shared writer with no second
+    // device. Diag-only: ROUTE_OPT + compiled only under -DURTN_SDW_INJECT.
+    //   mode=blob (default): n writes of `size` bytes.
+    //     op=trunc (default) | append   - AppendSeek seeks back 8 B from EOF.
+    //     sync=1                         - write(done) + wait (zero-copy path).
+    //   mode=stream: open `streams` concurrent ring-backed streams of `size`
+    //     bytes each, fed round-robin (exercises MAX_STREAMS interleave).
+    // Then read GET /api/diag/storage (sd_queue_wait_max_ms, sd_jobs_preempted,
+    // sd_jobs_inflight_max, sd_*errors). Run mode=blob alongside an upload for
+    // the head-of-line numbers.
+    static void handle_sdwriter_inject(AsyncWebServerRequest* req) {
+      if (require_auth(req).empty()) return;
+      if (!Storage::SDCard::present()) {
+        send_error_with_message(req, 400, "no_sd", "SD card not present.");
+        return;
+      }
+      namespace W = Storage::SdWriter;
+      auto numu = [&](const char* k, uint32_t dflt) -> uint32_t {
+        if (req->hasParam(k))       return (uint32_t)req->getParam(k)->value().toInt();
+        if (req->hasParam(k, true)) return (uint32_t)req->getParam(k, true)->value().toInt();
+        return dflt;
+      };
+      auto str = [&](const char* k, const char* dflt) -> String {
+        if (req->hasParam(k))       return req->getParam(k)->value();
+        if (req->hasParam(k, true)) return req->getParam(k, true)->value();
+        return String(dflt);
+      };
+      Common::PsramJsonDocument doc;
+
+      if (str("mode", "blob") == "stream") {
+        uint32_t streams = numu("streams", W::MAX_STREAMS);
+        if (streams < 1) streams = 1;
+        if (streams > W::MAX_STREAMS) streams = W::MAX_STREAMS;
+        uint32_t size = numu("size", 256 * 1024);
+        if (size == 0) size = 1;
+        const size_t CHUNK = 8192;
+        uint8_t* chunk = (uint8_t*)heap_caps_malloc(CHUNK, MALLOC_CAP_SPIRAM);
+        if (!chunk) { send_error_with_message(req, 500, "oom", "alloc"); return; }
+        memset(chunk, 0x5a, CHUNK);
+        W::Handle h[W::MAX_STREAMS] = {0};
+        uint32_t fed[W::MAX_STREAMS] = {0};
+        uint32_t opened = 0;
+        char path[40];
+        for (uint32_t i = 0; i < streams; ++i) {
+          snprintf(path, sizeof(path), "/sdwstream_%u.bin", (unsigned)i);
+          h[i] = W::open(path, W::Op::Truncate, 0, W::Kind::Test, W::PRIO_BULK,
+                         /*want_sha=*/false, /*keep=*/false);
+          if (h[i]) opened++;
+        }
+        bool more = true;
+        while (more) {
+          more = false;
+          for (uint32_t i = 0; i < streams; ++i) {
+            if (!h[i] || fed[i] >= size) continue;
+            const uint32_t w = (size - fed[i]) < CHUNK ? (size - fed[i]) : CHUNK;
+            if (!W::feed(h[i], chunk, w)) { fed[i] = size; continue; }
+            fed[i] += w; more = true;
+          }
+        }
+        for (uint32_t i = 0; i < streams; ++i) if (h[i]) W::finish(h[i]);
+        heap_caps_free(chunk);
+        doc["mode"] = "stream"; doc["streams"] = streams; doc["opened"] = opened; doc["size"] = size;
+        send_json(req, 200, doc);
+        return;
+      }
+
+      uint32_t n    = numu("n", 8);
+      uint32_t size = numu("size", 4096);
+      const bool append = (str("op", "trunc") == "append");
+      const bool sync   = numu("sync", 0) != 0;
+      if (n > 64) n = 64;
+      if (size > W::INLINE_MAX_BYTES) size = W::INLINE_MAX_BYTES;
+      if (size == 0) size = 1;
+      uint8_t* buf = (uint8_t*)heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+      if (!buf) { send_error_with_message(req, 500, "oom", "alloc"); return; }
+      memset(buf, 0x5a, size);
+      const char* path = append ? "/sdwappend.bin" : "/sdwtest.bin";
+      uint32_t queued = 0, dropped = 0;
+      // AppendSeek needs an existing file: lay down a base with Truncate first.
+      if (append && W::write(path, buf, size, W::Op::Truncate, 0, W::Kind::Test)) queued++;
+      const uint32_t seek_back = (append && size >= 8) ? 8 : 0;
+      const W::Op wop = append ? W::Op::AppendSeek : W::Op::Truncate;
+      SemaphoreHandle_t sem = sync ? xSemaphoreCreateBinary() : nullptr;
+      for (uint32_t i = 0; i < n; ++i) {
+        if (W::write(path, buf, size, wop, seek_back, W::Kind::Test, W::PRIO_NORMAL, sem, nullptr)) {
+          queued++;
+          if (sync) xSemaphoreTake(sem, pdMS_TO_TICKS(10000));   // zero-copy: buf held across the wait
+        } else dropped++;
+      }
+      if (sem) vSemaphoreDelete(sem);
+      heap_caps_free(buf);
+      doc["mode"] = "blob"; doc["op"] = append ? "append" : "trunc"; doc["sync"] = sync;
+      doc["requested"] = n; doc["queued"] = queued; doc["dropped"] = dropped; doc["size"] = size;
+      send_json(req, 200, doc);
+    }
+#endif
 
 #if defined(URTN_HEAP_TRACE)
     // GET /api/diag/heaptrace - live allocations aggregated by caller (innermost

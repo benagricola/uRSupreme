@@ -20,8 +20,8 @@
 // job with a ready chunk (round-robin among equal priority), so a small write
 // preempts a long upload and two streams interpolate while their producers wait
 // on the network. Nothing here assumes one stream: MAX_STREAMS rings can be in
-// flight at once (shipped at 1; raising it is a constant + the producer
-// migration, no ABI or scheduler change).
+// flight at once (currently 2: an upload plus a stamp sidecar). Changing the
+// count is one constant; the scheduler and ABI are already N-stream.
 #pragma once
 
 #include <stdint.h>
@@ -55,8 +55,6 @@ namespace SdWriter {
   inline constexpr uint32_t RECV_TICK_MS    = 100;         // writer park tick when only streams are idle
   inline constexpr uint32_t IDLE_TICK_MS    = 1000;        // park backstop against a lost wakeup
   inline constexpr uint32_t ABANDON_MS      = 15000;       // give up on a fed-but-silent stream (dropped client)
-  inline constexpr uint32_t READY_TIMEOUT_MS = 5000;       // open() wait to reclaim an orphaned stream
-  inline constexpr uint32_t ABORT_TIMEOUT_MS = 5000;       // abort() wait for the writer to release the slot
 
   // ---- job table / scheduling ----
   inline constexpr size_t   MAX_STREAMS      = 2;          // concurrent ring-backed jobs (== rings in the pool): upload + sidecar
@@ -71,8 +69,7 @@ namespace SdWriter {
 
   // Priority: higher = serviced sooner. Any uint8_t works; these are the defaults.
   inline constexpr uint8_t  PRIO_BULK   = 16;    // the streaming upload: yields to everything
-  inline constexpr uint8_t  PRIO_NORMAL = 128;   // GPX / attachment / default write()
-  inline constexpr uint8_t  PRIO_URGENT = 200;   // a write a caller is blocked on (sidecar)
+  inline constexpr uint8_t  PRIO_NORMAL = 128;   // GPX / attachment / sidecar / default write()
 
   using Handle = uint32_t;                        // 0 = invalid
   enum class Op   : uint8_t { Truncate, AppendSeek };
@@ -132,6 +129,11 @@ namespace SdWriter {
     Handle            next_id  = 1;
     uint32_t          rr_clock = 0;         // monotonic service counter for round-robin
     char              last_err[160] = {0};
+    // fds of released jobs, closed by the writer OFF the table mutex (closing
+    // under it would block every producer on a card op). Bounded by MAX_JOBS:
+    // at most one open fd per slot can be outstanding at a time.
+    int               pending_close[MAX_JOBS];
+    size_t            pending_n = 0;
   };
   inline State& st() { static State s; return s; }
   inline void task_fn(void*);   // defined below; referenced by ensure()
@@ -147,6 +149,7 @@ namespace SdWriter {
   inline std::atomic<uint32_t>& inline_bytes() { static std::atomic<uint32_t> v{0}; return v; }
   inline uint32_t& queue_wait_max_ms() { static uint32_t v = 0; return v; }   // since boot: head-of-line wait
   inline uint32_t& queue_wait_win_ms() { static uint32_t v = 0; return v; }   // resettable window
+  inline uint32_t& mux_wait_max_ms()   { static uint32_t v = 0; return v; }   // worst table-mutex acquisition wait (windowed): a producer's stall behind a finalize op. Should stay ~0.
   inline uint32_t& queue_slow_jobs()   { static uint32_t v = 0; return v; }   // wait >= BLOB_SLOW_MS, window
   inline uint32_t& service_max_ms()    { static uint32_t v = 0; return v; }   // worst single-chunk write
   inline uint32_t& latency_max_ms()    { static uint32_t v = 0; return v; }   // wait + service
@@ -170,6 +173,7 @@ namespace SdWriter {
   inline void reset_window() {
     queue_wait_win_ms() = 0;
     queue_slow_jobs()   = 0;
+    mux_wait_max_ms()   = 0;
     for (size_t i = 0; i < (size_t)Kind::_Count; ++i) wait_by_kind()[i] = 0;
   }
 
@@ -181,7 +185,13 @@ namespace SdWriter {
   }
 
   // ---- internals (all callers below the lock helpers) ----
-  inline bool take_mux() { return xSemaphoreTake(st().mux, portMAX_DELAY) == pdTRUE; }
+  inline bool take_mux() {
+    const uint32_t t0 = millis();
+    const bool ok = xSemaphoreTake(st().mux, portMAX_DELAY) == pdTRUE;
+    const uint32_t dt = millis() - t0;
+    if (dt > mux_wait_max_ms()) mux_wait_max_ms() = dt;   // a non-zero spike means a finalize op held the lock
+    return ok;
+  }
   inline void give_mux() { xSemaphoreGive(st().mux); }
 
   inline Job* find_job(Handle h) {           // caller holds mux
@@ -208,10 +218,17 @@ namespace SdWriter {
     j.caller_reaps = false; j.done_flag = false; j.done = nullptr; j.ok_out = nullptr;
   }
 
-  // Release a finished/aborted job: close any held fd, return its ring, free its
-  // inline buffer, signal a waiter, mark the slot free. Caller holds mux.
+  // Release a finished/aborted job: hand off any held fd for an off-lock close,
+  // return its ring, free its inline buffer, signal a waiter, mark the slot free.
+  // Caller holds mux. The ring + slot are freed synchronously (memory only) so a
+  // waiting open() can reclaim the ring at once; only the fd close is deferred.
   inline void release_job(Job& j) {
-    if (j.fd >= 0) { Storage::SDCard::BusGuard _bg; ::close(j.fd); j.fd = -1; }
+    if (j.fd >= 0) {
+      State& s = st();
+      if (s.pending_n < MAX_JOBS) s.pending_close[s.pending_n++] = j.fd;  // writer closes it off-lock
+      else { Storage::SDCard::BusGuard _bg; ::close(j.fd); }              // list full (cannot happen): fall back
+      j.fd = -1;
+    }
     if (j.streaming && j.ring_idx >= 0) {
       xStreamBufferReset(st().rings[j.ring_idx].handle);
       st().rings[j.ring_idx].in_use = false;
@@ -224,28 +241,47 @@ namespace SdWriter {
     j.id = 0;   // slot free
   }
 
-  // Lazily create the task, mutex, wake semaphore and PSRAM job table.
+  // Serialises the lazy init below so two producer tasks racing the first SD
+  // write can't both create the task (two writers on one job table). Creating
+  // this mutex is the one unavoidable race; a function-local static makes it
+  // thread-safe via the C++ static-init guard, as everywhere else here (st()).
+  inline SemaphoreHandle_t init_mux() { static SemaphoreHandle_t m = xSemaphoreCreateMutex(); return m; }
+
+  // Lazily create the task, mutex, wake semaphore and PSRAM job table. Safe to
+  // call from several tasks at once: the first does the work under init_mux, the
+  // rest then see s.task already set. Returns false (and retries next call) if a
+  // resource could not be allocated.
   inline bool ensure() {
     State& s = st();
-    if (s.task) return true;
-    if (!s.mux)  s.mux  = xSemaphoreCreateMutex();
-    if (!s.wake) s.wake = xSemaphoreCreateBinary();
-    if (!s.mux || !s.wake) return false;
-    if (!s.jobs) {
-      void* mem = heap_caps_malloc(sizeof(Job) * MAX_JOBS, MALLOC_CAP_SPIRAM);
-      if (!mem) return false;
-      s.jobs = static_cast<Job*>(mem);
-      for (size_t i = 0; i < MAX_JOBS; ++i) new (&s.jobs[i]) Job();   // construct (SHA256 ctor)
+    if (s.task) return true;                       // fast path: up, no lock needed
+    SemaphoreHandle_t im = init_mux();
+    if (im) xSemaphoreTake(im, portMAX_DELAY);
+    if (!s.task) {                                 // re-check under the lock
+      if (!s.mux)  s.mux  = xSemaphoreCreateMutex();
+      if (!s.wake) s.wake = xSemaphoreCreateBinary();
+      if (s.mux && s.wake) {
+        if (!s.jobs) {
+          void* mem = heap_caps_malloc(sizeof(Job) * MAX_JOBS, MALLOC_CAP_SPIRAM);
+          if (mem) {
+            s.jobs = static_cast<Job*>(mem);
+            for (size_t i = 0; i < MAX_JOBS; ++i) new (&s.jobs[i]) Job();   // construct (SHA256 ctor)
+          }
+        }
+        if (s.jobs) {
+          // Priority 5, above loopTask (1): validated for the upload path; the
+          // writer mostly blocks on the ring or the bus, so it does not starve
+          // the loop. 8 KiB stack: FATFS-via-VFS + SHA-256 + snprintf.
+          extern void task_fn(void*);
+          const BaseType_t r = xTaskCreatePinnedToCore(
+              task_fn, "sdwriter", 8192, nullptr, 5, &s.task, 1);
+          if (r != pdPASS) s.task = nullptr;
+          else NOTICEF("SdWriter: task up (%u job slots, %u ring(s))",
+                       (unsigned)MAX_JOBS, (unsigned)MAX_STREAMS);
+        }
+      }
     }
-    // Priority 5, above loopTask (1): validated for the upload path; the writer
-    // mostly blocks on the ring or the bus, so it does not starve the loop.
-    // 8 KiB stack: FATFS-via-VFS + SHA-256 + snprintf.
-    extern void task_fn(void*);
-    const BaseType_t ok = xTaskCreatePinnedToCore(
-        task_fn, "sdwriter", 8192, nullptr, 5, &s.task, 1);
-    if (ok != pdPASS) { s.task = nullptr; return false; }
-    NOTICEF("SdWriter: task up (%u job slots, %u ring(s))", (unsigned)MAX_JOBS, (unsigned)MAX_STREAMS);
-    return true;
+    if (im) xSemaphoreGive(im);
+    return s.task != nullptr;
   }
 
   // Claim a free ring from the pool, allocating it on first use. Caller holds
@@ -305,7 +341,7 @@ namespace SdWriter {
         snprintf(s.last_err, sizeof(s.last_err),
                  "SD writer abandoned idle stream after %u ms", (unsigned)(now - j.last_active_ms));
         WARNINGF("SdWriter: %s", s.last_err);
-        j.error = true;
+        j.aborting = true;   // producer vanished: discard + reap, don't linger for a poll() that won't come
       }
       if (!ready(j)) continue;
       if (j.streaming && xStreamBufferIsEmpty(s.rings[j.ring_idx].handle) != pdTRUE) any_stream_ready = true;
@@ -392,6 +428,16 @@ namespace SdWriter {
     State& s = st();
     uint8_t* scratch = (uint8_t*)heap_caps_malloc(SCRATCH, MALLOC_CAP_SPIRAM);
     for (;;) {
+      // Drain deferred fd closes OFF the table mutex: a released job hands its fd
+      // here so the close never runs under the lock or on a producer's task.
+      for (;;) {
+        int fd = -1;
+        take_mux();
+        if (s.pending_n > 0) fd = s.pending_close[--s.pending_n];
+        give_mux();
+        if (fd < 0) break;
+        { Storage::SDCard::BusGuard _bg; ::close(fd); }
+      }
       // Pick the next job under the lock; mark it servicing so a concurrent
       // abort/release can't free it mid-write.
       Job* j = nullptr; bool stream_ready = false; uint8_t kind = 0; uint32_t enq = 0;
@@ -428,6 +474,15 @@ namespace SdWriter {
       const bool terminal = service(*j, scratch);
       const uint32_t svc = millis() - t0;
 
+      // Finalize I/O runs OFF the table mutex, while `servicing` still guards the
+      // job (a concurrent release() defers to the writer instead of freeing it).
+      // Producers contend for st().mux, so a card op (close, used-space scan) must
+      // never run under it: that is the stall this writer exists to remove.
+      if (terminal) {
+        if (j->fd >= 0) { Storage::SDCard::BusGuard _bg; ::close(j->fd); j->fd = -1; }
+        if (j->streaming && !j->error) Storage::SDCard::refresh_used_cache();
+      }
+
       take_mux();
       j->servicing = false;
       if (svc > service_max_ms()) service_max_ms() = svc;        // worst single-chunk write (every chunk)
@@ -436,15 +491,15 @@ namespace SdWriter {
         if (life > latency_max_ms()) latency_max_ms() = life;    // longest job, enqueue -> done
         jobs_done()++;
         if (j->error) job_errors()++;
-        if (j->streaming && !j->error) Storage::SDCard::refresh_used_cache();
         if (!j->streaming && j->owns_buf) inline_bytes().fetch_sub(j->inlen, std::memory_order_relaxed);
         stack_low_water() = (uint32_t)uxTaskGetStackHighWaterMark(nullptr);
-        // caller_reaps streams linger in Done so poll() can read the digest;
-        // everything else (and any errored/aborted job) the writer reaps now.
-        if (j->caller_reaps && !j->error && !j->aborting) {
-          // Data is durable; close the fd but keep the slot (digest + ring) so
-          // the caller can read digest_hex() and then release() it.
-          if (j->fd >= 0) { Storage::SDCard::BusGuard _bg; ::close(j->fd); j->fd = -1; }
+        // A caller_reaps stream (success OR error) lingers in Done until the
+        // producer poll()s + release()s it: poll() then reports the real outcome
+        // (1 ok / 0 failed), and the ring stays reserved so a late feed() lands in
+        // this dead job's own ring, never a recycled one. Abandoned/aborted jobs
+        // (the producer is gone) the writer reaps now. The fd is already closed
+        // above; release_job only frees memory + signals here.
+        if (j->caller_reaps && !j->aborting) {
           j->done_flag = true;
         } else {
           release_job(*j);
@@ -563,8 +618,10 @@ namespace SdWriter {
     xSemaphoreGive(s.wake);
   }
 
-  // -1 still working, 0 failed, 1 done. A done streaming job keeps returning 1
-  // (the slot lingers) until the caller reads digest_hex() and calls release().
+  // -1 still working, 0 failed, 1 done. A terminal caller_reaps stream lingers and
+  // keeps returning its outcome (0 or 1) until the caller release()s it, so a
+  // failed write is never reported as success. A handle that is already gone reads
+  // as 1 (nothing left to wait for).
   inline int poll(Handle h) {
     State& s = st();
     take_mux();
@@ -577,8 +634,9 @@ namespace SdWriter {
     return r;
   }
 
-  // Read + free a finished streaming job (call after poll()==1). Returns the
-  // SHA-256 hex (empty if none / failed), then releases the slot.
+  // Read the SHA-256 hex of a finished streaming job (call after poll()==1). Does
+  // NOT free the job: the caller must still release() it (the upload reads the
+  // digest, then releases). Empty string if the job has no digest or failed.
   inline const char* digest_hex(Handle h) {
     State& s = st();
     static char out[65];
@@ -591,24 +649,20 @@ namespace SdWriter {
   }
 
   // Tear down a job: a polled-done stream the caller is finished with, or a
-  // discard (client disconnected / GC). Reaps it now - closing the fd - if the
-  // writer is not mid-write on it, so the file can be removed safely after;
-  // otherwise marks it and waits briefly for the writer to reap it after the
-  // current chunk.
+  // discard (client gone / GC / cancel). NEVER blocks on the card and NEVER
+  // spins: an idle job is freed now (memory only; its fd, if any, is queued for
+  // the writer to close off-lock), and a job the writer is mid-write on is just
+  // marked for the writer to reap after the current chunk. Either way the ring is
+  // returned synchronously, so a waiting open() can reclaim it immediately.
   inline void release(Handle h) {
     State& s = st();
-    uint32_t waited = 0;
-    for (;;) {
-      take_mux();
-      Job* j = find_job(h);
-      if (!j) { give_mux(); return; }                            // already gone
-      if (!j->servicing) { release_job(*j); give_mux(); return; }// reap now (closes fd, returns ring)
-      j->aborting = true;                                        // mid-write: writer reaps after the chunk
-      give_mux();
-      xSemaphoreGive(s.wake);
-      if (waited >= ABORT_TIMEOUT_MS) return;
-      vTaskDelay(pdMS_TO_TICKS(10)); waited += 10;
-    }
+    take_mux();
+    Job* j = find_job(h);
+    if (!j) { give_mux(); return; }                            // already gone
+    if (j->servicing) { j->aborting = true; give_mux(); xSemaphoreGive(s.wake); return; }  // writer reaps it
+    release_job(*j);                                           // frees ring + slot now; fd close deferred
+    give_mux();
+    xSemaphoreGive(s.wake);                                    // nudge the writer to drain the deferred close
   }
 
   inline const char* last_error() { return st().last_err; }

@@ -244,7 +244,7 @@ inline bool verify_or_disable() {
 // seconds (measured /api/info spikes to 4 s), which dropped connections.
 // total/used are cached instead: total is constant (cached at mount); used is
 // refreshed off the AsyncTCP task (by the SD writer task after each job, see
-// OutboundStaging::_sdwriter) so the value the upload path reads is bus-free.
+// Storage::SdWriter) so the value the upload path reads is bus-free.
 // Approximate is fine - this only gates backend selection and the card has GB
 // of headroom. cached_used starts 0 (optimistic: empty) until first refreshed;
 // a genuinely-full card is still caught by the writer's checked ENOSPC.

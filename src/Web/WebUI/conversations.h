@@ -343,7 +343,7 @@
       const uint32_t id = cur; pf.id.store(0, std::memory_order_release);
       {
         const uint32_t dt = millis() - pf.t0_ms;
-        auto& mx = Storage::OutboundStaging::_sdwriter::finish_max_ms();
+        auto& mx = Storage::SdWriter::finish_max_ms();
         if (dt > mx) mx = dt;
       }
       if (st == 0) {

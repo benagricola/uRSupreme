@@ -172,7 +172,7 @@
       doc["sd_total_kb"]   = (uint32_t)(total / 1024);
       doc["sd_used_kb"]    = (uint32_t)(used / 1024);
       doc["sd_free_kb"]    = (uint32_t)((total > used ? total - used : 0) / 1024);
-      namespace W = Storage::OutboundStaging::_sdwriter;
+      namespace W = Storage::SdWriter;
       doc["sd_bytes_written"]     = (uint32_t)(W::bytes_written() / 1024);
       doc["sd_write_errors"]      = (uint32_t)W::write_errors();
       doc["sd_ring_timeouts"]     = (uint32_t)W::ring_timeouts();

@@ -69,6 +69,6 @@ bool Identity::validate(const Bytes& signature, const Bytes& message) const {
 
 Fix (one line): `return _object->_sig_pub->verify(signature, message);`.
 
-Applied as a build-time patch in `extra_script.py::patch_microreticulum_validate()` - runs on every build and is idempotent. It detects either the buggy or the patched form and only writes when the buggy form is found. Survives a fresh `.pio/libdeps/.../microReticulum/` install.
+This is now committed directly to the ur-patches fork (`benagricola/microReticulum`), not patched at build time. The fix lives in `Identity.cpp` (`Identity::validate`, alongside the runt/truncated-announce guards), and `platformio.ini`'s `[libdeps]` pins the fork commit that carries it. The old `extra_script.py` text-substitution patch has been removed, so there is no longer any build-time rewrite to keep in sync. To bump the fix, re-pin `${libdeps.ur}` to a newer ur-patches commit.
 
-**TODO:** file an upstream issue / PR against attermann/microReticulum referencing Identity.cpp:652. Until merged, the local patch in `extra_script.py` is load-bearing.
+**TODO (optional):** file an upstream issue / PR against `attermann/microReticulum` so the fork does not have to carry this divergence indefinitely. This is no longer load-bearing for our builds; it only avoids a permanent fork delta.

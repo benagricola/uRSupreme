@@ -32,6 +32,11 @@
 namespace Storage {
 namespace SDCard {
 
+// VFS mountpoint the card is mounted at (SD.begin below). Card-relative paths
+// (what Arduino SD.open and our stored disk paths use) become full POSIX paths
+// by prefixing this; Storage::SdWriter does that so callers never carry it.
+inline constexpr char MOUNT[] = "/sd";
+
 // HSPI bus arbitration. The SD card and the QMI8658 IMU share the HSPI
 // bus on this hardware. SD I/O issued from the AsyncTCP web task
 // (attachment upload / download) would otherwise interleave on the bus
@@ -151,7 +156,7 @@ inline bool begin() {
   // download/extract writers, log appends). Default mountpoint "/sd"
   // passed through to reach the max_files argument.
   static constexpr uint8_t URTN_SD_MAX_OPEN_FILES = 30;
-  if (!SD.begin(SD_CS, *bus, URTN_SD_SPI_HZ, "/sd", URTN_SD_MAX_OPEN_FILES)) {
+  if (!SD.begin(SD_CS, *bus, URTN_SD_SPI_HZ, MOUNT, URTN_SD_MAX_OPEN_FILES)) {
     _detail::last_status_ref() = "sd_begin_failed";
     NOTICE("SDCard: SD.begin() failed - card absent, wrong pinout, or unsupported FS (try FAT32)");
     _detail::present_ref() = false;

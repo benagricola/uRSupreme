@@ -75,12 +75,12 @@ inline constexpr uint32_t STAGING_TIMEOUT_MS = 60000;
 
 enum class Backend : uint8_t { Psram, Sd, Flash };
 
-// SHA-256 hex of the staged SD upload, computed by the writer as it wrote
-// (empty for non-SD backends or a failed job). Used by the upload handler to
-// verify integrity against a client X-SHA256 without re-reading the file.
-inline const char* sd_digest_hex() {
-  return SdWriter::digest_ready() ? SdWriter::digest_hex() : "";
-}
+// SHA-256 hex of the last finalized SD upload, captured by finalize_poll while
+// the writer job still lingered (empty for non-SD backends or a failed job).
+// Used by the upload handler to verify integrity against a client X-SHA256
+// without re-reading the file.
+inline char* last_digest() { static char d[65] = {0}; return d; }
+inline const char* sd_digest_hex() { return last_digest(); }
 
 struct Buffer {
   uint32_t   id          = 0;
@@ -96,6 +96,7 @@ struct Buffer {
   // and to remove it on release/GC).
   String     disk_path;
   microStore::File flash_file;  // Backend::Flash only
+  SdWriter::Handle sd_handle = 0;  // Backend::Sd only: the shared-writer job
   // SD finalize runs deferred (the writer drains off-task; the web layer
   // parks the request and polls). Set by finalize_begin, cleared when
   // finalize_poll reports a terminal state.
@@ -112,8 +113,8 @@ namespace _detail {
   }
 
   // Close the Flash write handle a buffer holds open. Idempotent. SD has no
-  // handle here (the writer task owns the fd); SD teardown is abort_job() +
-  // SD.remove(), done in release()/gc() directly.
+  // handle here (the writer task owns the fd); SD teardown is SdWriter::release
+  // + SD.remove(), done in release()/gc() directly.
   inline void close_write_handle(Buffer& b) {
     if (b.backend == Backend::Flash && b.flash_file) {
       b.flash_file.close();
@@ -141,7 +142,7 @@ namespace _detail {
         if (it->backend == Backend::Psram && it->psram_ptr) {
           heap_caps_free(it->psram_ptr);
         } else if (it->backend == Backend::Sd && !it->disk_path.isEmpty()) {
-          SdWriter::abort_job();   // stop the writer + free its fd if this upload is still live
+          if (it->sd_handle) SdWriter::release(it->sd_handle);   // tear down the writer job (closes fd)
           if (Storage::SDCard::present()) { Storage::SDCard::BusGuard _bg; SD.remove(it->disk_path); }
         } else if (it->backend == Backend::Flash && !it->disk_path.isEmpty()) {
           if (filesystem.exists(it->disk_path.c_str())) filesystem.remove(it->disk_path.c_str());
@@ -263,17 +264,30 @@ inline uint32_t allocate(size_t total_bytes) {
       return 0;
     }
   } else if (b.backend == Backend::Sd) {
+    // One SD upload at a time (the 409 single-uploader guard). Reclaim any prior
+    // SD job still holding the writer's ring (an orphaned drop) so this one can
+    // claim it now, instead of failing until the abandon backstop frees it.
+    for (auto& ob : _detail::buffers()) {
+      if (ob.backend == Backend::Sd && ob.sd_handle) {
+        SdWriter::release(ob.sd_handle); ob.sd_handle = 0;
+        if (Storage::SDCard::present() && !ob.disk_path.isEmpty()) {
+          Storage::SDCard::BusGuard _bg; SD.remove(ob.disk_path);
+        }
+      }
+    }
     b.disk_path = String("/lxmf/staging/") + b.id + ".bin";
     {
       Storage::SDCard::BusGuard _bg;   // serialise mkdir/exists against the IMU pump
       if (!SD.exists("/lxmf")) SD.mkdir("/lxmf");
       if (!SD.exists("/lxmf/staging")) SD.mkdir("/lxmf/staging");
     }
-    // The dedicated writer task owns the file handle and all SD writes, off
-    // the web/AsyncTCP task. Hand it the POSIX path (SD is mounted at /sd).
-    const String posix = String("/sd") + b.disk_path;
-    if (!SdWriter::begin_job(posix.c_str())) {
-      ERRORF("OutboundStaging: SD writer begin_job failed: %s", SdWriter::last_error());
+    // The shared writer owns the fd + all SD writes, off the web/AsyncTCP task.
+    // Stream job (open/feed/finish): card-relative path (the writer adds the
+    // mount), PRIO_BULK so small writes preempt it, want_sha for X-SHA256 verify.
+    b.sd_handle = SdWriter::open(b.disk_path.c_str(), SdWriter::Op::Truncate, 0,
+                                SdWriter::Kind::Upload, SdWriter::PRIO_BULK, /*want_sha=*/true);
+    if (!b.sd_handle) {
+      ERRORF("OutboundStaging: SD writer open failed: %s", SdWriter::last_error());
       return 0;
     }
   } else {  // Flash
@@ -315,10 +329,10 @@ inline bool append(uint32_t id, const uint8_t* data, size_t len) {
     if (!b->psram_ptr) return false;
     memcpy(b->psram_ptr + b->written, data, len);
   } else if (b->backend == Backend::Sd) {
-    // Hand the bytes to the SD writer task's ring. This is a fast memcpy into
-    // PSRAM with a bounded wait if the ring is full - it never blocks on the
-    // card, so a stall can't drop the upload's TCP connection.
-    if (!SdWriter::feed(data, len)) {
+    // Hand the bytes to the writer job's ring. A fast memcpy into PSRAM with a
+    // bounded wait if the ring is full - never blocks on the card, so a stall
+    // can't drop the upload's TCP connection.
+    if (!SdWriter::feed(b->sd_handle, data, len)) {
       snprintf(fail_detail(), 192, "%s", SdWriter::last_error());
       return false;
     }
@@ -353,7 +367,7 @@ inline int finalize_begin(uint32_t id) {
     return 1;
   }
   b->finalize_deferred = true;
-  SdWriter::request_finish();
+  SdWriter::finish(b->sd_handle);
   return 0;
 }
 inline bool finalize_deferred(uint32_t id) {
@@ -368,13 +382,16 @@ inline bool finalize_deferred(uint32_t id) {
 inline int finalize_poll(uint32_t id) {
   Buffer* b = _detail::find(id);
   if (!b) { snprintf(fail_detail(), 192, "staging buffer vanished mid-finalize"); return 0; }
-  const int w = SdWriter::finish_poll();
+  const int w = SdWriter::poll(b->sd_handle);
   if (w < 0) return -1;
   b->finalize_deferred = false;
   if (w == 0) {
     snprintf(fail_detail(), 192, "%s", SdWriter::last_error());
     return 0;
   }
+  // Capture the digest while the writer job still lingers (release() frees it).
+  { const char* dg = SdWriter::digest_hex(b->sd_handle);
+    strncpy(last_digest(), dg, 64); last_digest()[64] = 0; }
   size_t fsz = 0;
   {
     Storage::SDCard::BusGuard _bg;
@@ -440,7 +457,7 @@ inline void release(uint32_t id) {
     if (it->backend == Backend::Psram && it->psram_ptr) {
       heap_caps_free(it->psram_ptr);
     } else if (it->backend == Backend::Sd && !it->disk_path.isEmpty()) {
-      SdWriter::abort_job();   // stop the writer + free its fd if this upload is still live
+      if (it->sd_handle) SdWriter::release(it->sd_handle);   // tear down the writer job (closes fd)
       if (Storage::SDCard::present()) { Storage::SDCard::BusGuard _bg; SD.remove(it->disk_path); }
     } else if (it->backend == Backend::Flash && !it->disk_path.isEmpty()) {
       if (filesystem.exists(it->disk_path.c_str())) filesystem.remove(it->disk_path.c_str());

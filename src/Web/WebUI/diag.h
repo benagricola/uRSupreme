@@ -180,8 +180,86 @@
       doc["sd_feed_slow_blocks"]  = (uint32_t)W::feed_slow_blocks();
       doc["sd_finish_max_ms"]     = (uint32_t)W::finish_max_ms();
       doc["sd_writer_stack_free"] = (uint32_t)W::stack_low_water();
+      // Shared-writer job scheduler (GPX/attachment/sidecar writes interleaved
+      // with uploads by priority). sd_queue_wait_* is the head-of-line latency a
+      // small write waited behind a bigger one; sd_service_max_ms is the write
+      // itself. High wait + low service = queue contention; high service = a
+      // stalling card. sd_jobs_preempted > 0 confirms a write preempted a stream
+      // that had data ready. The *_win, slow count and by-kind reset on POST.
+      doc["sd_jobs_done"]            = (uint32_t)W::jobs_done();
+      doc["sd_jobs_preempted"]       = (uint32_t)W::jobs_preempted();
+      doc["sd_job_errors"]           = (uint32_t)W::job_errors();
+      doc["sd_jobs_dropped"]         = (uint32_t)W::jobs_dropped();
+      doc["sd_jobs_inflight_max"]    = (uint32_t)W::jobs_inflight_max();
+      doc["sd_inline_bytes"]         = (uint32_t)W::inline_bytes().load();
+      doc["sd_queue_wait_max_ms"]    = (uint32_t)W::queue_wait_max_ms();
+      doc["sd_queue_wait_win_ms"]    = (uint32_t)W::queue_wait_win_ms();
+      doc["sd_queue_slow_jobs"]      = (uint32_t)W::queue_slow_jobs();
+      doc["sd_service_max_ms"]       = (uint32_t)W::service_max_ms();
+      doc["sd_latency_max_ms"]       = (uint32_t)W::latency_max_ms();
+      JsonObject byk = doc["sd_wait_by_kind"].to<JsonObject>();
+      for (uint8_t k = 0; k < (uint8_t)W::Kind::_Count; ++k)
+        byk[W::kind_name(k)] = (uint32_t)W::wait_by_kind()[k];
       send_json(req, 200, doc);
     }
+
+    // POST /api/diag/storage - reset the resettable blob-queue window
+    // (sd_queue_wait_win_ms, sd_queue_slow_jobs, sd_wait_by_kind) so a test can
+    // measure a clean window without rebooting. The since-boot maxima persist.
+    static void handle_diag_storage_reset(AsyncWebServerRequest* req, JsonVariant& /*body*/) {
+      if (require_auth(req).empty()) return;
+      Storage::SdWriter::reset_window();
+      Common::PsramJsonDocument doc;
+      doc["status"] = "reset";
+      send_json(req, 200, doc);
+    }
+
+#ifdef URTN_SDW_INJECT
+    // POST /api/diag/sdwriter?n=&size= - enqueue n synthetic blob writes of
+    // `size` bytes each, to exercise the shared-writer blob queue, the upload
+    // interleave and the head-of-line metrics with no second device. Run it
+    // alongside a concurrent upload, then read GET /api/diag/storage:
+    // sd_queue_wait_max_ms is the head-of-line latency, sd_blob_mid_stream
+    // confirms the interleave fired. Diag-only: the route is ROUTE_OPT and the
+    // whole handler compiles in only under -DURTN_SDW_INJECT, so a default
+    // build neither registers the route nor carries this code. Truncate jobs
+    // only (AppendSeek is exercised by the live GPX track once it migrates).
+    static void handle_sdwriter_inject(AsyncWebServerRequest* req) {
+      if (require_auth(req).empty()) return;
+      if (!Storage::SDCard::present()) {
+        send_error_with_message(req, 400, "no_sd", "SD card not present.");
+        return;
+      }
+      auto numu = [&](const char* k, uint32_t dflt) -> uint32_t {
+        if (req->hasParam(k))       return (uint32_t)req->getParam(k)->value().toInt();
+        if (req->hasParam(k, true)) return (uint32_t)req->getParam(k, true)->value().toInt();
+        return dflt;
+      };
+      uint32_t n    = numu("n", 8);
+      uint32_t size = numu("size", 4096);
+      if (n > 64) n = 64;                                  // bound the test burst
+      if (size > Storage::SdWriter::INLINE_MAX_BYTES) size = Storage::SdWriter::INLINE_MAX_BYTES;
+      if (size == 0) size = 1;
+      uint8_t* buf = (uint8_t*)heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+      if (!buf) { send_error_with_message(req, 500, "oom", "Could not allocate test buffer."); return; }
+      memset(buf, 0x5a, size);
+      uint32_t queued = 0, dropped = 0;
+      for (uint32_t i = 0; i < n; ++i) {
+        if (Storage::SdWriter::write("/sdwtest.bin", buf, size,
+              Storage::SdWriter::Op::Truncate, 0, Storage::SdWriter::Kind::Test))
+          queued++;
+        else
+          dropped++;
+      }
+      heap_caps_free(buf);
+      Common::PsramJsonDocument doc;
+      doc["requested"] = n;
+      doc["queued"]    = queued;
+      doc["dropped"]   = dropped;
+      doc["size"]      = size;
+      send_json(req, 200, doc);
+    }
+#endif
 
 #if defined(URTN_HEAP_TRACE)
     // GET /api/diag/heaptrace - live allocations aggregated by caller (innermost

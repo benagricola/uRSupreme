@@ -328,8 +328,8 @@
       const int st = Storage::OutboundStaging::finalize_poll(cur);
       if (st < 0) {
         // Writer still draining. Past the join budget it is wedged: answer
-        // 500 and release so the pipeline frees up (begin_job's reclaim
-        // handles the writer task itself).
+        // 500 and release so the pipeline frees up (the next upload's open()
+        // reclaim, plus the abandon backstop, tear down the writer job itself).
         if ((millis() - pf.t0_ms) > 30000) {
           auto r = pf.req.lock(); pf.req.reset();
           const uint32_t id = cur; pf.id.store(0, std::memory_order_release);

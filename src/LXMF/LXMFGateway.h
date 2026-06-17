@@ -936,18 +936,29 @@ namespace LXMF {
       return a.dir() + "/pending_stamp_" + std::to_string(seq) + ".bin";
     }
 
-    static bool write_pending_stamp_sidecar(const std::string& path,
-                                            const RNS::Bytes& dest,
-                                            uint8_t cost,
-                                            const RNS::Bytes& message_id,
-                                            const RNS::Bytes& payload) {
-      if (dest.size() != 16 || message_id.size() != 32 || payload.size() == 0) return false;
-      uint8_t hdr[STAMP_SIDECAR_HDR];
+    // Fill the fixed sidecar header in `hdr` (STAMP_SIDECAR_HDR bytes): "LXSP" |
+    // version(1) | dest(16) | cost(1) | message_id(32). Returns false on a wrong
+    // dest/message_id size. The SD-stream write, the inline-fallback write and the
+    // read path all share this one layout, so it lives in a single place.
+    static bool fill_stamp_header(uint8_t* hdr, const RNS::Bytes& dest,
+                                  uint8_t cost, const RNS::Bytes& message_id) {
+      if (dest.size() != 16 || message_id.size() != 32) return false;
       memcpy(hdr, "LXSP", 4);
       hdr[4] = 1;
       memcpy(hdr + 5, dest.data(), 16);
       hdr[21] = cost;
       memcpy(hdr + 22, message_id.data(), 32);
+      return true;
+    }
+
+    static bool write_pending_stamp_sidecar(const std::string& path,
+                                            const RNS::Bytes& dest,
+                                            uint8_t cost,
+                                            const RNS::Bytes& message_id,
+                                            const RNS::Bytes& payload) {
+      if (payload.size() == 0) return false;
+      uint8_t hdr[STAMP_SIDECAR_HDR];
+      if (!fill_stamp_header(hdr, dest, cost, message_id)) return false;
       const size_t total = sizeof(hdr) + payload.size();
       // Chunked writer: header bytes first, then payload straight from
       // the (PSRAM-backed) Bytes buffer - no contiguous header+payload
@@ -990,13 +1001,9 @@ namespace LXMF {
         const std::string& path, const RNS::Bytes& dest, uint8_t cost,
         const RNS::Bytes& message_id, const RNS::Bytes& payload) {
       if (!Storage::SDCard::present()) return 0;
-      if (dest.size() != 16 || message_id.size() != 32 || payload.size() == 0) return 0;
+      if (payload.size() == 0) return 0;
       uint8_t hdr[STAMP_SIDECAR_HDR];
-      memcpy(hdr, "LXSP", 4);
-      hdr[4] = 1;
-      memcpy(hdr + 5, dest.data(), 16);
-      hdr[21] = cost;
-      memcpy(hdr + 22, message_id.data(), 32);
+      if (!fill_stamp_header(hdr, dest, cost, message_id)) return 0;
       Storage::SdWriter::Handle h = Storage::SdWriter::open(
           path.c_str(), Storage::SdWriter::Op::Truncate, 0,
           Storage::SdWriter::Kind::Sidecar, Storage::SdWriter::PRIO_NORMAL,

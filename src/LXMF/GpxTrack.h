@@ -47,6 +47,13 @@ inline size_t fmt_trkpt(char* out, size_t cap, double lat, double lon) {
 // Create a new GPX containing the first point. The size is deterministic, so it
 // is returned immediately even though the SD write commits off-loop; returns 0
 // on a format error or a rejected/failed enqueue.
+//
+// Best-effort by design: a non-zero return means the write was queued, NOT that
+// it is on disk. A later off-loop write failure (card pulled mid-share) is not
+// reported to this caller - it surfaces only in the aggregate sd_job_errors
+// counter, and the track simply stops rendering. This is acceptable for an
+// auto-generated live-share track; making it durable would require blocking the
+// LXMF delivery loop on the card, which is exactly what the shared writer avoids.
 inline size_t create(const char* path, bool use_sd, double lat, double lon) {
   char pt[64];
   if (!fmt_trkpt(pt, sizeof(pt), lat, lon)) return 0;

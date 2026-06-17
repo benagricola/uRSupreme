@@ -5,8 +5,12 @@
 // valid GPX after every append, so the web app renders it like any received
 // .gpx (it detects GPX by the application/gpx+xml mime, not the .bin name).
 //
-// Backends mirror the attachment path: SD via the Arduino SD library, flash via
-// the microStore filesystem. Both support seek + mid-file write.
+// These run on the inbound LXMF delivery path (the main loop), so SD writes go
+// through the shared Storage::SdWriter task, off the loop; only the one-time
+// parent-dir mkdir stays inline (bounded, idempotent). Flash (microStore)
+// writes stay inline: it is the fast, predictable backend and routing it
+// off-loop would add cross-task filesystem access. Both backends support seek +
+// mid-file write for the constant-time append.
 
 #pragma once
 
@@ -20,6 +24,7 @@
 #include "../Clock/Manager.h"
 #include "../Storage/SDCard.h"
 #include "../Storage/Streaming.h"
+#include "../Storage/SdWriter.h"
 
 extern microStore::FileSystem filesystem;
 
@@ -39,36 +44,44 @@ inline size_t fmt_trkpt(char* out, size_t cap, double lat, double lon) {
   return (n > 0 && (size_t)n < cap) ? (size_t)n : 0;
 }
 
-// Create a new GPX containing the first point. Returns the bytes written, or
-// 0 on failure.
+// Create a new GPX containing the first point. The size is deterministic, so it
+// is returned immediately even though the SD write commits off-loop; returns 0
+// on a format error or a rejected/failed enqueue.
 inline size_t create(const char* path, bool use_sd, double lat, double lon) {
   char pt[64];
   if (!fmt_trkpt(pt, sizeof(pt), lat, lon)) return 0;
   char body[256];
   const int n = snprintf(body, sizeof(body), "%s%s%s", HEADER, pt, CLOSE);
   if (n <= 0 || (size_t)n >= sizeof(body)) return 0;
-  return Storage::Streaming::write_from_buffer(path, use_sd, (const uint8_t*)body, (size_t)n)
+  if (use_sd) {
+    // The parent-dir mkdir stays inline (bounded, idempotent); the writer opens
+    // the POSIX /sd path and commits the body off the loop.
+    if (!Storage::SDCard::ensure_parent_dirs(path)) return 0;
+    return Storage::SdWriter::write(path, (const uint8_t*)body, (uint32_t)n,
+             Storage::SdWriter::Op::Truncate, 0, Storage::SdWriter::Kind::GpxCreate)
+           ? (size_t)n : 0;
+  }
+  return Storage::Streaming::write_from_buffer(path, false, (const uint8_t*)body, (size_t)n)
          == (size_t)n ? (size_t)n : 0;
 }
 
 // Append one point by seeking back over the closing tags and re-writing them.
-// Constant time in the file size. Returns true on success.
+// Constant time in the file size. The SD write commits off-loop: the payload is
+// the new point followed by a fresh CLOSE, and the writer seeks back clen bytes
+// from EOF to overwrite the old CLOSE, so the file is valid GPX after every
+// append. Returns true on success (for SD, on a successful enqueue).
 inline bool append(const char* path, bool use_sd, double lat, double lon) {
   char pt[64];
   if (!fmt_trkpt(pt, sizeof(pt), lat, lon)) return false;
   const size_t plen = strlen(pt);
   const size_t clen = sizeof(CLOSE) - 1;   // exclude the NUL
   if (use_sd) {
-    Storage::SDCard::BusGuard bg;          // HSPI shared with the IMU
-    File f = SD.open(path, "r+");
-    if (!f) return false;
-    const size_t sz = (size_t)f.size();
-    if (sz < clen) { f.close(); return false; }
-    f.seek(sz - clen);
-    const bool ok = f.write((const uint8_t*)pt, plen) == plen
-                 && f.write((const uint8_t*)CLOSE, clen) == clen;
-    f.close();
-    return ok;
+    char buf[64 + sizeof(CLOSE)];          // new point + closing tags, one write
+    memcpy(buf, pt, plen);
+    memcpy(buf + plen, CLOSE, clen);
+    return Storage::SdWriter::write(path, (const uint8_t*)buf,
+             (uint32_t)(plen + clen), Storage::SdWriter::Op::AppendSeek,
+             (uint32_t)clen, Storage::SdWriter::Kind::GpxAppend);
   }
   microStore::File f = filesystem.open(path, microStore::File::ModeReadWrite);
   if (!f) return false;

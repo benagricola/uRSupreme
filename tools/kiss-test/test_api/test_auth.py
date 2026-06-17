@@ -37,14 +37,14 @@ def test_login_missing_identity_400(devices):
 
 def test_protected_endpoint_without_token_401(devices):
     d = devices[0]
-    r = requests.get(f"{d.url}/api/identities/{d.identity}/state", timeout=5)
+    r = requests.get(f"{d.url}/api/state", timeout=5)
     assert r.status_code == 401
 
 
 def test_protected_endpoint_with_bad_token_401(devices):
     d = devices[0]
     r = requests.get(
-        f"{d.url}/api/identities/{d.identity}/state",
+        f"{d.url}/api/state",
         headers={"Authorization": "Bearer not_a_real_token_xx"},
         timeout=5,
     )

@@ -37,25 +37,28 @@ def test_inbox_config_get(sx):
     r = s.get(f"{d.url}/api/inbox_config", timeout=15)
     assert r.status_code == 200
     body = r.json()
-    assert "ram_capacity" in body
-    assert "ttl_seconds" in body
+    # Schema: { default_retention: { kind, value } }. kind is one of
+    # none | time | count (LXMF::retention_kind_name).
+    assert "default_retention" in body
+    dr = body["default_retention"]
+    assert "kind" in dr and "value" in dr
+    assert dr["kind"] in ("none", "time", "count")
 
 
 def test_inbox_config_post_roundtrip(sx):
     s, d = sx
-    before = s.get(f"{d.url}/api/inbox_config", timeout=15).json()
-    new_ttl = (before["ttl_seconds"] or 0) + 1
+    before = s.get(f"{d.url}/api/inbox_config", timeout=15).json()["default_retention"]
+    # Set a known retention, read it back, then restore the original.
     r = s.post(f"{d.url}/api/inbox_config",
-               json={"ttl_seconds": new_ttl,
-                     "ram_capacity": before["ram_capacity"]},
+               json={"default_retention": {"kind": "count", "value": 25}},
                timeout=15)
     assert r.status_code == 200
-    after = r.json()
-    assert after["ttl_seconds"] == new_ttl
+    after = r.json()["default_retention"]
+    assert after["kind"] == "count" and after["value"] == 25
     # Restore.
     s.post(f"{d.url}/api/inbox_config",
-           json={"ttl_seconds": before["ttl_seconds"],
-                 "ram_capacity": before["ram_capacity"]},
+           json={"default_retention": {"kind": before["kind"],
+                                       "value": before["value"]}},
            timeout=15)
 
 

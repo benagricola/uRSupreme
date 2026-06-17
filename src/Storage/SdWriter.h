@@ -59,7 +59,7 @@ namespace SdWriter {
   inline constexpr uint32_t ABORT_TIMEOUT_MS = 5000;       // abort() wait for the writer to release the slot
 
   // ---- job table / scheduling ----
-  inline constexpr size_t   MAX_STREAMS      = 1;          // concurrent ring-backed jobs (== rings in the pool)
+  inline constexpr size_t   MAX_STREAMS      = 2;          // concurrent ring-backed jobs (== rings in the pool): upload + sidecar
   inline constexpr size_t   MAX_JOBS         = 8;          // total slots (streams + inline in flight)
   inline constexpr uint32_t INLINE_MAX_BYTES = 128 * 1024; // largest single write() payload
   inline constexpr uint32_t INLINE_TOTAL_BYTES = 256 * 1024; // cap on queued inline payload across all jobs
@@ -502,8 +502,12 @@ namespace SdWriter {
 
   // Begin a streaming job (the upload). Claims a ring; returns 0 if no slot or
   // ring is free (caller falls back / 409s). `card_path` is card-relative.
+  // `keep` true: the job lingers Done until the caller poll()s + release()s it
+  // (uploads read the digest; the sidecar polls to confirm the write). `keep`
+  // false: fire-and-forget, the writer reaps it on finish (no poll needed).
   inline Handle open(const char* card_path, Op op = Op::Truncate, uint32_t seek_back = 0,
-                     Kind kind = Kind::Upload, uint8_t priority = PRIO_BULK, bool want_sha = false) {
+                     Kind kind = Kind::Upload, uint8_t priority = PRIO_BULK,
+                     bool want_sha = false, bool keep = true) {
     if (!ensure()) return 0;
     State& s = st();
     take_mux();
@@ -517,7 +521,7 @@ namespace SdWriter {
     slot->op = op; slot->seek_back = seek_back;
     slot->streaming = true; slot->ring_idx = ring; slot->last_active_ms = millis();
     slot->want_sha = want_sha;
-    slot->caller_reaps = true;          // the caller polls + reads the digest, then release()s
+    slot->caller_reaps = keep;
     const Handle h = slot->id;
     give_mux();
     return h;

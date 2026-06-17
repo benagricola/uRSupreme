@@ -195,6 +195,10 @@
       doc["sd_queue_wait_max_ms"]    = (uint32_t)W::queue_wait_max_ms();
       doc["sd_queue_wait_win_ms"]    = (uint32_t)W::queue_wait_win_ms();
       doc["sd_queue_slow_jobs"]      = (uint32_t)W::queue_slow_jobs();
+      // Worst wait any caller spent acquiring the writer's table mutex (windowed).
+      // A finalize op (fd close, used-space scan) runs off this lock, so this
+      // should stay ~0; a spike means a producer stalled behind a card op.
+      doc["sd_mux_wait_max_ms"]      = (uint32_t)W::mux_wait_max_ms();
       doc["sd_service_max_ms"]       = (uint32_t)W::service_max_ms();
       doc["sd_latency_max_ms"]       = (uint32_t)W::latency_max_ms();
       JsonObject byk = doc["sd_wait_by_kind"].to<JsonObject>();
@@ -222,6 +226,8 @@
     //     sync=1                         - write(done) + wait (zero-copy path).
     //   mode=stream: open `streams` concurrent ring-backed streams of `size`
     //     bytes each, fed round-robin (exercises MAX_STREAMS interleave).
+    //   mode=errstream: open a keep stream to a bad path so the writer errors it;
+    //     checks poll() reports the failure (0) and the ring releases cleanly.
     // Then read GET /api/diag/storage (sd_queue_wait_max_ms, sd_jobs_preempted,
     // sd_jobs_inflight_max, sd_*errors). Run mode=blob alongside an upload for
     // the head-of-line numbers.
@@ -243,6 +249,29 @@
         return String(dflt);
       };
       Common::PsramJsonDocument doc;
+
+      // mode=errstream: open a keep stream to a path whose parent dir is missing,
+      // so the writer's open() fails. Validates that an errored keep stream lingers
+      // and poll() reports the failure (0, never a false 1), then releases cleanly.
+      if (str("mode", "blob") == "errstream") {
+        const uint32_t inflight_before = W::jobs_inflight_max();
+        W::Handle h = W::open("/sdw_nodir_xyz/err.bin", W::Op::Truncate, 0,
+                              W::Kind::Test, W::PRIO_NORMAL, /*want_sha=*/false, /*keep=*/true);
+        int p = -2;
+        bool fed_ok = false;
+        if (h) {
+          uint8_t b[16]; memset(b, 0x5a, sizeof(b));
+          fed_ok = W::feed(h, b, sizeof(b));   // may fail once the writer errors the job
+          W::finish(h);
+          for (int i = 0; i < 200 && (p = W::poll(h)) < 0; ++i) vTaskDelay(pdMS_TO_TICKS(10));
+          W::release(h);
+        }
+        doc["mode"] = "errstream"; doc["opened"] = (h != 0); doc["fed_ok"] = fed_ok;
+        doc["poll"] = p;   // expect 0 (failed); -1 would mean it never resolved
+        doc["inflight_max_before"] = inflight_before;
+        send_json(req, 200, doc);
+        return;
+      }
 
       if (str("mode", "blob") == "stream") {
         uint32_t streams = numu("streams", W::MAX_STREAMS);

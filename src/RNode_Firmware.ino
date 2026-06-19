@@ -38,6 +38,7 @@
 #include "LXMF/Messenger.h"
 #include "LXMF/TelemetryShare.h"
 #include "LXMF/RatchetBridge.h"
+#include "RnsConclude.h"       // off-loop receive writes + conclude
 #include "Common/LoopTiming.h"
 #include "Sensors/View.h"     // before WebUI.h: diag.h drives the view
 #if HAS_WIFI
@@ -1519,6 +1520,10 @@ void setup() {
       LXMF::InboxConfig::load(filesystem);
       Storage::Config::load(filesystem);
       LXMF::LXMFGateway::setup();
+      // Start the off-loop receive-conclude worker and register it with RNS so
+      // large single-segment attachment receives don't stall loopTask on the
+      // read_all+decrypt. No-op-safe: if it fails, conclude stays inline.
+      RnsConclude::begin();
       LXMF::AnnounceLog::setup();
       // Accelerate queued/retrying outbound sends when their recipient
       // announces. AnnounceLog subscribers run on the LoRa RX path, so
@@ -3119,6 +3124,9 @@ void loop() {
   // released here so the web_task gets a window before we re-enter
   // RNS work below.
   esp_task_wdt_reset();
+  // Deliver any receives the off-loop conclude worker has prepared. Runs on
+  // loopTask, lock-free, like the original inline conclude. Cheap when idle.
+  URTN_LT(Common::LoopTiming::max_deliver_us, RnsConclude::drain_deliveries());
 #endif
 
   // Drain whatever NMEA the GPS module shoved at us this

@@ -89,6 +89,26 @@ RNode. Rules (see CLAUDE.md §1):
   unaffected; they wait in the gateway's separately-bounded auto-send
   queue. Map nodes are PSRAM-backed (PsAlloc), not a wire change.
 
+### 10. Off-loop receive over fast links (byte-bounded window, off-loop I/O)
+- Where: uR `src/Resource.cpp` / `src/ResourceBuffer.*` / `src/Type.h` /
+  `src/ResourceData.h`; the firmware registers the hooks in
+  `src/RnsConclude.h` (worker) and `src/RNode_Firmware.ino`. Detailed in
+  the uR fork's own `DIVERGENCES.md` (entries 1-3).
+- Upstream: RNS sizes the Resource request window by part count
+  (`Resource.py`, ramps to 75) and writes parts + concludes (read-back,
+  decrypt, verify, app callback) inline on the receive path.
+- Why: on this single-threaded receiver a part-count window overruns a
+  fast large-SDU link, and the inline SD writes + whole-transfer
+  read+decrypt freeze the main loop (starving the radio). uR exposes a
+  byte cap (`RECV_MAX_INFLIGHT_BYTES`) and two firmware-registered hooks
+  (part-write, conclude); the firmware does the SD I/O off-loop on a
+  core-0 worker. With no hook registered uR is upstream-identical, so the
+  divergence is opt-in and owned here.
+- Also here: a non-blocking `Storage::SDCard::BusGuard{TryLock}` for the
+  on-loop IMU poll (`src/Sensors/Motion/QMI8658.h`), so a best-effort
+  loop-task SD-bus user yields to the off-loop writer instead of blocking
+  the loop. Not an upstream divergence (firmware-only mechanism).
+
 ## Recently retired (do not reintroduce)
 
 Removed by `6aef568` + the June 2026 uR re-pins, all matching upstream

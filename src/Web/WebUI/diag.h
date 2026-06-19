@@ -200,6 +200,31 @@
       JsonObject byk = doc["sd_wait_by_kind"].to<JsonObject>();
       for (uint8_t k = 0; k < (uint8_t)W::Kind::_Count; ++k)
         byk[W::kind_name(k)] = (uint32_t)W::wait_by_kind()[k];
+      // On-loop SD-read timing (resource transfer read paths).
+      doc["sd_loadpart_max_us"] = (uint32_t)RNS::SdReadStat::loadpart_max_us();
+      doc["sd_loadpart_count"]  = (uint32_t)RNS::SdReadStat::loadpart_count();
+      doc["sd_readall_max_us"]  = (uint32_t)RNS::SdReadStat::readall_max_us();
+      doc["sd_readall_count"]   = (uint32_t)RNS::SdReadStat::readall_count();
+      doc["sd_read_kb"]         = (uint32_t)(RNS::SdReadStat::total_bytes() / 1024);
+      doc["sd_read_over10ms"]   = (uint32_t)RNS::SdReadStat::over10ms();
+      doc["sd_read_over100ms"]  = (uint32_t)RNS::SdReadStat::over100ms();
+      // Off-loop receive-conclude worker.
+      doc["conclude_jobs"]        = (uint32_t)RnsConclude::jobs_done();
+      doc["conclude_read_max_us"] = (uint32_t)RnsConclude::read_max_us();
+      doc["conclude_write_max_us"]= (uint32_t)RnsConclude::write_max_us();
+      doc["conclude_write_errors"]= (uint32_t)RnsConclude::write_errors();
+      doc["conclude_fallbacks"]   = (uint32_t)RnsConclude::fallbacks();
+      doc["conclude_stack_free"]  = (uint32_t)RnsConclude::stack_low_water();
+      // Receive-flow snapshot (in-progress incoming Resource).
+      doc["rx_received"]    = (uint32_t)RNS::SdReadStat::rx_received();
+      doc["rx_parts"]       = (uint32_t)RNS::SdReadStat::rx_parts();
+      doc["rx_outstanding"] = (uint32_t)RNS::SdReadStat::rx_outstanding();
+      doc["rx_window"]      = (uint32_t)RNS::SdReadStat::rx_window();
+      doc["rx_cch"]         = (int32_t)RNS::SdReadStat::rx_cch();
+      doc["rx_reqs"]        = (uint32_t)RNS::SdReadStat::rx_reqs();
+      doc["rx_timeouts"]    = (uint32_t)RNS::SdReadStat::rx_timeouts();
+      doc["rx_last_wtmo_ms"]= (uint32_t)RNS::SdReadStat::rx_last_wtmo_ms();
+      doc["rx_eifr"]        = (uint32_t)RNS::SdReadStat::rx_eifr();
       send_json(req, 200, doc);
     }
 
@@ -209,6 +234,7 @@
     static void handle_diag_storage_reset(AsyncWebServerRequest* req, JsonVariant& /*body*/) {
       if (require_auth(req).empty()) return;
       Storage::SdWriter::reset_window();
+      RNS::SdReadStat::reset();
       Common::PsramJsonDocument doc;
       doc["status"] = "reset";
       send_json(req, 200, doc);
@@ -368,6 +394,7 @@
       doc["modem"]     = Common::LoopTiming::max_modem_us;
       doc["prune"]     = Common::LoopTiming::max_prune_us;
       doc["serial"]    = Common::LoopTiming::max_serial_us;
+      doc["deliver"]   = Common::LoopTiming::max_deliver_us;
       // Breakdown of the reticulum section into its housekeeping steps (in
       // milliseconds; the section maxima above are microseconds). Pins which
       // step holds the loop when a table-scaling stall shows up: jobs() runs

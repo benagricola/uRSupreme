@@ -397,17 +397,18 @@ namespace LXMF {
     // Test a candidate password against the stored hash for this identity.
     // verify_fn computes the PBKDF2 hash of the candidate with the
     // identity's salt and constant-time compares against the stored hash.
-    static bool check_password(const IdentityId& iden_id,
-                               const std::string& candidate,
-                               bool (*verify_fn)(const std::string&, const RNS::Bytes&, const RNS::Bytes&)) {
+    // Copy out an identity's stored password salt + hash. The caller runs the
+    // slow PBKDF2 verify on these copies WITHOUT holding rns_lock, so a login
+    // can't stall the main loop (rns_lock is shared with reticulum.loop()).
+    // Returns false if no such identity; empty salt/hash means a pre-password
+    // identity from older firmware (the caller refuses login).
+    static bool read_password_material(const IdentityId& iden_id,
+                                       RNS::Bytes& salt_out, RNS::Bytes& hash_out) {
       LXMFIdentity* a = identity_by_id_mut(iden_id);
       if (!a) return false;
-      if (a->password_hash.size() == 0 || a->password_salt.size() == 0) {
-        // Pre-password identity from an older firmware - refuse login;
-        // user must factory-reset to recover.
-        return false;
-      }
-      return verify_fn(candidate, a->password_salt, a->password_hash);
+      salt_out = a->password_salt;
+      hash_out = a->password_hash;
+      return true;
     }
 
     // Tear down and remove an identity from disk.

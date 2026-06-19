@@ -236,7 +236,6 @@
     }
 
     static void handle_login(AsyncWebServerRequest* req, JsonVariant& body) {
-      RnsLockGuard _g;
       const char* acc_str = body["identity_id"] | "";
       const char* pw_str  = body["password"]   | "";
       if (!*acc_str) {
@@ -250,30 +249,45 @@
         return;
       }
       LXMF::IdentityId iden_id = acc_str;
-      if (!LXMF::LXMFGateway::identity_by_id(iden_id)) {
+      // Read the stored password material under a brief lock, then run the
+      // slow PBKDF2 verify WITHOUT rns_lock - holding it across the hash
+      // (~20k iterations) stalls the main loop, starving the radio and any
+      // in-flight receive for the verify's duration.
+      RNS::Bytes salt, hash;
+      bool exists;
+      {
+        RnsLockGuard _g;
+        exists = LXMF::LXMFGateway::read_password_material(iden_id, salt, hash);
+      }
+      if (!exists) {
         send_error_with_message(req, 404, "unknown_identity",
           "No identity with that ID exists on this device.");
         return;
       }
       // Knowledge-factor only - physical-presence button gesture is
       // explicitly NOT a path to login because a stolen device could
-      // otherwise be unlocked by anyone with hands on it.
-      if (!LXMF::LXMFGateway::check_password(iden_id, pw_str, PasswordHash::verify)) {
+      // otherwise be unlocked by anyone with hands on it. An empty
+      // salt/hash (pre-password identity) is treated as a failed login.
+      if (salt.size() == 0 || hash.size() == 0 ||
+          !PasswordHash::verify(std::string(pw_str), salt, hash)) {
         send_error_with_message(req, 401, "invalid_password",
           "Incorrect password for that identity.");
         return;
       }
-      std::string token = AuthTokens::issue(iden_id);
+      std::string token;
+      {
+        RnsLockGuard _g;
+        token = AuthTokens::issue(iden_id);
+        // Fire an announce now so peers learn this identity immediately
+        // rather than waiting up to one auto-announce interval. Cheap
+        // (just packs + queues a Packet); failure here doesn't fail the
+        // login since the periodic announce loop will catch up.
+        if (!token.empty()) LXMF::LXMFGateway::announce(iden_id);
+      }
       if (token.empty()) {
         send_error(req, 500, "token_issue_failed");
         return;
       }
-      // Fire an announce now so peers learn this identity immediately
-      // rather than waiting up to one auto-announce interval. Cheap
-      // (just packs + queues a Packet); failure here doesn't fail the
-      // login since the periodic announce loop will catch up.
-      LXMF::LXMFGateway::announce(iden_id);
-
       Common::PsramJsonDocument doc;
       doc["token"]         = token;
       doc["identity_id"]    = iden_id;

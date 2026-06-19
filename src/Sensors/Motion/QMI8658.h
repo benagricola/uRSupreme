@@ -133,10 +133,17 @@ inline void pump() {
   float temp_c = 0.0f;
   {
     // The IMU shares the HSPI bus with the SD card. Hold the bus mutex
-    // across this poll's SPI reads so they can't interleave with an
-    // attachment-upload SD write running on the AsyncTCP web task, which
-    // would corrupt the SD transfer. See Storage::SDCard::BusGuard.
-    Storage::SDCard::BusGuard _bg;
+    // across this poll's SPI reads so they can't interleave with an SD write
+    // (attachment upload on the web task, or the off-loop receive writer),
+    // which would corrupt the SD transfer. See Storage::SDCard::BusGuard.
+    //
+    // Non-blocking: this poll runs on the main loop, and the off-loop SD
+    // writer (higher priority) can hold the bus in tight bursts for a whole
+    // receive. Blocking here would stall the loop for seconds, starving LoRa
+    // servicing and the resource part-request flow. The IMU is best-effort
+    // periodic sampling, so if the bus is busy we just skip this sample.
+    Storage::SDCard::BusGuard _bg{Storage::SDCard::TryLock{}};
+    if (!_bg.ok()) return;
     // getDataReady() is cheap; if neither domain has fresh data yet,
     // skip - we'll catch it on the next poll.
     if (!_detail::sensor().getDataReady()) return;

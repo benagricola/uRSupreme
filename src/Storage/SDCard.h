@@ -53,12 +53,24 @@ namespace _detail {
     return m;
   }
 }
+// Tag for the non-blocking BusGuard constructor.
+struct TryLock {};
 struct BusGuard {
   bool held = false;
   BusGuard() {
     SemaphoreHandle_t m = _detail::bus_mtx_ref();
     if (m) held = (xSemaphoreTakeRecursive(m, portMAX_DELAY) == pdTRUE);
   }
+  // Non-blocking: acquire the bus only if it's free right now (timeout 0).
+  // For best-effort loopTask users (the IMU poll) that must NOT block behind
+  // the off-loop SD writer holding the bus for a receive - blocking there
+  // stalls the main loop, starving LoRa servicing and the part-request flow.
+  // Check held (or ok()) before touching the bus.
+  explicit BusGuard(TryLock) {
+    SemaphoreHandle_t m = _detail::bus_mtx_ref();
+    if (m) held = (xSemaphoreTakeRecursive(m, 0) == pdTRUE);
+  }
+  bool ok() const { return held; }
   ~BusGuard() { if (held) xSemaphoreGiveRecursive(_detail::bus_mtx_ref()); }
   BusGuard(const BusGuard&) = delete;
   BusGuard& operator=(const BusGuard&) = delete;

@@ -2,7 +2,7 @@
 // Supreme's user I2C bus (Wire, SDA=17, SCL=18, addr 0x77 fallback
 // 0x76). Shares the bus with the OLED display and the QMC6310
 // magnetometer; cheap to coexist since each device has its own
-// address and we only poll on a configurable interval.
+// address and each read is a few ms.
 //
 // Wraps Adafruit_BME280, which speaks our msgpack-free, no-config
 // Arduino dialect. We pass a Wire pointer explicitly so we don't
@@ -12,9 +12,12 @@
 //   begin(wire, addr=0x77)  - probe + init. Returns true if a chip
 //                             answered at the given address; auto-
 //                             falls back to 0x76 if 0x77 missed.
-//   pump()                  - called from the main loop. Re-reads
-//                             the sensor at most once per
-//                             interval_ms (default 60_000).
+//   pump()                  - called from the main loop. Polls fast
+//                             while a live demand is active, else at the
+//                             pressure-trend interval while that feature
+//                             is on; read on demand otherwise.
+//   read_now()              - one-shot read bypassing the cadence, for
+//                             pack-time telemetry freshness.
 //   last_reading()          - cached struct {ts_ms, temp_c,
 //                             humidity_pct, pressure_pa, valid}.
 //   present()               - true once begin() succeeded.
@@ -37,23 +40,54 @@ struct Reading {
   float     pressure_pa    = 0.0f;
 };
 
-// Pressure-trend history for the climate screen's graph: one point every
-// PRESS_HIST_MS, so PRESS_HIST_N points span a few hours. Sampled in
-// pump() (which runs continuously) so the trend builds whether or not
-// the screen is open.
+// Pressure-trend history for the climate screen's graph: PRESS_HIST_N
+// points, one per trend interval (set_trend), so the graph spans
+// interval x PRESS_HIST_N. PRESS_HIST_MS is the default interval (a 5 min
+// point gives a ~4 h window). The trend builds in the background whether
+// or not the screen is open, while the feature is enabled.
 inline constexpr int      PRESS_HIST_N  = 48;
-inline constexpr uint32_t PRESS_HIST_MS = 5UL * 60 * 1000;  // 5 min -> ~4 h window
+inline constexpr uint32_t PRESS_HIST_MS = 5UL * 60 * 1000;  // default: 5 min -> ~4 h window
 
 namespace _detail {
   inline Adafruit_BME280& sensor()      { static Adafruit_BME280 s; return s; }
   inline bool&     present_ref()        { static bool v = false; return v; }
   inline Reading&  last_ref()           { static Reading r; return r; }
-  inline uint32_t& interval_ms_ref()    { static uint32_t v = 60000; return v; }
   inline uint32_t& live_until_ref()     { static uint32_t v = 0; return v; }
   inline uint8_t&  addr_ref()           { static uint8_t v = 0; return v; }
   inline bool&     enabled_ref()        { static bool v = true; return v; }
   struct PressHist { float p[PRESS_HIST_N] = {0}; int head = 0, count = 0; uint32_t last_ms = 0; };
   inline PressHist& press_hist_ref() { static PressHist h; return h; }
+  // Pressure-trend feature: when enabled, the sensor background-samples
+  // at trend_interval_ms and appends one trend point per interval.
+  // Disabled means no background sampling (read on demand / live only)
+  // and no appends.
+  inline bool&     trend_enabled_ref()     { static bool v = true; return v; }
+  inline uint32_t& trend_interval_ms_ref() { static uint32_t v = PRESS_HIST_MS; return v; }
+
+  // One read into the cache, bypassing any cadence gate. While the
+  // pressure-trend feature is on, a point is appended at most once per
+  // trend_interval_ms, so a fast live poll (or a pack-time read_now)
+  // cannot over-fill the ring.
+  inline void do_read(uint32_t now) {
+    Reading r;
+    r.taken_ms     = now;
+    r.temp_c       = sensor().readTemperature();
+    r.humidity_pct = sensor().readHumidity();
+    r.pressure_pa  = sensor().readPressure();
+    // BME280 returns NAN for any field where the sensor refused; treat
+    // the whole reading as invalid in that case rather than half-publish.
+    r.valid = !isnan(r.temp_c) && !isnan(r.humidity_pct) && !isnan(r.pressure_pa);
+    last_ref() = r;
+    if (r.valid && trend_enabled_ref()) {
+      PressHist& h = press_hist_ref();
+      if (h.last_ms == 0 || (now - h.last_ms) >= trend_interval_ms_ref()) {
+        h.p[h.head] = r.pressure_pa;
+        h.head = (h.head + 1) % PRESS_HIST_N;
+        if (h.count < PRESS_HIST_N) h.count++;
+        h.last_ms = now;
+      }
+    }
+  }
 }
 
 inline bool begin(TwoWire& wire, uint8_t primary_addr = 0x77) {
@@ -80,46 +114,40 @@ inline bool begin(TwoWire& wire, uint8_t primary_addr = 0x77) {
   return false;
 }
 
-// Drive a periodic read. Cheap - only touches the bus once per
-// interval_ms. Call from the main loop; gated on `enabled` so the
-// user can stop monitoring entirely without unmounting the chip.
-// Fast poll period while a live demand is active.
+// Fast poll period while a live demand is active (popover / OLED screen).
 inline constexpr uint32_t LIVE_POLL_MS = 500;
 
+// Drive the read cadence from the main loop. Cheap - one I2C read at most
+// per period. Gated on `enabled` so the user can stop monitoring entirely
+// without unmounting the chip. When nothing is live, the sensor
+// background-samples only while the pressure-trend feature is on (at its
+// interval); otherwise it is read on demand (Telemeter::pack -> read_now),
+// not on a timer.
 inline void pump() {
-  if (!_detail::present_ref())                  return;
-  if (!_detail::enabled_ref())                  return;
+  if (!_detail::present_ref()) return;
+  if (!_detail::enabled_ref()) return;
   const uint32_t now = millis();
   const auto& last = _detail::last_ref();
-  // interval_ms == 0 means "boot-read only": take one reading on the
-  // first pump() after boot, then never again until reboot. Without
-  // this, the SPA's "At boot only" preset (which sends interval_s=0)
-  // would cause the sensor to read every main-loop iteration because
-  // `(now - taken_ms) < 0` is always false for uint32_t.
-  const bool live = now < _detail::live_until_ref();
-  const uint32_t eff_interval = live ? LIVE_POLL_MS : _detail::interval_ms_ref();
-  if (!live && _detail::interval_ms_ref() == 0 && last.taken_ms != 0) return;
-  if (last.taken_ms != 0 && (now - last.taken_ms) < eff_interval) return;
-
-  Reading r;
-  r.taken_ms     = now;
-  r.temp_c       = _detail::sensor().readTemperature();
-  r.humidity_pct = _detail::sensor().readHumidity();
-  r.pressure_pa  = _detail::sensor().readPressure();
-  // BME280 returns NAN for any field where the sensor refused; treat
-  // the whole reading as invalid in that case rather than half-publish.
-  r.valid = !isnan(r.temp_c) && !isnan(r.humidity_pct) && !isnan(r.pressure_pa);
-  _detail::last_ref() = r;
-  // Append to the pressure trend at most once per PRESS_HIST_MS.
-  if (r.valid) {
-    _detail::PressHist& h = _detail::press_hist_ref();
-    if (h.last_ms == 0 || (now - h.last_ms) >= PRESS_HIST_MS) {
-      h.p[h.head] = r.pressure_pa;
-      h.head = (h.head + 1) % PRESS_HIST_N;
-      if (h.count < PRESS_HIST_N) h.count++;
-      h.last_ms = now;
-    }
+  uint32_t eff_interval;
+  if (now < _detail::live_until_ref()) {
+    eff_interval = LIVE_POLL_MS;
+  } else if (_detail::trend_enabled_ref()) {
+    eff_interval = _detail::trend_interval_ms_ref();   // build the trend
+  } else {
+    return;   // no live demand and trend off -> read on demand only
   }
+  if (last.taken_ms != 0 && (now - last.taken_ms) < eff_interval) return;
+  _detail::do_read(now);
+}
+
+// Force a fresh read now, bypassing the cadence gate. Telemetry packs
+// the cached reading, so a passive packer (collector, live-share grant,
+// announce) calls this just before packing to send current data without
+// a standing idle poll. A single I2C read, a few ms; no-op if the chip
+// is absent or the sensor disabled.
+inline void read_now() {
+  if (!_detail::present_ref() || !_detail::enabled_ref()) return;
+  _detail::do_read(millis());
 }
 
 // Fill `out` with the pressure history oldest-first; returns the count.
@@ -141,10 +169,8 @@ inline const char* model_name() { return "BME280"; }
 inline bool      present()       { return _detail::present_ref(); }
 inline uint8_t   address()       { return _detail::addr_ref(); }
 inline Reading   last_reading()  { return _detail::last_ref(); }
-inline uint32_t  interval_ms()   { return _detail::interval_ms_ref(); }
-inline void      set_interval_ms(uint32_t ms) { _detail::interval_ms_ref() = ms; }
 // While live (a screen showing this sensor is open), poll fast
-// instead of at the idle interval. The consumer renews the TTL.
+// instead of at the idle background cadence. The consumer renews the TTL.
 inline void request_live(uint32_t ttl_ms = 1500) {
   _detail::live_until_ref() = millis() + ttl_ms;
 }
@@ -157,6 +183,15 @@ inline uint32_t live_remaining_ms() {
 }
 inline bool      enabled()       { return _detail::enabled_ref(); }
 inline void      set_enabled(bool on) { _detail::enabled_ref() = on; }
+// Pressure-trend feature: enable + sample interval. The interval sets
+// both the background sample cadence and the trend resolution, so the
+// graph spans interval x PRESS_HIST_N. Off => no background sampling.
+inline bool      trend_enabled()     { return _detail::trend_enabled_ref(); }
+inline uint32_t  trend_interval_ms() { return _detail::trend_interval_ms_ref(); }
+inline void      set_trend(bool on, uint32_t interval_ms) {
+  _detail::trend_enabled_ref() = on;
+  if (interval_ms > 0) _detail::trend_interval_ms_ref() = interval_ms;
+}
 
 } // namespace BME280
 } // namespace Sensors

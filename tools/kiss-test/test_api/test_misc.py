@@ -70,15 +70,13 @@ def test_sensors_config_post_roundtrip(sx, tokens):
     if not env or not env.get("available"):
         pytest.skip("environment sensor not available on this board")
     initial = env.get("enabled", True)
-    interval = max(1, int(env.get("interval_ms", 60000) / 1000))
+    # I2C sensors carry only an enable flag now (no user interval).
     r = s.post(f"{d.url}/api/sensors/config",
-               json={"sensor": "environment", "enabled": not initial,
-                     "interval_s": interval}, timeout=15)
+               json={"sensor": "environment", "enabled": not initial}, timeout=15)
     assert r.status_code == 200
     # Restore.
     s.post(f"{d.url}/api/sensors/config",
-           json={"sensor": "environment", "enabled": initial,
-                 "interval_s": interval}, timeout=15)
+           json={"sensor": "environment", "enabled": initial}, timeout=15)
 
 
 def test_paths_lookup_unknown(sx):

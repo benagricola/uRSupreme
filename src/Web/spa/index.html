@@ -856,11 +856,11 @@
     <div class="popover-subline" id="sys-gps-age" x-text="$store.s.ui.sysGpsAge"></div>
     <div class="popover-config" data-role="config" x-show="sectionOpen.gps" x-cloak>
       <label>
-        <input type="checkbox" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.gps ? $store.s.system.sensors.gps.enabled : false"
+        <input type="checkbox" data-role="enable" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.gps ? $store.s.system.sensors.gps.enabled : false"
                @change="onSensorConfigChange('gps', $event.target)">
         <span>Enabled</span>
       </label>
-      <select :value="gpsLocationCurrent()"
+      <select data-role="gps-interval" :value="gpsLocationCurrent()"
               @change="onSensorConfigChange('gps', $event.target)">
         <template x-for="p in GPS_INTERVALS" :key="p.value">
           <option :value="String(p.value)" x-text="p.label"></option>
@@ -882,13 +882,19 @@
     <div class="popover-subline" id="sys-env-age" x-text="$store.s.ui.sysBmeAge"></div>
     <div class="popover-config" data-role="config" x-show="sectionOpen.environment" x-cloak>
       <label>
-        <input type="checkbox" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.environment ? $store.s.system.sensors.environment.enabled : false"
+        <input type="checkbox" data-role="enable" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.environment ? $store.s.system.sensors.environment.enabled : false"
                @change="onSensorConfigChange('environment', $event.target)">
         <span>Enabled</span>
       </label>
-      <select :value="sensorIntervalCurrent('environment')"
+      <label>
+        <input type="checkbox" data-role="feature-enable" :checked="featureEnabled('environment')"
+               @change="onSensorConfigChange('environment', $event.target)">
+        <span>Pressure trend</span>
+      </label>
+      <select data-role="feature-interval" x-show="featureEnabled('environment')"
+              :value="featureIntervalCurrent('environment')"
               @change="onSensorConfigChange('environment', $event.target)">
-        <template x-for="p in SENSOR_INTERVALS" :key="p.value">
+        <template x-for="p in TREND_INTERVALS" :key="p.value">
           <option :value="String(p.value)" x-text="p.label"></option>
         </template>
       </select>
@@ -908,16 +914,10 @@
     <div class="popover-subline" id="sys-mag-age" x-text="$store.s.ui.sysMagAge"></div>
     <div class="popover-config" data-role="config" x-show="sectionOpen.magnetometer" x-cloak>
       <label>
-        <input type="checkbox" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.magnetometer ? $store.s.system.sensors.magnetometer.enabled : false"
+        <input type="checkbox" data-role="enable" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.magnetometer ? $store.s.system.sensors.magnetometer.enabled : false"
                @change="onSensorConfigChange('magnetometer', $event.target)">
         <span>Enabled</span>
       </label>
-      <select :value="sensorIntervalCurrent('magnetometer')"
-              @change="onSensorConfigChange('magnetometer', $event.target)">
-        <template x-for="p in SENSOR_INTERVALS" :key="p.value">
-          <option :value="String(p.value)" x-text="p.label"></option>
-        </template>
-      </select>
     </div>
   </div>
   <div class="popover-section" id="sys-section-imu" data-sensor="imu"
@@ -935,16 +935,15 @@
     <div class="popover-subline" id="sys-imu-age" x-text="$store.s.ui.sysImuAge"></div>
     <div class="popover-config" data-role="config" x-show="sectionOpen.imu" x-cloak>
       <label>
-        <input type="checkbox" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.imu ? $store.s.system.sensors.imu.enabled : false"
+        <input type="checkbox" data-role="enable" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.imu ? $store.s.system.sensors.imu.enabled : false"
                @change="onSensorConfigChange('imu', $event.target)">
         <span>Enabled</span>
       </label>
-      <select :value="sensorIntervalCurrent('imu')"
-              @change="onSensorConfigChange('imu', $event.target)">
-        <template x-for="p in SENSOR_INTERVALS" :key="p.value">
-          <option :value="String(p.value)" x-text="p.label"></option>
-        </template>
-      </select>
+      <label>
+        <input type="checkbox" data-role="feature-enable" :checked="featureEnabled('imu')"
+               @change="onSensorConfigChange('imu', $event.target)">
+        <span>Motion wake</span>
+      </label>
     </div>
   </div>
   <!-- Status only - the collector configuration lives in Settings ->
@@ -6752,7 +6751,7 @@ function onClickStorageMigrate(btn) {
   }, { label: 'Moving…' });
 }
 
-// Build / refresh the per-sensor enable+interval config rows whenever
+// Build / refresh the per-sensor enable config rows whenever
 // the system snapshot changes - declarative bindings handle the sensor
 // values but the config inputs are still imperatively constructed
 // inside updateSensorConfigUI. The Alpine x-effect wiring on the
@@ -6978,19 +6977,43 @@ function onClickPowerBtn() {
 // $store.s.system snapshot.
 
 // ============================== SYSTEM POPOVER - sensor config ==============================
-// Each sensor section (Environment / Compass / Motion) has a click-
-// to-expand row revealing an enable checkbox + interval dropdown.
-// Save fires immediately on change - small enough payload that the
-// user expects instant feedback. GPS has its own enable + duty-cycle
-// row (onGpsConfigChange) wired to /api/time/sources, since it's a time
-// source (Clock::Manager) rather than a /api/sensors/config sensor.
-const SENSOR_INTERVALS = [
-  { value: 10,    label: 'Every 10 sec' },
-  { value: 60,    label: 'Every minute' },
-  { value: 300,   label: 'Every 5 min' },
-  { value: 3600,  label: 'Every hour' },
-  { value: 0,     label: 'At boot only' },
+// Each sensor section (Environment / Compass / Motion) expands to an
+// enable toggle plus, where the sensor drives a feature, that feature's
+// controls. Environment has "Pressure trend" (a time series: toggle +
+// interval, where interval x 48 points = the graph window). Motion has
+// "Motion wake" (an interrupt-driven event: toggle only, no interval).
+// GPS keeps a location interval (its receiver duty-cycles and cannot be
+// read on demand). All save through /api/sensors/config.
+
+// Pressure-trend sample intervals; interval x 48 points = trend window
+// (1 min -> ~48 min, 30 min -> ~24 h).
+const TREND_INTERVALS = [
+  { value: 60,   label: 'Every minute' },
+  { value: 300,  label: 'Every 5 min' },
+  { value: 600,  label: 'Every 10 min' },
+  { value: 1800, label: 'Every 30 min' },
 ];
+// The feature object key for a sensor ('trend' / 'motion_wake'), or null.
+function sensorFeatureKey(key) {
+  return key === 'environment' ? 'trend' : key === 'imu' ? 'motion_wake' : null;
+}
+function sensorFeature(key) {
+  const s = state.system && state.system.sensors && state.system.sensors[key];
+  const fk = sensorFeatureKey(key);
+  return (s && fk && s[fk]) ? s[fk] : {};
+}
+function featureEnabled(key) { return !!sensorFeature(key).enabled; }
+// Current trend interval (environment only) snapped to a preset.
+function featureIntervalCurrent(key) {
+  const cur = Number(sensorFeature(key).interval_s) || TREND_INTERVALS[1].value;
+  for (const p of TREND_INTERVALS) if (p.value === cur) return String(p.value);
+  let best = TREND_INTERVALS[1].value, bestD = Infinity;
+  for (const p of TREND_INTERVALS) {
+    const d = Math.abs(Math.log(Math.max(cur, 1)) - Math.log(p.value));
+    if (d < bestD) { best = p.value; bestD = d; }
+  }
+  return String(best);
+}
 
 // Send cadence for telemetry-to-collector. Floor matches the
 // firmware's MIN_INTERVAL_S clamp.
@@ -7001,27 +7024,6 @@ const TELEMETRY_INTERVALS = [
   { value: 21600, label: 'Every 6 hours' },
   { value: 86400, label: 'Every day' },
 ];
-function sensorIntervalSnap(secs) {
-  if (secs == null) return 60;
-  // Match exact preset, else nearest non-zero log-distance.
-  for (const p of SENSOR_INTERVALS) if (p.value === secs) return p.value;
-  let best = 60, bestDist = Infinity;
-  for (const p of SENSOR_INTERVALS) {
-    if (p.value === 0) continue;
-    const d = Math.abs(Math.log(Math.max(secs, 1)) - Math.log(p.value));
-    if (d < bestDist) { best = p.value; bestDist = d; }
-  }
-  return best;
-}
-
-// Current interval value (snapped to one of the presets) for a sensor
-// key. Used by the declarative <select :value> binding inside each
-// .popover-config block.
-function sensorIntervalCurrent(key) {
-  const s = state.system && state.system.sensors && state.system.sensors[key];
-  return String(sensorIntervalSnap(Math.round(((s && s.interval_ms) || 60000) / 1000)));
-}
-
 // GPS location-update presets (the receiver power schedule, saved via
 // /api/sensors/config like the other sensors):
 //   0 .. <300s  -> receiver stays powered (continuous)
@@ -7054,21 +7056,35 @@ function gpsLocationCurrent() {
   return String(gpsIntervalSnap(Math.round((sys.interval_ms || 0) / 1000)));
 }
 
-// @change handler shared by the checkbox + select inputs in each
-// sensor-config row. Reads BOTH from the section so a single change
-// fires a single POST with both fields.
+// @change handler for the inputs in each sensor-config row, addressed by
+// data-role: the enable toggle is always present; GPS adds an interval
+// select; environment/imu add a feature toggle (and environment a feature
+// interval). One change fires one POST carrying the whole row's state.
 async function onSensorConfigChange(key, sourceEl) {
   const section = sourceEl.closest('[data-sensor]');
   if (!section) return;
-  const cb  = section.querySelector('.popover-config input[type=checkbox]');
-  const sel = section.querySelector('.popover-config select');
-  if (!cb || !sel) return;
-  const body = { sensor: key, enabled: cb.checked, interval_s: parseInt(sel.value, 10) };
+  const cb      = section.querySelector('.popover-config [data-role=enable]');
+  if (!cb) return;
+  const gpsSel  = section.querySelector('.popover-config [data-role=gps-interval]');
+  const featCb  = section.querySelector('.popover-config [data-role=feature-enable]');
+  const featSel = section.querySelector('.popover-config [data-role=feature-interval]');
+  const featKey = sensorFeatureKey(key);
+  const body = { sensor: key, enabled: cb.checked };
+  if (gpsSel) body.interval_s = parseInt(gpsSel.value, 10);
+  if (featCb && featKey) {
+    body[featKey] = { enabled: featCb.checked };
+    if (featSel) body[featKey].interval_s = parseInt(featSel.value, 10);
+  }
   try {
     await state.transport._req(API.SENSORS_CONFIG, { method: 'POST', body });
-    if (state.system && state.system.sensors && state.system.sensors[key]) {
-      state.system.sensors[key].enabled     = cb.checked;
-      state.system.sensors[key].interval_ms = parseInt(sel.value, 10) * 1000;
+    const s = state.system && state.system.sensors && state.system.sensors[key];
+    if (s) {
+      s.enabled = cb.checked;
+      if (gpsSel) s.interval_ms = parseInt(gpsSel.value, 10) * 1000;
+      if (featCb && featKey) {
+        s[featKey] = Object.assign({}, s[featKey], { enabled: featCb.checked });
+        if (featSel) s[featKey].interval_s = parseInt(featSel.value, 10);
+      }
     }
   } catch (e) {
     toast('Sensor config save failed: ' + (e.message || e), 'error');

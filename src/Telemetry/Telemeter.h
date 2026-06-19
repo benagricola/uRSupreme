@@ -19,9 +19,10 @@
 //   SID_HUMIDITY    0x08  float percent        (sense.py:1197)
 //   SID_MAGNETIC_FIELD 0x09  [x, y, z] microtesla (sense.py:1262)
 //
-// All reads come from the drivers' cached snapshots (no bus traffic
-// beyond the AXP2101 register reads Battery::current() already does
-// for the web UI), so pack() is safe to call from the main loop.
+// pack() first reads the included I2C sensors on demand (BME280 /
+// QMC6310, a few ms each) so passive packers send fresh data without a
+// standing idle poll; battery is read live and location rides the GPS
+// power schedule. The reads are bounded and main-loop safe.
 
 #pragma once
 
@@ -85,6 +86,14 @@ inline size_t pack_be_bin(uint8_t* buf, size_t cap, uint32_t v, size_t width) {
 // message timestamp uses). Returns bytes written, 0 on overflow.
 inline size_t pack(uint8_t* buf, size_t cap, const Include& inc, double now_epoch) {
   using namespace Common::MsgPack;
+
+  // Read-on-demand (#7): refresh the included I2C sensors just before
+  // packing so a passive packer (collector, live-share grant, announce)
+  // sends current data without relying on a standing idle poll. Battery
+  // is read live below; location rides the GPS power schedule and is not
+  // force-read here. Each call is a no-op if the chip is absent/disabled.
+  if (inc.environment) Sensors::BME280::read_now();
+  if (inc.magnetic)    Sensors::QMC6310::read_now();
 
   const Telemetry::Battery::Snapshot batt = Telemetry::Battery::current();
   const bool have_battery = inc.battery && batt.pmu_present

@@ -27,7 +27,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "src", "Web")
-SPA = os.path.join(WEB, "spa", "index.html")
+SPA_DIR = os.path.join(WEB, "spa")
 DEF = os.path.join(WEB, "api_routes.def")
 
 DEF_LINE = re.compile(r'^\s*ROUTE(_OPT)?\(\s*([A-Z][A-Z0-9_]*)\s*,\s*"([A-Z|]+)"\s*,\s*"(/api/[^"]+)"\s*\)\s*$')
@@ -90,14 +90,26 @@ def main() -> int:
         if re.search(r"AsyncWebSocket\s+\w+\(ApiRoutes::WS\)", text):
             cpp_methods.setdefault("WS", set()).add("WS")
 
-    # 2+3. SPA: quoted /api literals banned; API.* refs must exist.
-    spa_text = open(SPA, encoding="utf-8").read()
-    for n, line in enumerate(spa_text.splitlines(), 1):
-        if "__API_ROUTES__" in line:
-            continue
-        if re.search(r"""['"`]/api/""", line):
-            errors.append(f"src/Web/spa/index.html:{n}: quoted /api "
-                          f"literal; use the generated API table")
+    # 2+3. SPA: quoted /api literals banned; API.* refs must exist. The app
+    # logic is split across spa/app/*.js (concatenated into index.html's
+    # inline <script> at build time), so scan index.html plus every module.
+    spa_sources = [os.path.join(SPA_DIR, "index.html")]
+    app_dir = os.path.join(SPA_DIR, "app")
+    if os.path.isdir(app_dir):
+        spa_sources += sorted(
+            os.path.join(app_dir, fn) for fn in os.listdir(app_dir)
+            if fn.endswith(".js"))
+    spa_text = ""
+    for path in spa_sources:
+        text = open(path, encoding="utf-8").read()
+        spa_text += text + "\n"
+        rel = os.path.relpath(path, ROOT)
+        for n, line in enumerate(text.splitlines(), 1):
+            if "__API_ROUTES__" in line:
+                continue
+            if re.search(r"""['"`]/api/""", line):
+                errors.append(f"{rel}:{n}: quoted /api literal; use the "
+                              f"generated API table")
     for ref in set(re.findall(r"\bAPI\.([A-Z][A-Z0-9_]*)", spa_text)):
         if ref not in names:
             errors.append(f"SPA references API.{ref}, which is not in "

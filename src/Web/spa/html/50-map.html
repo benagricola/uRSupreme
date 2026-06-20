@@ -1,0 +1,38 @@
+<div id="map-view" class="map-view" x-data x-show="$store.s.mapView.open" x-cloak>
+  <div id="map-canvas" class="map-view-canvas"></div>
+  <div class="map-loading" x-show="$store.s.mapView.loading" x-cloak>
+    <span class="icon-spinner" aria-hidden="true"></span><span>Loading map…</span>
+  </div>
+  <!-- Viewing a track: just a download control, whatever the tile source. -->
+  <div class="map-dl-ctl" x-show="$store.s.mapView.gpx">
+    <span class="map-dl-actions">
+      <button type="button" class="secondary" @click="downloadGpx()">Download track</button>
+    </span>
+  </div>
+  <div class="map-dl-ctl" x-show="!$store.s.mapView.gpx && $store.s.mapTiles.mode === 'sd' && $store.s.mapTiles.format === 'vector'">
+    <span class="map-dl-status" x-show="$store.s.mapExt.phase !== 'idle' && !$store.s.mapDraw.on" x-text="mapExtStatus()"></span>
+    <template x-if="!$store.s.mapExt.active && !$store.s.mapDraw.on">
+      <span class="map-dl-actions">
+        <input class="map-dl-name" type="text" spellcheck="false" autocomplete="off" placeholder="name (optional)" x-model.trim="$store.s.mapDraw.name">
+        <button type="button" @click="extractCurrentView()">Download this view</button>
+        <button type="button" class="secondary" @click="startDrawArea()">Draw area</button>
+      </span>
+    </template>
+    <template x-if="$store.s.mapDraw.on">
+      <span class="map-dl-actions">
+        <span class="map-dl-status" x-text="$store.s.mapDraw.pts.length + ' points - tap to add, drag to move'"></span>
+        <button type="button" @click="finishDrawArea()" :disabled="$store.s.mapDraw.pts.length < 3">Download area</button>
+        <button type="button" class="secondary" @click="cancelDrawArea()">Cancel</button>
+      </span>
+    </template>
+    <button type="button" class="danger" @click="cancelMapExtract()" x-show="$store.s.mapExt.active">Cancel download</button>
+  </div>
+</div>
+
+<!-- ===================== CONVERSATION RETENTION MODAL ===================== -->
+<!-- Per-chat retention. Four modes:
+       - default: inherits the identity-wide default (snapshotted when
+         the user first interacts with this peer)
+       - forever: keep all messages from this peer forever
+       - time:    expire records older than N units of time
+       - count:   keep only the newest N messages from this peer -->

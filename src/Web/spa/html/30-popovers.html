@@ -1,0 +1,293 @@
+<div id="popover-status" class="popover" x-data="statusPopoverData()"
+     x-show="$store.s.popovers.status"
+     x-effect="$store.s.popovers.status && (refreshRadioTelemetry(), refreshNetworkTelemetry())"
+     x-cloak>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label" id="status-radio-label" x-text="radioLabel">RADIO</div>
+      <div id="status-radio-line">
+        <span :class="radioPillClass" x-text="radioPillLabel"></span>
+      </div>
+    </div>
+    <div class="popover-value" id="status-radio-cfg-1" x-html="radioCfg1"></div>
+    <div class="popover-value" id="status-radio-cfg-2" x-html="radioCfg2"></div>
+    <div class="popover-subline" id="status-radio-stats" x-text="radioStatsLine"></div>
+    <div class="popover-subline" id="status-radio-rate" x-text="radioRateLine"></div>
+    <div class="popover-subline" id="status-radio-airtime" x-text="radioAirtimeLine"></div>
+    <div class="popover-subline" id="status-radio-csma" x-html="radioCsmaLine"></div>
+    <div class="radio-chart-wrap" id="status-radio-chart" x-html="radioChartHTML"></div>
+  </div>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">WiFi</div>
+      <div id="status-wifi-line">
+        <span :class="wifiPillClass" x-text="wifiPillLabel"></span>
+      </div>
+    </div>
+    <div class="popover-value" id="status-wifi-ssid" x-text="wifiSsid"></div>
+    <div class="popover-subline" id="status-wifi-ip" x-text="wifiIpLine"></div>
+    <div class="popover-subline" id="status-wifi-auth" x-html="wifiAuthLine"></div>
+    <div class="popover-subline net-rate-line" id="status-net-rate" x-html="networkRateLine"></div>
+    <div class="radio-chart-wrap" id="status-net-chart" x-html="networkChartHTML"></div>
+    <button class="secondary w-full mt-2" id="btn-force-softap"
+            x-show="wifiMode === 'sta'"
+            title="Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept; a reboot will try it again."
+            @click="onClickForceSoftap($event.currentTarget)">Switch to softAP</button>
+    <div class="popover-subline" id="status-wifi-hint"
+         x-show="wifiMode === 'sta'">Disconnects from this network and brings up the bootstrap WiFi so you can reconfigure. The saved network is kept; a reboot will try it again.</div>
+  </div>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">Transport</div>
+      <div id="status-transport-line">
+        <span :class="'pill ' + (transportEnabled ? 'ok' : '')"
+              x-text="transportEnabled ? 'On: relaying packets' : 'Off: endpoint only'"></span>
+      </div>
+    </div>
+    <button class="secondary w-full mt-2" id="btn-toggle-transport" 
+            title="Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots."
+            x-text="transportEnabled ? 'Turn transport off' : 'Turn transport on'"
+            @click="onClickToggleTransport($event.currentTarget)"></button>
+    <div class="popover-subline">Relays packets for peers it can reach. Costs duty-cycle airtime. Persists across reboots.</div>
+  </div>
+</div>
+
+<!-- Anchored below #btn-power. Hosts the detailed battery telemetry
+     plus future per-knob power-management toggles. The topbar battery
+     icon shows just percent + state; full detail lives here. -->
+<div id="popover-power" class="popover" x-data="powerPopoverData()"
+     x-show="$store.s.popovers.power"
+     x-cloak>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">Battery</div>
+      <div id="pw-battery-line">
+        <span :class="stateClass" x-text="stateLabel"></span>
+      </div>
+    </div>
+    <div class="popover-value" id="pw-battery-values" x-html="valuesHTML"></div>
+    <div class="popover-subline" id="pw-battery-slope" x-html="slopeHTML"></div>
+  </div>
+  <div class="popover-section" id="pw-tuning-section" hidden>
+    <div class="popover-row">
+      <div class="popover-label">Power tuning</div>
+    </div>
+    <div class="popover-subline">Knobs will appear here as power-saving features land.</div>
+  </div>
+</div>
+
+<!-- Anchored below #btn-system. Mirrors #popover-status' style but
+     hosts device-side state: storage, clock + RTC, on-board sensors. -->
+<div id="popover-system" class="popover" x-data="systemPopoverData()"
+     x-show="$store.s.popovers.system"
+     x-effect="$store.s.popovers.system && (refreshSensorConfigUI(), populateCollectorConfig())"
+     x-cloak>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">Storage</div>
+      <div id="sys-storage-line">
+        <span :class="storagePillClass" x-text="storagePillLabel"></span>
+      </div>
+    </div>
+    <div class="popover-value" id="sys-storage-flash" x-html="storageFlashHTML"></div>
+    <div class="popover-subline" id="sys-storage-sd" x-html="storageSdHTML"></div>
+    <button id="sys-storage-migrate" class="secondary w-full mt-2" 
+            x-show="storageShowMigrate" x-cloak @click="onClickStorageMigrate($event.currentTarget)">
+      Move flash attachments to SD card
+    </button>
+  </div>
+  <div class="popover-section">
+    <div class="popover-row">
+      <div class="popover-label">Clock</div>
+      <div id="sys-clock-line">
+        <span :class="clockPillClass" x-text="clockPillLabel"></span>
+      </div>
+    </div>
+    <div class="popover-value" id="sys-clock-now" x-text="$store.s.ui.sysClockNow"></div>
+    <div class="popover-subline" id="sys-clock-source" x-text="$store.s.ui.sysClockSource"></div>
+  </div>
+  <div class="popover-section" id="sys-section-gps" data-sensor="gps"
+       :class="{ 'is-open': sectionOpen.gps }"
+       x-show="gpsAvailable" x-cloak>
+    <div class="popover-row clickable" data-role="header" @click="toggleSection('gps')">
+      <div class="popover-label">Position</div>
+      <div id="sys-gps-line">
+        <span :class="gpsPillClass" x-text="gpsPillLabel"></span>
+      </div>
+      <span class="popover-chev" data-role="chev">▾</span>
+    </div>
+    <div class="popover-value" id="sys-gps-pos" x-text="gpsPosText"></div>
+    <div class="popover-subline" id="sys-gps-speed" x-show="gpsHaveFix" x-text="gpsFixTimeText"></div>
+    <div class="popover-subline" id="sys-gps-extra" x-show="gpsExtraHTML" x-html="gpsExtraHTML"></div>
+    <div class="popover-subline" id="sys-gps-rf" x-show="gpsRfText" x-text="gpsRfText"></div>
+    <div class="popover-subline" id="sys-gps-age" x-text="$store.s.ui.sysGpsAge"></div>
+    <div class="popover-config" data-role="config" x-show="sectionOpen.gps" x-cloak>
+      <label>
+        <input type="checkbox" data-role="enable" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.gps ? $store.s.system.sensors.gps.enabled : false"
+               @change="onSensorConfigChange('gps', $event.target)">
+        <span>Enabled</span>
+      </label>
+      <select data-role="gps-interval" :value="gpsLocationCurrent()"
+              @change="onSensorConfigChange('gps', $event.target)">
+        <template x-for="p in GPS_INTERVALS" :key="p.value">
+          <option :value="String(p.value)" x-text="p.label"></option>
+        </template>
+      </select>
+    </div>
+  </div>
+  <div class="popover-section" id="sys-section-env" data-sensor="environment"
+       :class="{ 'is-open': sectionOpen.environment }"
+       x-show="envAvailable" x-cloak>
+    <div class="popover-row clickable" data-role="header" @click="toggleSection('environment')">
+      <div class="popover-label">Environment</div>
+      <div id="sys-env-line">
+        <span :class="envState.cls" x-text="envState.label"></span>
+      </div>
+      <span class="popover-chev" data-role="chev">▾</span>
+    </div>
+    <div class="popover-value" id="sys-env-values" x-html="envValuesHTML"></div>
+    <div class="popover-subline" id="sys-env-age" x-text="$store.s.ui.sysBmeAge"></div>
+    <div class="popover-config" data-role="config" x-show="sectionOpen.environment" x-cloak>
+      <label>
+        <input type="checkbox" data-role="enable" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.environment ? $store.s.system.sensors.environment.enabled : false"
+               @change="onSensorConfigChange('environment', $event.target)">
+        <span>Enabled</span>
+      </label>
+      <label>
+        <input type="checkbox" data-role="feature-enable" :checked="featureEnabled('environment')"
+               @change="onSensorConfigChange('environment', $event.target)">
+        <span>Pressure trend</span>
+      </label>
+      <select data-role="feature-interval" x-show="featureEnabled('environment')"
+              :value="featureIntervalCurrent('environment')"
+              @change="onSensorConfigChange('environment', $event.target)">
+        <template x-for="p in TREND_INTERVALS" :key="p.value">
+          <option :value="String(p.value)" x-text="p.label"></option>
+        </template>
+      </select>
+    </div>
+  </div>
+  <div class="popover-section" id="sys-section-mag" data-sensor="magnetometer"
+       :class="{ 'is-open': sectionOpen.magnetometer }"
+       x-show="magAvailable" x-cloak>
+    <div class="popover-row clickable" data-role="header" @click="toggleSection('magnetometer')">
+      <div class="popover-label">Compass</div>
+      <div id="sys-mag-line">
+        <span :class="magState.cls" x-text="magState.label"></span>
+      </div>
+      <span class="popover-chev" data-role="chev">▾</span>
+    </div>
+    <div class="popover-value" id="sys-mag-values" x-html="magValuesHTML"></div>
+    <div class="popover-subline" id="sys-mag-age" x-text="$store.s.ui.sysMagAge"></div>
+    <div class="popover-config" data-role="config" x-show="sectionOpen.magnetometer" x-cloak>
+      <label>
+        <input type="checkbox" data-role="enable" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.magnetometer ? $store.s.system.sensors.magnetometer.enabled : false"
+               @change="onSensorConfigChange('magnetometer', $event.target)">
+        <span>Enabled</span>
+      </label>
+    </div>
+  </div>
+  <div class="popover-section" id="sys-section-imu" data-sensor="imu"
+       :class="{ 'is-open': sectionOpen.imu }"
+       x-show="imuAvailable" x-cloak>
+    <div class="popover-row clickable" data-role="header" @click="toggleSection('imu')">
+      <div class="popover-label">Motion</div>
+      <div id="sys-imu-line">
+        <span :class="imuState.cls" x-text="imuState.label"></span>
+      </div>
+      <span class="popover-chev" data-role="chev">▾</span>
+    </div>
+    <div class="popover-value" id="sys-imu-accel" x-html="imuAccelHTML"></div>
+    <div class="popover-subline" id="sys-imu-gyro" x-html="imuGyroHTML"></div>
+    <div class="popover-subline" id="sys-imu-age" x-text="$store.s.ui.sysImuAge"></div>
+    <div class="popover-config" data-role="config" x-show="sectionOpen.imu" x-cloak>
+      <label>
+        <input type="checkbox" data-role="enable" :checked="$store.s.system && $store.s.system.sensors && $store.s.system.sensors.imu ? $store.s.system.sensors.imu.enabled : false"
+               @change="onSensorConfigChange('imu', $event.target)">
+        <span>Enabled</span>
+      </label>
+      <label>
+        <input type="checkbox" data-role="feature-enable" :checked="featureEnabled('imu')"
+               @change="onSensorConfigChange('imu', $event.target)">
+        <span>Motion wake</span>
+      </label>
+    </div>
+  </div>
+  <!-- Status only - the collector configuration lives in Settings ->
+       Identity. Same layout as the sensor sections above: a pill on
+       the header row and a "Last sent Xs ago (dest)" subline. -->
+  <div class="popover-section" id="sys-section-telemetry">
+    <div class="popover-row">
+      <div class="popover-label">Telemetry</div>
+      <div id="sys-tele-line">
+        <span :class="collectorPillClass()" x-text="collectorPillLabel()"></span>
+      </div>
+    </div>
+    <div class="popover-subline" x-text="$store.s.ui.sysTeleStatus"></div>
+  </div>
+</div>
+
+<!-- ===================== EMOJI PICKER ===================== -->
+<!-- Floating per-row context menu. Rendered once, positioned via the
+     x/y from $store.s.rowMenu. openRowMenu(peer, anchor) seeds the
+     items + coords; closeRowMenu sets rowMenu to null. -->
+<div x-data x-show="$store.s.rowMenu" x-cloak
+     class="row-menu"
+     :style="$store.s.rowMenu ? ('left:' + $store.s.rowMenu.x + 'px;top:' + $store.s.rowMenu.y + 'px') : ''">
+  <template x-for="it in ($store.s.rowMenu ? $store.s.rowMenu.items : [])" :key="it.label">
+    <button :class="'row-menu-item' + (it.destructive ? ' destructive' : '')"
+            @click.stop="closeRowMenu(); it.fn()"
+            x-text="it.label"></button>
+  </template>
+</div>
+
+<div id="popup-emoji" x-data x-show="$store.s.popovers.emoji" x-cloak>
+  <template x-for="e in EMOJI" :key="e">
+    <div class="emoji-cell" x-text="e" @click="onEmojiPick(e)"></div>
+  </template>
+</div>
+
+<!-- Telemetry attach popover, anchored above the compose bar's pin
+     button. Toggles bind straight into forms.compose.telemetry; the
+     tray chip and the armed button state react live. -->
+<div id="popup-telemetry" x-data x-show="$store.s.popovers.telemetry" x-cloak>
+  <template x-if="$store.s.forms.compose.telemetry">
+    <div>
+      <div class="font-bold mb-2">Attach to this message</div>
+      <label class="toggle-row">
+        <input type="checkbox" x-model="$store.s.forms.compose.telemetry.location">
+        <span class="ico-pin">Position</span>
+      </label>
+      <label class="toggle-row mt-1">
+        <input type="checkbox" x-model="$store.s.forms.compose.telemetry.compass">
+        <span class="ico-compass">Heading</span>
+      </label>
+      <label class="toggle-row mt-1">
+        <input type="checkbox" x-model="$store.s.forms.compose.telemetry.environment">
+        <span class="ico-thermo">Environment</span>
+      </label>
+      <label class="toggle-row mt-1">
+        <input type="checkbox" x-model="$store.s.forms.compose.telemetry.battery">
+        <span class="ico-battery">Battery</span>
+      </label>
+      <label class="mt-3">Live updates
+        <button type="button" class="info-icon" @click.stop data-info="For this long after the message, the recipient's device fetches fresh readings of the same items. 'None' shares a single snapshot. Stop sharing at any time from the bar above the chat."></button>
+      </label>
+      <select class="w-full" x-model.number="$store.s.forms.compose.telemetry.share_s">
+        <template x-for="o in TELEMETRY_SHARE_OPTIONS" :key="o.s">
+          <option :value="o.s" x-text="o.label" :selected="o.s === $store.s.forms.compose.telemetry.share_s"></option>
+        </template>
+      </select>
+      <div x-show="$store.s.forms.compose.telemetry.share_s > 0" x-cloak>
+        <label class="mt-3">Live update rate</label>
+        <select class="w-full" x-model.number="$store.s.forms.compose.telemetry.rate_s">
+          <template x-for="o in TELEMETRY_RATE_OPTIONS" :key="o.s">
+            <option :value="o.s" x-text="o.label" :selected="o.s === $store.s.forms.compose.telemetry.rate_s"></option>
+          </template>
+        </select>
+      </div>
+    </div>
+  </template>
+</div>
+
+<!-- ===================== NEW CONVERSATION MODAL ===================== -->

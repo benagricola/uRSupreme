@@ -91,14 +91,20 @@ def main() -> int:
             cpp_methods.setdefault("WS", set()).add("WS")
 
     # 2+3. SPA: quoted /api literals banned; API.* refs must exist. The app
-    # logic is split across spa/app/*.js (concatenated into index.html's
-    # inline <script> at build time), so scan index.html plus every module.
+    # logic is split across spa/app/*.js and the markup across spa/html/*.html
+    # (both spliced into index.html at build time), so scan index.html plus
+    # every module and fragment.
     spa_sources = [os.path.join(SPA_DIR, "index.html")]
     app_dir = os.path.join(SPA_DIR, "app")
     if os.path.isdir(app_dir):
         spa_sources += sorted(
             os.path.join(app_dir, fn) for fn in os.listdir(app_dir)
             if fn.endswith(".js"))
+    html_dir = os.path.join(SPA_DIR, "html")
+    if os.path.isdir(html_dir):
+        spa_sources += sorted(
+            os.path.join(html_dir, fn) for fn in os.listdir(html_dir)
+            if fn.endswith(".html"))
     spa_text = ""
     for path in spa_sources:
         text = open(path, encoding="utf-8").read()

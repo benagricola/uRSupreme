@@ -102,18 +102,28 @@ def embed_spa(env):
     if html_files:
         frags = {os.path.splitext(os.path.basename(p))[0]:
                  open(p, "rb").read() for p in html_files}
+        used = set()
         for _ in range(len(frags) + 1):
             tokens = [b"<!--SPA:" + s.encode() + b"-->" for s in frags]
             if not any(t in html for t in tokens):
                 break
             for stem, content in frags.items():
-                html = html.replace(
-                    b"<!--SPA:" + stem.encode() + b"-->", content)
+                token = b"<!--SPA:" + stem.encode() + b"-->"
+                if token in html:
+                    html = html.replace(token, content)
+                    used.add(stem)
+        # Guard both directions so nothing is silently dropped: a placeholder
+        # with no file, or a fragment file no placeholder ever references.
         import re as _re
         leftover = _re.findall(rb"<!--SPA:[0-9A-Za-z_-]+-->", html)
         if leftover:
-            raise Exception("unresolved SPA fragment placeholders: "
-                            + repr(leftover))
+            raise Exception("SPA placeholder with no matching spa/html/ "
+                            "file: " + repr(leftover))
+        unused = sorted(set(frags) - used)
+        if unused:
+            raise Exception("spa/html/ fragment with no <!--SPA:name--> "
+                            "placeholder in the shell or any fragment: "
+                            + repr(unused))
     # Splice the app modules into the inline <script> before the
     # __API_ROUTES__ substitution below, which targets a placeholder that
     # now lives inside that app source (app/00-core.js).

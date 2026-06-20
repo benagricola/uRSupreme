@@ -1,0 +1,77 @@
+<div id="modal-conv-retention" class="modal-bg z-260" x-data x-show="$store.s.modals.convRetention"
+     @click.self="retentionCancel()" x-cloak>
+  <div class="modal modal-wide">
+    <h3>Retention for this chat</h3>
+    <p class="muted mb-14" >
+      Older messages are pruned according to the chosen retention.
+      <span id="cr-default-line" x-text="'Identity default: ' + $store.s.retention.defaultLabel + '.'"></span>
+    </p>
+    <label class="cr-option">
+      <input type="radio" name="cr-mode" value="default" id="cr-mode-default"
+             x-model="$store.s.retention.mode" value="default">
+      <span id="cr-mode-default-label"
+            x-text="'Use identity default (' + $store.s.retention.defaultLabel + ')'"></span>
+    </label>
+    <label class="cr-option">
+      <input type="radio" name="cr-mode" value="forever" id="cr-mode-forever"
+             x-model="$store.s.retention.mode" value="forever">
+      <span>Keep forever</span>
+    </label>
+    <label class="cr-option cr-option-custom">
+      <input type="radio" name="cr-mode" value="time" id="cr-mode-time"
+             x-model="$store.s.retention.mode" value="time">
+      <span>Expire after</span>
+      <input type="number" id="cr-time-n" min="1" step="1" class="cr-num"
+             x-model.number="$store.s.retention.timeN">
+      <select id="cr-time-unit" class="cr-unit"
+              x-model="$store.s.retention.timeUnit">
+        <option value="60">minutes</option>
+        <option value="3600">hours</option>
+        <option value="86400">days</option>
+      </select>
+    </label>
+    <label class="cr-option cr-option-custom">
+      <input type="radio" name="cr-mode" value="count" id="cr-mode-count"
+             x-model="$store.s.retention.mode" value="count">
+      <span>Keep last</span>
+      <input type="number" id="cr-count-n" min="1" max="200" step="1" class="cr-num"
+             x-model.number="$store.s.retention.countN">
+      <span class="cr-unit">messages</span>
+    </label>
+    <div class="row mt-14" >
+      <button class="secondary" id="cr-cancel" @click="retentionCancel()">Cancel</button>
+      <button id="cr-save" @click="retentionSave($event.currentTarget)">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== IDENTITY CODE MODAL ===================== -->
+<div id="modal-id-code" class="modal-bg z-280" x-data x-show="$store.s.modals.idCode" x-cloak>
+  <div class="modal">
+    <h3 id="id-code-modal-title" x-text="$store.s.ui.idCodeModalTitle">Identity code required</h3>
+    <!-- Two opening paths: (1) the device button was pressed and the
+         firmware fired identity_code_available - we got here from the
+         WS event handler, so a code is already on the OLED; (2) the
+         SPA needs a code to authorise a privileged action and opened
+         this modal itself - the user may need to press the button
+         first. id-code-modal-hint carries whichever context applies;
+         the .id-code-hint span below has the full "how to generate"
+         instructions. -->
+    <p class="muted"><span id="id-code-modal-hint" x-text="$store.s.ui.idCodeModalHint"></span></p>
+    <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
+    <input class="mb-3 font-mono-inline" id="idc-input" maxlength="6" placeholder="abc123"
+           x-model="$store.s.forms.idCode.input"
+           x-effect="$store.s.modals.idCode && $nextTick(() => $el.focus())"
+           @keydown.enter.prevent="onClickIdcOk()">
+    <div class="row">
+      <button class="secondary" id="btn-idc-cancel" @click="onClickIdcCancel()">Dismiss</button>
+      <button id="btn-idc-ok" @click="onClickIdcOk()">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== SETTINGS MODAL (tabbed) ===================== -->
+<!-- Single modal owns ALL configuration UI. Tabs at top, content
+     below. Opens via the gear icon (default tab: Identity) or the
+     radio icon (Radio tab). Boot-time first-run forces the Radio tab
+     and hides the others until a config is saved. -->

@@ -1,0 +1,875 @@
+<div id="modal-settings" class="modal-bg" x-data x-show="$store.s.modals.settings" x-cloak
+     @click.self="closeSettingsModal()">
+  <div class="modal modal-tall">
+    <header class="modal-header">
+      <h3 id="settings-title" x-text="$store.s.ui.settingsTitle">Settings</h3>
+      <button class="icon icon-x" id="btn-close-settings" title="Close"
+              x-show="$store.s.ui.showCloseSettings"
+              @click="closeSettingsModal()"></button>
+    </header>
+    <div class="tab-bar" id="settings-tabs">
+      <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['telemetry','Telemetry'],['map','Map'],['time','Time'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
+        <button class="tab" :data-tab="t[0]"
+                :class="{ active: $store.s.settingsTab === t[0] }"
+                :hidden="$store.s.settingsFirstRun && t[0] !== 'connectivity'"
+                x-text="t[1]"
+                @click="selectSettingsTab(t[0])"></button>
+      </template>
+    </div>
+    <div class="modal-body">
+
+      <!-- ============== Identity tab ============== -->
+      <div class="tab-panel" data-panel="identity" :class="{ active: $store.s.settingsTab === 'identity' }">
+        <div class="card">
+          <label>Display name <button type="button" class="info-icon" data-info="The display name peers see in your identity announce. Changes take effect on the next announce. Press the megaphone after editing to re-broadcast immediately."></button></label>
+          <div class="list-row flex items-center gap-10" >
+            <span class="idc" id="id-modal-idc"
+                  x-html="$store.s.self ? identicon($store.s.self.address || $store.s.self.id, 40) : ''"></span>
+            <div class="flex-1-min0">
+              <input type="text" id="id-display-name" maxlength="96"
+                     class="font-bold w-full min-h-auto py-1 px-6"
+                     autocomplete="off" spellcheck="false"
+                     x-model="$store.s.forms.identity.displayName"
+                     @blur="onBlurIdName()"
+                     @keydown.enter.prevent="$event.target.blur()">
+              <div class="muted mono mt-1" id="id-address"
+                   x-text="$store.s.self ? ($store.s.self.address || $store.s.self.id) : ''"></div>
+            </div>
+          </div>
+          <label class="mt-3">Auto-announce <button type="button" class="info-icon" data-info="How often this identity automatically broadcasts an announce so peers can find and route to it. Manual announces via the megaphone icon work regardless of this setting."></button></label>
+          <select id="id-announce-interval"
+                  x-model="$store.s.forms.identity.announceInterval"
+                  @change="onChangeAnnounceInterval()">
+            <template x-for="i in ANNOUNCE_INTERVALS" :key="i.ms">
+              <option :value="String(i.ms)" x-text="i.label"></option>
+            </template>
+          </select>
+          <label class="toggle-row mt-4">
+            <input class="input-inline" type="checkbox" id="id-persist-outbound"
+                   x-model="$store.s.forms.identity.persistOutbound"
+                   @change="onChangePersistOutbound()">
+            <span>Keep a copy of attachments I send</span>
+            <button type="button" class="info-icon" @click.stop data-info="Lets the chat history show an inline preview of images and audio you've sent. Off saves storage at the cost of preview."></button>
+          </label>
+          <label class="mt-3">Require message stamps <button type="button" class="info-icon" data-info="Deters spam by requiring anyone who messages you to first spend some computing effort on a stamp. Off means no stamp is required. Higher values make mass-messaging you more expensive. Senders' apps learn the requirement from your announce and do the work automatically before sending, so a higher value just means they spend longer on it. This is separate from the discovery stamp on the Connectivity tab, which is work this device attaches to its own discovery announces."></button></label>
+          <select id="id-stamp-cost"
+                  x-model="$store.s.forms.identity.stampCost"
+                  @change="onChangeStampCost()">
+            <option value="0">Off (no stamp required)</option>
+            <option value="8">8 bits (light)</option>
+            <option value="12">12 bits (medium)</option>
+            <option value="16">16 bits (strong)</option>
+          </select>
+          <label class="toggle-row mt-4">
+            <input class="input-inline" type="checkbox" id="id-enforce-stamps"
+                   x-model="$store.s.forms.identity.enforceStamps"
+                   @change="onChangeEnforceStamps()">
+            <span>Discard messages without a valid stamp</span>
+            <button type="button" class="info-icon" @click.stop data-info="When on, messages that arrive without the required stamp are discarded before reaching your inbox. When off, they are still delivered, just marked in the conversation."></button>
+          </label>
+          <details class="cn-section mt-4" data-cn="telemetry-defaults">
+            <summary><span class="cn-title">Telemetry attachments</span>
+              <button type="button" class="info-icon" @click.stop data-info="Defaults for the pin button next to the message box. Each message starts from this selection; you can change it per message before sending."></button>
+            </summary>
+            <div class="cn-section-body">
+              <label class="toggle-row">
+                <input type="checkbox"
+                       x-model="$store.s.forms.identity.telLocation"
+                       @change="onChangeTelemetryDefaults()">
+                <span class="ico-pin">Position</span>
+              </label>
+              <label class="toggle-row mt-1">
+                <input type="checkbox"
+                       x-model="$store.s.forms.identity.telCompass"
+                       @change="onChangeTelemetryDefaults()">
+                <span class="ico-compass">Heading</span>
+              </label>
+              <label class="toggle-row mt-1">
+                <input type="checkbox"
+                       x-model="$store.s.forms.identity.telEnvironment"
+                       @change="onChangeTelemetryDefaults()">
+                <span class="ico-thermo">Environment</span>
+                <button type="button" class="info-icon" @click.stop data-info="Temperature, humidity and air pressure from the onboard sensor."></button>
+              </label>
+              <label class="toggle-row mt-1">
+                <input type="checkbox"
+                       x-model="$store.s.forms.identity.telBattery"
+                       @change="onChangeTelemetryDefaults()">
+                <span class="ico-battery">Battery</span>
+              </label>
+              <label class="mt-3">Live updates
+                <button type="button" class="info-icon" @click.stop data-info="For this long after a message with telemetry, the recipient's device fetches fresh readings of the same items. 'None' shares a single snapshot."></button>
+              </label>
+              <select x-model="$store.s.forms.identity.telShare"
+                      @change="onChangeTelemetryDefaults()">
+                <template x-for="o in TELEMETRY_SHARE_OPTIONS" :key="o.s">
+                  <option :value="String(o.s)" x-text="o.label"
+                          :selected="String(o.s) === $store.s.forms.identity.telShare"></option>
+                </template>
+              </select>
+              <label class="mt-3">Live update rate</label>
+              <select x-model="$store.s.forms.identity.telRate"
+                      @change="onChangeTelemetryDefaults()">
+                <template x-for="o in TELEMETRY_RATE_OPTIONS" :key="o.s">
+                  <option :value="String(o.s)" x-text="o.label"
+                          :selected="String(o.s) === $store.s.forms.identity.telRate"></option>
+                </template>
+              </select>
+            </div>
+          </details>
+          <label class="toggle-row mt-4">
+            <input class="input-inline" type="checkbox" id="id-screen"
+                   x-model="$store.s.forms.identity.screen"
+                   @change="onChangeScreenIdentity()">
+            <span>Show new messages on the device screen</span>
+            <button type="button" class="info-icon" @click.stop data-info="This is the account whose messages appear on the device screen. Anyone holding the device can read them. Turning this on needs the 6-character device code. One account at a time; turn it off here before enabling it on another."></button>
+          </label>
+          <details class="cn-section mt-4" data-cn="messenger"
+                   x-show="$store.s.forms.identity.screen" x-cloak>
+            <summary><span class="cn-title">Device messages</span>
+              <button type="button" class="info-icon" @click.stop data-info="Preset messages you can send from the device with its buttons. Up to 8. Stored with this account only, and cleared when its screen toggle turns off. Each message can attach telemetry and live updates, like messages composed here."></button>
+            </summary>
+            <div class="cn-section-body">
+              <p class="muted">Each message needs a recipient before it appears on the device.</p>
+              <template x-for="(p, i) in $store.s.forms.messenger.presets" :key="i">
+                <div class="preset-card">
+                  <div class="preset-head">
+                    <input type="text" maxlength="24" placeholder="Label (shown on the device)"
+                           x-model.trim="p.label">
+                  </div>
+                  <!-- :selected on each option (not just :value on the
+                       select) because the option list renders after the
+                       value binding on first paint - without it the DOM
+                       falls back to the placeholder. -->
+                  <select class="mt-1"
+                          @change="if ($event.target.value === '__manual__') { p._manual = true; }
+                                   else { p._manual = false; p.dest = $event.target.value; }">
+                    <option value="" :selected="!p._manual && !p.dest">Choose a recipient</option>
+                    <template x-for="o in messengerDestOptions()" :key="o.addr">
+                      <option :value="o.addr" x-text="o.label"
+                              :selected="!p._manual && p.dest === o.addr"></option>
+                    </template>
+                    <option value="__manual__"
+                            :selected="p._manual || (!!p.dest && !messengerDestKnown(p.dest))">Enter an address</option>
+                  </select>
+                  <input type="text" maxlength="32" placeholder="Destination address (32 hex)"
+                         class="font-mono-inline mt-1" spellcheck="false" autocomplete="off"
+                         x-show="p._manual || (!messengerDestKnown(p.dest) && p.dest !== '')" x-cloak
+                         x-model.trim="p.dest">
+                  <textarea maxlength="200" rows="2" placeholder="Message" class="mt-1"
+                            x-model="p.content"></textarea>
+                  <!-- Per-preset telemetry: the same options as the
+                       compose popover, sent with every use of this
+                       preset. -->
+                  <div class="preset-tel mt-1">
+                    <label class="toggle-row">
+                      <input type="checkbox" x-model="p.telemetry.location">
+                      <span class="ico-pin">Position</span>
+                    </label>
+                    <label class="toggle-row">
+                      <input type="checkbox" x-model="p.telemetry.compass">
+                      <span class="ico-compass">Heading</span>
+                    </label>
+                    <label class="toggle-row">
+                      <input type="checkbox" x-model="p.telemetry.environment">
+                      <span class="ico-thermo">Environment</span>
+                    </label>
+                    <label class="toggle-row">
+                      <input type="checkbox" x-model="p.telemetry.battery">
+                      <span class="ico-battery">Battery</span>
+                    </label>
+                  </div>
+                  <div class="row mt-1">
+                    <div>
+                      <label>Live updates</label>
+                      <select x-model.number="p.telemetry.share_s">
+                        <template x-for="o in TELEMETRY_SHARE_OPTIONS" :key="o.s">
+                          <option :value="o.s" x-text="o.label"
+                                  :selected="o.s === p.telemetry.share_s"></option>
+                        </template>
+                      </select>
+                    </div>
+                    <div x-show="p.telemetry.share_s > 0">
+                      <label>Live update rate</label>
+                      <select x-model.number="p.telemetry.rate_s">
+                        <template x-for="o in TELEMETRY_RATE_OPTIONS" :key="o.s">
+                          <option :value="o.s" x-text="o.label"
+                                  :selected="o.s === p.telemetry.rate_s"></option>
+                        </template>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="preset-foot">
+                    <button type="button" class="secondary"
+                            @click="$store.s.forms.messenger.presets.splice(i, 1)">Remove</button>
+                  </div>
+                </div>
+              </template>
+              <div class="row mt-2">
+                <button type="button" class="secondary"
+                        x-show="$store.s.forms.messenger.presets.length < 8"
+                        @click="addMessengerPreset()">Add message</button>
+                <button type="button" @click="saveMessengerPresets($event.currentTarget)">Save messages</button>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <!-- ============== Connectivity tab (accordion: Radio / WiFi / Bluetooth) ============== -->
+      <div class="tab-panel" data-panel="connectivity" :class="{ active: $store.s.settingsTab === 'connectivity' }">
+        <div class="warn mx-0 mt-0">⚠ Connectivity settings are <strong>device-wide</strong>: they apply to every identity stored on this device. Changing radio params reboots the device and may interrupt active conversations.</div>
+
+        <details class="cn-section" data-cn="radio" open x-show="$store.s.ui.showRadioSection">
+          <summary>
+            <span class="cn-title">LoRa Radio</span>
+            <span class="cn-dot" id="cn-dot-radio"
+                  :class="$store.s.ui.cnDotRadio"
+                  x-show="!!$store.s.ui.cnDotRadio"></span>
+            <label class="cn-row-toggle" @click.stop>
+              <span>Discoverable</span>
+              <button type="button" class="info-icon" data-info="When on, this interface periodically emits an <code>rnstransport.discovery.interface</code> announce over LoRa. The announce contains this device's identity hash, radio parameters (frequency, bandwidth, SF, coding rate), and approximate location (if GPS has a fix) so other Reticulum nodes hearing it can decide whether they're configured to reach this device, and apps like <a href='https://rmap.world/info.html' target='_blank' rel='noopener'>rmap.world</a> can plot the device on a map."></button>
+              <input type="checkbox" id="rd-discoverable"
+                     :checked="$store.s.forms.radio.discoverable"
+                     @change="onChangeRdDiscoverable($event.target)">
+            </label>
+          </summary>
+          <div class="cn-section-body">
+            <label>Region preset <button type="button" class="info-icon" data-info="Pick the region preset that matches your local mesh. Both ends of a conversation must use the <em>same</em> region settings. If one device uses EU 869 and the other US 915, they won't hear each other."></button></label>
+            <p class="muted mx-0 mt-1 mb-6" id="rd-intro"
+               x-show="$store.s.settingsFirstRun"
+               x-html="$store.s.settingsFirstRun
+                 ? `Before this device can talk to other LoRa nodes, it needs to know which region to operate in. Pick the preset for your local mesh. Both ends of a conversation must use the <em>same</em> region settings, or they won't hear each other.`
+                 : `Pick the region preset that matches your local mesh. Both ends of a conversation must use the <em>same</em> region settings. If one device uses EU 869 and the other US 915, they won't hear each other.`"></p>
+            <select class="mb-6" id="rd-preset" x-model="$store.s.forms.radio.preset" @change="applyRadioPreset()">
+              <option value="__empty">(Pick a region)</option>
+              <template x-for="p in RADIO_PRESETS" :key="p.id">
+                <option :value="p.id" x-text="p.label"></option>
+              </template>
+              <option value="__custom">Custom (manual)</option>
+            </select>
+            <div class="muted mb-14 min-h-14" id="rd-preset-note" x-text="$store.s.ui.rdPresetNote"></div>
+            <div id="rd-raw" x-show="$store.s.forms.radio.preset === '__custom'">
+              <div class="row mb-2" >
+                <div>
+                  <label>Frequency (Hz)</label>
+                  <input id="rd-freq" type="number" x-model.number="$store.s.forms.radio.freq">
+                </div>
+                <div>
+                  <label>Bandwidth (Hz)</label>
+                  <input id="rd-bw" type="number" x-model.number="$store.s.forms.radio.bw">
+                </div>
+              </div>
+              <div class="row mb-2" >
+                <div>
+                  <label>Spreading factor <button type="button" class="info-icon" data-info="SF7 + BW 125k + CR 4/5 is the speed-optimised default. SF11+ trades speed for range and lowers duty-cycle headroom, useful for long links."></button></label>
+                  <input id="rd-sf" type="number" min="6" max="12" x-model.number="$store.s.forms.radio.sf">
+                </div>
+                <div>
+                  <label>Coding rate</label>
+                  <input id="rd-cr" type="number" min="5" max="8" x-model.number="$store.s.forms.radio.cr">
+                </div>
+                <div>
+                  <label>TX power (dBm)</label>
+                  <input id="rd-tx" type="number" min="0" max="22" x-model.number="$store.s.forms.radio.tx">
+                </div>
+              </div>
+              <div class="row mb-2" >
+                <div>
+                  <label>Airtime cap (% short-term) <button type="button" class="info-icon" data-info="Instantaneous duty-cycle ceiling. <strong>Airtime caps are regulatory limits.</strong> Picking a region preset sets a sane default; 0 disables (only use where allowed)."></button></label>
+                  <input id="rd-airtime" type="number" min="0" max="99" x-model.number="$store.s.forms.radio.airtime">
+                </div>
+                <div>
+                  <label>Airtime cap (% long-term) <button type="button" class="info-icon" data-info="Long-term averaged duty-cycle ceiling. This is the figure regulators care about. 0 disables (only use where allowed)."></button></label>
+                  <input id="rd-airtime-lt" type="number" min="0" max="99" x-model.number="$store.s.forms.radio.airtimeLt">
+                </div>
+              </div>
+            </div>
+            <button class="w-full" id="btn-radio-save"
+                    :disabled="$store.s.forms.radio.preset === '__empty' || !!$store.s.busyButtons['btn-radio-save']"
+                    @click="onClickRadioSave($event.currentTarget)">Save &amp; reboot</button>
+
+            <hr class="border-color-default mt-14 mb-14">
+            <label>Interface mode
+              <button type="button" class="info-icon" data-info="How this interface relays announces and discovers paths. Applies after a reboot.<br><br><strong>Full</strong>: relays announces both ways and learns paths.<br><strong>Gateway</strong>: Full, plus actively requests unknown paths to bridge separate segments.<br><strong>Access Point</strong>: won't rebroadcast other interfaces' announces here, but still learns paths.<br><strong>Point-to-Point</strong>: one peer only; skips multi-node announce relaying.<br><strong>Roaming</strong>: for a moving node; holds back announce relaying to avoid loops.<br><strong>Boundary</strong>: edge between segments; won't relay across-boundary announces back over it."></button>
+            </label>
+            <select id="rd-lora-mode" x-model="$store.s.forms.loraCfg.mode">
+              <option value="full">Full</option>
+              <option value="gateway">Gateway</option>
+              <option value="access_point">Access Point</option>
+              <option value="pointtopoint">Point-to-Point</option>
+              <option value="roaming">Roaming</option>
+              <option value="boundary">Boundary</option>
+            </select>
+            <div class="muted mt-1" x-show="$store.s.forms.loraCfg.modeDefault">No mode is stored yet, so the device is using the Gateway default.</div>
+
+            <label class="mt-14">IFAC network name
+              <button type="button" class="info-icon" data-info="Interface Access Code (IFAC). When set, this interface only talks to peers that share the same network name and key, and its traffic is hidden from nodes that don't. Leave the name empty to keep the interface open. Changes apply after a reboot."></button>
+            </label>
+            <input id="rd-ifac-netname" type="text" placeholder="(open interface)" maxlength="32"
+                   x-model="$store.s.forms.loraCfg.ifacNetname">
+            <div class="row mt-2">
+              <div>
+                <label>IFAC network key</label>
+                <input id="rd-ifac-netkey" type="password" autocomplete="new-password"
+                       :placeholder="$store.s.forms.loraCfg.ifacConfigured ? 'unchanged' : '(required to enable)'"
+                       x-model="$store.s.forms.loraCfg.ifacNetkey">
+              </div>
+              <div>
+                <label>IFAC size (bits)</label>
+                <select id="rd-ifac-size" x-model.number="$store.s.forms.loraCfg.ifacSize">
+                  <option :value="0">Off</option>
+                  <option :value="8">8</option>
+                  <option :value="16">16</option>
+                  <option :value="32">32</option>
+                  <option :value="64">64</option>
+                  <option :value="128">128</option>
+                  <option :value="160">160</option>
+                  <option :value="256">256</option>
+                </select>
+              </div>
+            </div>
+            <div class="muted mt-1" x-show="$store.s.forms.loraCfg.ifacConfigured"
+                 x-text="'IFAC is currently configured at ' + $store.s.forms.loraCfg.ifacConfiguredSize + ' bits. Leave the key blank to keep it; set size to Off to clear it.'"></div>
+            <div class="muted mt-1" x-show="!$store.s.forms.loraCfg.ifacConfigured">IFAC is off. This interface is open to any nearby Reticulum node.</div>
+
+            <button class="w-full mt-10" id="btn-lora-cfg-save"
+                    :disabled="!!$store.s.busyButtons['btn-lora-cfg-save']"
+                    @click="onClickLoraCfgSave($event.currentTarget)">Save mode &amp; IFAC</button>
+            <div class="muted mt-2 text-xs" id="rd-lora-cfg-status" x-text="$store.s.ui.cnLoraCfgStatus"></div>
+          </div>
+        </details>
+
+        <details class="cn-section" data-cn="wifi">
+          <summary>WiFi
+            <button type="button" class="info-icon" @click.stop data-info="Networks this device has credentials for. Forgetting one wipes the SSID + password from the device and reboots into softAP for reconfiguration."></button>
+            <span class="cn-dot" id="cn-dot-wifi"
+                  :class="$store.s.ui.cnDotWifi"
+                  x-show="!!$store.s.ui.cnDotWifi"></span></summary>
+          <div class="cn-section-body">
+            <div class="mb-10" id="cn-wifi-saved-list" x-data>
+              <template x-if="$store.s.wifiSaved === null">
+                <p class="muted">Loading…</p>
+              </template>
+              <template x-if="$store.s.wifiSaved && $store.s.wifiSaved.length === 0">
+                <p class="muted">No saved networks. The device will come up in softAP for first-time setup.</p>
+              </template>
+              <template x-for="n in ($store.s.wifiSaved || [])" :key="n.ssid">
+                <div class="flex items-center gap-10 px-10 py-2 border-elev2 rounded-6 mb-6">
+                  <div class="flex-1">
+                    <div class="font-bold" x-text="n.ssid"></div>
+                    <div class="muted text-xs" 
+                         x-text="n.has_psk ? 'Saved with password' : 'Saved (open network)'"></div>
+                  </div>
+                  <button class="secondary" @click="forgetSavedNetwork(n.ssid)">Forget</button>
+                </div>
+              </template>
+            </div>
+            <button class="secondary w-full" id="btn-wifi-add"  @click="openAddWifiModal()">Add a network…</button>
+          </div>
+        </details>
+
+        <details class="cn-section" data-cn="tcp" x-show="$store.s.ui.showTcpSection" x-cloak>
+          <summary>TCP clients
+            <button type="button" class="info-icon" @click.stop data-info="Outbound TCP links to other Reticulum nodes. Useful for joining a remote network over the internet, or for a wired LAN bridge. Each entry connects on boot and reconnects automatically if dropped."></button>
+            <span class="cn-dot" id="cn-dot-tcp"
+                  :class="$store.s.ui.cnDotTcp"
+                  x-show="!!$store.s.ui.cnDotTcp"></span></summary>
+          <div class="cn-section-body">
+            <div class="mb-10" id="cn-tcp-list" x-data>
+              <template x-if="$store.s.tcpClients === null">
+                <p class="muted">Loading…</p>
+              </template>
+              <template x-if="$store.s.tcpClients && $store.s.tcpClients.length === 0">
+                <p class="muted">No TCP clients configured.</p>
+              </template>
+              <template x-for="c in ($store.s.tcpClients || [])" :key="c.name + ':' + c.host + ':' + c.port">
+                <div class="cn-tcp-row">
+                  <div class="cn-tcp-info">
+                    <div class="flex items-center gap-6">
+                      <span :class="'cn-dot ' + (c.online ? 'ok' : 'err')"></span>
+                      <span x-text="c.name"></span>
+                    </div>
+                    <div class="muted" x-text="c.host + ':' + c.port"></div>
+                  </div>
+                  <button class="secondary chip m-0"
+                          
+                          title="Remove this TCP client"
+                          @click="onTcpRemove(c)">✕</button>
+                </div>
+              </template>
+              <template x-if="$store.s.tcpClientsCap && $store.s.tcpClientsLive >= $store.s.tcpClientsCap">
+                <p class="muted" x-text="'All ' + $store.s.tcpClientsCap + ' TCP client slots in use. Remove one before adding another.'"></p>
+              </template>
+            </div>
+            <button class="secondary w-full" id="btn-tcp-add"  @click="openAddTcpModal()">Add a TCP client…</button>
+          </div>
+        </details>
+
+        <details class="cn-section" data-cn="bt" x-show="$store.s.ui.showBtSection" x-cloak>
+          <summary>Bluetooth</summary>
+          <div class="cn-section-body">
+            <p class="muted">Not configurable from the SPA yet. The hardware supports it; this section will gain pairing / on-off controls in a future release.</p>
+          </div>
+        </details>
+
+        <details class="cn-section" data-cn="diag">
+          <summary>Serial / diagnostics</summary>
+          <div class="cn-section-body">
+            <label class="toggle-row">
+              <input class="input-inline" type="checkbox" id="cn-kiss-out"
+                     x-model="$store.s.forms.diag.kissOut"
+                     @change="onChangeKissOut()">
+              <span>KISS-frame radio traffic on USB serial</span>
+              <button type="button" class="info-icon" @click.stop data-info="Turn OFF if you're reading the USB serial with <code>pio device monitor</code> or similar; KISS-framed binary bytes are otherwise interleaved with the diagnostic text log. Leave ON if you're using the device as a KISS host for tools like rnsd or MeshChat. Persists across reboots."></button>
+            </label>
+          </div>
+        </details>
+
+      </div>
+
+      <!-- ============== Discovery tab ============== -->
+      <div class="tab-panel" data-panel="discovery" :class="{ active: $store.s.settingsTab === 'discovery' }">
+        <div class="warn mx-0 mt-0">⚠ Discovery announces this device's interfaces to other nodes that can hear it. Off by default for privacy: only turn it on if you want to be findable.</div>
+        <div class="card">
+          <strong>Network identity <button type="button" class="info-icon" data-info="A device-wide long-lived keypair signs every discovery announce so other nodes can recognise this device across boots."></button></strong>
+          <div class="list-row">
+            <div>Identity hash</div>
+            <div id="disc-identity-hash" class="muted font-mono-inline text-xs"
+                 x-text="$store.s.ui.discIdentityHash">-</div>
+          </div>
+        </div>
+        <div class="card mt-3" >
+          <strong>Master toggle</strong>
+          <label class="toggle-row mt-10">
+            <input class="input-inline" type="checkbox" id="disc-enabled"
+                   x-model="$store.s.forms.discovery.enabled"
+                   @change="onChangeDiscEnabled()">
+            <span>Announce discoverable interfaces <button type="button" class="info-icon" @click.stop data-info="When on, each interface marked as discoverable on the Connectivity tab will emit a periodic announce. Enabling requires the identity code on the device's display."></button></span>
+          </label>
+        </div>
+        <div class="card mt-3" >
+          <strong>Advertised name <button type="button" class="info-icon" data-info="Carried inside every discovery announce. Defaults to the interface name (e.g. <code>LoRaInterface</code>); set a friendlier label here if you want this device to show up as something specific on rmap.world / similar listeners."></button></strong>
+          <label class="mt-2">Public label shown to other Reticulum nodes</label>
+          <input id="disc-advertised-name" type="text" placeholder="(uses interface name if empty)"
+                 x-model="$store.s.forms.discovery.advertisedName"
+                 @blur="onBlurDiscName()"
+                 @keydown.enter.prevent="$event.target.blur()">
+          <div class="muted mt-1 text-xs" id="disc-name-status" x-text="$store.s.ui.discNameStatus"></div>
+        </div>
+        <div class="card mt-3" >
+          <strong>Cadence <button type="button" class="info-icon" data-info="How often each discoverable interface re-announces. Lower values mean other nodes find this device sooner but use more airtime."></button></strong>
+          <label class="mt-2">Default interval</label>
+          <select id="disc-interval"
+                  x-model="$store.s.forms.discovery.interval"
+                  @change="onChangeDiscInterval()">
+            <option value="5">5 minutes (debug)</option>
+            <option value="15">15 minutes</option>
+            <option value="60">1 hour</option>
+            <option value="360">6 hours (default)</option>
+            <option value="720">12 hours</option>
+            <option value="1440">24 hours</option>
+          </select>
+        </div>
+        <div class="card mt-3" >
+          <strong>Discovery stamp <button type="button" class="info-icon" data-info="Attaches proof-of-work to this device's discovery announces. Some discovery listeners require a minimum amount of work before they will list a node, so a higher value satisfies stricter listeners at the cost of more computation here. This is separate from the message stamp on the Identity tab, which is work you require from people who message you. Set to 0 to attach no proof-of-work."></button></strong>
+          <label class="mt-2">Proof-of-work difficulty (leading zero bits)</label>
+          <select id="disc-stamp-cost"
+                  x-model="$store.s.forms.discovery.stampCost"
+                  @change="onChangeDiscStampCost()">
+            <option value="0">Off (no proof-of-work)</option>
+            <option value="8">8 bits</option>
+            <option value="12">12 bits</option>
+            <option value="14">14 bits</option>
+            <option value="16">16 bits</option>
+          </select>
+        </div>
+        <div class="muted mt-2 text-xs" id="disc-status" x-text="$store.s.ui.discStatus"></div>
+      </div>
+
+      <!-- ============== Telemetry tab ============== -->
+      <div class="tab-panel" data-panel="telemetry" :class="{ active: $store.s.settingsTab === 'telemetry' }">
+        <div class="card">
+          <label class="toggle-row">
+            <input type="checkbox"
+                   x-model="$store.s.forms.collector.enabled"
+                   @change="saveCollectorConfig()">
+            <span>Send readings to collectors</span>
+            <button type="button" class="info-icon" @click.stop data-info="Sends this device's sensor readings to one or more Sideband collectors on a schedule. Separate from the telemetry you attach to individual messages."></button>
+          </label>
+
+          <label class="mt-3">Collectors
+            <button type="button" class="info-icon" @click.stop data-info="Addresses that receive these reports. Each is a 32-character hex address. The same readings go to every collector."></button>
+          </label>
+          <template x-for="(addr, i) in $store.s.forms.collector.collectors" :key="i">
+            <div class="list-row flex items-center gap-10 mt-1">
+              <input type="text" maxlength="32" class="font-mono-inline flex-1-min0" placeholder="32 hex characters"
+                     spellcheck="false" autocomplete="off"
+                     x-model.trim="$store.s.forms.collector.collectors[i]"
+                     @change="saveCollectorConfig()">
+              <button type="button" class="icon icon-x" title="Remove" @click="removeCollector(i)"></button>
+            </div>
+          </template>
+          <div class="muted mt-1" x-show="!$store.s.forms.collector.collectors.length">No collectors yet.</div>
+          <div class="row mt-2">
+            <button type="button" class="secondary" @click="addCollector()">Add collector</button>
+          </div>
+
+          <label class="mt-3">Send as
+            <button type="button" class="info-icon" @click.stop data-info="Which of this device's accounts the reports are sent from. The default uses the first account."></button>
+          </label>
+          <select x-model="$store.s.forms.collector.identity" @change="saveCollectorConfig()">
+            <option value="" :selected="!$store.s.forms.collector.identity">First account on this device</option>
+            <template x-for="i in $store.s.identities" :key="i.id">
+              <option :value="i.id" x-text="i.display_name || i.id"
+                      :selected="i.id === $store.s.forms.collector.identity"></option>
+            </template>
+          </select>
+
+          <label class="mt-3">Send every</label>
+          <select x-model.number="$store.s.forms.collector.interval_s" @change="saveCollectorConfig()">
+            <template x-for="p in TELEMETRY_INTERVALS" :key="p.value">
+              <option :value="p.value" x-text="p.label"
+                      :selected="p.value === $store.s.forms.collector.interval_s"></option>
+            </template>
+          </select>
+
+          <label class="toggle-row mt-3">
+            <input type="checkbox" x-model="$store.s.forms.collector.diag"
+                   @change="saveCollectorConfig()">
+            <span>GPS diagnostics</span>
+            <button type="button" class="info-icon" @click.stop data-info="Debug mode. Sends a compact GNSS status report (AGC, satellites, fix, power mode) instead of sensor telemetry, for field-testing GPS over the radio. Stays out of the conversation."></button>
+          </label>
+
+          <label class="mt-3">Include</label>
+          <label class="toggle-row mt-1">
+            <input type="checkbox" x-model="$store.s.forms.collector.location"
+                   @change="saveCollectorConfig()">
+            <span class="ico-pin">Position</span>
+          </label>
+          <label class="toggle-row mt-1">
+            <input type="checkbox" x-model="$store.s.forms.collector.compass"
+                   @change="saveCollectorConfig()">
+            <span class="ico-compass">Heading</span>
+          </label>
+          <label class="toggle-row mt-1">
+            <input type="checkbox" x-model="$store.s.forms.collector.environment"
+                   @change="saveCollectorConfig()">
+            <span class="ico-thermo">Environment</span>
+          </label>
+          <label class="toggle-row mt-1">
+            <input type="checkbox" x-model="$store.s.forms.collector.battery"
+                   @change="saveCollectorConfig()">
+            <span class="ico-battery">Battery</span>
+          </label>
+
+          <div class="row mt-3">
+            <button type="button" class="secondary" @click="collectorSendNow($event.currentTarget)">Send now</button>
+          </div>
+          <div class="muted mt-1" x-text="collectorStatusText()"></div>
+        </div>
+
+      </div>
+
+      <!-- ============== Map tab ============== -->
+      <div class="tab-panel" data-panel="map" :class="{ active: $store.s.settingsTab === 'map' }">
+        <div class="card">
+          <label>Tile source
+            <button type="button" class="info-icon" @click.stop data-info="Where the location map gets its tiles. SD card works with no internet from tiles you load onto the card. Online has your browser fetch tiles from a server, which tells that server where you are looking."></button>
+          </label>
+          <select x-model="$store.s.forms.map.mode" @change="saveMapConfig()">
+            <option value="off">Off (coordinates only)</option>
+            <option value="sd">SD card</option>
+            <option value="online">Online</option>
+          </select>
+          <div class="muted mt-1 text-xs" x-text="mapSourceStatus()"></div>
+
+          <template x-if="$store.s.forms.map.mode !== 'off'">
+            <div>
+              <label class="mt-3">Format
+                <button type="button" class="info-icon" @click.stop data-info="Raster is a grid of image tiles: simple, and you can download an exact area. Vector is one compact file (.pmtiles) that stays sharp at any zoom and takes far less space."></button>
+              </label>
+              <select x-model="$store.s.forms.map.format" @change="saveMapConfig()">
+                <option value="raster">Raster tiles</option>
+                <option value="vector">Vector basemap</option>
+              </select>
+            </div>
+          </template>
+
+          <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.forms.map.format === 'raster'">
+            <div>
+              <label class="mt-3">Tiles folder on the card</label>
+              <input type="text" spellcheck="false" autocomplete="off" placeholder="/maps"
+                     x-model.trim="$store.s.forms.map.maps_dir" @change="saveMapConfig()">
+            </div>
+          </template>
+
+          <template x-if="$store.s.forms.map.mode === 'online'">
+            <div>
+              <label class="mt-3">Tile URL</label>
+              <input type="text" spellcheck="false" autocomplete="off"
+                     placeholder="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+                     x-model.trim="$store.s.forms.map.online_url" @change="saveMapConfig()">
+              <div class="muted mt-1 text-xs">Use a tile server whose terms allow it. The default OpenStreetMap server is for light use only.</div>
+            </div>
+          </template>
+
+          <template x-if="$store.s.forms.map.mode !== 'off'">
+            <div>
+              <label class="mt-3">Open at zoom</label>
+              <select x-model.number="$store.s.forms.map.default_zoom" @change="saveMapConfig()">
+                <option value="12">Town</option>
+                <option value="14">District</option>
+                <option value="16">Street</option>
+                <option value="18">Building</option>
+              </select>
+            </div>
+          </template>
+        </div>
+
+        <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.forms.map.format === 'vector'">
+          <div class="card">
+            <label>Get a map from the planet
+              <button type="button" class="info-icon" @click.stop data-info="The device downloads map data for an area straight from the Protomaps planet and saves it to the card. No second computer and no account. Bigger areas and higher detail mean larger files."></button>
+            </label>
+
+            <div class="row">
+              <button type="button" @click="extractWorld()" x-show="!$store.s.mapExt.active">Download world map (rough, about 45 MB)</button>
+              <button type="button" class="danger" @click="cancelMapExtract()" x-show="$store.s.mapExt.active">Cancel</button>
+            </div>
+            <div class="muted mt-1 text-xs">For a detailed area, open the map, find the place, then tap "Download this view".</div>
+
+            <template x-if="$store.s.mapExt.phase !== 'idle'">
+              <div class="mt-2">
+                <div class="progress-track" x-show="$store.s.mapExt.active || $store.s.mapExt.phase === 'done'">
+                  <div class="progress-fill" :style="'width:' + mapExtPct() + '%'"></div>
+                </div>
+                <div class="muted mt-1 text-xs" x-text="mapExtStatus()"></div>
+              </div>
+            </template>
+
+            <details class="mt-3">
+              <summary class="muted text-xs">Advanced: load a .pmtiles file from a link</summary>
+              <input type="text" spellcheck="false" autocomplete="off" class="mt-2"
+                     placeholder="https://example.com/region.pmtiles"
+                     x-model.trim="$store.s.forms.map.download_url"
+                     :disabled="$store.s.mapDl.active">
+              <div class="muted mt-1 text-xs">A pre-made .pmtiles file. It becomes the world base.</div>
+              <div class="row mt-2">
+                <button type="button" @click="startMapDownload()" x-show="!$store.s.mapDl.active" :disabled="!$store.s.forms.map.download_url">Download file</button>
+                <button type="button" class="danger" @click="cancelMapDownload()" x-show="$store.s.mapDl.active">Cancel</button>
+              </div>
+              <template x-if="$store.s.mapDl.phase !== 'idle'">
+                <div class="mt-2">
+                  <div class="progress-track" x-show="$store.s.mapDl.active || $store.s.mapDl.phase === 'done'">
+                    <div class="progress-fill" :style="'width:' + mapDlPct() + '%'"></div>
+                  </div>
+                  <div class="muted mt-1 text-xs" x-text="mapDlStatus()"></div>
+                </div>
+              </template>
+            </details>
+          </div>
+        </template>
+
+        <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.forms.map.format === 'vector' && $store.s.mapTiles.layers.length">
+          <div class="card">
+            <label>Downloaded maps</label>
+            <template x-for="ly in $store.s.mapTiles.layers" :key="ly.file">
+              <div class="layer-row">
+                <div class="layer-info">
+                  <div x-text="layerLabel(ly)"></div>
+                  <div class="muted text-xs" x-text="layerExtent(ly)"></div>
+                </div>
+                <button type="button" class="secondary" @click="flyToLayer(ly)">Show</button>
+                <button type="button" class="danger" @click="deleteMapLayer(ly.file)">Delete</button>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- ============== Time tab ============== -->
+      <div class="tab-panel" data-panel="time" :class="{ active: $store.s.settingsTab === 'time' }">
+        <div class="card">
+          <p class="muted mt-0" >The highest-priority enabled source that's reported a value wins.</p>
+          <div class="row mb-14 items-center gap-12" >
+            <div class="flex-1-min0">
+              <div><strong id="tm-current" x-text="$store.s.ui.tmCurrent">-</strong></div>
+              <div class="muted text-xs" id="tm-source" x-text="$store.s.ui.tmSource">no source has reported yet</div>
+            </div>
+            <button class="m-0" id="btn-tm-browser-sync" @click="onClickTmBrowserSync($event.currentTarget)">Sync to browser time</button>
+          </div>
+        </div>
+        <div class="card mt-3" >
+          <div class="mb-6"><strong>Time sources (drag to reorder) <button type="button" class="info-icon" data-info="Top of the list = highest priority. Disable a source to skip it entirely. Some sources expose an interval: how often their driver polls."></button></strong></div>
+          <div id="tm-sources" x-data>
+            <template x-for="row in $store.s.timeSources" :key="row.key">
+              <div class="tm-source-row mb-6 border-elev2 rounded-6 bg-elev user-select-none overflow-hidden" :data-source="row.key" draggable="true"
+                   x-init="attachTimeSourceDnD($el)"
+                   >
+                <div class="flex items-center gap-8 px-10 py-2 cursor-grab" 
+           @click="row.expanded = !row.expanded">
+                  <div class="opacity-50 text-14 line-height-1 text-center flex-0">⋮⋮</div>
+                  <input class="flex-0" type="checkbox" data-role="enable"
+             :checked="row.enabled"
+             @change.stop="row.enabled = $event.target.checked"
+             @click.stop>
+                  <div class="flex-1-min0 text-13">
+                    <strong x-text="row.label"></strong>
+                  </div>
+                  <span class="opacity-55 text-xs flex-0 transition-transform-fast" 
+            :style="row.expanded ? 'transform:rotate(180deg)' : ''">▾</span>
+                </div>
+                <div x-show="row.expanded" class="pt-0 pr-10 pb-10 pl-38 text-sm">
+                  <div class="muted mb-6"  x-text="row.desc"></div>
+                  <template x-if="row.hasInterval">
+                    <div class="flex items-center gap-8">
+                      <label class="text-sm text-default flex-0">Refresh:</label>
+                      <select class="flex-1 max-w-160" data-role="interval" 
+               title="How often this source should report a new time."
+               :value="String(row.interval_s)"
+               @change="row.interval_s = parseInt($event.target.value, 10)">
+                        <template x-for="p in INTERVAL_PRESETS" :key="p.value">
+                          <option :value="String(p.value)" x-text="p.label"></option>
+                        </template>
+                      </select>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+          <button class="w-full mt-10" id="btn-tm-save" @click="onClickTmSave($event.currentTarget)">Save time-source config</button>
+        </div>
+      </div>
+
+      <!-- ============== App / UI tab ============== -->
+      <div class="tab-panel" data-panel="ui" :class="{ active: $store.s.settingsTab === 'ui' }">
+        <div class="card">
+          <strong>UI preferences</strong>
+          <label class="toggle-row mt-10">
+            <input class="input-inline" type="checkbox" id="pref-enter-sends"
+                   x-model="$store.s.forms.prefs.enterSends"
+                   @change="savePrefs()">
+            <span>Press <kbd>Enter</kbd> to send (Shift+Enter for newline) <button type="button" class="info-icon" @click.stop data-info="When off: Enter inserts a newline, Shift+Enter sends."></button></span>
+          </label>
+          <label class="toggle-row mt-14">
+            <input class="input-inline" type="checkbox" id="pref-auto-download-attachments"
+                   x-model="$store.s.forms.prefs.autoDownloadAttachments"
+                   @change="savePrefs()">
+            <span>Automatically download attachments <button type="button" class="info-icon" @click.stop data-info="When off: inbound images and audio show as click-to-load chips."></button></span>
+          </label>
+        </div>
+        <div class="card mt-14" >
+          <strong>Transport</strong>
+          <div class="list-row">
+            <div id="tp-name">uR device (HTTP)</div>
+            <div class="muted font-mono-inline" id="tp-endpoint" x-text="$store.s.ui.tpEndpoint"></div>
+          </div>
+          <button class="secondary" disabled title="Only one transport is wired up so far">Switch transport…</button>
+        </div>
+        <div class="card mt-14" >
+          <strong>Default retention <button type="button" class="info-icon" data-info="Applied to every chat that's set to &quot;Use identity default&quot; (the inherit mode). Changing this here cascades to all inheriting chats at the next prune. Chats with an explicit per-chat override stay on their own setting until you switch them back to &quot;Use identity default&quot; from the conversation's retention icon."></button></strong>
+          <label>Pick one</label>
+          <select id="inbox-default-retention"
+                  x-model="$store.s.forms.prefs.inboxDefaultRetention"
+                  @change="onChangeInboxDefaultRetention()">
+            <option value="none:0">No expiry: keep everything</option>
+            <option value="time:604800">Last 7 days</option>
+            <option value="time:2592000">Last 30 days</option>
+            <option value="time:7776000">Last 90 days</option>
+            <option value="time:31536000">Last year</option>
+            <option value="count:50">Last 50 messages</option>
+            <option value="count:200">Last 200 messages</option>
+          </select>
+          <div class="muted mt-6 text-xs" id="inbox-config-status" x-text="$store.s.ui.inboxConfigStatus"></div>
+        </div>
+        <div class="card mt-14" >
+          <strong>Transfer limits <button type="button" class="info-icon" data-info="Maximum outbound message size you can send, and maximum inbound size accepted from peers. The slider's upper bound tracks your device's available storage live. Values above your current free space are disabled. Pull / re-insert the SD card to see the range change."></button></strong>
+          <label>Max send</label>
+          <input class="mb-1" type="range" id="storage-max-send" min="65536" step="65536"
+                 :max="$store.s.ui.storageMaxSendMax"
+                 x-model.number="$store.s.forms.storage.maxSend"
+                 @change="onChangeStorageSlider()">
+          <div class="muted mb-10 text-xs" id="storage-max-send-label" x-text="$store.s.ui.storageMaxSendLabel"></div>
+          <label>Max receive</label>
+          <input class="mb-1" type="range" id="storage-max-recv" min="65536" step="65536"
+                 :max="$store.s.ui.storageMaxRecvMax"
+                 x-model.number="$store.s.forms.storage.maxRecv"
+                 @change="onChangeStorageSlider()">
+          <div class="muted mb-6 text-xs" id="storage-max-recv-label" x-text="$store.s.ui.storageMaxRecvLabel"></div>
+          <div class="muted mt-6 text-xs" id="storage-config-status" x-text="$store.s.ui.storageStatus"></div>
+        </div>
+        <div class="card mt-14" >
+          <strong>Contacts</strong>
+          <div class="muted mt-1" >Stored in this browser only; they don't leave the device or sync between browsers.</div>
+          <div class="mt-2" id="contacts-list" x-data x-cloak>
+            <template x-if="Object.keys($store.s.contacts).length === 0">
+              <div class="muted">No contacts saved.</div>
+            </template>
+            <template x-for="addr in Object.keys($store.s.contacts)" :key="addr">
+              <div class="list-row flex items-center gap-8" >
+                <span x-html="identicon(addr, 28)"></span>
+                <div class="flex-1-min0">
+                  <div x-text="$store.s.contacts[addr]"></div>
+                  <div class="muted mono" x-text="addr"></div>
+                </div>
+                <button class="ghost"
+                        @click="delete $store.s.contacts[addr]; persistContacts();">×</button>
+              </div>
+            </template>
+          </div>
+          <label class="mt-2">Address</label>
+          <input class="font-mono-inline mb-6" id="ct-addr" maxlength="32"
+                 x-model="$store.s.forms.contactRename.addr">
+          <label>Name</label>
+          <input class="mb-2" id="ct-name"
+                 x-model="$store.s.forms.contactRename.name">
+          <button class="secondary" id="btn-ct-save" @click="onClickContactSave()">Save contact</button>
+        </div>
+      </div>
+
+      <!-- ============== Network tab ============== -->
+      <div class="tab-panel" data-panel="network" :class="{ active: $store.s.settingsTab === 'network' }">
+        <div class="card">
+          <strong>Recent announces</strong>
+          <div class="muted mt-1" >LXMF endpoints heard on the network. Click an entry to start a chat.</div>
+          <div class="mt-2" id="announces-card" x-data x-cloak>
+            <template x-if="Object.keys($store.s.announces).length === 0">
+              <div class="muted">No announces seen yet.</div>
+            </template>
+            <template x-for="a in Object.values($store.s.announces).sort((x,y) => y.received_ms - x.received_ms)" :key="a.dest">
+              <div class="list-row">
+                <div>
+                  <span x-html="identicon(a.dest, 20)"></span>
+                  <strong x-text="a.display_name || nameFor(a.dest)"></strong>
+                </div>
+                <div class="muted mono" x-text="a.dest"></div>
+                <div class="muted" x-text="'aspect=' + (a.aspect || 'transport/unknown')"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============== Danger tab ============== -->
+      <div class="tab-panel" data-panel="danger" :class="{ active: $store.s.settingsTab === 'danger' }">
+        <div class="card">
+          <strong>Delete this identity</strong>
+          <p class="muted">Permanently delete this identity from the device. Inbox, outbox, and identity material are removed. Only affects the currently logged-in identity.</p>
+          <button class="danger" id="btn-delete-self" @click="onClickDeleteSelf($event.currentTarget)">Delete this identity</button>
+        </div>
+        <div class="card mt-14" >
+          <strong>Factory reset device</strong>
+          <p class="muted">Wipes <em>every</em> identity on this device. Only escape if all passwords are lost.</p>
+          <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
+          <label>Identity code</label>
+          <input class="font-mono-inline mb-6" id="fr2-code" maxlength="6" placeholder="abc123"
+                 x-model="$store.s.forms.factoryReset2.code">
+          <button class="danger" id="btn-fr2" @click="onClickFr2($event.currentTarget)">Factory reset device</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>

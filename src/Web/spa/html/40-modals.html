@@ -1,0 +1,237 @@
+<div id="modal-new-conv" class="modal-bg" x-data x-show="$store.s.modals.newConv" x-cloak>
+  <div class="modal modal-wide">
+    <h3>New conversation</h3>
+    <div class="max-h-260 overflow-y-auto mb-3" id="nc-pick" 
+     x-data="newConvPickerData()">
+      <template x-if="contacts.length === 0 && discovered.length === 0">
+        <div class="muted">No saved contacts or discovered peers yet. Enter an address below.</div>
+      </template>
+      <template x-if="contacts.length > 0">
+        <div class="list-section py-1" >Saved contacts</div>
+      </template>
+      <template x-for="c in contacts" :key="'c:' + c.addr">
+        <div class="iden-card mb-6" 
+             @click="$store.s.forms.newConv.addr = c.addr; if (c.name) $store.s.forms.newConv.name = c.name;">
+          <span x-html="identicon(c.addr, 36)"></span>
+          <div class="min-w-0">
+            <div class="name" x-text="c.name || shortHex(c.addr)"></div>
+            <div class="addr" x-text="c.addr"></div>
+          </div>
+          <div>→</div>
+        </div>
+      </template>
+      <template x-if="discovered.length > 0">
+        <div class="list-section py-1 mt-6" >Discovered nearby</div>
+      </template>
+      <template x-for="a in discovered" :key="'d:' + a.dest">
+        <div class="iden-card mb-6" 
+             @click="$store.s.forms.newConv.addr = a.dest; if (a.display_name) $store.s.forms.newConv.name = a.display_name;">
+          <span x-html="identicon(a.dest, 36)"></span>
+          <div class="min-w-0">
+            <div class="name" x-text="a.display_name || shortHex(a.dest)"></div>
+            <div class="addr" x-text="a.dest"></div>
+            <div class="muted text-xs" 
+                 x-text="'heard ' + heardLabel(a) + ' ago'"></div>
+          </div>
+          <div>→</div>
+        </div>
+      </template>
+    </div>
+    <label>Or enter address manually (32 hex)</label>
+    <input class="mb-10 font-mono-inline" id="nc-addr" maxlength="32" placeholder="a5104e44225af3db4430f8e749509946"
+           x-model="$store.s.forms.newConv.addr">
+    <label>Contact name (optional, saved locally)</label>
+    <input class="mb-14" id="nc-name" placeholder="Their name"
+           x-model="$store.s.forms.newConv.name">
+    <div class="row">
+      <button class="secondary" id="btn-nc-cancel" @click="state.modals.newConv = false">Cancel</button>
+      <button id="btn-nc-go" @click="onClickNewConvGo()">Open</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== IMAGE RESIZE PICKER ===================== -->
+<!-- Opened after the user picks an image. Lets them pick small /
+     medium / original; each option shows its file size + ETA against
+     the current destination so the cost is visible before send. -->
+<div id="modal-image-resize" class="modal-bg z-260" x-data x-show="$store.s.modals.imageResize"
+     @click.self="imageResizeCancel()" x-cloak>
+  <div class="modal modal-wide">
+    <h3>Attach image</h3>
+    <p class="muted mb-10" id="ir-source" 
+       x-text="$store.s.imageResize.sourceLine"></p>
+    <div class="flex flex-col gap-6 mb-14" id="ir-options">
+      <template x-for="p in $store.s.imageResize.prepared" :key="p.key">
+        <div :style="imageResizeCardStyle(p)"
+             @click="imageResizePick(p)">
+          <img :src="p.objectUrl"
+               class="object-contain bg-base rounded-4 flex-shrink-0"
+               :style="'width:' + $store.s.imageResize.thumbBox + 'px;height:' + $store.s.imageResize.thumbBox + 'px'">
+          <div class="flex-1-min0">
+            <div class="font-bold" 
+         x-text="p.label + (p.maxDim ? ' (≤ ' + p.maxDim + ' px)' : ' (as-is)')"></div>
+            <div class="muted mono text-xs mt-mini" 
+                 x-text="p.dims.w + '×' + p.dims.h + ' · ' + formatBytes(p.size)"></div>
+            <template x-if="p.size > $store.s.imageResize.cap">
+              <div class="text-danger text-xs mt-1" 
+          x-text="'Too large. Cap is ' + formatBytes($store.s.imageResize.cap)"></div>
+            </template>
+            <div class="muted mono text-xs text-dim mt-1" 
+                 x-text="$store.s.imageResize.etaByKey[p.key] || ''"></div>
+          </div>
+        </div>
+      </template>
+    </div>
+    <div class="muted text-xs mb-10" x-show="$store.s.imageResize.preparing" x-cloak>Preparing previews…</div>
+    <div class="row">
+      <button class="secondary" id="ir-cancel" @click="imageResizeCancel()">Cancel</button>
+      <button id="ir-attach" :disabled="!$store.s.imageResize.chosen"
+              @click="imageResizeAttach($event.currentTarget)">Attach</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== GENERIC CONFIRM MODAL ===================== -->
+<!-- Replaces native alert/confirm/prompt. Configured at runtime via
+     showConfirm(opts) so call sites don't have to declare their own
+     modal HTML for every action. Optional identity-code input for
+     physical-presence-gated calls. -->
+<div id="modal-confirm" class="modal-bg z-270" x-data x-show="$store.s.modals.confirm"
+     @click.self="confirmCancel()" x-cloak>
+  <div class="modal">
+    <h3 id="mc-title" x-text="$store.s.confirm.title">Confirm</h3>
+    <p class="muted whitespace-pre" id="mc-body" 
+       x-text="$store.s.confirm.body"></p>
+    <div class="mb-3" id="mc-code-wrap" x-show="$store.s.confirm.needsCode" x-cloak>
+      <label>Identity code</label>
+      <p class="muted id-code-hint mb-6" x-data x-html="idCodeHintHtml()"></p>
+      <input class="font-mono-inline" id="mc-code" maxlength="6" placeholder="abc123"
+             x-model="$store.s.confirm.codeValue"
+             x-effect="$store.s.confirm.refocusTick;
+                       $store.s.modals.confirm && $store.s.confirm.needsCode && !$store.s.confirm.needsInput
+                         && $nextTick(() => $el.focus())"
+             @keydown.enter.prevent="confirmOk()">
+    </div>
+    <div class="mb-3" id="mc-input-wrap" x-show="$store.s.confirm.needsInput" x-cloak>
+      <label id="mc-input-label" x-text="$store.s.confirm.inputLabel"></label>
+      <input id="mc-input" type="text"
+             x-model="$store.s.confirm.inputValue"
+             :placeholder="$store.s.confirm.inputPlaceholder"
+             x-effect="$store.s.modals.confirm && $store.s.confirm.needsInput
+                         && $nextTick(() => { $el.focus(); $el.select(); })"
+             @keydown.enter.prevent="confirmOk()">
+    </div>
+    <div class="row">
+      <button class="secondary" id="mc-cancel" @click="confirmCancel()">Cancel</button>
+      <button id="mc-ok" :class="{ danger: $store.s.confirm.destructive }"
+              x-text="$store.s.confirm.okLabel"
+              x-effect="$store.s.modals.confirm && !$store.s.confirm.needsCode && !$store.s.confirm.needsInput
+                          && $nextTick(() => $el.focus())"
+              @click="confirmOk()">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== ADD WIFI NETWORK MODAL ===================== -->
+<!-- Opened from the Connectivity tab's "Add a network" button. Same
+     scan + pick + PSK + identity-code flow that the bootstrap softAP
+     uses, just framed as a modal so it doesn't bloat the settings tab. -->
+<div id="modal-wifi-add" class="modal-bg z-260" x-data x-show="$store.s.modals.wifiAdd" x-cloak>
+  <div class="modal modal-wide">
+    <h3>Add a WiFi network</h3>
+    <p class="muted mb-10" >Pick a network for this device to join. The device transitions to the new network in place, no reboot needed. If the saved network isn't reachable on next boot, the softAP comes up automatically after ~3 minutes as a recovery channel.</p>
+    <label>Network</label>
+    <select class="mb-2" id="cn-wifi-ssid" x-model="$store.s.forms.wifiAdd.ssid">
+      <option value=""
+              x-text="$store.s.wifiScanState === 'scanning' ? '(scanning…)'
+                     : $store.s.wifiScanState === 'error' ? '(scan failed)'
+                     : '(pick a network)'"></option>
+      <template x-for="n in $store.s.wifiScanList" :key="n.ssid">
+        <option :value="n.ssid" x-text="n.ssid + (n.secure ? ' 🔒' : '')"></option>
+      </template>
+    </select>
+    <button class="secondary mb-3" id="cn-wifi-scan"  @click="scanIntoWifiModal()">Rescan networks</button>
+    <label>Password</label>
+    <input class="mb-2" id="cn-wifi-psk" type="password" placeholder="(leave blank for open networks)"
+           x-model="$store.s.forms.wifiAdd.psk">
+    <p class="muted id-code-hint mb-2" x-data x-html="idCodeHintHtml()"></p>
+    <label>Identity code</label>
+    <input class="font-mono-inline mb-3" id="cn-wifi-code" maxlength="6" placeholder="abc123"
+           x-model="$store.s.forms.wifiAdd.code">
+    <div class="row">
+      <button class="secondary" id="cn-wifi-cancel" @click="state.modals.wifiAdd = false">Cancel</button>
+      <button id="cn-wifi-save" @click="onClickWifiSave($event.currentTarget)">Save &amp; reboot</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== ADD TCP CLIENT MODAL ===================== -->
+<div id="modal-tcp-add" class="modal-bg z-260" x-data x-show="$store.s.modals.tcpAdd" x-cloak>
+  <div class="modal modal-wide">
+    <h3>Add a TCP client</h3>
+    <p class="muted mb-10" >Connect outbound to another Reticulum node by hostname or IP. The link comes up immediately and persists across reboots.</p>
+    <label>Name</label>
+    <input class="mb-2" id="cn-tcp-name" placeholder="e.g. amsterdam-hub" maxlength="32"
+           x-model="$store.s.forms.tcpAdd.name">
+    <div class="row mb-2" >
+      <div>
+        <label>Host</label>
+        <input class="font-mono-inline" id="cn-tcp-host" placeholder="hub.example.org"
+               x-model="$store.s.forms.tcpAdd.host">
+      </div>
+      <div>
+        <label>Port</label>
+        <input id="cn-tcp-port" type="number" min="1" max="65535"
+               x-model.number="$store.s.forms.tcpAdd.port">
+      </div>
+    </div>
+    <p class="muted mt-2 text-xs" >
+      A TCP client is an outbound link only; this device opens the
+      connection. Peers can't reach back through it, so it can't be
+      publicly advertised the way a LoRa or UDP interface can.
+    </p>
+    <div class="row mt-3" >
+      <button class="secondary" id="cn-tcp-cancel" @click="state.modals.tcpAdd = false">Cancel</button>
+      <button id="cn-tcp-save" @click="onClickTcpSave($event.currentTarget)">Add</button>
+    </div>
+    <div class="muted mt-2 text-xs" id="cn-tcp-status" x-text="$store.s.ui.cnTcpStatus"></div>
+  </div>
+</div>
+
+<!-- ===================== IMAGE VIEWER MODAL ===================== -->
+<!-- Full-screen image preview opened by clicking any inline-rendered
+     image attachment in a chat bubble. Tap the image to toggle between
+     fit-to-viewport and natural size (pan via scroll when zoomed).
+     Tap the backdrop or hit Escape to close. -->
+<div id="modal-image" class="modal-bg z-280 bg-image-backdrop" x-data x-show="$store.s.modals.image" x-cloak >
+  <!-- 100dvh, not 100vh - Firefox Android's bottom address bar
+       otherwise hides the bottom of the image (and the close/save
+       buttons by reducing the usable area). Same fix as the modals. -->
+  <div class="w-viewport h-viewport overflow-y-auto flex items-center justify-center cursor-zoom-out" id="mi-wrap">
+    <img class="max-w-viewport max-h-viewport display-block cursor-zoom-in touch-pinch" id="mi-img" alt="">
+  </div>
+  <!-- `top: calc(8px + env(safe-area-inset-top, 0px))` rather than the
+       earlier `env(..., 8px)` form: the fallback only fires when the env
+       is UNDEFINED; on most Android browsers safe-area-inset-top IS
+       defined but evaluates to 0, so the fallback never kicked in and
+       the button pinned flush to the top edge. The calc form always
+       gives the 8 px gap plus any real notch / status-bar inset. -->
+  <!-- Close + Save controls floated above the image. Explicit
+       z-index because when the viewer is in zoomed-1:1 mode the
+       <img> can be enormous and live in its own stacking context;
+       without z-index the controls would still stack on top in
+       DOM-order but it's worth being explicit so any future style
+       change to .icon doesn't accidentally introduce a new
+       stacking context that buries them. -->
+  <button id="mi-close" class="icon icon-x absolute top-safe-8 right-8 bg-modal-btn text-white border-white-soft z-10" title="Close"></button>
+  <a id="mi-save" download class="icon absolute top-safe-8 right-60 bg-modal-btn text-white border-white-soft inline-flex items-center justify-center no-underline z-10" title="Save" >
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+  </a>
+</div>
+
+<!-- ===================== MAP VIEW ===================== -->
+<!-- The map fills the main app area (below the app top bar) when the Map
+     view switch is active. Just the canvas; the top bar's Chats/Map icons
+     switch views. One persistent Leaflet map, initialised lazily in
+     openMapView: markers for every peer sharing a position, per-peer track
+     + heading, browsable over offline tiles. -->

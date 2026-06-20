@@ -1,0 +1,36 @@
+<div id="toast-reconnect"
+     x-data
+     x-show="$store.net && !$store.net.connected"
+     x-cloak>Reconnecting…</div>
+<!-- Offscreen utility nodes - never user-visible. Created in markup
+     once instead of via document.createElement on every Save-As /
+     image-resize call. -->
+<a id="dl-link" hidden></a>
+<canvas id="resize-canvas" hidden></canvas>
+
+<!-- Singleton info-tooltip popover. Positioned at runtime via
+     $store.s.infoTip.{x,y} and its body comes from .data-info on the
+     icon that triggered it. -->
+<div class="info-tooltip" x-data x-show="$store.s.infoTip"
+     :style="$store.s.infoTip ? ('left:' + $store.s.infoTip.x + 'px;top:' + $store.s.infoTip.y + 'px') : ''"
+     x-html="$store.s.infoTip ? $store.s.infoTip.html : ''"
+     x-cloak></div>
+
+<div id="toast-stack" x-data x-cloak>
+  <template x-for="t in $store.toasts.items" :key="t.id">
+    <div :class="'toast ' + t.kind + (t.dismissing ? ' dismissing' : '')"
+         role="status"
+         @click="$store.toasts.dismiss(t.id)">
+      <div class="title" x-text="t.title"></div>
+      <template x-if="t.body">
+        <div class="body" x-text="t.body"></div>
+      </template>
+    </div>
+  </template>
+</div>
+
+<!-- ===================== LOADING ===================== -->
+<!-- Shown until boot()'s first /api/info resolves and routes to the
+     correct view. Without this, the store's initial view would render a
+     real screen (e.g. first-time setup) for a frame before identities
+     load. -->

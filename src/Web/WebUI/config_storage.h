@@ -88,11 +88,14 @@
     }
 
     // POST /api/sensors/config - body = {"sensor":"environment|
-    // magnetometer|imu|gps", "enabled":bool, "interval_s":uint}.
+    // magnetometer|imu|gps", "enabled":bool, "interval_s":uint, plus an
+    // optional feature object: "trend" (environment) {"enabled":bool,
+    // "interval_s":uint} or "motion_wake" (imu) {"enabled":bool}.
     // Applies the override to the running driver and persists to
-    // /lxmf/sensors.json so it survives reboot. For gps this is the
-    // LOCATION cadence (receiver power); the clock-sync cadence lives
-    // in /api/time/sources.
+    // /lxmf/sensors.json so it survives reboot. For gps interval_s is the
+    // LOCATION cadence (receiver power); for the I2C sensors a bare
+    // interval_s is ignored, only the feature interval applies. The
+    // clock-sync cadence lives in /api/time/sources.
     static void handle_sensors_config_post(AsyncWebServerRequest* req, JsonVariant& body) {
       RnsLockGuard _g;
       if (require_auth(req).empty()) return;
@@ -104,12 +107,24 @@
           "Body must include `sensor` (one of environment, magnetometer, imu, gps).");
         return;
       }
-      if (iv_s > 7 * 24 * 3600UL) {
+      // Optional time-series feature config: "trend" for environment,
+      // "motion_wake" for imu. Absent leaves the feature untouched.
+      Sensors::SensorConfig::FeatureUpdate feat;
+      const char* feat_key = (strcmp(key, "environment") == 0) ? "trend"
+                           : (strcmp(key, "imu") == 0)         ? "motion_wake"
+                                                              : nullptr;
+      if (feat_key && body[feat_key].is<JsonObjectConst>()) {
+        JsonObjectConst f = body[feat_key].as<JsonObjectConst>();
+        feat.present    = true;
+        feat.enabled    = f["enabled"] | true;
+        feat.interval_s = (uint32_t)(f["interval_s"] | 0);
+      }
+      if (iv_s > 7 * 24 * 3600UL || feat.interval_s > 7 * 24 * 3600UL) {
         send_error_with_message(req, 400, "interval_too_large",
           "Interval must be no more than 7 days.");
         return;
       }
-      if (!Sensors::SensorConfig::update_one(filesystem, key, enabled, iv_s)) {
+      if (!Sensors::SensorConfig::update_one(filesystem, key, enabled, iv_s, feat)) {
         send_error_with_message(req, 400, "unknown_sensor",
           "Unknown sensor key. Expected environment, magnetometer, imu, or gps.");
         return;

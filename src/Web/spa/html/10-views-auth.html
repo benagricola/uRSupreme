@@ -1,0 +1,118 @@
+<div id="view-loading" class="page" x-data x-show="$store.s.view === 'view-loading'" x-cloak>
+  <div class="card loading-card">
+    <span class="icon-spinner" aria-hidden="true"></span>
+    <p class="muted">Loading…</p>
+  </div>
+</div>
+
+<!-- ===================== BOOTSTRAP WIFI SETUP ===================== -->
+<div id="view-bootstrap" class="page" x-data x-show="$store.s.view === 'view-bootstrap'" x-cloak>
+  <div class="card">
+    <h2>First-time setup</h2>
+    <p class="muted">This device hasn't been configured for a WiFi network yet. Configure home WiFi so you can reach it from any device on your network, or skip and use it directly from this softAP for standalone / off-grid operation.</p>
+    <div class="row mb-2" >
+      <select id="bs-ssid" x-model="$store.s.forms.bootstrap.ssid">
+        <option value=""
+                x-text="$store.s.wifiScanState === 'scanning' ? '(scanning…)'
+                       : $store.s.wifiScanState === 'error' ? '(scan failed)'
+                       : '(pick a network)'"></option>
+        <template x-for="n in $store.s.wifiScanList" :key="n.ssid">
+          <option :value="n.ssid" x-text="n.ssid + (n.secure ? ' 🔒' : '')"></option>
+        </template>
+      </select>
+      <button class="secondary" id="bs-rescan" @click="bsRescan()">Rescan</button>
+    </div>
+    <label>Password</label>
+    <input class="mb-10" id="bs-psk" type="password" placeholder="WiFi password" x-model="$store.s.forms.bootstrap.psk">
+    <p class="muted id-code-hint mt-14" x-data x-html="idCodeHintHtml()"></p>
+    <label>Identity code</label>
+    <input class="font-mono-inline mb-10" id="bs-code" maxlength="6" placeholder="abc123" x-model="$store.s.forms.bootstrap.code">
+    <button class="w-full" id="bs-save"
+            :disabled="!!$store.s.busyButtons['bs-save']"
+            @click="onClickBsSave($event.currentTarget)">Save WiFi & reboot</button>
+    <p class="muted mt-10" >Tip: leave the password empty for an open network.</p>
+    <hr class="border-color-default mt-14 mb-14">
+    <button class="secondary w-full" id="bs-skip" @click="onClickBsSkip()">Skip: use chat from this softAP</button>
+    <p class="muted mt-2" >Standalone mode: don't join a WiFi network at all; stay on this device's softAP. You can join a network later from the settings menu.</p>
+  </div>
+</div>
+
+<!-- ===================== IDENTITY PICKER ===================== -->
+<div id="view-identities" class="page" x-data x-show="$store.s.view === 'view-identities'" x-cloak>
+  <div class="card">
+    <h2>Identities</h2>
+    <div id="identity-list" x-data>
+      <template x-if="$store.s.identities.length === 0">
+        <div class="muted">No identities yet. Create one below.</div>
+      </template>
+      <template x-for="id in $store.s.identities" :key="id.id">
+        <div class="iden-card" @click="enterLogin(id)">
+          <span class="idc" x-html="identicon(id.address, 44)"></span>
+          <div class="min-w-0">
+            <div class="name" x-text="id.display_name || '(no name)'"></div>
+            <div class="addr" x-text="id.address"></div>
+          </div>
+          <div>→</div>
+        </div>
+      </template>
+    </div>
+    <div class="row mt-14" >
+      <button class="flex-1" id="btn-show-create" @click="enterCreate()">Create new identity</button>
+    </div>
+    <details class="mt-14">
+      <summary class="muted">Lost a password?</summary>
+      <p class="muted">Factory reset wipes <em>every</em> identity on this device: inboxes, sent messages, auth tokens, the lot. Required if every password is forgotten.</p>
+      <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
+      <label>Identity code</label>
+      <input class="font-mono-inline mb-2" id="fr-code" maxlength="6" placeholder="abc123"
+             x-model="$store.s.forms.factoryReset.code">
+      <button class="danger w-full" id="btn-factory-reset"
+              @click="onClickFactoryReset($event.currentTarget)">Factory reset</button>
+    </details>
+  </div>
+</div>
+
+<!-- ===================== CREATE IDENTITY ===================== -->
+<div id="view-create" class="page" x-data x-show="$store.s.view === 'view-create'" x-cloak>
+  <div class="card">
+    <h2>Create identity</h2>
+    <label>Display name</label>
+    <input class="mb-10" id="cr-name" placeholder="Your name" x-model="$store.s.forms.createIdent.name">
+    <label>Password (≥8 chars)</label>
+    <input class="mb-2" id="cr-pw1" type="password" x-model="$store.s.forms.createIdent.pw1">
+    <label>Confirm password</label>
+    <input class="mb-10" id="cr-pw2" type="password" x-model="$store.s.forms.createIdent.pw2">
+    <p class="muted id-code-hint" x-data x-html="idCodeHintHtml()"></p>
+    <label>Identity code</label>
+    <input class="font-mono-inline mb-10" id="cr-code" maxlength="6" placeholder="abc123"
+           x-model="$store.s.forms.createIdent.code">
+    <div class="row">
+      <button class="secondary" id="btn-create-cancel" @click="enterIdentityPicker()">Back</button>
+      <button id="btn-create-go" @click="onClickCreateGo($event.currentTarget)">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== LOGIN ===================== -->
+<div id="view-login" class="page" x-data x-show="$store.s.view === 'view-login'" x-cloak>
+  <div class="card">
+    <h2 id="login-title" x-text="$store.s.ui.loginTitle">Login</h2>
+    <p class="muted">Enter the password you set when this identity was created. No physical-presence proof is needed for login: the password is the only key.</p>
+    <label>Password</label>
+    <input class="mb-3" id="login-pw" type="password" x-model="$store.s.forms.login.pw"
+           x-effect="$store.s.view === 'view-login' && $nextTick(() => setTimeout(() => $el.focus(), 0))"
+           @keydown.enter.prevent="onClickLoginGo($refs.loginGo)">
+    <div class="row">
+      <button class="secondary" id="btn-login-back" @click="enterIdentityPicker()">Back</button>
+      <button id="btn-login-go" x-ref="loginGo"
+              :disabled="!!$store.s.busyButtons['btn-login-go']"
+              @click="onClickLoginGo($event.currentTarget)">Login</button>
+    </div>
+  </div>
+</div>
+
+<!-- (radio config lives inside #modal-settings under the Radio tab -
+     see below. The first-run wizard opens that modal with the Radio
+     tab pre-selected and "locked" so other tabs are hidden.) -->
+
+<!-- ===================== APP (split-pane chat) ===================== -->

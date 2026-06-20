@@ -39,6 +39,13 @@ def embed_spa(env):
     truth; the .h file is checked in to keep PR diffs reviewable but is
     overwritten if any source asset is newer.
 
+    The app logic lives in src/Web/spa/app/*.js, split by feature for
+    navigability. Those files are concatenated in name order and spliced
+    into index.html's single inline <script> at the __APP_JS__ placeholder,
+    so the served document is one classic script in the original order.
+    The page markup is split the same way into src/Web/spa/html/*.html,
+    spliced into the index.html shell at <!--SPA:name--> placeholders.
+
     A short hash of the CSS bytes is substituted for the
     `__STYLES_VERSION__` placeholder in the HTML so the CSS URL changes
     on every CSS edit. Combined with a long-lived immutable cache
@@ -54,6 +61,16 @@ def embed_spa(env):
     leaflet_css = os.path.join(web_dir, "spa", "leaflet.css")
     protomaps_js = os.path.join(web_dir, "spa", "protomaps-leaflet.js")
     dst = os.path.join(web_dir, "SPAEmbedded.h")
+    app_dir = os.path.join(web_dir, "spa", "app")
+    app_files = sorted(
+        os.path.join(app_dir, fn) for fn in os.listdir(app_dir)
+        if fn.endswith(".js")
+    ) if os.path.isdir(app_dir) else []
+    html_dir = os.path.join(web_dir, "spa", "html")
+    html_files = sorted(
+        os.path.join(html_dir, fn) for fn in os.listdir(html_dir)
+        if fn.endswith(".html")
+    ) if os.path.isdir(html_dir) else []
     if not os.path.exists(src):
         return
     src_mtime = os.path.getmtime(src)
@@ -70,11 +87,49 @@ def embed_spa(env):
     routes_def = os.path.join(web_dir, "api_routes.def")
     if os.path.exists(routes_def):
         src_mtime = max(src_mtime, os.path.getmtime(routes_def))
+    for app_file in app_files:
+        src_mtime = max(src_mtime, os.path.getmtime(app_file))
+    for html_file in html_files:
+        src_mtime = max(src_mtime, os.path.getmtime(html_file))
     if os.path.exists(dst) and os.path.getmtime(dst) >= src_mtime:
         return
     import gzip
     with open(src, "rb") as f:
         html = f.read()
+    # Splice the markup fragments (src/Web/spa/html/*.html) into the shell at
+    # their <!--SPA:name--> placeholders. Iterate to a fixpoint so a fragment
+    # may itself reference another; fail loudly on any unresolved token.
+    if html_files:
+        frags = {os.path.splitext(os.path.basename(p))[0]:
+                 open(p, "rb").read() for p in html_files}
+        used = set()
+        for _ in range(len(frags) + 1):
+            tokens = [b"<!--SPA:" + s.encode() + b"-->" for s in frags]
+            if not any(t in html for t in tokens):
+                break
+            for stem, content in frags.items():
+                token = b"<!--SPA:" + stem.encode() + b"-->"
+                if token in html:
+                    html = html.replace(token, content)
+                    used.add(stem)
+        # Guard both directions so nothing is silently dropped: a placeholder
+        # with no file, or a fragment file no placeholder ever references.
+        import re as _re
+        leftover = _re.findall(rb"<!--SPA:[0-9A-Za-z_-]+-->", html)
+        if leftover:
+            raise Exception("SPA placeholder with no matching spa/html/ "
+                            "file: " + repr(leftover))
+        unused = sorted(set(frags) - used)
+        if unused:
+            raise Exception("spa/html/ fragment with no <!--SPA:name--> "
+                            "placeholder in the shell or any fragment: "
+                            + repr(unused))
+    # Splice the app modules into the inline <script> before the
+    # __API_ROUTES__ substitution below, which targets a placeholder that
+    # now lives inside that app source (app/00-core.js).
+    if app_files:
+        app_js = b"".join(open(p, "rb").read() for p in app_files)
+        html = html.replace(b"__APP_JS__", app_js)
     css_bytes = b""
     css_version = ""
     if os.path.exists(css):

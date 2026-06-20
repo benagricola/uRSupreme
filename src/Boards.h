@@ -675,6 +675,7 @@
       const int SD_CS = 47;
 
       const int IMU_CS = 34;
+      const int IMU_INT = 33;   // QMI8658 INT, wired to GPIO33 (LilyGo)
 
       #if HAS_NP == false
         #if defined(EXTERNAL_LEDS)
@@ -729,6 +730,7 @@
       const int SD_CS = 47;
 
       const int IMU_CS = 34;
+      const int IMU_INT = 33;   // QMI8658 INT, wired to GPIO33 (LilyGo)
 
       #if HAS_NP == false
         #if defined(EXTERNAL_LEDS)

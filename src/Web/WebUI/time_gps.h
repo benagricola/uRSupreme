@@ -181,7 +181,11 @@
         o["model"]       = Sensors::BME280::model_name();
         o["available"]   = Sensors::BME280::present();
         o["enabled"]     = Sensors::BME280::enabled();
-        o["interval_ms"] = (uint32_t)Sensors::BME280::interval_ms();
+        {
+          JsonObject t = o["trend"].to<JsonObject>();
+          t["enabled"]    = Sensors::BME280::trend_enabled();
+          t["interval_s"] = Sensors::BME280::trend_interval_ms() / 1000UL;
+        }
         o["valid"]       = r.valid;
         if (r.valid) {
           o["temp_c"]       = r.temp_c;
@@ -197,7 +201,6 @@
         o["model"]       = Sensors::QMC6310::model_name();
         o["available"]   = Sensors::QMC6310::present();
         o["enabled"]     = Sensors::QMC6310::enabled();
-        o["interval_ms"] = (uint32_t)Sensors::QMC6310::interval_ms();
         o["valid"]       = r.valid;
         if (r.valid) {
           o["heading_deg"]  = r.heading_deg;
@@ -217,7 +220,7 @@
         o["model"]       = Sensors::QMI8658::model_name();
         o["available"]   = Sensors::QMI8658::present();
         o["enabled"]     = Sensors::QMI8658::enabled();
-        o["interval_ms"] = (uint32_t)Sensors::QMI8658::interval_ms();
+        o["motion_wake"].to<JsonObject>()["enabled"] = Sensors::QMI8658::motion_wake_enabled();
         o["valid"]       = r.valid;
         if (r.valid) {
           o["accel_x_g"]  = r.accel_x_g;

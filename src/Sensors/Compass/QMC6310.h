@@ -13,9 +13,10 @@
 // different part (different register map); it needs its own driver
 // and is not probed here.
 //
-// API mirrors Bme280/Gps: begin() probes both addresses, pump()
-// reads at most once per interval_ms (default 60 s), last_reading()
-// returns the cached snapshot.
+// API mirrors Bme280/Gps: begin() probes both addresses, pump() reads
+// only while a live demand (heading screen / popover / live share) is
+// active, read_now() forces a one-shot read for pack-time telemetry,
+// last_reading() returns the cached snapshot.
 //
 // Heading is computed here, not by the library. SensorLib's readPolar
 // is a bare atan2 of the raw vector with no offset removal. On this
@@ -108,7 +109,6 @@ namespace _detail {
   inline SensorQMC6310& sensor()     { static SensorQMC6310 s; return s; }
   inline bool&     present_ref()     { static bool v = false; return v; }
   inline Reading&  last_ref()        { static Reading r; return r; }
-  inline uint32_t& interval_ms_ref() { static uint32_t v = 60000; return v; }
   inline uint32_t& live_until_ref()  { static uint32_t v = 0; return v; }
   inline uint8_t&  addr_ref()        { static uint8_t v = 0; return v; }
   inline bool&     enabled_ref()     { static bool v = true; return v; }
@@ -162,18 +162,12 @@ inline bool begin(TwoWire& wire) {
 // complementary filter a tight integration step.
 inline constexpr uint32_t LIVE_POLL_MS = 100;
 
-inline void pump() {
-  if (!_detail::present_ref()) return;
-  if (!_detail::enabled_ref()) return;
-  const uint32_t now = millis();
-  const auto& last = _detail::last_ref();
-  // A live demand (a screen showing the compass is open) overrides both
-  // the idle interval and boot-only mode with a fast poll.
-  const bool live = now < _detail::live_until_ref();
-  const uint32_t eff_interval = live ? LIVE_POLL_MS : _detail::interval_ms_ref();
-  if (!live && _detail::interval_ms_ref() == 0 && last.taken_ms != 0) return;
-  if (last.taken_ms != 0 && (now - last.taken_ms) < eff_interval) return;
-
+// The full read: trigger the magnetometer, accumulate hard-iron
+// calibration, tilt-compensate + gyro-fuse the heading, then cache it.
+// Factored so the cadence-gated pump() and the ungated read_now() share
+// one body. `now` is millis() at the read.
+namespace _detail {
+inline void do_read(uint32_t now) {
   Polar p;
   if (!_detail::sensor().readPolar(p)) return;   // triggers the read; p.polar unused
   Reading r;
@@ -314,15 +308,40 @@ inline void pump() {
   }
   _detail::last_ref() = r;
 }
+}  // namespace _detail
+
+// Drive the read cadence from the main loop. No time-series feature
+// consumes the magnetometer, so it never background-samples: it polls
+// fast only while a heading screen, popover, or live share demands it,
+// and is read on demand (Telemeter::pack -> read_now) otherwise.
+inline void pump() {
+  if (!_detail::present_ref()) return;
+  if (!_detail::enabled_ref()) return;
+  const uint32_t now = millis();
+  const bool live = now < _detail::live_until_ref();
+  if (!live) return;
+  const auto& last = _detail::last_ref();
+  if (last.taken_ms != 0 && (now - last.taken_ms) < LIVE_POLL_MS) return;
+  _detail::do_read(now);
+}
+
+// Force a fresh read now, bypassing the live gate. Telemetry packs the
+// cached magnetic field, so a passive packer calls this just before
+// packing to send a current reading without a standing poll. A single
+// I2C read; no-op if absent or disabled. Heading fusion needs continuous
+// samples and is not produced here - only the raw field, which is all
+// the telemeter packs.
+inline void read_now() {
+  if (!_detail::present_ref() || !_detail::enabled_ref()) return;
+  _detail::do_read(millis());
+}
 
 inline const char* model_name() { return "QMC6310"; }
 inline bool      present()       { return _detail::present_ref(); }
 inline uint8_t   address()       { return _detail::addr_ref(); }
 inline Reading   last_reading()  { return _detail::last_ref(); }
-inline uint32_t  interval_ms()   { return _detail::interval_ms_ref(); }
-inline void      set_interval_ms(uint32_t ms) { _detail::interval_ms_ref() = ms; }
 // While live (a screen showing this sensor is open), poll fast
-// instead of at the idle interval. The consumer renews the TTL.
+// instead of at the idle cadence. The consumer renews the TTL.
 inline void request_live(uint32_t ttl_ms = 1500) {
   _detail::live_until_ref() = millis() + ttl_ms;
 }

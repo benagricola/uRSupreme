@@ -91,6 +91,7 @@ function telemetryLines(m) {
   if (typeof t.lat === 'number') {
     let txt = t.lat.toFixed(5) + ', ' + t.lon.toFixed(5);
     if (typeof t.acc_m === 'number' && t.acc_m > 0) txt += ' ±' + Math.round(t.acc_m) + ' m';
+    if (typeof t.alt_m === 'number') txt += ' · ' + Math.round(t.alt_m) + ' m alt';
     if (typeof t.speed_kmh === 'number' && t.speed_kmh >= 1) txt += ' · ' + Math.round(t.speed_kmh) + ' km/h';
     L.push({ ico: 'ico-pin', txt, latlon: [t.lat, t.lon] });
     // Distance from the peer's position to ours - only when our own GPS has a
@@ -182,19 +183,35 @@ function haversineKm(a, b) {
           + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dlon / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
 }
-function _peerName(peer) {
-  const c = state.conversations[peer];
-  return (c && c.display_name) || (peer ? peer.slice(0, 8) : '?');
+// How recently a live feed must have updated to still count as "live" on the
+// map. Past this, an open share whose peer has gone quiet reads as stale.
+const POSITION_LIVE_MAX_AGE_S = 600;
+// Prefer the sender's fix stamp, but fall back to our receive time when it is
+// missing or the peer's clock is clearly skewed (in the future, or far from
+// when we received the reading).
+function _fixTs(tele, recvS) {
+  const t = (tele && typeof tele.time === 'number') ? tele.time : 0;
+  const nowS = Date.now() / 1000;
+  if (t > 0 && t <= nowS + 300 && (!recvS || Math.abs(t - recvS) < 7 * 86400)) return t;
+  return recvS || t || 0;
 }
-// Latest known position for a peer: an active live feed first, else the
-// most recent message in the conversation that carried a position.
+// Latest known position for a peer and whether it is being tracked live. A
+// feed counts as live only while its share window is open AND it has updated
+// recently; otherwise (expired feed, gone-quiet peer, or a position from an
+// old message) the position is last-known and the marker is greyed out.
 function peerLatestPosition(peer) {
   const f = (state.telemetryShares.feeds || []).find(x => x.peer === peer);
-  if (f && f.tele && typeof f.tele.lat === 'number') return { tele: f.tele, live: true };
+  if (f && f.tele && typeof f.tele.lat === 'number') {
+    const recvS = f.updatedAtMs ? f.updatedAtMs / 1000 : 0;
+    const ageS  = recvS ? (Date.now() / 1000 - recvS) : Infinity;
+    const live  = _shareLeftS(f) > 0 && ageS < POSITION_LIVE_MAX_AGE_S;
+    return { tele: f.tele, live, fixTs: _fixTs(f.tele, recvS) };
+  }
   const c = state.conversations[peer];
   if (c) for (let i = c.msgs.length - 1; i >= 0; i--) {
-    const t = c.msgs[i].tele;
-    if (t && typeof t.lat === 'number') return { tele: t, live: false };
+    const m = c.msgs[i];
+    if (m.tele && typeof m.tele.lat === 'number')
+      return { tele: m.tele, live: false, fixTs: _fixTs(m.tele, m.ts || 0) };
   }
   return null;
 }
@@ -344,9 +361,9 @@ async function _renderGpxThumb(pts) {
   return canvas.toDataURL('image/png');
 }
 // A position marker: a heading arrow when we know the bearing, else a dot.
-// Live peers are red, last-known are blue.
+// Live peers are red; stale ones (live tracking has stopped) are greyed out.
 function _peerIcon(headingDeg, live) {
-  const color = live ? '#f85149' : '#58a6ff';
+  const color = live ? '#f85149' : '#8b949e';
   let html;
   if (typeof headingDeg === 'number') {
     html = "<svg width='24' height='24' viewBox='0 0 24 24' style='transform:rotate("
@@ -358,21 +375,32 @@ function _peerIcon(headingDeg, live) {
   }
   return window.L.divIcon({ className: 'peer-pin', iconSize: [24, 24], iconAnchor: [12, 12], html });
 }
-// Popup built as a DOM node so the peer name needs no escaping.
+// Popup built as a DOM node so the peer name needs no escaping. Shows the
+// resolved contact name, whether the position is live or how old it is, then
+// the full set of readings that came with it (the same lines as a bubble).
 function _peerPopup(peer, latest) {
-  const t = latest.tele, el = document.createElement('div');
-  const nm = document.createElement('div'); nm.style.fontWeight = '600'; nm.textContent = _peerName(peer);
-  const co = document.createElement('div'); co.style.cssText = 'font-family:ui-monospace,monospace;font-size:11px';
-  co.textContent = t.lat.toFixed(5) + ', ' + t.lon.toFixed(5);
-  el.appendChild(nm); el.appendChild(co);
-  const bits = [];
-  if (typeof t.acc_m === 'number' && t.acc_m > 0) bits.push('±' + Math.round(t.acc_m) + ' m');
-  if (typeof t.alt_m === 'number') bits.push(Math.round(t.alt_m) + ' m alt');
-  if (typeof t.speed_kmh === 'number' && t.speed_kmh >= 1) bits.push(Math.round(t.speed_kmh) + ' km/h');
-  if (latest.live) bits.push('live');
-  if (bits.length) {
-    const d = document.createElement('div'); d.className = 'muted';
-    d.style.fontSize = '11px'; d.textContent = bits.join(' · '); el.appendChild(d);
+  const el = document.createElement('div');
+  const nm = document.createElement('div'); nm.style.fontWeight = '600';
+  nm.textContent = nameFor(peer); el.appendChild(nm);
+
+  const st = document.createElement('div'); st.className = 'muted'; st.style.fontSize = '11px';
+  const ageS = latest.fixTs ? Math.max(0, Date.now() / 1000 - latest.fixTs) : 0;
+  const ago  = latest.fixTs ? _agoText(ageS) : '';
+  if (latest.live) {
+    st.textContent = 'Live' + (ago ? ' · updated ' + ago : '');
+  } else if (latest.fixTs) {
+    st.textContent = 'Last seen ' + new Date(latest.fixTs * 1000).toLocaleString()
+                   + (ago ? ' (' + ago + ')' : '');
+  } else {
+    st.textContent = 'Last known position';
+  }
+  el.appendChild(st);
+
+  // Reuse the bubble's line builder so the popup shows the same readings
+  // (position, distance, heading, environment, battery) in one place.
+  for (const l of telemetryLines({ tele: latest.tele })) {
+    const row = document.createElement('div'); row.className = l.ico;
+    row.textContent = l.txt; el.appendChild(row);
   }
   return el;
 }
@@ -535,12 +563,18 @@ function _gpxExtendLine(lat, lon) {
   else _gpxLayer._urtnEnd = L.circleMarker(ll,
     { radius: 5, color: '#fff', weight: 2, fillColor: GPX_END_COLOR, fillOpacity: 1 }).addTo(_gpxLayer);
 }
+// While the map is open, restyle markers on a timer so a peer that goes quiet
+// greys out in real time, not only on the next update or on reopen.
+const MAP_STALE_REFRESH_MS = 30000;
+let _mapStaleTimer = null;
 // Open the map view. opts: { peer, latlon } to centre on a shared position,
 // or { gpx } (an attachment meta) to draw a track.
 function openMapView(opts) {
   opts = opts || {};
   state.mapView.open = true;
   state.mapView.gpx = opts.gpx || null;
+  clearInterval(_mapStaleTimer);
+  _mapStaleTimer = setInterval(() => { if (state.mapView.open) mapRefresh(); }, MAP_STALE_REFRESH_MS);
   _mapTileErrorShown = false;
   setTimeout(async () => {
     _mapInit();
@@ -560,6 +594,7 @@ function closeMapView() {
   _clearHighlight();
   if (_gpxLayer && _map) { _map.removeLayer(_gpxLayer); _gpxLayer = null; }
   _gpxLoading = false; clearTimeout(_mapLoadTimer); state.mapView.loading = false;
+  clearInterval(_mapStaleTimer); _mapStaleTimer = null;
   state.mapView.gpx = null;
   state.mapView.open = false;
 }
@@ -926,6 +961,14 @@ function telemetryFeedUpdatedText() {
   return 'updated ' + Math.round(sec / 3600) + 'h ago';
 }
 
+// "12s ago" / "3d ago" for an elapsed number of seconds. Shared by the
+// bubble age line and the map popup so they read the same.
+function _agoText(sec) {
+  if (sec < 60)    return Math.round(sec) + 's ago';
+  if (sec < 3600)  return Math.round(sec / 60) + 'm ago';
+  if (sec < 86400) return Math.round(sec / 3600) + 'h ago';
+  return Math.round(sec / 86400) + 'd ago';
+}
 // Age of the readings attached to a message bubble, from the packed
 // SID_TIME stamp (the sender's clock).
 function telemetryBubbleAge(m) {
@@ -933,11 +976,7 @@ function telemetryBubbleAge(m) {
   if (!t || !t.time) return '';
   const sec = state.ui.nowS - t.time;
   if (sec < 0 || sec > 7 * 86400) return '';   // skewed peer clock - say nothing
-  if (sec < 3)    return 'updated now';
-  if (sec < 60)   return 'updated ' + Math.round(sec) + 's ago';
-  if (sec < 3600) return 'updated ' + Math.round(sec / 60) + 'm ago';
-  if (sec < 86400) return 'updated ' + Math.round(sec / 3600) + 'h ago';
-  return 'updated ' + Math.round(sec / 86400) + 'd ago';
+  return 'updated ' + (sec < 3 ? 'now' : _agoText(sec));
 }
 
 // 16-point compass rose for a bearing in degrees.

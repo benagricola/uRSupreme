@@ -1,6 +1,6 @@
-// Device-side map download: fetch a file (a vector .pmtiles, or later a
-// raster tile pack) from a URL straight to the SD card, on a dedicated
-// background task so the main loop never blocks on the network or the SD
+// Device-side map download: fetch a vector .pmtiles file from a URL
+// straight to the SD card, on a dedicated background task so the main
+// loop never blocks on the network or the SD
 // bus. One job at a time, cancellable, with byte progress. The browser
 // polls /api/map/download for status while a job runs.
 //

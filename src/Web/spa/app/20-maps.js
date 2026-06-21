@@ -125,42 +125,10 @@ function telemetryLines(m) {
   return L;
 }
 
-// ---- Location map: bubble preview + modal -------------------------
-// Web Mercator: lat/lon -> tile indices + pixel within the 256 px tile.
-function lonLatToTilePx(lat, lon, z) {
-  const n = Math.pow(2, z);
-  const xw = (lon + 180) / 360 * n;
-  const lr = lat * Math.PI / 180;
-  const yw = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n;
-  const xt = Math.floor(xw), yt = Math.floor(yw);
-  return { n, xt, yt, px: Math.floor((xw - xt) * 256), py: Math.floor((yw - yt) * 256) };
-}
-// Whether a map preview/modal should render at all: source not Off, and the
-// chosen format's data is present (raster needs SD zoom dirs / online URL;
-// vector needs the .pmtiles on SD / an online URL).
-function mapTilesEnabled() {
-  const mt = state.mapTiles;
-  if (mt.mode === 'off') return false;
-  if (mt.mode === 'online') return !!mt.onlineUrl;
-  return mt.format === 'vector' ? !!(mt.layers && mt.layers.length) : !!mt.sdAvailable;
-}
-// Raster tile URL: the opt-in online template, or the device SD route (token
-// in the query so an <img>/tile layer can load it).
-function mapTileUrl(z, x, y) {
-  const mt = state.mapTiles;
-  if (mt.mode === 'online' && mt.onlineUrl)
-    return mt.onlineUrl.replace('{z}', z).replace('{x}', x).replace('{y}', y);
-  return API.MAP_TILE(z, x, y) + '?token=' + encodeURIComponent(state.token || '');
-}
+// ---- Location map: modal ------------------------------------------
 // Device range-served URL for one vector layer file (token in the query).
 function layerUrl(file) {
   return API.MAP_LAYER(file) + '?token=' + encodeURIComponent(state.token || '');
-}
-// Raster base layer (online template or the device SD route).
-function _rasterLayer() {
-  const L = window.L;
-  const Tiles = L.TileLayer.extend({ getTileUrl: function (c) { return mapTileUrl(c.z, c.x, c.y); } });
-  return new Tiles('', { maxZoom: 19, attribution: mapAttribution() });
 }
 // One protomaps-leaflet vector layer for a layer descriptor. maxDataZoom =
 // the file's own max zoom, so zooming past it overzooms (coarse data scaled)
@@ -188,29 +156,6 @@ function _vectorLayer(ly, isWorld) {
   // covers (a permanent blank over Europe/US at the world view).
   lyr.backgroundColor = isWorld ? '#0d1117' : null;
   return lyr;
-}
-function mapAttribution() {
-  return state.mapTiles.mode === 'online' ? '&copy; OpenStreetMap contributors' : '';
-}
-// Static 3x3 tile grid for a bubble preview, positioned so the location
-// pixel lands at the box centre (240x132, zoom 15). Latitude clamped,
-// longitude wrapped. Static <img>s (not a Leaflet map) so the thread can
-// re-render freely without leaking map instances.
-function locationThumbTiles(t) {
-  if (!t || typeof t.lat !== 'number') return [];
-  const Z = 15, BW = 240, BH = 132;
-  const c = lonLatToTilePx(t.lat, t.lon, Z);
-  const out = [];
-  for (let dy = -1; dy <= 1; dy++)
-    for (let dx = -1; dx <= 1; dx++) {
-      const yt = c.yt + dy;
-      if (yt < 0 || yt >= c.n) continue;
-      const xt = ((c.xt + dx) % c.n + c.n) % c.n;
-      out.push({ url: mapTileUrl(Z, xt, yt),
-                 left: Math.round(BW / 2 - c.px + dx * 256),
-                 top:  Math.round(BH / 2 - c.py + dy * 256) });
-    }
-  return out;
 }
 
 // The map view shows every peer that is sharing a position, with a track
@@ -296,7 +241,7 @@ let _mapMetaPromise = null;
 function ensureMapMeta() {
   if (!_mapMetaPromise) _mapMetaPromise = (async () => {
     await fetchMapConfig();
-    if (state.mapTiles.mode === 'sd' && state.mapTiles.format === 'vector') await fetchMapLayers();
+    if (state.mapTiles.mode === 'sd') await fetchMapLayers();
   })().catch(() => { _mapMetaPromise = null; });
   return _mapMetaPromise;
 }
@@ -375,7 +320,7 @@ async function _renderGpxThumb(pts) {
   const ctx = canvas.getContext('2d');
   // Static vector basemap (best layer for the area). Failure leaves the app
   // background, so the track still shows.
-  const ly = (state.mapTiles.mode === 'sd' && state.mapTiles.format === 'vector') ? _gpxBaseLayer(bb) : null;
+  const ly = state.mapTiles.mode === 'sd' ? _gpxBaseLayer(bb) : null;
   if (ly && window.protomapsL && window.protomapsL.Static) {
     try {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -436,22 +381,17 @@ function _mapInit() {
   _map = L.map('map-canvas', { zoomControl: true, attributionControl: true, maxZoom: 18 });
   _map.setView([20, 0], 2);   // world-ish until markers arrive
 }
-// (Re)build the base layer from the current format/source, so a settings
-// change (raster <-> vector, SD <-> online) takes effect on the next open.
-// Why the map can't show tiles, or '' when it should be fine. Used to warn
-// the user on open rather than leaving a silently blank canvas.
+// Why the map can't show, or '' when it should be fine. Used to warn the
+// user on open rather than leaving a silently blank canvas.
 function mapUnavailableReason() {
   const mt = state.mapTiles;
-  if (mt.mode === 'off')    return 'Map tiles are off. Choose a source in Settings, Map.';
-  if (mt.mode === 'online') return mt.onlineUrl ? '' : 'No online tile URL set. Settings, Map.';
-  if (!mt.sdPresent)        return 'No SD card detected for map tiles. Settings, Map.';
-  if (mt.format === 'vector')
-    return (mt.layers && mt.layers.length) ? '' : 'No maps on the card yet. Download one in Settings, Map.';
-  return mt.sdAvailable ? '' : 'No map tiles found on the card in ' + mt.mapsDir + '.';
+  if (mt.mode === 'off') return 'Map is off. Turn it on in Settings, Map.';
+  if (!mt.sdPresent)     return 'No SD card detected for maps. Settings, Map.';
+  return (mt.layers && mt.layers.length) ? '' : 'No maps on the card yet. Download one in Settings, Map.';
 }
 let _mapTileErrorShown = false;   // one missing-tile toast per open
-// A part of the map not loading (raster 404, vector tile fetch failure, or an
-// online server not responding) fires tileerror; warn once per open.
+// A part of the map not loading (a vector tile fetch failure) fires
+// tileerror; warn once per open.
 function _onMapTileErr() {
   if (_mapTileErrorShown) return;
   _mapTileErrorShown = true;
@@ -487,12 +427,6 @@ function _mapApplyBase() {
   _map._urtnLayers = [];
   const mt = state.mapTiles;
   if (mt.mode === 'off') { _recomputeMapLoading(); return; }
-  if (mt.mode === 'online' || mt.format === 'raster') {
-    const base = _rasterLayer();
-    base.on('tileerror', _onMapTileErr); _bindTileLoad(base); base.addTo(_map); _map._urtnLayers.push(base);
-    _recomputeMapLoading();
-    return;
-  }
   if (!window.protomapsL) return;
   // World base at the bottom, then areas by max zoom ascending so the most
   // detailed area is drawn last (on top): where areas overlap, the finer one
@@ -611,7 +545,7 @@ function openMapView(opts) {
   setTimeout(async () => {
     _mapInit();
     await fetchMapConfig();
-    if (state.mapTiles.mode === 'sd' && state.mapTiles.format === 'vector') await fetchMapLayers();
+    if (state.mapTiles.mode === 'sd') await fetchMapLayers();
     _mapApplyBase();
     mapRefresh(opts.peer, opts.latlon, !opts.peer && !opts.latlon && !opts.gpx);
     if (opts.gpx) await _renderGpxOnMap(opts.gpx);
@@ -645,18 +579,11 @@ function mapLive(ev) {
 // settings form.
 function applyMapConfig(r) {
   const mt = state.mapTiles;
-  mt.mode             = r.mode || 'sd';
-  mt.format           = r.format || 'raster';
-  mt.sdPresent        = !!r.sd_present;
-  mt.sdAvailable      = !!r.sd_available;
-  mt.zooms            = r.zooms || [];
-  mt.mapsDir          = r.maps_dir || '/maps';
-  mt.defaultZoom      = r.default_zoom || 16;
-  if (r.online_url) mt.onlineUrl = r.online_url;
-  mt.online           = (mt.mode === 'online');
+  mt.mode        = r.mode || 'sd';
+  mt.sdPresent   = !!r.sd_present;
+  mt.defaultZoom = r.default_zoom || 16;
   const pf = state.forms.map || {};
-  state.forms.map = { mode: mt.mode, format: mt.format, maps_dir: mt.mapsDir,
-                      default_zoom: mt.defaultZoom, online_url: mt.onlineUrl,
+  state.forms.map = { mode: mt.mode, default_zoom: mt.defaultZoom,
                       download_url: pf.download_url || '' };
 }
 async function fetchMapConfig() {
@@ -677,26 +604,20 @@ async function saveMapConfig() {
   const f = state.forms.map;
   try {
     applyMapConfig(await state.transport._req(API.MAP_CONFIG, { method: 'POST', body: {
-      mode: f.mode, format: f.format, maps_dir: f.maps_dir,
-      default_zoom: f.default_zoom, online_url: f.online_url,
+      mode: f.mode, default_zoom: f.default_zoom,
     }}));
-    if (f.mode === 'sd' && f.format === 'vector') fetchMapLayers();
+    if (f.mode === 'sd') fetchMapLayers();
   } catch (e) { toast('Could not save map settings: ' + (e.message || e), 'error'); }
 }
 // One-line status under the source picker in settings.
 function mapSourceStatus() {
   const mt = state.mapTiles, f = state.forms.map;
-  if (f.mode === 'off')    return 'Positions show as coordinates only.';
-  if (f.mode === 'online') return 'Your browser loads tiles from the URL below.';
-  if (!mt.sdPresent)       return 'No SD card detected. Load a card, or use Online.';
-  if (f.format === 'vector') {
-    const nareas = (mt.layers || []).filter(l => l.id !== 'world').length;
-    const haveWorld = (mt.layers || []).some(l => l.id === 'world');
-    if (!(mt.layers || []).length) return 'Card present. Download a map below to start.';
-    return (haveWorld ? 'World base' : 'No world base') + (nareas ? (' + ' + nareas + ' detail area' + (nareas > 1 ? 's' : '')) : '') + '.';
-  }
-  return mt.sdAvailable ? 'Serving raster tiles from the card (' + mt.zooms.length + ' zoom levels).'
-                        : 'Card present, but no tiles found in ' + mt.mapsDir + '.';
+  if (f.mode === 'off') return 'Positions show as coordinates only.';
+  if (!mt.sdPresent)    return 'No SD card detected. Load a card to use maps.';
+  const nareas = (mt.layers || []).filter(l => l.id !== 'world').length;
+  const haveWorld = (mt.layers || []).some(l => l.id === 'world');
+  if (!(mt.layers || []).length) return 'Card present. Download a map below to start.';
+  return (haveWorld ? 'World base' : 'No world base') + (nareas ? (' + ' + nareas + ' detail area' + (nareas > 1 ? 's' : '')) : '') + '.';
 }
 
 // --- Device-side map download -------------------------------------

@@ -574,45 +574,14 @@
       <!-- ============== Map tab ============== -->
       <div class="tab-panel" data-panel="map" :class="{ active: $store.s.settingsTab === 'map' }">
         <div class="card">
-          <label>Tile source
-            <button type="button" class="info-icon" @click.stop data-info="Where the location map gets its tiles. SD card works with no internet from tiles you load onto the card. Online has your browser fetch tiles from a server, which tells that server where you are looking."></button>
+          <label>Map source
+            <button type="button" class="info-icon" @click.stop data-info="Where the location map comes from. SD card shows maps you have loaded onto the card and needs no internet. Off shows positions as coordinates only."></button>
           </label>
           <select x-model="$store.s.forms.map.mode" @change="saveMapConfig()">
             <option value="off">Off (coordinates only)</option>
             <option value="sd">SD card</option>
-            <option value="online">Online</option>
           </select>
           <div class="muted mt-1 text-xs" x-text="mapSourceStatus()"></div>
-
-          <template x-if="$store.s.forms.map.mode !== 'off'">
-            <div>
-              <label class="mt-3">Format
-                <button type="button" class="info-icon" @click.stop data-info="Raster is a grid of image tiles: simple, and you can download an exact area. Vector is one compact file (.pmtiles) that stays sharp at any zoom and takes far less space."></button>
-              </label>
-              <select x-model="$store.s.forms.map.format" @change="saveMapConfig()">
-                <option value="raster">Raster tiles</option>
-                <option value="vector">Vector basemap</option>
-              </select>
-            </div>
-          </template>
-
-          <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.forms.map.format === 'raster'">
-            <div>
-              <label class="mt-3">Tiles folder on the card</label>
-              <input type="text" spellcheck="false" autocomplete="off" placeholder="/maps"
-                     x-model.trim="$store.s.forms.map.maps_dir" @change="saveMapConfig()">
-            </div>
-          </template>
-
-          <template x-if="$store.s.forms.map.mode === 'online'">
-            <div>
-              <label class="mt-3">Tile URL</label>
-              <input type="text" spellcheck="false" autocomplete="off"
-                     placeholder="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-                     x-model.trim="$store.s.forms.map.online_url" @change="saveMapConfig()">
-              <div class="muted mt-1 text-xs">Use a tile server whose terms allow it. The default OpenStreetMap server is for light use only.</div>
-            </div>
-          </template>
 
           <template x-if="$store.s.forms.map.mode !== 'off'">
             <div>
@@ -627,7 +596,7 @@
           </template>
         </div>
 
-        <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.forms.map.format === 'vector'">
+        <template x-if="$store.s.forms.map.mode === 'sd'">
           <div class="card">
             <label>Get a map from the planet
               <button type="button" class="info-icon" @click.stop data-info="The device downloads map data for an area straight from the Protomaps planet and saves it to the card. No second computer and no account. Bigger areas and higher detail mean larger files."></button>
@@ -671,7 +640,7 @@
           </div>
         </template>
 
-        <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.forms.map.format === 'vector' && $store.s.mapTiles.layers.length">
+        <template x-if="$store.s.forms.map.mode === 'sd' && $store.s.mapTiles.layers.length">
           <div class="card">
             <label>Downloaded maps</label>
             <template x-for="ly in $store.s.mapTiles.layers" :key="ly.file">

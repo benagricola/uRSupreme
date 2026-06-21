@@ -126,12 +126,9 @@ let state = {
   },
   // The full-screen map view (top-bar icon / bubble preview open it).
   mapView: { open: false, gpx: null, loading: false },
-  // Map tile source, mirrored from /api/map/config. mode is off|sd|online;
-  // online (the OSM fallback) is opt-in via the Map settings.
-  mapTiles: { mode: 'sd', format: 'raster', sdPresent: false, sdAvailable: false,
-              layers: [], zooms: [], mapsDir: '/maps',
-              defaultZoom: 16, online: false,
-              onlineUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png' },
+  // Map source, mirrored from /api/map/config. mode is off|sd; the vector
+  // layers on the card (world base + detail areas) are listed separately.
+  mapTiles: { mode: 'sd', sdPresent: false, layers: [], defaultZoom: 16 },
   // Polygon draw-to-download state for the map view.
   mapDraw: { on: false, pts: [], name: '' },
   // Device-side map download job, mirrored from /api/map/download while a
@@ -292,10 +289,7 @@ let state = {
   // FORM_DEFAULTS.x). No more $('input-id').value = '' across the file.
   forms: {
     bootstrap:       { ssid: '', psk: '', code: '' },
-    map:             { mode: 'sd', format: 'raster', maps_dir: '/maps',
-                       default_zoom: 16,
-                       online_url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                       download_url: '' },
+    map:             { mode: 'sd', default_zoom: 16, download_url: '' },
     createIdent:     { name: '', pw1: '', pw2: '', code: '' },
     login:           { pw: '' },
     factoryReset:    { code: '' },           // bottom of identity-picker

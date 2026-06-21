@@ -572,17 +572,29 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
 }
 .modal-body .list-row:last-child { border-bottom: none; }
 
-/* Tab bar inside the settings modal. */
+/* Tab bar inside the settings modal. One row that scrolls horizontally
+   rather than wrapping to a second line: the modal is intentionally
+   narrow, and selectSettingsTab() scrolls the active tab toward the
+   centre so its neighbours on both sides stay reachable. The strip's own
+   scrollbar is hidden; it scrolls by swipe/trackpad, on tab select, or via
+   the edge chevrons. The relative wrapper hosts those edge affordances. */
+.tab-bar-wrap { position: relative; flex-shrink: 0; }
 .tab-bar {
   display: flex;
-  flex-wrap: wrap;          /* tabs flow to a second row rather than scroll */
+  flex-wrap: nowrap;        /* one row; the strip scrolls instead of wrapping */
   gap: 2px;
   padding: 0 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elev);
   flex-shrink: 0;            /* see .modal-header rule above */
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;     /* Firefox: hide the strip's own scrollbar */
 }
+.tab-bar::-webkit-scrollbar { display: none; }   /* WebKit/Blink: same */
 .tab-bar .tab {
+  flex: 0 0 auto;            /* keep each tab's width; scroll, don't compress */
   background: transparent; border: none;
   color: var(--text-mute);
   font-size: 13px; font-weight: 500;
@@ -598,6 +610,32 @@ label { display: block; font-size: 12px; color: var(--text-mute); margin-bottom:
   border-bottom-color: var(--accent);
 }
 .tab-bar .tab[hidden] { display: none; }
+/* Edge affordances on the scrolling tab strip: a fade gradient plus a
+   chevron at each end, shown (x-show on settingsTabEdges) only when the
+   strip can scroll further that way. Clickable to nudge the strip; the
+   gradient matches the bar background so tabs fade out under it. */
+.tab-edge {
+  position: absolute; top: 0; bottom: 0;
+  width: 32px; padding: 0; border: none;
+  display: flex; align-items: center;
+  cursor: pointer; z-index: 2;
+  color: var(--text-mute);
+}
+.tab-edge:hover { color: var(--text); }
+.tab-edge-left {
+  left: 0; justify-content: flex-start; padding-left: 5px;
+  background: linear-gradient(to right, var(--bg-elev) 45%, transparent);
+}
+.tab-edge-right {
+  right: 0; justify-content: flex-end; padding-right: 5px;
+  background: linear-gradient(to left, var(--bg-elev) 45%, transparent);
+}
+.tab-edge::before {
+  content: ""; width: 7px; height: 7px;
+  border-top: 2px solid currentColor; border-right: 2px solid currentColor;
+}
+.tab-edge-left::before  { transform: rotate(-135deg); }   /* points left */
+.tab-edge-right::before { transform: rotate(45deg); }     /* points right */
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 

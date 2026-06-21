@@ -7,14 +7,22 @@
               x-show="$store.s.ui.showCloseSettings"
               @click="closeSettingsModal()"></button>
     </header>
-    <div class="tab-bar" id="settings-tabs">
-      <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['telemetry','Telemetry'],['map','Map'],['time','Time'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
-        <button class="tab" :data-tab="t[0]"
-                :class="{ active: $store.s.settingsTab === t[0] }"
-                :hidden="$store.s.settingsFirstRun && t[0] !== 'connectivity'"
-                x-text="t[1]"
-                @click="selectSettingsTab(t[0])"></button>
-      </template>
+    <div class="tab-bar-wrap">
+      <div class="tab-bar" id="settings-tabs" @scroll.passive="updateTabEdges()">
+        <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['telemetry','Telemetry'],['map','Map'],['time','Time'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
+          <button class="tab" :data-tab="t[0]"
+                  :class="{ active: $store.s.settingsTab === t[0] }"
+                  :hidden="$store.s.settingsFirstRun && t[0] !== 'connectivity'"
+                  x-text="t[1]"
+                  @click="selectSettingsTab(t[0])"></button>
+        </template>
+      </div>
+      <button class="tab-edge tab-edge-left" type="button" x-cloak
+              x-show="$store.s.ui.settingsTabEdges.left"
+              @click="scrollTabs(-1)" aria-label="Scroll tabs left"></button>
+      <button class="tab-edge tab-edge-right" type="button" x-cloak
+              x-show="$store.s.ui.settingsTabEdges.right"
+              @click="scrollTabs(1)" aria-label="Scroll tabs right"></button>
     </div>
     <div class="modal-body">
 

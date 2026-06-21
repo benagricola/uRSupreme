@@ -327,12 +327,53 @@ async function populateIdentityTab() {
   }
 }
 
+// Edge affordances on the scrolling tab strip: show the left/right fade +
+// chevron only when the strip can scroll further that way. Bound to the
+// strip's scroll event and called on select / open / resize. A 1px slack
+// keeps it from flickering at the exact ends; a hidden strip (modal shut)
+// reports 0 width and resolves to both edges off.
+function updateTabEdges() {
+  const bar = document.getElementById('settings-tabs');
+  if (!bar) return;
+  const max = bar.scrollWidth - bar.clientWidth;
+  state.ui.settingsTabEdges.left  = bar.scrollLeft > 1;
+  state.ui.settingsTabEdges.right = bar.scrollLeft < max - 1;
+}
+// Nudge the strip about one near-screenful in `dir` (-1 left, +1 right)
+// when an edge chevron is tapped; on touch the strip also swipes natively.
+function scrollTabs(dir) {
+  const bar = document.getElementById('settings-tabs');
+  if (bar) bar.scrollBy({ left: dir * Math.round(bar.clientWidth * 0.7), behavior: 'smooth' });
+}
+// A viewport resize (e.g. phone rotation while Settings is open) changes the
+// strip's overflow, so re-evaluate the edges. No-ops when the modal is shut.
+window.addEventListener('resize', updateTabEdges);
+
+// Keep the active settings tab visible in the scrolling tab strip: scroll
+// it toward the strip's centre so its neighbours on both sides stay
+// reachable. rAF lets the modal finish laying out on first open (a hidden
+// strip reports 0 width); the leftmost tab just resolves to scrollLeft 0.
+// scrollTo clamps to the scrollable range, so the ends never over-scroll.
+function _centerSettingsTab(tabId) {
+  requestAnimationFrame(() => {
+    const bar = document.getElementById('settings-tabs');
+    if (!bar) return;
+    const btn = bar.querySelector('.tab[data-tab="' + tabId + '"]');
+    if (btn) {
+      const target = btn.offsetLeft - (bar.clientWidth - btn.offsetWidth) / 2;
+      bar.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
+    }
+    updateTabEdges();
+  });
+}
+
 function selectSettingsTab(tabId) {
   // Visual state is reactive via $store.s.settingsTab + the :class
   // bindings on each #settings-tabs > .tab and #modal-settings
   // .tab-panel. This function still handles the per-tab data load
   // (populateXxxTab) which the legacy code coupled to the tab click.
   state.settingsTab = tabId;
+  _centerSettingsTab(tabId);
   // Stop the time-tab ticker if we're leaving it; populateTimeTab
   // restarts it when we re-enter.
   if (tabId !== 'time') stopTimeTicker();

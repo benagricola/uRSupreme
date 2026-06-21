@@ -356,6 +356,7 @@ let state = {
     tmCurrent: '-',                  // time-master current value
     tmSource:  '',                   // time-master source label
     settingsTitle: 'Settings',       // h3 above the tab bar in #modal-settings
+    settingsTabEdges: { left: false, right: false },  // tab-strip scroll affordances; set by updateTabEdges()
     tpEndpoint:    '',               // transport endpoint URL in App tab
     announceState: 'none',           // data-state on #btn-announce-top: none|sent|auto
     announceLabelText: '',           // countdown label text (empty => label hidden)

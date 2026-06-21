@@ -434,8 +434,18 @@ function relTime(tsSec) {
   return d.getDate() + '/' + (d.getMonth()+1);
 }
 function shortHex(h) { return h ? (h.length > 8 ? h.slice(0,8) + '…' : h) : ''; }
+// Resolve a peer to a human name, best source first: the local alias the
+// user set, then the name from the conversation / announce (the identity's
+// own display name), then a short hex. One resolver so lists, the map and
+// the row menu all agree on what a peer is called.
 function nameFor(peerHex) {
-  return state.contacts[peerHex] || shortHex(peerHex);
+  if (!peerHex) return '?';
+  const c = state.conversations[peerHex];
+  const a = state.announces[peerHex];
+  return state.contacts[peerHex]
+      || (c && c.display_name)
+      || (a && a.display_name)
+      || shortHex(peerHex);
 }
 
 // ============================== BUSY ==============================

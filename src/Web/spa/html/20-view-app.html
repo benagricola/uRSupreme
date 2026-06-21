@@ -407,20 +407,6 @@
                line links to the map. -->
           <template x-if="telemetryLines(m).length > 0">
             <div class="telemetry-block mt-6">
-              <!-- Inline single-point preview from static raster tiles; only
-                   when raster tiles exist (online, or SD raster). In SD vector
-                   mode there are no raster images, so it would render blank -
-                   a track there shows via its GPX thumbnail instead. -->
-              <template x-if="m.tele && typeof m.tele.lat === 'number' && mapTilesEnabled() && !(state.mapTiles.mode === 'sd' && state.mapTiles.format === 'vector')">
-                <button class="map-thumb" @click="openMapView({ peer: m.peer, latlon: [m.tele.lat, m.tele.lon] })" title="Open map">
-                  <template x-for="tile in locationThumbTiles(m.tele)" :key="tile.left + ',' + tile.top">
-                    <img class="map-thumb-tile" :src="tile.url"
-                         :style="'left:' + tile.left + 'px;top:' + tile.top + 'px'" alt="" loading="lazy">
-                  </template>
-                  <span class="map-thumb-pin"></span>
-                  <span class="map-thumb-hint">Open map</span>
-                </button>
-              </template>
               <template x-for="(l, li) in telemetryLines(m)" :key="li">
                 <span class="display-contents">
                   <template x-if="l.latlon">

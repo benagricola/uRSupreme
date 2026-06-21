@@ -9,7 +9,7 @@
       <button type="button" class="secondary" @click="downloadGpx()">Download track</button>
     </span>
   </div>
-  <div class="map-dl-ctl" x-show="!$store.s.mapView.gpx && $store.s.mapTiles.mode === 'sd' && $store.s.mapTiles.format === 'vector'">
+  <div class="map-dl-ctl" x-show="!$store.s.mapView.gpx && $store.s.mapTiles.mode === 'sd'">
     <span class="map-dl-status" x-show="$store.s.mapExt.phase !== 'idle' && !$store.s.mapDraw.on" x-text="mapExtStatus()"></span>
     <template x-if="!$store.s.mapExt.active && !$store.s.mapDraw.on">
       <span class="map-dl-actions">

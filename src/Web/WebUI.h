@@ -974,7 +974,6 @@ namespace Web {
       on_uri(HTTP_GET, ApiRoutes::ATTACHMENT_DOWNLOAD, handle_attachment_get);
       on_uri(HTTP_GET, ApiRoutes::MAP_CONFIG, handle_map_config_get);
       on_json_post(ApiRoutes::MAP_CONFIG, handle_map_config_post);
-      on_uri(HTTP_GET, ApiRoutes::MAP_TILE, handle_map_tile);
       on_uri(HTTP_GET, ApiRoutes::MAP_LAYERS, handle_map_layers);
       on_uri(HTTP_GET, ApiRoutes::MAP_LAYER, handle_map_layer);
       on_uri(HTTP_DELETE, ApiRoutes::MAP_LAYER, handle_map_layer_delete);

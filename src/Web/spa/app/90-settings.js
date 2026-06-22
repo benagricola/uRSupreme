@@ -385,6 +385,7 @@ function selectSettingsTab(tabId) {
   if (tabId === 'identity')     { populateIdentityTab(); }
   if (tabId === 'telemetry')    { populateCollectorConfig(); }
   if (tabId === 'power')        { populatePowerTab(); }
+  if (tabId === 'propagation')  { populatePropagationTab(); }
   if (tabId === 'map')          { fetchMapConfig(); fetchMapLayers(); refreshMapDownload(); refreshMapExtract(); }
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
   if (tabId === 'ui')           {
@@ -864,6 +865,41 @@ async function savePowerConfig() {
   } catch (e) {
     toast('Could not save: ' + (e.message || e), 'error');
     await populatePowerTab();
+  }
+}
+
+// ---- Settings -> Propagation tab ----
+// Maps the /api/propagation response onto the UI form. The node picker shows
+// the discovered registry (nodes[]) plus a free-text address field; both edit
+// pnHash. sync_interval_s collapses to a "Manual / every N" select.
+function _propApply(r) {
+  const f = state.forms.propagation;
+  f.enabled = !!r.enabled;
+  f.pnHash  = r.pn_hash || '';
+  f.syncSel = r.sync_interval_s ? String(r.sync_interval_s) : 'manual';
+  f.retain  = !!r.retain_on_node;
+  f.offline = (r.use_when_offline !== false);
+  f.nodes   = Array.isArray(r.nodes) ? r.nodes : [];
+}
+async function populatePropagationTab() {
+  try { _propApply(await state.transport._req(API.PROPAGATION_CONFIG)); }
+  catch (e) { /* keep last-known values */ }
+}
+async function savePropagationConfig() {
+  const f = state.forms.propagation;
+  const body = {
+    enabled:          !!f.enabled,
+    pn_hash:          (f.pnHash || '').trim().toLowerCase(),
+    sync_interval_s:  f.syncSel === 'manual' ? 0 : (parseInt(f.syncSel, 10) || 0),
+    retain_on_node:   !!f.retain,
+    use_when_offline: !!f.offline,
+  };
+  try {
+    _propApply(await state.transport._req(API.PROPAGATION_CONFIG, { method: 'POST', body }));
+    toast('Propagation settings saved', 'success');
+  } catch (e) {
+    toast('Could not save: ' + (e.message || e), 'error');
+    await populatePropagationTab();
   }
 }
 

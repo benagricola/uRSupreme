@@ -10,7 +10,7 @@
     <div class="tab-bar-wrap">
       <div class="tab-bar" id="settings-tabs" @scroll.passive="updateTabEdges()"
            @wheel.prevent="$el.scrollLeft += ($event.deltaY || $event.deltaX)">
-        <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['telemetry','Telemetry'],['map','Map'],['time','Time'],['power','Power'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
+        <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['telemetry','Telemetry'],['map','Map'],['time','Time'],['power','Power'],['propagation','Propagation'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
           <button class="tab" :data-tab="t[0]"
                   :class="{ active: $store.s.settingsTab === t[0] }"
                   :hidden="$store.s.settingsFirstRun && t[0] !== 'connectivity'"
@@ -760,6 +760,48 @@
             <span>Heartbeat blink when screen is off</span>
             <button type="button" class="info-icon" @click.stop data-info="A brief charge-LED tick every few seconds while the screen is off on battery, so you can tell the device is still on."></button>
           </label>
+        </div>
+      </div>
+
+      <!-- ============== Propagation tab ============== -->
+      <div class="tab-panel" data-panel="propagation" :class="{ active: $store.s.settingsTab === 'propagation' }">
+        <div class="card">
+          <label class="toggle-row">
+            <input class="input-inline" type="checkbox"
+                   x-model="$store.s.forms.propagation.enabled" @change="savePropagationConfig()">
+            <span>Use a propagation node</span>
+            <button type="button" class="info-icon" @click.stop data-info="A propagation node stores messages for you while you are offline, and forwards messages you send when the other person is offline. The node can see who you message and when."></button>
+          </label>
+          <div x-show="$store.s.forms.propagation.enabled">
+            <label class="mt-3">Propagation node <button type="button" class="info-icon" data-info="The node that stores your messages. Pick a discovered one, or paste a node address."></button></label>
+            <select @change="$store.s.forms.propagation.pnHash = $event.target.value; $event.target.value=''; savePropagationConfig()">
+              <option value="">Pick a discovered node</option>
+              <template x-for="n in $store.s.forms.propagation.nodes" :key="n.hash">
+                <option :value="n.hash" x-text="(n.name || 'Unnamed') + ' - ' + n.hash.slice(0,12) + (n.active ? '' : ' (inactive)')"></option>
+              </template>
+            </select>
+            <input class="mt-2" type="text" placeholder="Node address" spellcheck="false"
+                   x-model="$store.s.forms.propagation.pnHash" @change="savePropagationConfig()">
+            <label class="mt-3">Check for messages <button type="button" class="info-icon" data-info="How often to fetch stored messages from the node. Manual only fetches when you ask."></button></label>
+            <select x-model="$store.s.forms.propagation.syncSel" @change="savePropagationConfig()">
+              <option value="manual">Manual only</option>
+              <option value="900">Every 15 minutes</option>
+              <option value="3600">Every hour</option>
+              <option value="21600">Every 6 hours</option>
+            </select>
+            <label class="toggle-row mt-4">
+              <input class="input-inline" type="checkbox"
+                     x-model="$store.s.forms.propagation.offline" @change="savePropagationConfig()">
+              <span>Send via the node when a contact is offline</span>
+              <button type="button" class="info-icon" @click.stop data-info="When a message cannot be delivered directly, hand it to the node to store and forward."></button>
+            </label>
+            <label class="toggle-row mt-4">
+              <input class="input-inline" type="checkbox"
+                     x-model="$store.s.forms.propagation.retain" @change="savePropagationConfig()">
+              <span>Keep messages on the node after fetching</span>
+              <button type="button" class="info-icon" @click.stop data-info="Normally messages are removed from the node once fetched. Keep them if another device also fetches your messages."></button>
+            </label>
+          </div>
         </div>
       </div>
 

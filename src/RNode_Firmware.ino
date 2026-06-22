@@ -1279,6 +1279,8 @@ void setup() {
     // User power/display preferences (blank timeout, wake sensitivity,
     // heartbeat, GPS-retry delay). No-op if /lxmf/power.json doesn't exist.
     Common::PowerConfig::load(filesystem);
+    // Device-wide propagation-node config. No-op if the file doesn't exist.
+    LXMF::Propagation::load(filesystem);
     // Restore the saved magnetometer calibration so the compass works
     // from boot without re-waving the device. No-op if never calibrated.
     Sensors::SensorConfig::load_mag_cal(filesystem);
@@ -1528,6 +1530,7 @@ void setup() {
       // read_all+decrypt. No-op-safe: if it fails, conclude stays inline.
       RnsConclude::begin();
       LXMF::AnnounceLog::setup();
+      LXMF::Propagation::setup();
       // Accelerate queued/retrying outbound sends when their recipient
       // announces. AnnounceLog subscribers run on the LoRa RX path, so
       // the callback only stashes the 16-byte hash (lock-free ring) and

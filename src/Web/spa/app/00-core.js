@@ -309,6 +309,9 @@ let state = {
     messenger:       { presets: [] },        // OLED messenger preset editor
     // Settings -> Power tab (UI-facing fields; mapped to /api/power on save).
     power:           { blankSel: '60', wakeSel: 'medium', heartbeat: true, gpsSel: '20' },
+    // Settings -> Propagation tab (mapped to /api/propagation on save). nodes
+    // holds the discovered propagation-node registry for the picker.
+    propagation:     { enabled: false, pnHash: '', syncSel: 'manual', retain: false, offline: true, nodes: [] },
     // Collector reporting (Settings -> Telemetry); also feeds the
     // system popover's telemetry status line.
     collector:       { enabled: false, collectors: [], identity: '', interval_s: 900,

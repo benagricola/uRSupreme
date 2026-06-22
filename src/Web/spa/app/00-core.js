@@ -304,8 +304,11 @@ let state = {
     idCode:          { input: '' },          // physical-presence modal
     contactRename:   { addr: '', name: '' },
     identity:        { displayName: '', announceInterval: '', persistOutbound: false, stampCost: '0', enforceStamps: false, screen: false,
-                       telLocation: true, telEnvironment: false, telBattery: false, telCompass: false, telShare: '0', telRate: '60' },
+                       telLocation: true, telEnvironment: false, telBattery: false, telCompass: false, telShare: '0', telRate: '60',
+                       msgFlash: true },
     messenger:       { presets: [] },        // OLED messenger preset editor
+    // Settings -> Power tab (UI-facing fields; mapped to /api/power on save).
+    power:           { blankSel: '60', wakeSel: 'medium', heartbeat: true, gpsSel: '20' },
     // Collector reporting (Settings -> Telemetry); also feeds the
     // system popover's telemetry status line.
     collector:       { enabled: false, collectors: [], identity: '', interval_s: 900,

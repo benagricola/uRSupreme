@@ -308,6 +308,7 @@ async function populateIdentityTab() {
       stampCost: String(me.stamp_cost ?? 0),
       enforceStamps: !!me.enforce_stamps,
       screen: !!me.screen,
+      msgFlash: me.msg_flash !== false,
       telLocation:    !me.telemetry || me.telemetry.location !== false,
       telEnvironment: !!(me.telemetry && me.telemetry.environment),
       telBattery:     !!(me.telemetry && me.telemetry.battery),
@@ -383,6 +384,7 @@ function selectSettingsTab(tabId) {
   if (tabId === 'time')         { populateTimeTab(); }
   if (tabId === 'identity')     { populateIdentityTab(); }
   if (tabId === 'telemetry')    { populateCollectorConfig(); }
+  if (tabId === 'power')        { populatePowerTab(); }
   if (tabId === 'map')          { fetchMapConfig(); fetchMapLayers(); refreshMapDownload(); refreshMapExtract(); }
   if (tabId === 'network')      { renderAnnounces(); renderPaths(); }
   if (tabId === 'ui')           {
@@ -814,6 +816,54 @@ async function onChangeAnnounceInterval() {
     toast(ms === 0 ? 'Auto-announce disabled' : 'Auto-announce updated', 'success');
   } catch (err) {
     toast('Could not update setting: ' + (err.message || err), 'error');
+  }
+}
+
+// Settings -> Identity: flash the charge LED on a new message for the screen
+// identity (per-identity; saved via setIdentitySettings).
+async function onChangeMsgFlash() {
+  const want = !!state.forms.identity.msgFlash;
+  try {
+    await state.transport.setIdentitySettings(state.identityId, { msg_flash: want });
+    if (state.self) state.self.msg_flash = want;
+    toast(want ? 'Message LED flash on' : 'Message LED flash off', 'success');
+  } catch (err) {
+    toast('Could not update setting: ' + (err.message || err), 'error');
+    state.forms.identity.msgFlash = !want;
+  }
+}
+
+// ---- Settings -> Power tab ----
+// The Power panel's selects use static <option>s (string values); the value
+// mapping to/from the /api/power numeric fields lives in the two functions
+// below. Map an /api/power response onto the UI-facing select/toggle fields.
+function _powerApply(r) {
+  const f = state.forms.power;
+  f.blankSel  = (r.blank_enabled === false) ? 'off' : String(r.blank_timeout_s);
+  f.wakeSel   = (r.wake_threshold_mg <= 80)  ? 'high'
+              : (r.wake_threshold_mg <= 150) ? 'medium' : 'low';
+  f.heartbeat = (r.heartbeat_enabled !== false);
+  f.gpsSel    = String(r.gps_motion_retry_s != null ? r.gps_motion_retry_s : 0);
+}
+async function populatePowerTab() {
+  try { _powerApply(await state.transport._req(API.POWER_CONFIG)); }
+  catch (e) { /* keep last-known values */ }
+}
+async function savePowerConfig() {
+  const f = state.forms.power;
+  const body = {
+    heartbeat_enabled:  !!f.heartbeat,
+    wake_threshold_mg:  f.wakeSel === 'high' ? 60 : (f.wakeSel === 'low' ? 200 : 120),
+    gps_motion_retry_s: parseInt(f.gpsSel, 10) || 0,
+  };
+  if (f.blankSel === 'off') { body.blank_enabled = false; }
+  else { body.blank_enabled = true; body.blank_timeout_s = parseInt(f.blankSel, 10); }
+  try {
+    _powerApply(await state.transport._req(API.POWER_CONFIG, { method: 'POST', body }));
+    toast('Power settings saved', 'success');
+  } catch (e) {
+    toast('Could not save: ' + (e.message || e), 'error');
+    await populatePowerTab();
   }
 }
 

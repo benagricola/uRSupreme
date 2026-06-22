@@ -470,6 +470,10 @@
       doc["lrproofs_sent"]         = RNS::Transport::lrproofs_sent();
       doc["lrproofs_rx"]           = RNS::Transport::lrproofs_rx();
       doc["links_active"]          = RNS::Transport::links_active();
+      // Request/response over a link - bisect a stuck Link.request round-trip.
+      doc["requests_sent"]         = RNS::Transport::requests_sent();
+      doc["responses_rx"]          = RNS::Transport::responses_rx();
+      doc["responses_matched"]     = RNS::Transport::responses_matched();
       // AP-mode LoRa-saturation diagnostics: what fills the LoRa duty cycle.
       doc["path_reqs_originated"]  = RNS::Transport::path_reqs_originated();
       {

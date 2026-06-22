@@ -168,6 +168,69 @@
       handle_power_config_get(req);
     }
 
+    // GET /api/propagation - the device-wide propagation config plus the
+    // registry of propagation nodes discovered from lxmf.propagation
+    // announces (for the web app's node picker). The firmware reads the config
+    // live, so a POST takes effect without a reboot.
+    static void handle_propagation_get(AsyncWebServerRequest* req) {
+      if (require_auth(req).empty()) return;
+      const auto& c = LXMF::Propagation::current();
+      Common::PsramJsonDocument doc;
+      doc["enabled"]          = c.enabled;
+      doc["pn_hash"]          = c.pn_hash;
+      doc["sync_interval_s"]  = c.sync_interval_s;
+      doc["retain_on_node"]   = c.retain_on_node;
+      doc["use_when_offline"] = c.use_when_offline;
+      JsonObject sy = doc["sync"].to<JsonObject>();
+      sy["state"]         = LXMF::Propagation::Sync::state_name();
+      sy["last_received"] = LXMF::Propagation::Sync::ctx().last_received;
+      sy["last_error"]    = LXMF::Propagation::Sync::ctx().last_error;
+      uint32_t lsm = LXMF::Propagation::Sync::ctx().last_sync_ms;
+      sy["last_sync_age_s"] = lsm ? (int)((millis() - lsm) / 1000) : -1;
+      JsonArray arr = doc["nodes"].to<JsonArray>();
+      uint32_t now = millis();
+      for (const auto& n : LXMF::Propagation::nodes()) {
+        JsonObject o = arr.add<JsonObject>();
+        o["hash"]            = n.hash.toHex();
+        o["name"]            = n.name;
+        o["active"]          = n.active;
+        o["stamp_cost"]      = n.stamp_cost;
+        o["per_transfer_kb"] = n.per_transfer_kb;
+        o["per_sync"]        = n.per_sync;
+        o["age_s"]           = (now - n.last_seen_ms) / 1000;
+      }
+      send_json(req, 200, doc);
+    }
+
+    // POST /api/propagation - body = any subset of {enabled, pn_hash,
+    // sync_interval_s, retain_on_node, use_when_offline}. Absent keys keep
+    // their current value; the hash is clamped to a valid length on save.
+    static void handle_propagation_post(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      LXMF::Propagation::Config c = LXMF::Propagation::current();
+      if (body["enabled"].is<bool>())             c.enabled          = body["enabled"].as<bool>();
+      if (body["pn_hash"].is<const char*>())      c.pn_hash          = body["pn_hash"].as<const char*>();
+      if (body["sync_interval_s"].is<uint32_t>()) c.sync_interval_s  = body["sync_interval_s"].as<uint32_t>();
+      if (body["retain_on_node"].is<bool>())      c.retain_on_node   = body["retain_on_node"].as<bool>();
+      if (body["use_when_offline"].is<bool>())    c.use_when_offline = body["use_when_offline"].as<bool>();
+      LXMF::Propagation::set(filesystem, c);
+      handle_propagation_get(req);
+    }
+
+    // POST /api/propagation/sync - manually trigger an inbound sync from the
+    // configured propagation node. 409 if disabled, no node, or already syncing.
+    static void handle_propagation_sync(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      bool started = LXMF::Propagation::Sync::start();
+      Common::PsramJsonDocument doc;
+      doc["started"] = started;
+      doc["state"]   = LXMF::Propagation::Sync::state_name();
+      if (!started) doc["error"] = "propagation off, no node set, or already syncing";
+      send_json(req, started ? 200 : 409, doc);
+    }
+
     // POST /api/storage/migrate_flash_to_sd - move flash-resident
     // attachments onto the SD card to free device flash.
     static void handle_migrate_flash_to_sd(AsyncWebServerRequest* req) {

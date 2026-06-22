@@ -128,6 +128,58 @@ inline bool skip_element(const uint8_t* data, size_t len, size_t& offset) {
   return false;
 }
 
+// Read an unsigned integer (positive fixint / uint8 / uint16 / uint32 /
+// uint64). Advances offset. Sets *ok=false (and returns 0) on a non-uint tag.
+inline uint64_t read_uint(const uint8_t* data, size_t len, size_t& offset, bool* ok = nullptr) {
+  if (ok) *ok = false;
+  if (offset >= len) return 0;
+  uint8_t tag = data[offset++];
+  if (tag <= 0x7F) { if (ok) *ok = true; return tag; }
+  if (tag == 0xCC && offset < len)   { if (ok) *ok = true; return data[offset++]; }
+  if (tag == 0xCD && offset + 1 < len) {
+    uint64_t v = ((uint64_t)data[offset] << 8) | data[offset+1]; offset += 2; if (ok) *ok = true; return v;
+  }
+  if (tag == 0xCE && offset + 3 < len) {
+    uint64_t v = ((uint64_t)data[offset] << 24) | ((uint64_t)data[offset+1] << 16) |
+                 ((uint64_t)data[offset+2] << 8) | data[offset+3]; offset += 4; if (ok) *ok = true; return v;
+  }
+  if (tag == 0xCF && offset + 7 < len) {
+    uint64_t v = 0; for (int i = 0; i < 8; i++) v = (v << 8) | data[offset+i]; offset += 8; if (ok) *ok = true; return v;
+  }
+  return 0;
+}
+
+// Read a boolean (true 0xC3 / false 0xC2). Advances offset; *ok=false on a
+// non-bool tag.
+inline bool read_bool(const uint8_t* data, size_t len, size_t& offset, bool* ok = nullptr) {
+  if (ok) *ok = false;
+  if (offset >= len) return false;
+  uint8_t tag = data[offset++];
+  if (tag == 0xC3) { if (ok) *ok = true; return true; }
+  if (tag == 0xC2) { if (ok) *ok = true; return false; }
+  return false;
+}
+
+// Read an array header (fixarray 0x9X / array16 0xDC), returning the element
+// count and advancing offset. Returns -1 on a non-array tag.
+inline int read_array_header(const uint8_t* data, size_t len, size_t& offset) {
+  if (offset >= len) return -1;
+  uint8_t tag = data[offset++];
+  if ((tag & 0xF0) == 0x90) return tag & 0x0F;
+  if (tag == 0xDC && offset + 1 < len) { int n = (data[offset] << 8) | data[offset+1]; offset += 2; return n; }
+  return -1;
+}
+
+// Read a map header (fixmap 0x8X / map16 0xDE), returning the pair count and
+// advancing offset. Returns -1 on a non-map tag.
+inline int read_map_header(const uint8_t* data, size_t len, size_t& offset) {
+  if (offset >= len) return -1;
+  uint8_t tag = data[offset++];
+  if ((tag & 0xF0) == 0x80) return tag & 0x0F;
+  if (tag == 0xDE && offset + 1 < len) { int n = (data[offset] << 8) | data[offset+1]; offset += 2; return n; }
+  return -1;
+}
+
 // Just the bin-format header (bin8 / bin16 / bin32). Returns the
 // header length; caller writes the body bytes separately. Used for
 // staging-backed payloads where the body is streamed chunk by chunk

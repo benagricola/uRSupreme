@@ -21,6 +21,7 @@
 #include "../Common/Status.h"           // Status::latest for /api/info
 #include "../Common/HeapWatermark.h"    // window_low for /api/diag/mem
 #include "../Common/PowerConfig.h"      // /api/power settings store
+#include "../LXMF/Propagation.h"        // /api/propagation config + PN registry
 #if defined(URTN_HEAP_TRACE)
 #include "../HeapTrace.h"               // /api/diag/heaptrace leak tracker
 #endif
@@ -936,6 +937,10 @@ namespace Web {
       // heartbeat, GPS-retry delay).
       on_http(HTTP_GET, ApiRoutes::POWER_CONFIG,    handle_power_config_get);
       on_json_post(ApiRoutes::POWER_CONFIG,         handle_power_config_post);
+      // Device-wide propagation-node config + discovered-PN registry.
+      on_http(HTTP_GET, ApiRoutes::PROPAGATION_CONFIG, handle_propagation_get);
+      on_json_post(ApiRoutes::PROPAGATION_CONFIG,      handle_propagation_post);
+      on_http(HTTP_POST, ApiRoutes::PROPAGATION_SYNC,  handle_propagation_sync);
       // Telemetry-to-collector config + manual send trigger.
       on_http(HTTP_GET, ApiRoutes::TELEMETRY_CONFIG, handle_telemetry_config_get);
       on_json_post(ApiRoutes::TELEMETRY_CONFIG,     handle_telemetry_config_post);

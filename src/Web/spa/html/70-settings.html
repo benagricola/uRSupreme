@@ -801,6 +801,10 @@
               <span>Keep messages on the node after fetching</span>
               <button type="button" class="info-icon" @click.stop data-info="Normally messages are removed from the node once fetched. Keep them if another device also fetches your messages."></button>
             </label>
+            <div class="mt-4" x-show="$store.s.forms.propagation.pnHash">
+              <button class="secondary" @click="propSyncNow()">Sync now</button>
+              <div class="muted mt-2" x-text="propSyncStatus()"></div>
+            </div>
           </div>
         </div>
       </div>

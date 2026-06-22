@@ -3315,6 +3315,9 @@ void loop() {
         // WebServer task also touches via its handlers; lock around it.
         Web::WebUI::RnsLockGuard guard;
         URTN_LT(Common::LoopTiming::max_lxmf_us, LXMF::LXMFGateway::loop());
+        // Propagation sync state machine (opens Links / issues requests to the
+        // PN). Same lock: the WebServer task triggers it via /api/propagation/sync.
+        LXMF::Propagation::Sync::pump();
       }
       if (wifi_initialized) {
         Web::WebUI::start();        // idempotent - runs once after WiFi STA is up

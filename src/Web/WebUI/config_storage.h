@@ -181,6 +181,12 @@
       doc["sync_interval_s"]  = c.sync_interval_s;
       doc["retain_on_node"]   = c.retain_on_node;
       doc["use_when_offline"] = c.use_when_offline;
+      JsonObject sy = doc["sync"].to<JsonObject>();
+      sy["state"]         = LXMF::Propagation::Sync::state_name();
+      sy["last_received"] = LXMF::Propagation::Sync::ctx().last_received;
+      sy["last_error"]    = LXMF::Propagation::Sync::ctx().last_error;
+      uint32_t lsm = LXMF::Propagation::Sync::ctx().last_sync_ms;
+      sy["last_sync_age_s"] = lsm ? (int)((millis() - lsm) / 1000) : -1;
       JsonArray arr = doc["nodes"].to<JsonArray>();
       uint32_t now = millis();
       for (const auto& n : LXMF::Propagation::nodes()) {
@@ -210,6 +216,19 @@
       if (body["use_when_offline"].is<bool>())    c.use_when_offline = body["use_when_offline"].as<bool>();
       LXMF::Propagation::set(filesystem, c);
       handle_propagation_get(req);
+    }
+
+    // POST /api/propagation/sync - manually trigger an inbound sync from the
+    // configured propagation node. 409 if disabled, no node, or already syncing.
+    static void handle_propagation_sync(AsyncWebServerRequest* req) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      bool started = LXMF::Propagation::Sync::start();
+      Common::PsramJsonDocument doc;
+      doc["started"] = started;
+      doc["state"]   = LXMF::Propagation::Sync::state_name();
+      if (!started) doc["error"] = "propagation off, no node set, or already syncing";
+      send_json(req, started ? 200 : 409, doc);
     }
 
     // POST /api/storage/migrate_flash_to_sd - move flash-resident

@@ -880,6 +880,33 @@ function _propApply(r) {
   f.retain  = !!r.retain_on_node;
   f.offline = (r.use_when_offline !== false);
   f.nodes   = Array.isArray(r.nodes) ? r.nodes : [];
+  f.sync    = r.sync || {};
+}
+function propAge(s) {
+  if (s == null || s < 0) return '';
+  if (s < 60)   return s + 's ago';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  return Math.round(s / 3600) + 'h ago';
+}
+function propSyncStatus() {
+  const s = (state.forms.propagation && state.forms.propagation.sync) || {};
+  if (s.state === 'connecting') return 'Connecting to the node';
+  if (s.state === 'syncing')    return 'Syncing';
+  if (s.state === 'complete')   return 'Synced ' + (s.last_received || 0) + ' message(s)';
+  if (s.state === 'failed')     return 'Sync failed' + (s.last_error ? ': ' + s.last_error : '');
+  if (s.last_sync_age_s != null && s.last_sync_age_s >= 0)
+    return 'Last sync: ' + (s.last_received || 0) + ' message(s), ' + propAge(s.last_sync_age_s);
+  return 'Not synced yet';
+}
+async function propSyncNow() {
+  try {
+    await state.transport._req(API.PROPAGATION_SYNC, { method: 'POST' });
+    toast('Sync started', 'success');
+  } catch (e) {
+    toast('Could not sync: ' + (e.message || e), 'error');
+  }
+  // Poll the status a few times so the line reflects progress then the result.
+  for (let i = 0; i < 8; i++) { await new Promise(r => setTimeout(r, 2500)); await populatePropagationTab(); }
 }
 async function populatePropagationTab() {
   try { _propApply(await state.transport._req(API.PROPAGATION_CONFIG)); }

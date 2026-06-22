@@ -335,6 +335,39 @@ namespace LXMF {
 
     const RNS::Bytes& address() const { return _destination.hash(); }
 
+    // This identity, for link.identify() during a propagation-node sync.
+    const RNS::Identity& identity() const { return _identity; }
+
+    // The live registry of delivery instances (dest_hash -> instance), for the
+    // propagation sync to iterate the device's identities.
+    static std::map<RNS::Bytes, LXMFMinimal*>& instances() { return registry(); }
+
+    // Ingest a propagation-stored blob addressed to this identity's delivery
+    // destination: dest_hash(16) || encrypted(src||sig||payload). Decrypt with
+    // our identity and hand to the normal inbound path, mirroring upstream
+    // LXMRouter.lxmf_propagation (LXMRouter.py:2328-2335). Re-delivery dedup is
+    // handled downstream by _deliver_lxmf_payload (_seen_delivery). Returns
+    // true on a successful decrypt + deliver.
+    bool ingest_propagated(const RNS::Bytes& lxmf_data) {
+      if (lxmf_data.size() <= HASH_LEN) return false;
+      RNS::Bytes dest = lxmf_data.left(HASH_LEN);
+      if (dest != _destination.hash()) return false;   // not for this identity
+      RNS::Bytes enc;
+      enc.append(lxmf_data.data() + HASH_LEN, lxmf_data.size() - HASH_LEN);
+      RNS::Bytes dec = _destination.decrypt(enc);
+      if (dec.size() == 0) {
+        WARNINGF("LXMF: propagation blob decrypt failed for %s",
+                 _destination.hash().toHex().c_str());
+        return false;
+      }
+      RNS::Bytes delivery_data;
+      delivery_data.append(dest.data(), HASH_LEN);
+      delivery_data.append(dec);
+      _deliver_lxmf_payload(delivery_data, RNS::Identity::full_hash(lxmf_data),
+                            /*has_dest_prefix=*/true);
+      return true;
+    }
+
     // Manually emit the LXMF announce packet for this destination.
     //
     // Wire format is the v0.5.0+ announce app_data layout:

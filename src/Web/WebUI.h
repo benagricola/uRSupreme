@@ -940,6 +940,7 @@ namespace Web {
       // Device-wide propagation-node config + discovered-PN registry.
       on_http(HTTP_GET, ApiRoutes::PROPAGATION_CONFIG, handle_propagation_get);
       on_json_post(ApiRoutes::PROPAGATION_CONFIG,      handle_propagation_post);
+      on_http(HTTP_POST, ApiRoutes::PROPAGATION_SYNC,  handle_propagation_sync);
       // Telemetry-to-collector config + manual send trigger.
       on_http(HTTP_GET, ApiRoutes::TELEMETRY_CONFIG, handle_telemetry_config_get);
       on_json_post(ApiRoutes::TELEMETRY_CONFIG,     handle_telemetry_config_post);

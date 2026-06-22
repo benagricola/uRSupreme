@@ -20,7 +20,9 @@
 //                   power config (set_power_config, persisted with
 //                   the other sensors):
 //                     disabled              -> rail off
-//                     interval <  5 min     -> always on
+//                     interval <  5 min     -> always on (continuous
+//                                              while fixing; backs off
+//                                              when it can't, as pulsed)
 //                     interval >= 5 min     -> duty-cycled
 //                   Acquisition always runs at full power with a
 //                   progress-aware window (a cold receiver cannot
@@ -114,6 +116,13 @@ inline constexpr uint32_t PULSE_RETRY_BACKOFF_MS   = 60000;  // try again 60 s l
 // view): base << shift, clamped here.
 inline constexpr uint32_t PULSE_RETRY_BACKOFF_MAX_MS = 30UL * 60UL * 1000UL;
 inline constexpr uint8_t  PULSE_RETRY_BACKOFF_SHIFT_MAX = 9;
+// Always-on: how long after the last fix the receiver still counts as
+// "producing fixes" and so is kept continuously powered. Past this it
+// has lost sky view (taken indoors) and falls back to the same bounded
+// acquire-window + exponential-backoff cycle as pulsed mode, instead of
+// hunting at full power forever. While powered and tracking, RMC fixes
+// arrive ~1/s, so any value well above one NMEA epoch holds the state.
+inline constexpr uint32_t ALWAYSON_FIX_FRESH_MS = 30000;  // 30 s
 
 enum class PowerMode : uint8_t { Off, AlwaysOn, Pulsed };
 enum class PulseState : uint8_t { Idle, Acquiring };
@@ -398,14 +407,30 @@ namespace _detail {
   // self-cycles, the firmware only re-acquiring if fixes go stale
   // (2x interval + margin) - PSMOO with warm ephemeris re-fixes in
   // seconds, so its fixed 60 s ACQPERIOD is then appropriate.
-  inline void scheduler_pump(uint32_t now, uint32_t interval_s) {
+  inline void scheduler_pump(uint32_t now, uint32_t interval_s, bool continuous) {
     const bool m10 = (module() == Module::MAXM10);
     const uint32_t interval_ms = interval_s * 1000UL;
     const uint32_t last_fix    = last_fix_ms_ref();
 
     if (pulse_state_ref() == PulseState::Idle) {
       bool due;
-      if (!ever_fixed_ref()) {
+      if (continuous) {
+        // Always-on: stay continuously powered WHILE fixes are flowing
+        // (the always-on contract), but the moment they stop - cold, or
+        // sky view lost - fall through to the same bounded acquire +
+        // exponential-backoff cycle as pulsed, so an indoor receiver
+        // never hunts at full power forever.
+        const bool fixing = ever_fixed_ref() && last_fix != 0
+                            && (now - last_fix) < ALWAYSON_FIX_FRESH_MS;
+        if (fixing) {
+          if (!hw_powered_ref()) power_on();
+          if (m10) m10_request_power(M10Power::Full, 0);
+          backoff_count_ref() = 0;
+          return;
+        }
+        due = (next_attempt_ms_ref() == 0)
+              || ((int32_t)(now - next_attempt_ms_ref()) >= 0);
+      } else if (!ever_fixed_ref()) {
         // Cold: attempt schedule is the backoff ladder.
         due = (next_attempt_ms_ref() == 0)
               || ((int32_t)(now - next_attempt_ms_ref()) >= 0);
@@ -447,7 +472,11 @@ namespace _detail {
       backoff_count_ref() = 0;
       next_attempt_ms_ref() = 0;
       pulse_state_ref() = PulseState::Idle;
-      if (m10) {
+      if (continuous) {
+        // Always-on: keep the receiver powered; the Idle branch holds it
+        // on while fixes keep arriving.
+        if (m10) m10_request_power(M10Power::Full, 0);
+      } else if (m10) {
         m10_request_power(M10Power::Psmoo, interval_s);
       } else {
         power_off();
@@ -509,17 +538,14 @@ inline void pump() {
     return;                                         // no bytes will come; skip drain
   }
   if (mode == PowerMode::AlwaysOn) {
-    if (!_detail::hw_powered_ref()) power_on();
-    _detail::pulse_state_ref() = PulseState::Idle;
-    // An M10 may still hold PSMOO from an earlier config (it persists
-    // in RAM/BBR across ESP reboots while the rail stays up); put it
-    // back to continuous operation, ACK-verified.
-    if (module() == Module::MAXM10) {
-      _detail::m10_request_power(M10Power::Full, 0);
-    }
+    // Continuous fixes while sky is visible; the same bounded acquire +
+    // backoff cycle as pulsed once fixes stop, so an indoor receiver
+    // doesn't hunt at full power forever. The M10's PSMOO (if held from
+    // an earlier pulsed config) is overridden back to Full here.
+    _detail::scheduler_pump(now, 0, /*continuous=*/true);
   }
   if (mode == PowerMode::Pulsed) {
-    _detail::scheduler_pump(now, power_config().interval_s);
+    _detail::scheduler_pump(now, power_config().interval_s, /*continuous=*/false);
   }
   if (module() == Module::MAXM10) {
     _detail::m10_cfg_pump(now);

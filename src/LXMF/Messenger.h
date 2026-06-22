@@ -325,9 +325,12 @@ inline void send_selected();
 inline const Display::Screens::ScreenPage& screen_page();
 
 inline void show_incoming(const std::string& from_name, const std::string& content) {
+  // The screen identity's per-identity message-LED preference gates the blink.
+  const auto* si = LXMFGateway::screen_identity();
+  const bool flash = (si != nullptr && si->msg_flash);
   const Page pg = _detail::page_ref();
   if (pg != Page::Hidden && pg != Page::Message) {
-    notify_led(true);
+    if (flash) notify_led(true);
     return;
   }
   _detail::msg_from_ref() = from_name;
@@ -335,7 +338,7 @@ inline void show_incoming(const std::string& from_name, const std::string& conte
   _detail::msg_at_ref()   = millis();
   _detail::page_ref()     = Page::Message;
   Display::Screens::activate(&screen_page());
-  notify_led(true);
+  if (flash) notify_led(true);
 }
 
 

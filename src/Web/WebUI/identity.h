@@ -76,6 +76,7 @@
         obj["display_name"] = a->display_name;
         obj["address"]      = a->address_hex();
         obj["screen"]       = a->screen;
+        obj["msg_flash"]    = a->msg_flash;
       }
       // Radio + transport status. Surfaced here so the SPA can render a
       // single status indicator without an extra round-trip on every
@@ -373,6 +374,7 @@
       doc["stamp_cost"]                   = a->stamp_cost;
       doc["enforce_stamps"]               = a->enforce_stamps;
       doc["screen"]                       = a->screen;
+      doc["msg_flash"]                    = a->msg_flash;
       doc["inbox_size"]                   = a->inbox  ? (uint32_t)a->inbox->size()  : 0;
       doc["outbox_size"]                  = a->outbox ? (uint32_t)a->outbox->size() : 0;
       // Time until the next *auto* announce. 0 when auto-announce is
@@ -448,6 +450,13 @@
       if (body["enforce_stamps"].is<JsonVariant>()) {
         const bool on = (bool)body["enforce_stamps"];
         if (!LXMF::LXMFGateway::set_enforce_stamps(requested, on)) {
+          send_error(req, 404, "unknown_identity");
+          return;
+        }
+      }
+      if (body["msg_flash"].is<JsonVariant>()) {
+        const bool on = (bool)body["msg_flash"];
+        if (!LXMF::LXMFGateway::set_msg_flash(requested, on)) {
           send_error(req, 404, "unknown_identity");
           return;
         }

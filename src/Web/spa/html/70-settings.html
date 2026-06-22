@@ -8,8 +8,9 @@
               @click="closeSettingsModal()"></button>
     </header>
     <div class="tab-bar-wrap">
-      <div class="tab-bar" id="settings-tabs" @scroll.passive="updateTabEdges()">
-        <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['telemetry','Telemetry'],['map','Map'],['time','Time'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
+      <div class="tab-bar" id="settings-tabs" @scroll.passive="updateTabEdges()"
+           @wheel.prevent="$el.scrollLeft += ($event.deltaY || $event.deltaX)">
+        <template x-for="t in [['identity','Identity'],['connectivity','Connectivity'],['discovery','Discovery'],['telemetry','Telemetry'],['map','Map'],['time','Time'],['power','Power'],['ui','App'],['network','Activity'],['danger','Reset']]" :key="t[0]">
           <button class="tab" :data-tab="t[0]"
                   :class="{ active: $store.s.settingsTab === t[0] }"
                   :hidden="$store.s.settingsFirstRun && t[0] !== 'connectivity'"
@@ -131,6 +132,13 @@
                    @change="onChangeScreenIdentity()">
             <span>Show new messages on the device screen</span>
             <button type="button" class="info-icon" @click.stop data-info="This is the account whose messages appear on the device screen. Anyone holding the device can read them. Turning this on needs the 6-character device code. One account at a time; turn it off here before enabling it on another."></button>
+          </label>
+          <label class="toggle-row mt-3" x-show="$store.s.forms.identity.screen" x-cloak>
+            <input class="input-inline" type="checkbox"
+                   x-model="$store.s.forms.identity.msgFlash"
+                   @change="onChangeMsgFlash()">
+            <span>Flash the LED on a new message</span>
+            <button type="button" class="info-icon" @click.stop data-info="Blink the charge LED when a new message arrives for this account, so you notice it while the screen is off. Off keeps the LED quiet."></button>
           </label>
           <details class="cn-section mt-4" data-cn="messenger"
                    x-show="$store.s.forms.identity.screen" x-cloak>
@@ -717,6 +725,41 @@
             </template>
           </div>
           <button class="w-full mt-10" id="btn-tm-save" @click="onClickTmSave($event.currentTarget)">Save time-source config</button>
+        </div>
+      </div>
+
+      <!-- ============== Power tab ============== -->
+      <div class="tab-panel" data-panel="power" :class="{ active: $store.s.settingsTab === 'power' }">
+        <div class="card">
+          <label>Screen blank timeout <button type="button" class="info-icon" data-info="How long the screen stays on after you stop using it, when running on battery. Pick the device up to wake it. Never keeps it on always. Plugged in, the screen always stays on."></button></label>
+          <select x-model="$store.s.forms.power.blankSel" @change="savePowerConfig()">
+            <option value="off">Never</option>
+            <option value="15">15 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="120">2 minutes</option>
+            <option value="300">5 minutes</option>
+          </select>
+          <label class="mt-3">Pickup wake sensitivity <button type="button" class="info-icon" data-info="How easily lifting or tilting the device wakes the screen. High wakes on the gentlest pickup; Low needs a firmer movement."></button></label>
+          <select x-model="$store.s.forms.power.wakeSel" @change="savePowerConfig()">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+          <label class="mt-3">Retry GPS after movement <button type="button" class="info-icon" data-info="If the device is carried for this long, retry a GPS fix sooner (you have probably moved somewhere new). Off never retries on movement."></button></label>
+          <select x-model="$store.s.forms.power.gpsSel" @change="savePowerConfig()">
+            <option value="0">Off</option>
+            <option value="10">10 seconds</option>
+            <option value="20">20 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="60">60 seconds</option>
+          </select>
+          <label class="toggle-row mt-4">
+            <input class="input-inline" type="checkbox"
+                   x-model="$store.s.forms.power.heartbeat" @change="savePowerConfig()">
+            <span>Heartbeat blink when screen is off</span>
+            <button type="button" class="info-icon" @click.stop data-info="A brief charge-LED tick every few seconds while the screen is off on battery, so you can tell the device is still on."></button>
+          </label>
         </div>
       </div>
 

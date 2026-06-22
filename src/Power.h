@@ -664,6 +664,18 @@ bool init_pmu() {
   #endif
 }
 
+// True while a message notification owns the charge LED (4 Hz blink), so
+// the idle heartbeat below yields to it.
+bool led_notifying = false;
+
+// Idle "still alive" heartbeat on the charge LED (Supreme). The LED has no
+// brightness/PWM control, only on/off + fixed blink, so this is a brief,
+// sparse blip rather than a fade: HEARTBEAT_ON_MS on every HEARTBEAT_PERIOD_MS
+// while idle on battery. Kept short + infrequent so it is unobtrusive and
+// near-zero power (~1% duty on a sub-mA LED).
+#define HEARTBEAT_PERIOD_MS 8000UL
+#define HEARTBEAT_ON_MS       30UL
+
 // Message-notification LED. The Supreme has no plain GPIO LED; the
 // AXP2101's charge LED is the one indicator, normally driven by the
 // charger (CTRL_CHG). Blink it while an unread message is on screen,
@@ -671,11 +683,45 @@ bool init_pmu() {
 // transition.
 void notify_led(bool blinking) {
   #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+    led_notifying = blinking;
     if (PMU == NULL) return;
     PMU->setChargingLedMode(blinking ? XPOWERS_CHG_LED_BLINK_4HZ
                                      : XPOWERS_CHG_LED_CTRL_CHG);
   #else
     (void)blinking;
+  #endif
+}
+
+// Idle heartbeat tick. Call once per main-loop pass with the current
+// display-blanked state. Blips only while idle on battery (screen blanked,
+// not charging, no message alert); yields the LED to notifications and to
+// charge-status indication otherwise.
+void heartbeat_pump(bool screen_blanked, bool heartbeat_enabled) {
+  #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+    if (PMU == NULL) return;
+    static uint32_t hb_last = 0;
+    static bool     hb_on   = false;
+    const uint32_t now = millis();
+    if (hb_on) {
+      if (now - hb_last >= HEARTBEAT_ON_MS) {
+        hb_on = false;
+        // Restore the resting (off) state only if we still own the LED: a
+        // notification or USB insert during the blip takes priority.
+        if (!led_notifying && !external_power) {
+          PMU->setChargingLedMode(XPOWERS_CHG_LED_OFF);
+        }
+      }
+      return;
+    }
+    const bool eligible = heartbeat_enabled && !external_power && screen_blanked && !led_notifying;
+    if (eligible && (now - hb_last) >= HEARTBEAT_PERIOD_MS) {
+      PMU->setChargingLedMode(XPOWERS_CHG_LED_ON);
+      hb_on   = true;
+      hb_last = now;
+    }
+  #else
+    (void)screen_blanked;
+    (void)heartbeat_enabled;
   #endif
 }
 

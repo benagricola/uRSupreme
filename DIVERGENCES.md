@@ -109,6 +109,37 @@ RNode. Rules (see CLAUDE.md §1):
   loop-task SD-bus user yields to the off-loop writer instead of blocking
   the loop. Not an upstream divergence (firmware-only mechanism).
 
+### 11. Idle OLED blanking defaults on (Supreme)
+- Where: `src/Display.h` (`display_init` Supreme default, `DIVERGES:`; and
+  the `update_display` blank gate), `src/Display/ScreenFramework.h`
+  (`active_page`).
+- Upstream: RNode firmware defaults `display_blanking_enabled = false` and
+  enables blanking only when the RNode app writes a non-zero display
+  timeout. Upstream has no screen framework, so its blank gate is a pure
+  input-inactivity timer.
+- Why: the Supreme is a battery messenger, not a headless modem. A
+  permanently lit OLED is a continuous load (controller + charge pump),
+  so the idle home screen blanks after `DISPLAY_HOME_BLANK_DEFAULT_MS` (60 s)
+  and the panel is slept (`SH110X_DISPLAYOFF`). Blanking applies on battery
+  only: on external power the screen stays lit. Two parts:
+  (1) Default ON, keyed on the timeout byte `ADDR_CONF_DBLK` itself
+  (0 factory / 0xFF unwritten = unset, use the Supreme default; a non-zero
+  RNode-app timeout still wins) rather than on the `ADDR_CONF_BSET` marker,
+  so it holds however the EEPROM was initialised.
+  (2) Inactivity-based gate. The fork's screen framework keeps the home
+  page permanently active AND it reports `is_live` (radio waterfall), so
+  the prior `!Screens::active()` gate suppressed blanking forever. The
+  gate now keys on input silence (matching upstream's model): the home
+  page uses the idle timeout, pages the user navigated to hold for
+  `DISPLAY_LIVE_BLANK_TIMEOUT_MS` (5 min), and the identity code is never
+  blanked.
+- Consequence: a Supreme user can no longer disable blanking via the RNode
+  app's 0 timeout (it now means "use the default"); a long timeout
+  approximates always-on. Acceptable for a battery device.
+- Scope: the default-on is Supreme-only (`BOARD_TBEAM_S_V1` /
+  `BOARD_TBEAM_S_LR_V1`). The inactivity gate is shared, but degrades to
+  the upstream inactivity timer on boards that register no screens.
+
 ## Recently retired (do not reintroduce)
 
 Removed by `6aef568` + the June 2026 uR re-pins, all matching upstream

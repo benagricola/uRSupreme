@@ -160,6 +160,9 @@ namespace LXMF {
     // identity's messages, by design - enabling therefore requires the
     // physical-presence identity code (enforced at the web handler).
     bool                 screen = false;
+    // Flash the charge LED on a new message. Only the screen identity
+    // surfaces messages on the OLED, so this gates that LED alert.
+    bool                 msg_flash = true;
     bool                 active = false;
     // Password hash (PBKDF2-HMAC-SHA256) + per-identity salt. Set at
     // identity creation; required for login. Empty if identity is from an
@@ -275,6 +278,14 @@ namespace LXMF {
       if (!a) return false;
       a->enforce_stamps = on;
       a->lxmf.set_enforce_stamps(on);
+      write_meta(*a);
+      return true;
+    }
+
+    static bool set_msg_flash(const IdentityId& iden_id, bool on) {
+      LXMFIdentity* a = identity_by_id_mut(iden_id);
+      if (!a) return false;
+      a->msg_flash = on;
       write_meta(*a);
       return true;
     }
@@ -1393,6 +1404,7 @@ namespace LXMF {
       doc["stamp_cost"]                   = a.stamp_cost;
       doc["enforce_stamps"]               = a.enforce_stamps;
       doc["screen"]                       = a.screen;
+      doc["msg_flash"]                    = a.msg_flash;
       doc["tel_location"]                 = a.telemetry_location;
       doc["tel_environment"]              = a.telemetry_environment;
       doc["tel_battery"]                  = a.telemetry_battery;
@@ -1421,6 +1433,7 @@ namespace LXMF {
       a.stamp_cost     = (sc >= 1 && sc <= 254) ? (uint8_t)sc : 0;
       a.enforce_stamps = (bool)(doc["enforce_stamps"] | false);
       a.screen         = (bool)(doc["screen"] | false);
+      a.msg_flash      = (bool)(doc["msg_flash"] | true);
       a.telemetry_location    = (bool)(doc["tel_location"]    | true);
       a.telemetry_environment = (bool)(doc["tel_environment"] | false);
       a.telemetry_battery     = (bool)(doc["tel_battery"]     | false);

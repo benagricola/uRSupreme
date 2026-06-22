@@ -51,6 +51,7 @@
 // renders at a constant width - Org_01 (the SMALL_FONT default) is
 // variable-width and overflows the 64-px disp_area on some hex runs.
 #include "Common/Status.h"     // marquee strip at the bottom of stat_area
+#include "Common/PowerConfig.h" // user-tunable blank timeout (Supreme)
 #define DISP_W 128
 #define DISP_H 64
 
@@ -144,6 +145,11 @@ float epd_update_fps  = 0.5;
 #define DISP_MODE_PORTRAIT  0x02
 #define DISP_PIN_SIZE   6
 #define DISPLAY_BLANKING_TIMEOUT 15*1000
+// The idle home screen blanks at DISPLAY_BLANKING_TIMEOUT; a page the user
+// navigated to (the live pages: transport, GPS globe, messenger) holds for
+// this much input silence first, so a glance at live data is not cut off
+// at the home cadence.
+#define DISPLAY_LIVE_BLANK_TIMEOUT_MS (5UL*60*1000)
 uint8_t disp_mode = DISP_MODE_UNKNOWN;
 uint8_t disp_ext_fb = false;
 unsigned char fb[512];
@@ -281,6 +287,22 @@ uint8_t display_contrast = 0x00;
   }
 #endif
 
+#if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+// Real panel power control for the SH1106. Blanking only clears the
+// framebuffer, which leaves the controller and charge pump running (a few
+// mA); DISPLAYOFF puts the panel into sleep (~uA). Edge-tracked so the
+// command is sent only on a transition. set_contrast() is a no-op on this
+// panel, so this is the only thing that actually drops the screen's draw.
+bool display_panel_off = false;
+void display_panel_power(bool on) {
+  if (on == !display_panel_off) return;   // already in the requested state
+  display.oled_command(on ? SH110X_DISPLAYON : SH110X_DISPLAYOFF);
+  display_panel_off = !on;
+}
+#else
+inline void display_panel_power(bool) {}
+#endif
+
 bool display_init() {
   #if HAS_DISPLAY
     #if BOARD_MODEL == BOARD_RNODE_NG_20 || BOARD_MODEL == BOARD_LORA32_V2_0
@@ -378,7 +400,11 @@ bool display_init() {
         }
       }
     #endif
-    
+
+    // Supreme idle blanking is owned by Common::PowerConfig (the Power tab),
+    // read live in update_display below; no EEPROM default applied here. See
+    // DIVERGENCES.md #11.
+
     #if BOARD_MODEL == BOARD_TECHO
     // Don't check if display is actually connected
     if(false) {
@@ -1657,8 +1683,44 @@ void update_display(bool blank = false) {
   if (blank == true) {
     last_disp_update = millis()-disp_update_interval-1;
   } else {
-    if (display_blanking_enabled && millis()-last_unblank_event >= display_blanking_timeout
-        && !Display::Screens::active()) {
+    // Blank on input inactivity, not on screen state. The status/home page
+    // is a framework screen that is ALWAYS active (and reports is_live via
+    // the radio waterfall), so gating on active()/active_live() would
+    // suppress blanking entirely. The home page blanks at the configured
+    // idle timeout; a page the user navigated to holds for the longer live
+    // timeout first. The identity code is never blanked - it must stay
+    // readable for its whole TTL.
+    bool code_on_screen = false;
+    #if defined(HAS_LXMF_GATEWAY)
+      code_on_screen = !Web::WebUI::identity_code_for_display().empty();
+    #endif
+    // Stay lit while on external power: blanking is a battery measure, so a
+    // plugged-in device (on a desk / dock) keeps the screen visible.
+    bool plugged_keep_on = false;
+    #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+      plugged_keep_on = external_power;
+    #endif
+    // Hold the idle timer while on power, so unplugging starts a fresh blank
+    // countdown rather than blanking instantly from a long-expired timer.
+    if (plugged_keep_on) last_unblank_event = millis();
+    // DIVERGES: upstream RNode defaults idle blanking OFF and gates it on a
+    // pure inactivity timer; the battery Supreme defaults it ON and sources
+    // the enable + home timeout from the user's Power-tab config (see
+    // DIVERGENCES.md #11). Other boards keep the EEPROM-driven globals.
+    #if BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+      const bool     blank_en      = Common::PowerConfig::current().blank_enabled;
+      const uint32_t home_blank_ms = Common::PowerConfig::current().blank_timeout_s * 1000UL;
+    #else
+      const bool     blank_en      = display_blanking_enabled;
+      const uint32_t home_blank_ms = display_blanking_timeout;
+    #endif
+    const bool on_home = !Display::Screens::active()
+                         || Display::Screens::active_page() == &STATUS_PAGE;
+    const uint32_t blank_after = on_home ? home_blank_ms
+                                         : DISPLAY_LIVE_BLANK_TIMEOUT_MS;
+    if (blank_en && !plugged_keep_on
+        && millis()-last_unblank_event >= blank_after
+        && !code_on_screen) {
       blank = true;
       display_blanked = true;
       if (display_intensity != 0) {
@@ -1692,6 +1754,14 @@ void update_display(bool blank = false) {
         display.clear();
         display.display();
         digitalWrite(PIN_T114_TFT_BLGT, HIGH);
+      #elif BOARD_MODEL == BOARD_TBEAM_S_V1 || BOARD_MODEL == BOARD_TBEAM_S_LR_V1
+        // Clear the framebuffer once, then sleep the panel; while it is
+        // asleep there is nothing to push, so we stop redrawing it.
+        if (!display_panel_off) {
+          display.clearDisplay();
+          display.display();
+          display_panel_power(false);
+        }
       #elif BOARD_MODEL != BOARD_TDECK && BOARD_MODEL != BOARD_TECHO
         display.clearDisplay();
         display.display();
@@ -1709,6 +1779,9 @@ void update_display(bool blank = false) {
     if (Display::Screens::active_live()) eff_interval = LIVE_SCREEN_INTERVAL_MS;
     if (millis()-last_disp_update >= (uint32_t)eff_interval) {
       uint32_t current = millis();
+      // Leaving blank: wake the panel before drawing to it. No-op if it
+      // was never slept (non-Supreme, or blanking disabled).
+      display_panel_power(true);
       if (display_contrast != display_intensity) {
         display_contrast = display_intensity;
         set_contrast(&display, display_contrast);

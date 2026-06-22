@@ -122,6 +122,13 @@ namespace _detail {
 }
 
 inline bool   active()       { return _detail::active_ref() >= 0; }
+// The currently active page, or nullptr when none. Lets callers tell the
+// idle home screen apart from a page the user navigated to (the status
+// home page always reports is_live, so is_live can't make that call).
+inline const ScreenPage* active_page() {
+  const int a = _detail::active_ref();
+  return a < 0 ? nullptr : _detail::screens_ref()[a];
+}
 inline size_t screen_count() { return _detail::screen_count_ref(); }
 
 // Register the screen rotation once at setup. Order = BOOT-tap order.

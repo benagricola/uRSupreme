@@ -30,6 +30,7 @@
 #include "../../Boards.h"
 #include "../../Storage/SDCard.h"  // for ensure_shared_bus
 #include "../Position/Gnss.h"      // for Gnss::reset_backoff on motion events
+#include "../../Common/PowerConfig.h"  // wake threshold + GPS-retry delay
 
 namespace Sensors {
 namespace QMI8658 {
@@ -58,13 +59,26 @@ struct Reading {
 // gets its fast samples from the live demand the heading screen/popover
 // renews; outside both, the IMU does not poll.
 //
-// Per-axis any-motion slope threshold (mg). High-pass filtered, so
-// gravity is removed and this is the change that counts as movement.
-inline constexpr float    MOTION_ANY_THR_MG = 100.0f;
-// Don't fire reset_backoff() more than once per cooldown (a walk emits
-// many events); keep the signal sparse so it doesn't flap the GPS retry
-// cadence.
-inline constexpr uint32_t MOTION_REPORT_COOLDOWN_MS = 30UL * 1000UL;
+// Per-axis any-motion slope threshold (mg), at the part's 31.25 mg floor
+// (mgToBytes resolution is 31.25 mg/unit). The engine fires on the per-sample
+// slope of the high-pass-filtered accel, so it catches sharp motion (a shake,
+// tap or brisk knock) but NOT a smooth pickup, whose slope is too low even at
+// the floor. The software tilt detector (TILT_* below, pump section c) covers
+// the gentle-pickup case; any-motion stays for the cheap interrupt-driven
+// sharp-motion path.
+inline constexpr float    MOTION_ANY_THR_MG = 31.25f;
+// Software pickup detector. The any-motion engine misses a smooth lift, so
+// while idle we poll the accel slowly and treat a change in the gravity
+// vector (the board tilts or lifts) as a pickup. The deviation threshold is
+// user-tunable (Common::PowerConfig wake_threshold_mg; ~120 mg is roughly a
+// 7 deg tilt). The reference tracks the rest pose (TILT_REF_ALPHA per poll)
+// so settling into a new orientation stops re-triggering.
+inline constexpr uint32_t TILT_POLL_MS   = 300;    // idle accel poll cadence
+inline constexpr float    TILT_REF_ALPHA = 0.05f;  // rest-pose tracking rate
+// Movement that pauses for less than this still counts as one continuous
+// streak, so smooth carrying (occasional sub-threshold polls) doesn't reset
+// the GPS-retry timer.
+inline constexpr uint32_t MOVEMENT_QUIET_GAP_MS = 3000;
 
 namespace _detail {
   inline SensorQMI8658& sensor()     { static SensorQMI8658 s; return s; }
@@ -72,8 +86,26 @@ namespace _detail {
   inline Reading&  last_ref()        { static Reading r; return r; }
   inline uint32_t& live_until_ref()  { static uint32_t v = 0; return v; }
   inline bool&     enabled_ref()     { static bool v = true; return v; }
-  // millis() when we last fired a motion notification. 0 = never.
-  inline uint32_t& last_motion_ms_ref() { static uint32_t v = 0; return v; }
+  // Whether the gyroscope is currently powered. The any-motion wake engine
+  // needs only the accelerometer (kept on always); the gyro is spun up only
+  // for the duration of a live demand and spun down after, so it isn't
+  // running at ~900 Hz continuously for nothing. Tracks the hardware state
+  // so pump() only writes the register on a transition.
+  inline bool&     gyro_on_ref()     { static bool v = false; return v; }
+  // Wake-on-pickup: set when movement is detected; the main loop consumes it
+  // to wake the display, so the sensor layer doesn't reach into Display.
+  inline bool&     motion_event_ref()   { static bool v = false; return v; }
+  // Software pickup detector state: a slowly-tracked resting accel vector, its
+  // init flag, and the poll timer (see TILT_* and pump section c).
+  inline IMUdata&  tilt_ref_ref()       { static IMUdata v{}; return v; }
+  inline bool&     tilt_ref_init_ref()  { static bool v = false; return v; }
+  inline uint32_t& tilt_poll_ms_ref()   { static uint32_t v = 0; return v; }
+  // GPS-retry-on-sustained-movement streak: when the current movement streak
+  // began, the last poll that saw movement (for the gap tolerance), and
+  // whether this streak has already reset the GPS backoff (once per streak).
+  inline uint32_t& movement_since_ms_ref() { static uint32_t v = 0; return v; }
+  inline uint32_t& last_movement_ms_ref()  { static uint32_t v = 0; return v; }
+  inline bool&     gps_streak_fired_ref()  { static bool v = false; return v; }
   // Motion-wake feature: enable flag, and whether the any-motion engine +
   // INT configured at begin() (servicing no-ops if not).
   inline bool&     motion_wake_enabled_ref()     { static bool v = true; return v; }
@@ -112,9 +144,13 @@ inline bool begin() {
   // being held or moved" telemetry. configAccelerometer/Gyroscope's
   // 3rd arg is the LPF mode; older example code had a stale 4th
   // bool that no longer exists in this SensorLib version.
+  // 31.25 Hz accel: lower accel current than 1000 Hz, still ~3x above the
+  // ~10 Hz the compass tilt poll needs (so no compass-staleness regression)
+  // and gyro-agnostic (no rate-switching). Gentle-pickup wake comes from the
+  // software tilt detector, not from this rate.
   _detail::sensor().configAccelerometer(
       SensorQMI8658::ACC_RANGE_4G,
-      SensorQMI8658::ACC_ODR_1000Hz,
+      SensorQMI8658::ACC_ODR_31_25Hz,
       SensorQMI8658::LPF_MODE_0);
   _detail::sensor().configGyroscope(
       SensorQMI8658::GYR_RANGE_256DPS,
@@ -141,6 +177,12 @@ inline bool begin() {
   _detail::sensor().enableMotionDetect(SensorQMI8658::INTERRUPT_PIN_1);
   pinMode(IMU_INT, INPUT);
   attachInterrupt(digitalPinToInterrupt(IMU_INT), _detail::on_motion_irq, CHANGE);
+  // configMotion restored both accel and gyro to enabled (it preserves
+  // their prior state across the engine-register writes). The wake engine
+  // needs only the accelerometer, so drop the gyro back down; pump() spins
+  // it up on demand while a live window is open.
+  _detail::sensor().disableGyroscope();
+  _detail::gyro_on_ref() = false;
   _detail::motion_ready_ref() = true;
   return true;
 #else
@@ -157,26 +199,17 @@ inline void pump() {
   if (!_detail::enabled_ref()) return;
   const uint32_t now = millis();
 
-  // (a) Motion-wake: the IMU INT ISR flags an any-motion edge. Service it
-  // here (off the ISR): read the status register once to confirm + clear
-  // the latch, then drop the GNSS backoff (cooldown-limited) so a moved
-  // device re-acquires sooner. The status read clears the event whether or
-  // not the feature acts, so a stuck line cannot wedge the ISR.
+  // (a) Any-motion latch service. The IMU INT ISR flags a sharp-motion edge;
+  // read the status register once so the latch can't wedge the line. The
+  // any-motion (shake / tap / drop) event itself is NOT wired to wake or GPS:
+  // a smooth pickup has too little slope to trip it, so wake-on-pickup and the
+  // GPS-retry come from the software tilt detector (section c). The engine is
+  // left configured, reserved for a future dedicated tap/drop feature.
   if (_detail::motion_ready_ref() && _detail::motion_irq_flag_ref()) {
     _detail::motion_irq_flag_ref() = false;
     Storage::SDCard::BusGuard _bg{Storage::SDCard::TryLock{}};
     if (_bg.ok()) {
-      const uint8_t st = (uint8_t)_detail::sensor().getStatusRegister();
-      if (_detail::motion_wake_enabled_ref() && (st & SensorQMI8658::EVENT_ANY_MOTION)) {
-        auto& cooldown = _detail::last_motion_ms_ref();
-        const bool cooled = (cooldown == 0) || (now - cooldown >= MOTION_REPORT_COOLDOWN_MS);
-        if (cooled) {
-          cooldown = now;
-          // Motion implies a possibly new sky view; retry GPS sooner
-          // rather than sit out the (up to 30-min) backoff window.
-          Sensors::Gnss::reset_backoff();
-        }
-      }
+      (void)_detail::sensor().getStatusRegister();   // read clears the latch
     } else {
       // Bus busy: re-flag so we read + clear the latch on a later pass.
       _detail::motion_irq_flag_ref() = true;
@@ -186,8 +219,67 @@ inline void pump() {
   // (b) Accel/gyro/temp data read for the magnetometer's tilt/gyro fusion
   // and the Motion popover. Needed only while a live demand is active (the
   // compass renews it); the IMU has no packed telemetry and no background
-  // data consumer, so it is otherwise idle.
-  if (now >= _detail::live_until_ref()) return;
+  // data consumer, so it is otherwise idle. The gyro is powered only for
+  // the lifetime of that demand - spun down here when the window closes -
+  // so it isn't drawing continuously when nothing reads it.
+  if (now >= _detail::live_until_ref()) {
+    // No live demand: power the gyro down if it is up, and run the idle
+    // pickup check (c). Both touch the shared SD bus, so take the guard once.
+    const bool do_tilt = (now - _detail::tilt_poll_ms_ref()) >= TILT_POLL_MS;
+    if (_detail::gyro_on_ref() || do_tilt) {
+      Storage::SDCard::BusGuard _bg{Storage::SDCard::TryLock{}};
+      if (_bg.ok()) {
+        if (_detail::gyro_on_ref()) {
+          _detail::sensor().disableGyroscope();
+          _detail::gyro_on_ref() = false;
+        }
+        // (c) Pickup detection. Wake when the gravity vector deviates from its
+        // slowly-tracked resting reference (a smooth lift the any-motion engine
+        // misses). The reference tracks the rest pose so a new orientation
+        // stops re-triggering. report_motion is cooldown limited.
+        if (do_tilt) {
+          _detail::tilt_poll_ms_ref() = now;
+          IMUdata a{};
+          _detail::sensor().getAccelerometer(a.x, a.y, a.z);
+          IMUdata& ref = _detail::tilt_ref_ref();
+          if (!_detail::tilt_ref_init_ref()) {
+            ref = a;
+            _detail::tilt_ref_init_ref() = true;
+          } else {
+            const float dx = a.x - ref.x, dy = a.y - ref.y, dz = a.z - ref.z;
+            const float dev_mg = sqrtf(dx*dx + dy*dy + dz*dz) * 1000.0f;
+            const auto& pc = Common::PowerConfig::current();
+            if (dev_mg > (float)pc.wake_threshold_mg && _detail::motion_wake_enabled_ref()) {
+              // Movement now: wake the screen immediately (the loop drains this
+              // and keeps it up while handling continues).
+              _detail::motion_event_ref() = true;
+              // GPS retry on SUSTAINED movement only: a brief pickup shouldn't
+              // burn an acquisition, but carrying it for gps_motion_retry_s
+              // likely means a new location / sky view, so reset the backoff
+              // once per streak. A pause under MOVEMENT_QUIET_GAP_MS is tolerated
+              // so smooth carrying stays one streak.
+              if ((now - _detail::last_movement_ms_ref()) > MOVEMENT_QUIET_GAP_MS) {
+                _detail::movement_since_ms_ref() = now;
+                _detail::gps_streak_fired_ref()  = false;
+              }
+              _detail::last_movement_ms_ref() = now;
+              const uint32_t retry_ms = pc.gps_motion_retry_s * 1000UL;
+              if (retry_ms != 0 && !_detail::gps_streak_fired_ref()
+                  && (now - _detail::movement_since_ms_ref()) >= retry_ms) {
+                Sensors::Gnss::reset_backoff();
+                _detail::gps_streak_fired_ref() = true;
+              }
+            }
+            ref.x += dx * TILT_REF_ALPHA;
+            ref.y += dy * TILT_REF_ALPHA;
+            ref.z += dz * TILT_REF_ALPHA;
+          }
+        }
+      }
+      // Bus busy: leave it; a later idle pass retries.
+    }
+    return;
+  }
   const auto& last = _detail::last_ref();
   if (last.taken_ms != 0 && (now - last.taken_ms) < LIVE_POLL_MS) return;
 
@@ -204,6 +296,14 @@ inline void pump() {
     // bus is busy we just skip this sample.
     Storage::SDCard::BusGuard _bg{Storage::SDCard::TryLock{}};
     if (!_bg.ok()) return;
+    if (!_detail::gyro_on_ref()) {
+      // Live window just opened: spin the gyro up. It needs an ODR settle
+      // before its samples are trustworthy, so read from the next poll
+      // rather than this one.
+      _detail::sensor().enableGyroscope();
+      _detail::gyro_on_ref() = true;
+      return;
+    }
     // getDataReady() is cheap; if there's no fresh data yet, skip - we'll
     // catch it on the next poll.
     if (!_detail::sensor().getDataReady()) return;
@@ -243,6 +343,14 @@ inline void      set_enabled(bool on) { _detail::enabled_ref() = on; }
 // still read and cleared but does not reset the GNSS backoff.
 inline bool      motion_wake_enabled()     { return _detail::motion_wake_enabled_ref(); }
 inline void      set_motion_wake(bool on)  { _detail::motion_wake_enabled_ref() = on; }
+// Consume a pending motion event (set at most once per cooldown). The main
+// loop drains this to wake the display on movement, keeping the sensor layer
+// free of any Display dependency.
+inline bool      take_motion_event() {
+  bool v = _detail::motion_event_ref();
+  _detail::motion_event_ref() = false;
+  return v;
+}
 
 } // namespace QMI8658
 } // namespace Sensors

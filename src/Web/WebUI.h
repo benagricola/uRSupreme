@@ -20,6 +20,7 @@
 #include "../Common/WifiTransition.h"   // shared APSTA-state types
 #include "../Common/Status.h"           // Status::latest for /api/info
 #include "../Common/HeapWatermark.h"    // window_low for /api/diag/mem
+#include "../Common/PowerConfig.h"      // /api/power settings store
 #if defined(URTN_HEAP_TRACE)
 #include "../HeapTrace.h"               // /api/diag/heaptrace leak tracker
 #endif
@@ -931,6 +932,10 @@ namespace Web {
       // the same payload, with the initial snapshot in the `hello` frame.
       // Per-sensor enable + polling-interval overrides.
       on_json_post(ApiRoutes::SENSORS_CONFIG,       handle_sensors_config_post);
+      // Power / idle-display preferences (blank timeout, wake sensitivity,
+      // heartbeat, GPS-retry delay).
+      on_http(HTTP_GET, ApiRoutes::POWER_CONFIG,    handle_power_config_get);
+      on_json_post(ApiRoutes::POWER_CONFIG,         handle_power_config_post);
       // Telemetry-to-collector config + manual send trigger.
       on_http(HTTP_GET, ApiRoutes::TELEMETRY_CONFIG, handle_telemetry_config_get);
       on_json_post(ApiRoutes::TELEMETRY_CONFIG,     handle_telemetry_config_post);

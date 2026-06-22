@@ -137,6 +137,37 @@
       send_json(req, 200, doc);
     }
 
+    // GET /api/power - the current power / idle-display preferences. Consumed
+    // by the web app's Power tab; the firmware reads these live from
+    // Common::PowerConfig, so a POST takes effect without a reboot.
+    static void handle_power_config_get(AsyncWebServerRequest* req) {
+      if (require_auth(req).empty()) return;
+      const auto& c = Common::PowerConfig::current();
+      Common::PsramJsonDocument doc;
+      doc["blank_enabled"]      = c.blank_enabled;
+      doc["blank_timeout_s"]    = c.blank_timeout_s;
+      doc["wake_threshold_mg"]  = c.wake_threshold_mg;
+      doc["heartbeat_enabled"]  = c.heartbeat_enabled;
+      doc["gps_motion_retry_s"] = c.gps_motion_retry_s;
+      send_json(req, 200, doc);
+    }
+
+    // POST /api/power - body = any subset of {blank_enabled, blank_timeout_s,
+    // wake_threshold_mg, heartbeat_enabled, gps_motion_retry_s}. Absent keys
+    // keep their current value; out-of-range values are clamped on save.
+    static void handle_power_config_post(AsyncWebServerRequest* req, JsonVariant& body) {
+      RnsLockGuard _g;
+      if (require_auth(req).empty()) return;
+      Common::PowerConfig::Config c = Common::PowerConfig::current();
+      if (body["blank_enabled"].is<bool>())          c.blank_enabled      = body["blank_enabled"].as<bool>();
+      if (body["blank_timeout_s"].is<uint32_t>())    c.blank_timeout_s    = body["blank_timeout_s"].as<uint32_t>();
+      if (body["wake_threshold_mg"].is<uint32_t>())  c.wake_threshold_mg  = (uint16_t)body["wake_threshold_mg"].as<uint32_t>();
+      if (body["heartbeat_enabled"].is<bool>())      c.heartbeat_enabled  = body["heartbeat_enabled"].as<bool>();
+      if (body["gps_motion_retry_s"].is<uint32_t>()) c.gps_motion_retry_s = body["gps_motion_retry_s"].as<uint32_t>();
+      Common::PowerConfig::set(filesystem, c);
+      handle_power_config_get(req);
+    }
+
     // POST /api/storage/migrate_flash_to_sd - move flash-resident
     // attachments onto the SD card to free device flash.
     static void handle_migrate_flash_to_sd(AsyncWebServerRequest* req) {

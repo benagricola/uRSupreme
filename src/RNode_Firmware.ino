@@ -1276,6 +1276,9 @@ void setup() {
     // top of the driver defaults. No-op if /lxmf/sensors.json doesn't
     // exist yet (factory state).
     Sensors::SensorConfig::load(filesystem);
+    // User power/display preferences (blank timeout, wake sensitivity,
+    // heartbeat, GPS-retry delay). No-op if /lxmf/power.json doesn't exist.
+    Common::PowerConfig::load(filesystem);
     // Restore the saved magnetometer calibration so the compass works
     // from boot without re-waving the device. No-op if never calibrated.
     Sensors::SensorConfig::load_mag_cal(filesystem);
@@ -3145,6 +3148,11 @@ void loop() {
   // QMC6310 magnetometer + QMI8658 IMU - same pattern.
   Sensors::QMC6310::pump();
   Sensors::QMI8658::pump();
+  // Wake-on-pickup: a movement event (any-motion engine) rouses the screen.
+  if (Sensors::QMI8658::take_motion_event()) display_unblank();
+  // Idle "still alive" heartbeat blip on the charge LED while the screen is
+  // blanked on battery (no-op when charging / notifying / screen on / disabled).
+  heartbeat_pump(display_blanked, Common::PowerConfig::current().heartbeat_enabled);
   // Persist the compass calibration the once it completes (or is reset).
   // Rare, small write; take_cal_dirty() is false on every other tick.
   if (Sensors::QMC6310::take_cal_dirty()) Sensors::SensorConfig::save_mag_cal(filesystem);

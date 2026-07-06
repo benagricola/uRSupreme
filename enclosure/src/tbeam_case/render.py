@@ -40,8 +40,28 @@ VIEWS = {
     "back_flat": ((0, 0, -270), (0, -1, 0), 62.0),
 }
 
-# Exploded view: per part Z offset
-EXPLODE = {"front_shell": 42.0, "battery_hatch": -34.0}
+# Exploded view: per part Z offset. Front and back both lift clear
+# of the board; the hatch keeps going past the back shell.
+EXPLODE = {"front_shell": 55.0, "back_shell": -48.0, "battery_hatch": -84.0}
+
+# Solo part views: opaque renders of each printed part.
+# name -> list of (view name, camera offset from the part center)
+PART_VIEWS = {
+    "front_shell": [
+        ("outside", (120, -100, 170)),
+        ("inside", (-100, 120, -170)),
+        ("buttons", (230, 40, 70)),
+    ],
+    "back_shell": [
+        ("outside", (120, -100, -180)),
+        ("inside", (-100, 120, 180)),
+        ("hull", (210, 60, -130)),
+    ],
+    "battery_hatch": [
+        ("outside", (70, -70, -140)),
+        ("inside", (-70, 70, 140)),
+    ],
+}
 
 # LilyGo's simplified board STEP uses a centered frame: SMA end at
 # y = -50, buttons on +X, PCB top at z = +1. This offset maps it into
@@ -143,6 +163,67 @@ def render_all(stl_dir: Path, out_dir: Path, exploded: bool = True) -> list[Path
     return written
 
 
+def render_parts(stl_dir: Path, out_dir: Path) -> list[Path]:
+    """Opaque solo renders of each printed part."""
+    import vtk
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for part, views in PART_VIEWS.items():
+        stl = stl_dir / f"{part}.stl"
+        if not stl.exists():
+            continue
+        reader = vtk.vtkSTLReader()
+        reader.SetFileName(str(stl))
+        reader.Update()
+        bounds = reader.GetOutput().GetBounds()
+        center = (
+            (bounds[0] + bounds[1]) / 2,
+            (bounds[2] + bounds[3]) / 2,
+            (bounds[4] + bounds[5]) / 2,
+        )
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(reader.GetOutputPort())
+        color, _ = CASE_STYLE[part]
+        for view_name, offset in views:
+            ren = vtk.vtkRenderer()
+            ren.SetBackground(0.96, 0.96, 0.97)
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            prop = actor.GetProperty()
+            prop.SetColor(*color)
+            prop.SetOpacity(1.0)
+            prop.SetSpecular(0.3)
+            prop.SetSpecularPower(25)
+            ren.AddActor(actor)
+
+            rw = vtk.vtkRenderWindow()
+            rw.SetOffScreenRendering(1)
+            rw.SetMultiSamples(0)
+            rw.SetSize(1100, 1200)
+            rw.AddRenderer(ren)
+
+            cam = ren.GetActiveCamera()
+            cam.SetFocalPoint(*center)
+            cam.SetPosition(
+                center[0] + offset[0], center[1] + offset[1],
+                center[2] + offset[2],
+            )
+            cam.SetViewUp(0, -1, 0)
+            ren.ResetCameraClippingRange()
+            rw.Render()
+            w2i = vtk.vtkWindowToImageFilter()
+            w2i.SetInput(rw)
+            w2i.Update()
+            writer = vtk.vtkPNGWriter()
+            png = out_dir / f"part_{part}_{view_name}.png"
+            writer.SetFileName(str(png))
+            writer.SetInputConnection(w2i.GetOutputPort())
+            writer.Write()
+            written.append(png)
+    return written
+
+
 def _smoothstep(t: float) -> float:
     t = max(0.0, min(1.0, t))
     return t * t * (3 - 2 * t)
@@ -201,7 +282,7 @@ def animate(stl_dir: Path, out_path: Path, frames: int = 120,
     cam.SetFocalPoint(*CENTER)
     cam.SetViewUp(0, -1, 0)
 
-    radius = 300.0
+    radius = 360.0
     rgb_frames = []
     for f in range(frames):
         t = f / frames

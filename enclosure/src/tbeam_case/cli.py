@@ -136,6 +136,7 @@ def cmd_render(out_dir: Path) -> int:
     _export_stls(stl_dir)
     _export_step_overlay(stl_dir)
     pngs = render.render_all(stl_dir, out_dir / "renders")
+    pngs += render.render_parts(stl_dir, out_dir / "renders")
     for png in pngs:
         print(f"wrote {png}")
     return 0

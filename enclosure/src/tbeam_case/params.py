@@ -63,13 +63,33 @@ SD_X_MIN, SD_X_MAX = 14.30, 28.43
 SD_Y_MIN, SD_Y_MAX = 83.53, 99.56
 SD_H = 2.0  # ESTIMATED
 
-# OLED: 1.3 inch SH1106 128x64 at the Y = 0 end, glass covers roughly
-# y 0..37 (OFFICIAL region), panel and PMMA cover heights ESTIMATED.
+# OLED: 1.3 inch SH1106 128x64 at the Y = 0 end. The glass sits
+# between the two GPIO header rows; the factory acrylic (PMMA) cover
+# floats above it (position OFFICIAL, measured from the PMMA solid in
+# LilyGo's assembly STEP: 23.0 x 34.5 x 1.55 at z 5.3..6.85).
+# The active area position within the glass is ESTIMATED; measure on
+# hardware before tightening the case window.
 OLED_Y_MIN, OLED_Y_MAX = 0.5, 37.0
-OLED_X_MIN, OLED_X_MAX = 1.5, 31.4
-OLED_STACK_H = 4.5  # glass plus factory PMMA cover above PCB
-OLED_ACTIVE_W = 29.42  # 1.3 inch panel active area, ESTIMATED
-OLED_ACTIVE_H = 14.70
+OLED_X_MIN, OLED_X_MAX = 4.9, 28.0
+OLED_STACK_H = 5.3  # glass top above PCB
+PMMA_X_MIN, PMMA_X_MAX = 4.95, 27.95
+PMMA_Y_MIN, PMMA_Y_MAX = 5.5, 40.0
+PMMA_Z_MIN, PMMA_Z_MAX = 5.3, 6.9
+OLED_ACTIVE_LEN = 29.42  # along Y (portrait orientation)
+OLED_ACTIVE_W = 14.70  # across X
+
+# GPIO breakout header rows flanking the OLED (positions OFFICIAL
+# from DXF; socket height ESTIMATED worst case)
+HEADER_ROWS_X = [3.8, 29.2]  # row centerlines
+HEADER_ROW_HALF_W = 1.3
+HEADER_Y_MIN, HEADER_Y_MAX = 6.77, 38.15
+HEADER_H = 8.6
+
+# Factory corner screws at the antenna end holes (hold the PMMA
+# standoffs). Height above PCB ESTIMATED; the case stubs land on
+# these, verify on hardware.
+SCREWHEAD_R = 2.2
+SCREWHEAD_TOP = 6.3
 
 # M.2 core module region on the top side (OFFICIAL bbox from DXF).
 # Socket stack height 8.5 mm is OFFICIAL ("M.2 B-KEY H8.5" on the
@@ -78,12 +98,19 @@ M2_X_MIN, M2_X_MAX = 0.0, 25.4
 M2_Y_MIN, M2_Y_MAX = 43.4, 90.2
 M2_STACK_H = 11.5
 
-# SMA bulkhead at the Y = 0 edge (presence OFFICIAL, offsets ESTIMATED
-# from photos; the barrel is not in the top silkscreen DXF).
-SMA_CENTER_X = 6.0
+# SMA connector: board mounted, edge launch at the Y = 0 corner
+# (confirmed by product photos and the SMA solid in LilyGo's assembly
+# STEP at x 2.1..11.3, y 0..8.5 on board, z -1.5..6.5 in this frame).
+# Its position is fixed by the board; the case wall hole must meet it.
+# The body keepout starts at x 4.6 to leave room for the factory
+# corner screw beside it.
+SMA_CENTER_X = 6.7
 SMA_D = 6.5
-SMA_LEN_OUTSIDE = 8.0
-SMA_CENTER_Z = 4.0  # barrel axis height above PCB, ESTIMATED
+SMA_LEN = 12.0  # barrel beyond the board edge
+SMA_CENTER_Z = 2.5
+SMA_BODY_X = (4.6, 11.3)
+SMA_BODY_Y = (0.0, 8.5)
+SMA_BODY_Z = (-1.5, 6.6)
 
 # 18650 holder on the back side (presence OFFICIAL, envelope ESTIMATED
 # from generic drop-in frame holders; cell inserts radially from -Z).

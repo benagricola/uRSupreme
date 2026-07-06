@@ -46,6 +46,35 @@ def oled() -> cq.Workplane:
     )
 
 
+def pmma() -> cq.Workplane:
+    """Factory acrylic cover, plus the corner screw stacks at the
+    antenna end holes."""
+    plate = _block(
+        p.PMMA_X_MIN, p.PMMA_X_MAX, p.PMMA_Y_MIN, p.PMMA_Y_MAX,
+        p.PMMA_Z_MIN, p.PMMA_Z_MAX,
+    )
+    for hx, hy in p.MOUNT_HOLES:
+        if hy < 50:
+            plate = plate.union(
+                cq.Workplane("XY")
+                .center(hx, hy)
+                .circle(p.SCREWHEAD_R)
+                .extrude(p.SCREWHEAD_TOP)
+            )
+    return plate
+
+
+def headers() -> cq.Workplane:
+    rows = None
+    for rx in p.HEADER_ROWS_X:
+        row = _block(
+            rx - p.HEADER_ROW_HALF_W, rx + p.HEADER_ROW_HALF_W,
+            p.HEADER_Y_MIN, p.HEADER_Y_MAX, 0, p.HEADER_H,
+        )
+        rows = row if rows is None else rows.union(row)
+    return rows
+
+
 def m2_core() -> cq.Workplane:
     return _block(
         p.M2_X_MIN, p.M2_X_MAX, p.M2_Y_MIN, p.M2_Y_MAX, 0, p.M2_STACK_H
@@ -79,12 +108,16 @@ def buttons() -> cq.Workplane:
 
 
 def sma() -> cq.Workplane:
-    return (
+    # Board mounted edge launch connector: body on the PCB corner,
+    # barrel protruding past the board edge through the case wall.
+    barrel = (
         cq.Workplane("XZ")
         .center(p.SMA_CENTER_X, p.SMA_CENTER_Z)
         .circle(p.SMA_D / 2)
-        .extrude(p.SMA_LEN_OUTSIDE)
+        .extrude(p.SMA_LEN)
     )
+    body = _block(*p.SMA_BODY_X, *p.SMA_BODY_Y, *p.SMA_BODY_Z)
+    return barrel.union(body)
 
 
 def battery_holder() -> cq.Workplane:
@@ -103,6 +136,8 @@ def assembly() -> cq.Assembly:
     asm = cq.Assembly(name="tbeam_supreme_reference")
     asm.add(pcb(), name="pcb", color=cq.Color(0.0, 0.35, 0.15))
     asm.add(oled(), name="oled", color=cq.Color(0.1, 0.1, 0.1))
+    asm.add(pmma(), name="pmma", color=cq.Color(0.85, 0.9, 0.95))
+    asm.add(headers(), name="headers", color=cq.Color(0.15, 0.15, 0.15))
     asm.add(m2_core(), name="m2_core", color=cq.Color(0.3, 0.3, 0.35))
     asm.add(sd_slot(), name="sd_slot", color=cq.Color(0.6, 0.6, 0.6))
     asm.add(usb_c(), name="usb_c", color=cq.Color(0.7, 0.7, 0.7))
@@ -115,7 +150,7 @@ def assembly() -> cq.Assembly:
 def keepout() -> cq.Workplane:
     """Single fused solid of everything, for boolean clearance checks."""
     solid = pcb()
-    for part in (oled(), m2_core(), sd_slot(), usb_c(), buttons(), sma(),
-                 battery_holder()):
+    for part in (oled(), pmma(), headers(), m2_core(), sd_slot(), usb_c(),
+                 buttons(), sma(), battery_holder()):
         solid = solid.union(part)
     return solid

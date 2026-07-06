@@ -36,8 +36,18 @@ BOARD_PARTS = (
 )
 
 
+def _print_oriented(name: str, solid):
+    """Rotate a part into its print orientation and rest it on z=0."""
+    if PRINT_UP[name] < 0:
+        solid = solid.rotate((0, 0, 0), (1, 0, 0), 180)
+    bb = solid.val().BoundingBox()
+    return solid.translate((-bb.xmin, -bb.ymin, -bb.zmin))
+
+
 def _export_stls(out_dir: Path) -> None:
-    """Tessellate every board part and case part to its own STL."""
+    """Export every board part and case part: STL and STEP in design
+    orientation, 3MF per part and a combined plate in print
+    orientation (rotated for the bed, resting on z=0)."""
     import cadquery as cq
 
     from . import board, case
@@ -47,11 +57,28 @@ def _export_stls(out_dir: Path) -> None:
         path = out_dir / f"board_{part}.stl"
         cq.exporters.export(getattr(board, part)(), str(path))
         print(f"wrote {path}")
+
+    plate = []
+    plate_x = 0.0
+    print_dir = out_dir / "print"
+    print_dir.mkdir(parents=True, exist_ok=True)
     for name, solid in case.parts().items():
         for ext in ("stl", "step"):
             path = out_dir / f"{name}.{ext}"
             cq.exporters.export(solid, str(path))
             print(f"wrote {path}")
+        oriented = _print_oriented(name, solid)
+        path = print_dir / f"{name}.3mf"
+        cq.exporters.export(oriented, str(path))
+        print(f"wrote {path}")
+        bb = oriented.val().BoundingBox()
+        plate.append(oriented.translate((plate_x, 0, 0)).val())
+        plate_x += bb.xlen + 10.0
+    plate_path = print_dir / "plate_all_parts.3mf"
+    cq.exporters.export(
+        cq.Workplane(obj=cq.Compound.makeCompound(plate)), str(plate_path)
+    )
+    print(f"wrote {plate_path}")
 
 
 def cmd_build(out_dir: Path) -> int:

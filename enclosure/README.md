@@ -61,12 +61,18 @@ created automatically in `enclosure/.venv` on first run.
 
 ```sh
 cd enclosure
-uv run tbeam-case build          # export STEP + STL into build/
+uv run tbeam-case build          # STL + STEP into build/, print
+                                 # ready 3MF into build/print/
 uv run tbeam-case check          # interference + overhang checks
 uv run tbeam-case render         # PNG views into build/renders/
-uv run tbeam-case animate        # rotating exploded GIF
+uv run tbeam-case animate        # rotating exploded MP4 + GIF
 uv run tbeam-case fetch          # download LilyGo reference CAD
 ```
+
+The 3MF files in `build/print/` are already rotated into their print
+orientation and rest on z=0: load and slice, no supports needed.
+`plate_all_parts.3mf` has all three parts laid out with 10 mm
+spacing.
 
 Or without a checkout-local venv, via uvx:
 

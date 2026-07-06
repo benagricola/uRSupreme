@@ -58,6 +58,8 @@ def _export_stls(out_dir: Path) -> None:
         cq.exporters.export(getattr(board, part)(), str(path))
         print(f"wrote {path}")
 
+    from . import threemf
+
     plate = []
     plate_x = 0.0
     print_dir = out_dir / "print"
@@ -69,15 +71,13 @@ def _export_stls(out_dir: Path) -> None:
             print(f"wrote {path}")
         oriented = _print_oriented(name, solid)
         path = print_dir / f"{name}.3mf"
-        cq.exporters.export(oriented, str(path))
+        threemf.write_3mf(path, [(name, oriented)])
         print(f"wrote {path}")
         bb = oriented.val().BoundingBox()
-        plate.append(oriented.translate((plate_x, 0, 0)).val())
+        plate.append((name, oriented.translate((plate_x, 0, 0))))
         plate_x += bb.xlen + 10.0
     plate_path = print_dir / "plate_all_parts.3mf"
-    cq.exporters.export(
-        cq.Workplane(obj=cq.Compound.makeCompound(plate)), str(plate_path)
-    )
+    threemf.write_3mf(plate_path, plate)
     print(f"wrote {plate_path}")
 
 

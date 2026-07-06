@@ -74,10 +74,14 @@ PAN_IN = -5.0  # interior floor over the solder side
 HUMP_IN = -17.6
 HUMP_OUT = HUMP_IN - WALL
 HUMP_X_MIN, HUMP_X_MAX = 2.55, 30.35
-HUMP_Y_MIN, HUMP_Y_MAX = 5.6, 94.4
+# The flat hump footprint extends past the battery toward the antenna
+# end, so both end slopes are short and the screw pilots sit in full
+# depth material instead of piercing a long end slope.
+HUMP_Y_MIN, HUMP_Y_MAX = -6.0, 94.4
 HUMP_CAV_X_MIN, HUMP_CAV_X_MAX = 4.45, 28.45
 HUMP_CAV_Y_MIN, HUMP_CAV_Y_MAX = 7.5, 92.5
 HULL_RISE = (Z_PART + 0.1) - HUMP_OUT  # 45 degree run from hump to rim
+SMA_NUT_POCKET_R = 5.0  # relief for the SMA nut in the solid end region
 
 # OLED window, cut through the valley floor with an outward chamfer.
 # The active area Y position is not confirmed; the window may need to
@@ -169,9 +173,11 @@ HATCH_BEVEL = 1.2  # 45 degree edge bevel on the proud plate
 HATCH_CLR = 0.4
 HATCH_TAB_XS = [(9.0, 13.0), (20.0, 24.0)]
 HATCH_BUMP_Y = [30.0, 70.0]
-# thumb notch: 45 degree V groove beyond the hatch bottom edge
-THUMB_Y = (86.5, 90.5)
-THUMB_APEX_Z = HUMP_OUT + 2.0
+# thumb notch beyond the hatch bottom edge: a wedge with its deep
+# vertical face toward the hatch (pry leverage right at the plate
+# edge) ramping back to the surface at 45 degrees
+THUMB_Y = (86.0, 87.9)
+THUMB_APEX_Z = HUMP_OUT + 1.9
 THUMB_X = (10.0, 23.0)
 
 # Tactile surfaces. Front face: recessed pinstripes below the window
@@ -301,9 +307,11 @@ def front_shell() -> cq.Workplane:
     win_w = WIN_X_MAX - WIN_X_MIN
     win_h = WIN_Y_MAX - WIN_Y_MIN
 
+    # outer face perimeter gets an elephant's foot chamfer (the face
+    # is the first layer of the face down print)
     outer = _rbox(
         OUT_X_MIN, OUT_X_MAX, OUT_Y_MIN, OUT_Y_MAX, Z_PART, FACE, OUTER_R
-    )
+    ).edges(">Z").chamfer(0.6)
     shell = outer.cut(
         _rbox(CAV_X_MIN, CAV_X_MAX, CAV_Y_MIN, CAV_Y_MAX,
               Z_PART - 1, FRONT_IN, CAV_R)
@@ -406,7 +414,8 @@ def front_shell() -> cq.Workplane:
         )
 
     # Screw bosses at the antenna end: head well from the face, 45
-    # degree cone seat, clearance shaft down to the parting line
+    # degree cone seat, clearance shaft down to the parting line.
+    # The well rim gets an elephant's foot countersink at the face.
     for bx, by in BOSS_XY:
         shell = shell.union(_zcyl(bx, by, BOSS_R, Z_PART, FRONT_IN + 0.1))
         shell = shell.cut(_zcyl(bx, by, WELL_R, CONE_Z[1], FACE + 0.1))
@@ -418,6 +427,13 @@ def front_shell() -> cq.Workplane:
             .loft()
         )
         shell = shell.cut(_zcyl(bx, by, SHAFT_R, Z_PART - 0.1, CONE_Z[0] + 0.1))
+        shell = shell.cut(
+            cq.Workplane("XY", origin=(bx, by, FACE - 0.65))
+            .circle(WELL_R)
+            .workplane(offset=0.75)
+            .circle(WELL_R + 0.7)
+            .loft()
+        )
 
     # Board pedestals: full towers with locating pins at the USB end,
     # short stubs landing on the factory corner screws at the antenna
@@ -498,14 +514,30 @@ def back_shell() -> cq.Workplane:
             shell = shell.cut(
                 _xcyl(by, (HUMP_OUT + HUMP_IN) / 2, 0.8, ax - 0.6, ax + 0.6)
             )
-    # thumb notch: 45 degree V groove beyond the hatch bottom edge
+    # thumb notch: deep vertical face at the hatch side, 45 degree
+    # ramp back out to the surface
     shell = shell.cut(
         _yz_prism(
-            [(THUMB_Y[0], HUMP_OUT - 0.1),
-             (THUMB_Y[1], HUMP_OUT - 0.1),
-             ((THUMB_Y[0] + THUMB_Y[1]) / 2, THUMB_APEX_Z)],
+            [(THUMB_Y[0], HUMP_OUT - 0.15),
+             (THUMB_Y[0], THUMB_APEX_Z),
+             (THUMB_Y[1], HUMP_OUT - 0.15)],
             *THUMB_X,
         )
+    )
+    # SMA nut relief in the solid region behind the top wall
+    shell = shell.cut(
+        _ycyl(p.SMA_CENTER_X, p.SMA_CENTER_Z, SMA_NUT_POCKET_R,
+              CAV_Y_MIN - 0.5, -3.5)
+    )
+    # elephant's foot chamfer around the hatch opening rim (a bed
+    # facing edge on the hump bottom)
+    a_cx = (HATCH_A_X[0] + HATCH_A_X[1]) / 2
+    a_cy = (HATCH_A_Y[0] + HATCH_A_Y[1]) / 2
+    a_w = HATCH_A_X[1] - HATCH_A_X[0]
+    a_h = HATCH_A_Y[1] - HATCH_A_Y[0]
+    shell = shell.cut(
+        _rect_loft(a_cx, a_cy, a_w + 1.2, a_h + 1.2, HUMP_OUT - 0.05,
+                   a_w, a_h, HUMP_OUT + 0.55)
     )
 
     # Screw bosses embedded in the end slope: pilot holes only, the

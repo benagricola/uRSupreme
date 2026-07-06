@@ -11,22 +11,37 @@ cells swap without tools.
 
 ## Parts and closure
 
-- **front_shell**: screen window in a recessed valley between two
-  side rails (the rails clear the GPIO header rows), compliant
-  cantilever button flexures in the left wall, USB-C and microSD
-  openings, SMA hole, board pedestals and M3 bosses.
-- **back_shell**: shallow pan plus the battery grip hump, board clamp
-  posts, hook tabs, M3 counterbores, hatch opening with ledge.
-- **battery_hatch**: lift-out lid, two fixed tabs at the antenna end,
-  snap bumps at the sides, thumb scoop to pry it out.
+- **front_shell**: flat outer face with the screen at the bottom of a
+  45 degree funnel window, compliant cantilever button flexures in
+  the left wall, USB-C and microSD notches, teardropped SMA hole,
+  board pedestals and the M3 head wells.
+- **back_shell**: 45 degree boat hull rising from the battery hump
+  (the swell is the palm grip), board clamp posts, hook tabs, M3
+  pilot bosses, hatch opening, thumb notch.
+- **battery_hatch**: lift-out lid sitting proud with beveled edges,
+  two fixed tabs at the antenna end, snap bumps at the sides.
 
 Closure: hook the back shell tabs into the front shell windows at the
-USB end, close, then two M3x10 SHCS at the antenna end into thread
-forming pilot holes. Only fastener size used: M3x10.
+USB end, close, then two M3x10 SHCS driven from the front face into
+thread forming pilots in the back shell. Only fastener size used:
+M3x10.
 
 Assembly: board goes into the front shell antenna first (the board
 mounted SMA barrel passes through its wall hole), then the USB end
 swings down onto the locating pins. No screws touch the board.
+
+## Printing
+
+No supports, tested against a >45 degree overhang audit
+(`tbeam-case check`). PETG clearances throughout.
+
+- front_shell: face down
+- back_shell: hump down
+- battery_hatch: outer face down
+
+Remaining micro overhangs (all under 1.5 mm, every slicer bridges
+them without support): the hook window bridges, the hook tab noses,
+and the hatch fixed tab arms.
 
 ## Layout
 
@@ -47,8 +62,9 @@ created automatically in `enclosure/.venv` on first run.
 ```sh
 cd enclosure
 uv run tbeam-case build          # export STEP + STL into build/
-uv run tbeam-case check          # boolean interference checks
+uv run tbeam-case check          # interference + overhang checks
 uv run tbeam-case render         # PNG views into build/renders/
+uv run tbeam-case animate        # rotating exploded GIF
 uv run tbeam-case fetch          # download LilyGo reference CAD
 ```
 

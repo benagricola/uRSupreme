@@ -1193,10 +1193,14 @@ source = { editable = "." }
 dependencies = [
     { name = "cadquery", version = "2.7.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "cadquery", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pillow" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "cadquery", specifier = ">=2.5.2" }]
+requires-dist = [
+    { name = "cadquery", specifier = ">=2.5.2" },
+    { name = "pillow", specifier = ">=12.3.0" },
+]
 
 [[package]]
 name = "trame"

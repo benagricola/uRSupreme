@@ -6,8 +6,16 @@ at Z_PART, just below the PCB underside, so every critical opening
 front shell and nothing has to line up across the seam.
 
 Closure: two hook tabs at the USB end on the back shell snap into
-windows in the front shell side walls, then two M3x10 SHCS at the
-antenna end thread into pilot holes in the front shell bosses.
+windows in the front shell side walls, then two M3x10 SHCS driven
+from the front face at the antenna end thread into pilot holes in
+the back shell bosses.
+
+Every part prints without supports: front shell face down, back
+shell hump down, hatch outer face down. All face level changes go
+through 45 degree surfaces (window funnel, back hull, hatch bevels,
+cap and nub chamfers, SMA teardrop, cone screw seats). Two known
+micro overhangs remain by design, both under 1.5 mm and bridgeable:
+the hook tab nose undersides and the hatch fixed tab arms.
 
 Assembly order: the board goes into the front shell antenna first
 (the board mounted SMA barrel enters its wall hole), then the USB end
@@ -43,31 +51,33 @@ OUT_Y_MAX = CAV_Y_MAX + WALL
 OUTER_R = 3.5  # vertical corner fillet
 CAV_R = 2.0
 
-# Front shell. The screen zone interior sits at 9.0 to clear the GPIO
-# header rows (8.6) and the floating acrylic (6.9); the screen shows
-# through a recessed valley between two side rails over the headers,
-# so the window itself stays shallow (2.6 from acrylic to face).
-# The M.2 zone gets the full height plateau.
-FACE_STEP_Y = 40.6  # outer step position; inner step 0.6 further on
-FRONT_IN_LOW = 9.0  # inner face over the screen zone
-FRONT_IN_HIGH = 12.2  # inner face over the M.2 zone
-FRONT_OUT_LOW = FRONT_IN_LOW + WALL
-FRONT_OUT_HIGH = FRONT_IN_HIGH + WALL
-VALLEY_X = (7.2, 25.8)
-VALLEY_Y = (9.0, FACE_STEP_Y)
-VALLEY_FLOOR_OUT = 9.5  # outer surface of the recessed valley floor
-VALLEY_FLOOR_IN = 7.1  # inner surface, 0.2 above the acrylic
+# Front shell. Printed face down without supports, so the outer face
+# is a single flat plane; every recessed feature reaches it through
+# 45 degree surfaces. Interior is one level (FRONT_IN) clearing the
+# M.2 stack; a monolithic bezel block descends to 9.0 over the screen
+# (clearing the GPIO headers at 8.6 and the floating acrylic at 6.9)
+# and carries the window aperture at the bottom of a 45 degree
+# funnel.
+FRONT_IN = 12.2
+FACE = FRONT_IN + WALL
+BEZEL_X = (5.4, 27.6)
+BEZEL_Y = (6.8, 38.7)
+BEZEL_Z = (9.0, FRONT_IN + 0.1)
+APERTURE_TOP = 10.2  # vertical aperture walls from 9.0 up to here
 
-# Back shell: shallow pan (solder side clearance) plus grip hump over
-# the 18650 holder.
-PAN_IN = -5.0
-PAN_OUT = PAN_IN - WALL
+# Back shell: printed hump down without supports. The outer surface
+# is a boat hull: flat only at the hump bottom (the bed), rising at
+# 45 degrees on all sides until it meets the vertical perimeter
+# walls, so there is no flat pan face anywhere. The 45 degree swell
+# doubles as the palm grip.
+PAN_IN = -5.0  # interior floor over the solder side
 HUMP_IN = -17.6
 HUMP_OUT = HUMP_IN - WALL
 HUMP_X_MIN, HUMP_X_MAX = 2.55, 30.35
 HUMP_Y_MIN, HUMP_Y_MAX = 5.6, 94.4
 HUMP_CAV_X_MIN, HUMP_CAV_X_MAX = 4.45, 28.45
 HUMP_CAV_Y_MIN, HUMP_CAV_Y_MAX = 7.5, 92.5
+HULL_RISE = (Z_PART + 0.1) - HUMP_OUT  # 45 degree run from hump to rim
 
 # OLED window, cut through the valley floor with an outward chamfer.
 # The active area Y position is not confirmed; the window may need to
@@ -78,6 +88,8 @@ WIN_CHAMFER = 1.6  # per side growth at the outer face
 
 # Button flexures: cantilever tabs in the button side wall, anchored
 # at the top, nub reaching in to the switch plunger, cap outside.
+# Caps and nubs carry 45 degree chamfers on their face side edge so
+# they print without supports face down.
 BTN_TAB_HALF = 2.5  # tab half width along Y
 BTN_SLOT = 1.0  # slot around the tab
 BTN_SLOT_TOP = 8.0  # slots reach up to here, tab hangs above
@@ -86,33 +98,41 @@ BTN_TAB_T = 1.2  # thinned tab wall
 BTN_NUB_TIP_X = 34.6  # nub tip, 0.2 short of the plunger face
 BTN_NUB_HALF = 1.5
 BTN_NUB_Z = (0.4, 3.1)
-BTN_CAP_R = 2.2
-BTN_CAP_Z = 1.75
+BTN_CAP_HALF = 2.0  # cap half width along Y
+BTN_CAP_Z = (0.5, 3.0)
 BTN_CAP_PROTRUDE = {"reset": 0.6, "power": 1.8, "boot": 1.8}
 
-# USB-C and microSD openings in the bottom wall
+# USB-C and microSD openings in the bottom wall. They extend down to
+# the parting line (open bottomed notches, closed by the back shell
+# rim) so the face down print has no bridges there.
 USB_CUT_X = (3.8, 14.2)
-USB_CUT_Z = (-0.9, 4.2)
+USB_CUT_Z_TOP = 4.2
 USB_SCOOP_X = (2.6, 15.4)
-USB_SCOOP_Z = (-2.1, 5.4)
+USB_SCOOP_Z_TOP = 5.4
 SD_CUT_X = (15.4, 27.4)
-SD_CUT_Z = (-0.5, 2.6)
+SD_CUT_Z_TOP = 2.6
 SD_SCOOP_X = (17.0, 25.8)
-SD_SCOOP_Z = (-1.5, 3.6)
+SD_SCOOP_Z_TOP = 3.6
 SCOOP_DEPTH = 1.2  # outer face recess depth for both scoops
 
 # SMA: round hole in the front top wall meeting the board mounted
-# connector; the nut and washer clamp outside the wall
+# connector, teardropped toward +Z (the overhang side when printed
+# face down); the nut and washer clamp outside the wall
 SMA_HOLE_R = 3.4
 
-# Closure: M3 bosses at the antenna end, hook tabs at the USB end
+# Closure: M3x10 SHCS driven from the FRONT face at the antenna end
+# (deep hex wells with 45 degree cone seats, so neither shell needs a
+# flat counterbore overhang), hook tabs at the USB end. The screw
+# passes a clearance bore in the front shell and thread forms into
+# the back shell pilot.
 BOSS_XY = [(20.0, -4.6), (31.0, -4.6)]
 BOSS_R = 4.5
-PILOT_R = 1.35  # thread forming M3 pilot
-PILOT_TOP = 5.3  # pilot reaches just into the front face plate
+WELL_R = 3.2  # head well from the face down to the cone seat
+CONE_Z = (0.0, 1.5)  # 45 degree seat, well radius down to shaft
 SHAFT_R = 1.7
-HEAD_CB_R = 3.2
-HEAD_CB_TOP = -4.8  # counterbore depth tuned for M3x10 engagement
+PILOT_R = 1.35  # thread forming M3 pilot in the back shell
+BACK_BOSS_BOT = -9.6  # embedded in the back shell end slope
+PILOT_BOT = -9.4
 
 HOOK_Y = (91.5, 98.5)  # hook tab extent along Y
 HOOK_WIN_Y = (91.3, 98.7)
@@ -134,19 +154,25 @@ STUB_R = 1.8
 POST_R = 2.5
 POST_TOP = -1.7  # 0.1 below the PCB underside at rest
 
-# Battery hatch: opening A goes through the hump floor, opening B is
-# a recess for the hatch outer plate, the rim between them is the
-# retention ledge.
+# Battery hatch: opening A goes straight through the hump floor (no
+# recess: a recess ledge is an unprintable flat overhang ring when
+# the shell prints hump down). The hatch outer plate sits proud on
+# the hump bottom with 45 degree beveled edges; the floor around A
+# is the retention ledge the tabs hook over from inside. Clearance
+# sized for PETG.
 HATCH_A_X = (6.2, 26.7)
 HATCH_A_Y = (16.5, 83.5)
-HATCH_B_X = (4.7, 28.2)
-HATCH_B_Y = (14.0, 86.0)
-HATCH_B_Z_TOP = HUMP_OUT + 1.2  # recess depth = plate thickness
-HATCH_CLR = 0.3
+HATCH_PLATE_X = (4.4, 28.5)
+HATCH_PLATE_Y = (14.7, 85.3)
+HATCH_PROUD = 1.2  # plate thickness outside the hump bottom
+HATCH_BEVEL = 1.2  # 45 degree edge bevel on the proud plate
+HATCH_CLR = 0.4
 HATCH_TAB_XS = [(9.0, 13.0), (20.0, 24.0)]
 HATCH_BUMP_Y = [30.0, 70.0]
-THUMB_R = 5.0
-THUMB_Y = 88.5
+# thumb notch: 45 degree V groove beyond the hatch bottom edge
+THUMB_Y = (86.5, 90.5)
+THUMB_APEX_Z = HUMP_OUT + 2.0
+THUMB_X = (10.0, 23.0)
 
 
 def _box(x0, x1, y0, y1, z0, z1) -> cq.Workplane:
@@ -193,66 +219,93 @@ def _xcyl(y, z, r, x0, x1) -> cq.Workplane:
     )
 
 
-def _window_cut() -> cq.Workplane:
-    """Chamfered OLED window: small at the inner face, larger outside."""
-    cx = (WIN_X_MIN + WIN_X_MAX) / 2
-    cy = (WIN_Y_MIN + WIN_Y_MAX) / 2
-    w = WIN_X_MAX - WIN_X_MIN
-    h = WIN_Y_MAX - WIN_Y_MIN
-    g = 2 * WIN_CHAMFER
+def _xz_prism(points, y0, y1) -> cq.Workplane:
+    """Polygon in the XZ plane extruded from y0 to y1."""
     return (
-        cq.Workplane("XY", origin=(cx, cy, VALLEY_FLOOR_IN - 0.2))
-        .rect(w, h)
-        .workplane(offset=VALLEY_FLOOR_OUT - VALLEY_FLOOR_IN + 0.4)
-        .rect(w + g, h + g)
+        cq.Workplane("XZ", origin=(0, y1, 0))
+        .polyline(points)
+        .close()
+        .extrude(y1 - y0)
+    )
+
+
+def _yz_prism(points, x0, x1) -> cq.Workplane:
+    """Polygon in the YZ plane extruded from x0 to x1."""
+    return (
+        cq.Workplane("YZ", origin=(x0, 0, 0))
+        .polyline(points)
+        .close()
+        .extrude(x1 - x0)
+    )
+
+
+def _rect_loft(cx, cy, w0, h0, z0, w1, h1, z1) -> cq.Workplane:
+    """Loft between two centered rectangles at different heights."""
+    return (
+        cq.Workplane("XY", origin=(cx, cy, z0))
+        .rect(w0, h0)
+        .workplane(offset=z1 - z0)
+        .rect(w1, h1)
         .loft()
     )
 
 
 def front_shell() -> cq.Workplane:
+    win_cx = (WIN_X_MIN + WIN_X_MAX) / 2
+    win_cy = (WIN_Y_MIN + WIN_Y_MAX) / 2
+    win_w = WIN_X_MAX - WIN_X_MIN
+    win_h = WIN_Y_MAX - WIN_Y_MIN
+
     outer = _rbox(
-        OUT_X_MIN, OUT_X_MAX, OUT_Y_MIN, OUT_Y_MAX, Z_PART, FRONT_OUT_LOW, OUTER_R
-    ).union(
-        _rbox(
-            OUT_X_MIN, OUT_X_MAX, FACE_STEP_Y, OUT_Y_MAX, Z_PART, FRONT_OUT_HIGH,
-            OUTER_R,
-        )
+        OUT_X_MIN, OUT_X_MAX, OUT_Y_MIN, OUT_Y_MAX, Z_PART, FACE, OUTER_R
     )
-    shell = (
-        outer
-        .cut(_rbox(CAV_X_MIN, CAV_X_MAX, CAV_Y_MIN, CAV_Y_MAX,
-                   Z_PART - 1, FRONT_IN_LOW, CAV_R))
-        .cut(_rbox(CAV_X_MIN, CAV_X_MAX, FACE_STEP_Y + 0.6, CAV_Y_MAX,
-                   Z_PART - 1, FRONT_IN_HIGH, CAV_R))
+    shell = outer.cut(
+        _rbox(CAV_X_MIN, CAV_X_MAX, CAV_Y_MIN, CAV_Y_MAX,
+              Z_PART - 1, FRONT_IN, CAV_R)
     )
 
-    # recessed screen valley: add the low floor plate between the side
-    # rails (with 0.8 overlap shelves under the rails and band so the
-    # union is solid), then carve the valley out of the rail-height
-    # face
-    shell = shell.union(
-        _box(VALLEY_X[0] - 0.8, VALLEY_X[1] + 0.8,
-             VALLEY_Y[0] - 0.8, VALLEY_Y[1] + 0.6,
-             VALLEY_FLOOR_IN, VALLEY_FLOOR_OUT + 0.1)
+    # bezel block descending over the screen, then the 45 degree
+    # funnel and the vertical walled aperture cut through it
+    shell = shell.union(_box(*BEZEL_X, *BEZEL_Y, *BEZEL_Z))
+    funnel_g = 2 * (FACE + 0.1 - APERTURE_TOP)
+    shell = shell.cut(
+        _rect_loft(win_cx, win_cy, win_w, win_h, APERTURE_TOP,
+                   win_w + funnel_g, win_h + funnel_g, FACE + 0.1)
     )
     shell = shell.cut(
-        _box(*VALLEY_X, *VALLEY_Y, VALLEY_FLOOR_OUT, FRONT_OUT_LOW + 1)
+        _box(WIN_X_MIN, WIN_X_MAX, WIN_Y_MIN, WIN_Y_MAX,
+             BEZEL_Z[0] - 0.2, APERTURE_TOP + 0.1)
     )
 
-    shell = shell.cut(_window_cut())
-
-    # SMA half hole in the top wall (upper half; lower half is a notch
-    # in the back shell wall)
+    # SMA hole in the top wall, teardropped toward +Z for the face
+    # down print
     shell = shell.cut(
         _ycyl(p.SMA_CENTER_X, p.SMA_CENTER_Z, SMA_HOLE_R, OUT_Y_MIN - 2, CAV_Y_MIN + 2)
     )
+    # teardrop apex points to -Z: printed face down, the bore's -Z
+    # side is the physical ceiling that would otherwise sag
+    t = SMA_HOLE_R / 1.4142
+    shell = shell.cut(
+        _xz_prism(
+            [(p.SMA_CENTER_X - t, p.SMA_CENTER_Z - t),
+             (p.SMA_CENTER_X + t, p.SMA_CENTER_Z - t),
+             (p.SMA_CENTER_X, p.SMA_CENTER_Z - SMA_HOLE_R * 1.4142)],
+            OUT_Y_MIN - 2, CAV_Y_MIN + 2,
+        )
+    )
 
-    # USB-C and microSD openings plus outer finger scoops
+    # USB-C and microSD notches (open to the parting line) plus outer
+    # finger scoops
     yw0, yw1 = CAV_Y_MAX, OUT_Y_MAX
-    shell = shell.cut(_box(*USB_CUT_X, yw0 - 0.5, yw1 + 1, *USB_CUT_Z))
-    shell = shell.cut(_box(*USB_SCOOP_X, yw1 - SCOOP_DEPTH, yw1 + 1, *USB_SCOOP_Z))
-    shell = shell.cut(_box(*SD_CUT_X, yw0 - 0.5, yw1 + 1, *SD_CUT_Z))
-    shell = shell.cut(_box(*SD_SCOOP_X, yw1 - SCOOP_DEPTH, yw1 + 1, *SD_SCOOP_Z))
+    zb = Z_PART - 0.1
+    shell = shell.cut(_box(*USB_CUT_X, yw0 - 0.5, yw1 + 1, zb, USB_CUT_Z_TOP))
+    shell = shell.cut(
+        _box(*USB_SCOOP_X, yw1 - SCOOP_DEPTH, yw1 + 1, zb, USB_SCOOP_Z_TOP)
+    )
+    shell = shell.cut(_box(*SD_CUT_X, yw0 - 0.5, yw1 + 1, zb, SD_CUT_Z_TOP))
+    shell = shell.cut(
+        _box(*SD_SCOOP_X, yw1 - SCOOP_DEPTH, yw1 + 1, zb, SD_SCOOP_Z_TOP)
+    )
 
     # Button flexures
     for name, yc in p.BUTTON_Y.items():
@@ -268,15 +321,29 @@ def front_shell() -> cq.Workplane:
                  yc - BTN_TAB_HALF, yc + BTN_TAB_HALF,
                  Z_PART - 0.1, BTN_RECESS_TOP)
         )
-        # nub reaching in toward the switch plunger
+        # nub reaching in toward the switch plunger, 45 degree chamfer
+        # on its +Z edge
+        tab_face = OUT_X_MAX - BTN_TAB_T + 0.1
+        rise = tab_face - BTN_NUB_TIP_X
         shell = shell.union(
-            _box(BTN_NUB_TIP_X, OUT_X_MAX - BTN_TAB_T + 0.1,
-                 yc - BTN_NUB_HALF, yc + BTN_NUB_HALF, *BTN_NUB_Z)
+            _xz_prism(
+                [(tab_face, BTN_NUB_Z[0]),
+                 (BTN_NUB_TIP_X, BTN_NUB_Z[0]),
+                 (BTN_NUB_TIP_X, BTN_NUB_Z[1]),
+                 (tab_face, BTN_NUB_Z[1] + rise)],
+                yc - BTN_NUB_HALF, yc + BTN_NUB_HALF,
+            )
         )
-        # external cap
+        # external cap, 45 degree chamfer on its +Z edge
+        prot = BTN_CAP_PROTRUDE[name]
         shell = shell.union(
-            _xcyl(yc, BTN_CAP_Z, BTN_CAP_R,
-                  OUT_X_MAX, OUT_X_MAX + BTN_CAP_PROTRUDE[name])
+            _xz_prism(
+                [(OUT_X_MAX - 0.1, BTN_CAP_Z[0]),
+                 (OUT_X_MAX + prot, BTN_CAP_Z[0]),
+                 (OUT_X_MAX + prot, BTN_CAP_Z[1]),
+                 (OUT_X_MAX - 0.1, BTN_CAP_Z[1] + prot + 0.1)],
+                yc - BTN_CAP_HALF, yc + BTN_CAP_HALF,
+            )
         )
 
     # Hook recesses and windows in both side walls near the USB end
@@ -293,10 +360,19 @@ def front_shell() -> cq.Workplane:
                  *HOOK_WIN_Y, *HOOK_WIN_Z)
         )
 
-    # Screw bosses at the antenna end, pilot holes for M3 thread forming
+    # Screw bosses at the antenna end: head well from the face, 45
+    # degree cone seat, clearance shaft down to the parting line
     for bx, by in BOSS_XY:
-        shell = shell.union(_zcyl(bx, by, BOSS_R, Z_PART, FRONT_IN_LOW))
-        shell = shell.cut(_zcyl(bx, by, PILOT_R, Z_PART - 0.1, PILOT_TOP))
+        shell = shell.union(_zcyl(bx, by, BOSS_R, Z_PART, FRONT_IN + 0.1))
+        shell = shell.cut(_zcyl(bx, by, WELL_R, CONE_Z[1], FACE + 0.1))
+        shell = shell.cut(
+            cq.Workplane("XY", origin=(bx, by, CONE_Z[0]))
+            .circle(SHAFT_R)
+            .workplane(offset=CONE_Z[1] - CONE_Z[0])
+            .circle(WELL_R)
+            .loft()
+        )
+        shell = shell.cut(_zcyl(bx, by, SHAFT_R, Z_PART - 0.1, CONE_Z[0] + 0.1))
 
     # Board pedestals: full towers with locating pins at the USB end,
     # short stubs landing on the factory corner screws at the antenna
@@ -304,12 +380,12 @@ def front_shell() -> cq.Workplane:
     for hx, hy in p.MOUNT_HOLES:
         if hy > 50:
             shell = shell.union(_zcyl(hx, hy, PED_UPPER_R, PED_LOWER_TOP,
-                                      FRONT_IN_HIGH))
+                                      FRONT_IN + 0.1))
             shell = shell.union(_zcyl(hx, hy, PED_LOWER_R, 0, PED_LOWER_TOP + 0.1))
             shell = shell.union(_zcyl(hx, hy, PIN_R, -PIN_LEN, 0.1))
         else:
             shell = shell.union(_zcyl(hx, hy, STUB_R, p.SCREWHEAD_TOP + 0.1,
-                                      FRONT_IN_LOW))
+                                      FRONT_IN + 0.1))
 
     return shell
 
@@ -335,11 +411,19 @@ def _hook_tab(inner: float, sign: int) -> cq.Workplane:
 
 
 def back_shell() -> cq.Workplane:
-    pan = _rbox(OUT_X_MIN, OUT_X_MAX, OUT_Y_MIN, OUT_Y_MAX, PAN_OUT, Z_PART, OUTER_R)
-    hump = _rbox(HUMP_X_MIN, HUMP_X_MAX, HUMP_Y_MIN, HUMP_Y_MAX,
-                 HUMP_OUT, PAN_OUT + 0.5, 5.0)
-    hump = hump.edges("<Z").fillet(3.0)
-    shell = pan.union(hump)
+    # boat hull: vertical walled prism intersected with a 45 degree
+    # frustum flaring up from the hump footprint
+    prism = _rbox(OUT_X_MIN, OUT_X_MAX, OUT_Y_MIN, OUT_Y_MAX,
+                  HUMP_OUT, Z_PART, OUTER_R)
+    hump_cx = (HUMP_X_MIN + HUMP_X_MAX) / 2
+    hump_cy = (HUMP_Y_MIN + HUMP_Y_MAX) / 2
+    hump_w = HUMP_X_MAX - HUMP_X_MIN
+    hump_h = HUMP_Y_MAX - HUMP_Y_MIN
+    frustum = _rect_loft(
+        hump_cx, hump_cy, hump_w, hump_h, HUMP_OUT,
+        hump_w + 2 * HULL_RISE, hump_h + 2 * HULL_RISE, Z_PART + 0.1,
+    )
+    shell = prism.intersect(frustum)
 
     shell = shell.cut(
         _rbox(CAV_X_MIN, CAV_X_MAX, CAV_Y_MIN, CAV_Y_MAX, PAN_IN, Z_PART + 1, CAV_R)
@@ -349,23 +433,36 @@ def back_shell() -> cq.Workplane:
               HUMP_IN, PAN_IN + 1, CAV_R)
     )
 
-    # Battery hatch opening: A through the floor, B recess outside
-    shell = shell.cut(_box(*HATCH_A_X, *HATCH_A_Y, HUMP_OUT - 1, HUMP_IN + 0.1))
-    shell = shell.cut(_box(*HATCH_B_X, *HATCH_B_Y, HUMP_OUT - 1, HATCH_B_Z_TOP))
+    # Battery hatch opening straight through the hump floor
+    shell = shell.cut(_box(*HATCH_A_X, *HATCH_A_Y, HUMP_OUT - 2, HUMP_IN + 0.1))
     # snap bump dimples in the A opening side faces
     for by in HATCH_BUMP_Y:
         for ax in HATCH_A_X:
             shell = shell.cut(
-                _xcyl(by, (HATCH_B_Z_TOP + HUMP_IN) / 2, 0.8, ax - 0.6, ax + 0.6)
+                _xcyl(by, (HUMP_OUT + HUMP_IN) / 2, 0.8, ax - 0.6, ax + 0.6)
             )
-    # thumb scoop beyond the hatch bottom edge
-    shell = shell.cut(_xcyl(THUMB_Y, HUMP_OUT, THUMB_R, 10.0, 23.0))
+    # thumb notch: 45 degree V groove beyond the hatch bottom edge
+    shell = shell.cut(
+        _yz_prism(
+            [(THUMB_Y[0], HUMP_OUT - 0.1),
+             (THUMB_Y[1], HUMP_OUT - 0.1),
+             ((THUMB_Y[0] + THUMB_Y[1]) / 2, THUMB_APEX_Z)],
+            *THUMB_X,
+        )
+    )
 
-    # Screw bosses: through hole and head counterbore
+    # Screw bosses embedded in the end slope: pilot holes only, the
+    # heads live in the front shell wells. Trimmed to the hull so
+    # nothing pokes through the sloped exterior.
     for bx, by in BOSS_XY:
-        shell = shell.union(_zcyl(bx, by, BOSS_R, PAN_OUT, Z_PART))
-        shell = shell.cut(_zcyl(bx, by, SHAFT_R, PAN_OUT - 0.1, Z_PART + 0.1))
-        shell = shell.cut(_zcyl(bx, by, HEAD_CB_R, PAN_OUT - 0.1, HEAD_CB_TOP))
+        boss = _zcyl(bx, by, BOSS_R, BACK_BOSS_BOT, Z_PART).intersect(frustum)
+        shell = shell.union(boss)
+        shell = shell.cut(_zcyl(bx, by, PILOT_R, PILOT_BOT, Z_PART + 0.1))
+
+    # Rim tongues rising into the front shell port notches, closing
+    # the gap below the connectors
+    shell = shell.union(_box(4.1, 13.9, CAV_Y_MAX + 0.2, 102.2, Z_PART - 0.5, -0.5))
+    shell = shell.union(_box(15.7, 27.1, CAV_Y_MAX + 0.2, 102.2, Z_PART - 0.5, -1.0))
 
     # Board clamp posts
     for hx, hy in p.MOUNT_HOLES:
@@ -381,14 +478,23 @@ def back_shell() -> cq.Workplane:
 def battery_hatch() -> cq.Workplane:
     ax0, ax1 = HATCH_A_X[0] + HATCH_CLR, HATCH_A_X[1] - HATCH_CLR
     ay0, ay1 = HATCH_A_Y[0] + HATCH_CLR, HATCH_A_Y[1] - HATCH_CLR
-    bx0, bx1 = HATCH_B_X[0] + 0.15, HATCH_B_X[1] - 0.15
-    by0, by1 = HATCH_B_Y[0] + 0.15, HATCH_B_Y[1] - 0.15
+    p_cx = (HATCH_PLATE_X[0] + HATCH_PLATE_X[1]) / 2
+    p_cy = (HATCH_PLATE_Y[0] + HATCH_PLATE_Y[1]) / 2
+    p_w = HATCH_PLATE_X[1] - HATCH_PLATE_X[0]
+    p_h = HATCH_PLATE_Y[1] - HATCH_PLATE_Y[0]
 
-    outer_plate = _box(bx0, bx1, by0, by1, HUMP_OUT + 0.05, HATCH_B_Z_TOP - 0.1)
-    inner_plate = _box(ax0, ax1, ay0, ay1, HATCH_B_Z_TOP - 0.15, HUMP_IN - 0.1)
+    # proud outer plate, 45 degree bevels growing from the bed face
+    outer_plate = _rect_loft(
+        p_cx, p_cy,
+        p_w - 2 * HATCH_BEVEL, p_h - 2 * HATCH_BEVEL,
+        HUMP_OUT - HATCH_PROUD,
+        p_w, p_h,
+        HUMP_OUT - 0.05,
+    )
+    inner_plate = _box(ax0, ax1, ay0, ay1, HUMP_OUT - 0.1, HUMP_IN - 0.1)
     hatch = outer_plate.union(inner_plate)
 
-    # fixed tabs hooking over the ledge at the antenna end
+    # fixed tabs hooking over the floor ledge at the antenna end
     for tx0, tx1 in HATCH_TAB_XS:
         root = _box(tx0, tx1, ay0, ay0 + 2.0, HUMP_IN - 0.1, HUMP_IN + 0.65)
         arm = _box(tx0, tx1, ay0 - 1.45, ay0 + 2.0, HUMP_IN + 0.15, HUMP_IN + 0.65)
@@ -396,7 +502,7 @@ def battery_hatch() -> cq.Workplane:
 
     # snap bumps on the inner plate side faces, protruding 0.45 into
     # the dimples cut in the opening walls
-    zc = (HATCH_B_Z_TOP + HUMP_IN) / 2
+    zc = (HUMP_OUT + HUMP_IN) / 2
     for by in HATCH_BUMP_Y:
         hatch = hatch.union(_xcyl(by, zc, 0.7, ax0 - 0.45, ax0 + 0.6))
         hatch = hatch.union(_xcyl(by, zc, 0.7, ax1 - 0.6, ax1 + 0.45))

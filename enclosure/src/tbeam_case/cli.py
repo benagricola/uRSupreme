@@ -114,8 +114,57 @@ def cmd_render(out_dir: Path) -> int:
     return 0
 
 
+def cmd_animate(out_dir: Path) -> int:
+    from . import render
+
+    _export_stls(out_dir)
+    gif = render.animate(out_dir, out_dir / "renders" / "assembly.gif")
+    print(f"wrote {gif}")
+    return 0
+
+
+# Print orientation per part: sign of the global Z axis that points
+# UP on the printer (front prints face down, so global -Z is up).
+PRINT_UP = {"front_shell": -1.0, "back_shell": 1.0, "battery_hatch": 1.0}
+
+# Accepted micro overhang area (mm^2): hook window bridges in the
+# front, hook tab noses in the back, hatch fixed tab arms. All under
+# 1.5 mm wide and bridgeable; a slicer will not generate supports.
+OVERHANG_BUDGET = {"front_shell": 20.0, "back_shell": 15.0, "battery_hatch": 20.0}
+
+
+def _overhang_area(solid, up_sign: float) -> float:
+    """Total downward facing facet area steeper than 45 degrees,
+    excluding the bed plane."""
+    import math
+
+    verts, tris = solid.val().tessellate(0.2)
+    pts = [(v.x, v.y, v.z) for v in verts]
+    z_bed = min(pt[2] * up_sign for pt in pts)
+    area = 0.0
+    for a, b, c in tris:
+        pa, pb, pc = pts[a], pts[b], pts[c]
+        ux = [pb[i] - pa[i] for i in range(3)]
+        vx = [pc[i] - pa[i] for i in range(3)]
+        n = (
+            ux[1] * vx[2] - ux[2] * vx[1],
+            ux[2] * vx[0] - ux[0] * vx[2],
+            ux[0] * vx[1] - ux[1] * vx[0],
+        )
+        mag = math.sqrt(n[0] ** 2 + n[1] ** 2 + n[2] ** 2)
+        if mag < 1e-9:
+            continue
+        nz = n[2] * up_sign / mag
+        # facing down more steeply than 45 degrees (with tolerance)
+        if nz < -0.723:
+            zc = (pa[2] + pb[2] + pc[2]) / 3 * up_sign
+            if zc > z_bed + 0.3:
+                area += mag / 2
+    return area
+
+
 def cmd_check(out_dir: Path) -> int:
-    """Boolean interference checks between shells and the board."""
+    """Boolean interference checks plus a print overhang audit."""
     from . import board, case
 
     keepout = board.keepout()
@@ -135,6 +184,15 @@ def cmd_check(out_dir: Path) -> int:
         if vol >= 0.05:
             failures += 1
         print(f"{status}: {a_name} vs {b_name}: {vol:.3f} mm^3")
+
+    for name, solid in parts.items():
+        area = _overhang_area(solid, PRINT_UP[name])
+        budget = OVERHANG_BUDGET[name]
+        status = "OK" if area <= budget else "OVERHANG"
+        if area > budget:
+            failures += 1
+        print(f"{status}: {name} unsupported >45deg area: {area:.1f} mm^2"
+              f" (budget {budget:.0f})")
     return 1 if failures else 0
 
 
@@ -169,6 +227,9 @@ def main(argv: list[str] | None = None) -> int:
     render = sub.add_parser("render", help="render PNG views of the assembly")
     render.add_argument("--out", type=Path, default=Path("build"))
 
+    animate = sub.add_parser("animate", help="rotating exploding assembly GIF")
+    animate.add_argument("--out", type=Path, default=Path("build"))
+
     check = sub.add_parser("check", help="boolean interference checks")
     check.add_argument("--out", type=Path, default=Path("build"))
 
@@ -180,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_fetch(args.out)
     if args.command == "render":
         return cmd_render(args.out)
+    if args.command == "animate":
+        return cmd_animate(args.out)
     if args.command == "check":
         return cmd_check(args.out)
     if args.command == "build":

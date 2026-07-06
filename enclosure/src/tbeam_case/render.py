@@ -141,3 +141,96 @@ def render_all(stl_dir: Path, out_dir: Path, exploded: bool = True) -> list[Path
             "board_vs_step_side", ((260, 0, 0), (0, -1, 0), 58.0), {}
         )
     return written
+
+
+def _smoothstep(t: float) -> float:
+    t = max(0.0, min(1.0, t))
+    return t * t * (3 - 2 * t)
+
+
+def animate(stl_dir: Path, out_path: Path, frames: int = 120,
+            size: int = 760) -> Path:
+    """Turntable GIF: one revolution assembled, explode while turning,
+    one revolution exploded, close up again."""
+    import math
+
+    import vtk
+    from PIL import Image
+
+    ren = vtk.vtkRenderer()
+    ren.SetBackground(0.97, 0.97, 0.98)
+    ren.SetUseDepthPeeling(1)
+    ren.SetMaximumNumberOfPeels(12)
+    ren.SetOcclusionRatio(0.02)
+
+    case_actors = {}
+
+    def add(path: Path, color, opacity):
+        reader = vtk.vtkSTLReader()
+        reader.SetFileName(str(path))
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(reader.GetOutputPort())
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        prop = actor.GetProperty()
+        prop.SetColor(*color)
+        prop.SetOpacity(opacity)
+        prop.SetSpecular(0.25)
+        prop.SetSpecularPower(20)
+        ren.AddActor(actor)
+        return actor
+
+    for part, (color, opacity) in BOARD_STYLE.items():
+        stl = stl_dir / f"board_{part}.stl"
+        if stl.exists():
+            add(stl, color, opacity)
+    for part, (color, opacity) in CASE_STYLE.items():
+        stl = stl_dir / f"{part}.stl"
+        if stl.exists():
+            case_actors[part] = add(stl, color, opacity)
+
+    rw = vtk.vtkRenderWindow()
+    rw.SetOffScreenRendering(1)
+    rw.SetAlphaBitPlanes(1)
+    rw.SetMultiSamples(0)
+    rw.SetSize(size, size)
+    rw.AddRenderer(ren)
+
+    cam = ren.GetActiveCamera()
+    cam.SetFocalPoint(*CENTER)
+    cam.SetViewUp(0, -1, 0)
+
+    radius = 300.0
+    images = []
+    for f in range(frames):
+        t = f / frames
+        angle = 2 * math.pi * 2 * t  # two revolutions total
+        # explode from t 0.28..0.42, hold, implode from t 0.78..0.92
+        e = _smoothstep((t - 0.28) / 0.14) - _smoothstep((t - 0.78) / 0.14)
+        for part, zoff in EXPLODE.items():
+            if part in case_actors:
+                case_actors[part].SetPosition(0, 0, zoff * e)
+        cam.SetPosition(
+            CENTER[0] + radius * math.sin(angle),
+            CENTER[1] - 70,
+            CENTER[2] + radius * math.cos(angle),
+        )
+        ren.ResetCameraClippingRange()
+        rw.Render()
+        w2i = vtk.vtkWindowToImageFilter()
+        w2i.SetInput(rw)
+        w2i.Update()
+        img = w2i.GetOutput()
+        w, h, _ = img.GetDimensions()
+        raw = img.GetPointData().GetScalars()
+        buf = bytes(memoryview(raw))
+        pil = Image.frombytes("RGB", (w, h), buf)
+        pil = pil.transpose(Image.FLIP_TOP_BOTTOM)
+        images.append(pil.quantize(colors=128, dither=Image.NONE))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    images[0].save(
+        str(out_path), save_all=True, append_images=images[1:],
+        duration=70, loop=0, optimize=True,
+    )
+    return out_path

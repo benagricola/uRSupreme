@@ -174,6 +174,32 @@ THUMB_Y = (86.5, 90.5)
 THUMB_APEX_Z = HUMP_OUT + 2.0
 THUMB_X = (10.0, 23.0)
 
+# Tactile surfaces. Front face: recessed pinstripes below the window
+# (V grooves deeper than half their width, so the groove walls stay
+# steeper than 45 degrees in the face down print). Back hull: finger
+# grooves running down the fall line of the 45 degree slopes; walls
+# of a fall line groove tilt sideways around the slope axis, which
+# always REDUCES the downward facing angle, so any V angle prints.
+# Side walls: horizontal grip grooves (vertical walls take anything;
+# proportions still audit safe).
+STRIPE_Y0 = 43.0
+STRIPE_PITCH = 3.0
+STRIPE_N = 19
+STRIPE_HALF = 0.5
+STRIPE_DEPTH = 0.6
+STRIPE_X = (0.3, 33.7)
+
+FINGER_GROOVE_Y = [30.0, 48.0, 66.0, 84.0]  # button side slope
+FINGER_GROOVE_HALF = 7.0
+THUMB_GROOVE_Y = [52.0]  # opposite slope
+THUMB_GROOVE_HALF = 9.0
+SLOPE_GROOVE_DEPTH = 2.0
+
+SIDE_GROOVE_Z = [-5.2, -8.0, -10.8]
+SIDE_GROOVE_HALF = 0.65
+SIDE_GROOVE_DEPTH = 0.5
+SIDE_GROOVE_Y = (4.0, 96.0)
+
 
 def _box(x0, x1, y0, y1, z0, z1) -> cq.Workplane:
     return (
@@ -248,6 +274,25 @@ def _rect_loft(cx, cy, w0, h0, z0, w1, h1, z1) -> cq.Workplane:
         .rect(w1, h1)
         .loft()
     )
+
+
+def _slope_groove(yc: float, half: float, sign: int) -> cq.Workplane:
+    """Finger groove cutter for the back hull: a V prism whose axis
+    runs down the fall line of the 45 degree slope on the +X (sign 1)
+    or -X (sign -1) side."""
+    hump_edge = HUMP_X_MAX if sign > 0 else HUMP_X_MIN
+    wall = OUT_X_MAX if sign > 0 else OUT_X_MIN
+    x0 = hump_edge + sign * 2.3
+    z0 = HUMP_OUT + 2.3
+    g = (sign * 0.7071, 0.0, 0.7071)
+    plane = cq.Plane(origin=(x0, yc, z0), xDir=(0, 1, 0), normal=g)
+    pts = [(-half, -2.0), (half, -2.0), (0.0, SLOPE_GROOVE_DEPTH)]
+    run = abs(wall - hump_edge)
+    uphill = (run - 2.3) * 1.4142 - 1.0  # stop short of the chine
+    downhill = 2.3 * 1.4142 + 1.5
+    up = cq.Workplane(plane).polyline(pts).close().extrude(uphill)
+    down = cq.Workplane(plane).polyline(pts).close().extrude(-downhill)
+    return up.union(down)
 
 
 def front_shell() -> cq.Workplane:
@@ -387,6 +432,18 @@ def front_shell() -> cq.Workplane:
             shell = shell.union(_zcyl(hx, hy, STUB_R, p.SCREWHEAD_TOP + 0.1,
                                       FRONT_IN + 0.1))
 
+    # Recessed pinstripes below the window
+    for i in range(STRIPE_N):
+        yc = STRIPE_Y0 + i * STRIPE_PITCH
+        shell = shell.cut(
+            _yz_prism(
+                [(yc - STRIPE_HALF, FACE + 0.15),
+                 (yc + STRIPE_HALF, FACE + 0.15),
+                 (yc, FACE - STRIPE_DEPTH)],
+                *STRIPE_X,
+            )
+        )
+
     return shell
 
 
@@ -471,6 +528,32 @@ def back_shell() -> cq.Workplane:
     # Hook tabs at the USB end
     shell = shell.union(_hook_tab(CAV_X_MIN, -1))
     shell = shell.union(_hook_tab(CAV_X_MAX, 1))
+
+    # Finger grooves down the button side slope, thumb groove on the
+    # opposite slope
+    for yc in FINGER_GROOVE_Y:
+        shell = shell.cut(_slope_groove(yc, FINGER_GROOVE_HALF, 1))
+    for yc in THUMB_GROOVE_Y:
+        shell = shell.cut(_slope_groove(yc, THUMB_GROOVE_HALF, -1))
+
+    # Horizontal grip grooves on both vertical side walls
+    for zc in SIDE_GROOVE_Z:
+        shell = shell.cut(
+            _xz_prism(
+                [(OUT_X_MIN - 0.15, zc - SIDE_GROOVE_HALF),
+                 (OUT_X_MIN - 0.15, zc + SIDE_GROOVE_HALF),
+                 (OUT_X_MIN + SIDE_GROOVE_DEPTH, zc)],
+                *SIDE_GROOVE_Y,
+            )
+        )
+        shell = shell.cut(
+            _xz_prism(
+                [(OUT_X_MAX + 0.15, zc - SIDE_GROOVE_HALF),
+                 (OUT_X_MAX + 0.15, zc + SIDE_GROOVE_HALF),
+                 (OUT_X_MAX - SIDE_GROOVE_DEPTH, zc)],
+                *SIDE_GROOVE_Y,
+            )
+        )
 
     return shell
 

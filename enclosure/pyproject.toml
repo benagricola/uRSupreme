@@ -5,6 +5,7 @@ description = "Parametric 3D printable enclosure for the LilyGo T-Beam Supreme, 
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "cadquery>=2.5.2",
+    "imageio-ffmpeg>=0.6.0",
     "pillow>=12.3.0",
 ]
 

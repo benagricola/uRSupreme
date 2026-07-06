@@ -149,9 +149,10 @@ def _smoothstep(t: float) -> float:
 
 
 def animate(stl_dir: Path, out_path: Path, frames: int = 120,
-            size: int = 760) -> Path:
-    """Turntable GIF: one revolution assembled, explode while turning,
-    one revolution exploded, close up again."""
+            size: int = 760) -> list[Path]:
+    """Turntable animation: rotate assembled, explode while turning,
+    rotate exploded, close up again. Writes an MP4 (H.264, plays
+    anywhere) and a GIF fallback next to it."""
     import math
 
     import vtk
@@ -201,7 +202,7 @@ def animate(stl_dir: Path, out_path: Path, frames: int = 120,
     cam.SetViewUp(0, -1, 0)
 
     radius = 300.0
-    images = []
+    rgb_frames = []
     for f in range(frames):
         t = f / frames
         angle = 2 * math.pi * 2 * t  # two revolutions total
@@ -226,11 +227,34 @@ def animate(stl_dir: Path, out_path: Path, frames: int = 120,
         buf = bytes(memoryview(raw))
         pil = Image.frombytes("RGB", (w, h), buf)
         pil = pil.transpose(Image.FLIP_TOP_BOTTOM)
-        images.append(pil.quantize(colors=128, dither=Image.NONE))
+        rgb_frames.append(pil)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    images[0].save(
-        str(out_path), save_all=True, append_images=images[1:],
+    written = []
+
+    mp4_path = out_path.with_suffix(".mp4")
+    try:
+        import imageio_ffmpeg
+
+        w, h = rgb_frames[0].size
+        writer = imageio_ffmpeg.write_frames(
+            str(mp4_path), (w, h), fps=15, codec="libx264",
+            output_params=["-crf", "22"],
+        )
+        writer.send(None)
+        for pil in rgb_frames:
+            writer.send(pil.tobytes())
+        writer.close()
+        written.append(mp4_path)
+    except ImportError:
+        pass
+
+    gif_path = out_path.with_suffix(".gif")
+    quantized = [pil.quantize(colors=128, dither=Image.NONE)
+                 for pil in rgb_frames]
+    quantized[0].save(
+        str(gif_path), save_all=True, append_images=quantized[1:],
         duration=70, loop=0, optimize=True,
     )
-    return out_path
+    written.append(gif_path)
+    return written

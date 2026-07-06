@@ -118,8 +118,8 @@ def cmd_animate(out_dir: Path) -> int:
     from . import render
 
     _export_stls(out_dir)
-    gif = render.animate(out_dir, out_dir / "renders" / "assembly.gif")
-    print(f"wrote {gif}")
+    for path in render.animate(out_dir, out_dir / "renders" / "assembly.gif"):
+        print(f"wrote {path}")
     return 0
 
 

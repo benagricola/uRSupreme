@@ -173,12 +173,15 @@ HATCH_BEVEL = 1.2  # 45 degree edge bevel on the proud plate
 HATCH_CLR = 0.4
 HATCH_TAB_XS = [(9.0, 13.0), (20.0, 24.0)]
 HATCH_BUMP_Y = [30.0, 70.0]
-# thumb notch beyond the hatch bottom edge: a wedge with its deep
-# vertical face toward the hatch (pry leverage right at the plate
-# edge) ramping back to the surface at 45 degrees
-THUMB_Y = (86.0, 87.9)
-THUMB_APEX_Z = HUMP_OUT + 1.9
-THUMB_X = (10.0, 23.0)
+# thumb notch beyond the hatch bottom edge: a tapering scoop that
+# points at the hatch. Narrowest and deepest at the hatch plate edge
+# (pry leverage right where the thumbnail lands), widening and
+# shallowing away from it at 45 degrees.
+THUMB_Y = (86.0, 87.95)
+THUMB_DEPTH = 2.05
+THUMB_CX = 16.5
+THUMB_TIP_W = 6.0  # width at the hatch end
+THUMB_BASE_W = 13.0  # width at the shallow end
 
 # Tactile surfaces. Front face: recessed pinstripes below the window
 # (V grooves deeper than half their width, so the groove walls stay
@@ -514,15 +517,18 @@ def back_shell() -> cq.Workplane:
             shell = shell.cut(
                 _xcyl(by, (HUMP_OUT + HUMP_IN) / 2, 0.8, ax - 0.6, ax + 0.6)
             )
-    # thumb notch: deep vertical face at the hatch side, 45 degree
-    # ramp back out to the surface
+    # thumb notch: lofted scoop pointing at the hatch, deep and
+    # narrow at the plate edge, fading to the surface away from it
     shell = shell.cut(
-        _yz_prism(
-            [(THUMB_Y[0], HUMP_OUT - 0.15),
-             (THUMB_Y[0], THUMB_APEX_Z),
-             (THUMB_Y[1], HUMP_OUT - 0.15)],
-            *THUMB_X,
+        cq.Workplane(
+            "XZ",
+            origin=(THUMB_CX, THUMB_Y[0], HUMP_OUT - 0.1 + THUMB_DEPTH / 2),
         )
+        .rect(THUMB_TIP_W, THUMB_DEPTH)
+        .workplane(offset=-(THUMB_Y[1] - THUMB_Y[0]))
+        .center(0, -(THUMB_DEPTH / 2 - 0.05))
+        .rect(THUMB_BASE_W, 0.1)
+        .loft()
     )
     # SMA nut relief in the solid region behind the top wall
     shell = shell.cut(

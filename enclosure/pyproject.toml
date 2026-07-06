@@ -1,0 +1,18 @@
+[project]
+name = "tbeam-case"
+version = "0.1.0"
+description = "Parametric 3D printable enclosure for the LilyGo T-Beam Supreme, built with CadQuery"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "cadquery>=2.5.2",
+]
+
+[project.scripts]
+tbeam-case = "tbeam_case.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tbeam_case"]

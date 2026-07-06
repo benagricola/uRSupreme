@@ -173,15 +173,6 @@ HATCH_BEVEL = 1.2  # 45 degree edge bevel on the proud plate
 HATCH_CLR = 0.4
 HATCH_TAB_XS = [(9.0, 13.0), (20.0, 24.0)]
 HATCH_BUMP_Y = [30.0, 70.0]
-# thumb notch beyond the hatch bottom edge: a tapering scoop that
-# points at the hatch. Narrowest and deepest at the hatch plate edge
-# (pry leverage right where the thumbnail lands), widening and
-# shallowing away from it at 45 degrees.
-THUMB_Y = (86.0, 87.95)
-THUMB_DEPTH = 2.05
-THUMB_CX = 16.5
-THUMB_TIP_W = 6.0  # width at the hatch end
-THUMB_BASE_W = 13.0  # width at the shallow end
 
 # Tactile surfaces. Front face: recessed pinstripes below the window
 # (V grooves deeper than half their width, so the groove walls stay
@@ -200,9 +191,14 @@ STRIPE_X = (0.3, 33.7)
 
 FINGER_GROOVE_Y = [30.0, 48.0, 66.0, 84.0]  # button side slope
 FINGER_GROOVE_HALF = 7.0
-THUMB_GROOVE_Y = [52.0]  # opposite slope
-THUMB_GROOVE_HALF = 9.0
 SLOPE_GROOVE_DEPTH = 2.0
+# Thumb groove on the opposite slope: a teardrop, wide and deep at
+# the case edge where the thumb pad wraps, tapering to a point that
+# aims down the slope at the battery compartment.
+THUMB_GROOVE_Y = 52.0
+THUMB_GROOVE_HALF = 9.0
+THUMB_WIDE_D = 4.2  # wide end: distance from the hump edge, up slope
+THUMB_TIP_D = 0.8  # taper ends here, pointing at the hump
 
 SIDE_GROOVE_Z = [-5.2, -8.0, -10.8]
 SIDE_GROOVE_HALF = 0.65
@@ -302,6 +298,34 @@ def _slope_groove(yc: float, half: float, sign: int) -> cq.Workplane:
     up = cq.Workplane(plane).polyline(pts).close().extrude(uphill)
     down = cq.Workplane(plane).polyline(pts).close().extrude(-downhill)
     return up.union(down)
+
+
+def _thumb_groove() -> cq.Workplane:
+    """Thumb teardrop on the -X slope: full V profile at the wide end
+    up the slope, lofting down the fall line to a point aimed at the
+    battery compartment, plus a short constant stub reaching the case
+    edge."""
+    x0 = HUMP_X_MIN - THUMB_WIDE_D
+    z0 = HUMP_OUT + THUMB_WIDE_D
+    g = (-0.7071, 0.0, 0.7071)
+    plane = cq.Plane(origin=(x0, THUMB_GROOVE_Y, z0), xDir=(0, 1, 0), normal=g)
+    wide = [(-THUMB_GROOVE_HALF, -2.0), (THUMB_GROOVE_HALF, -2.0),
+            (0.0, SLOPE_GROOVE_DEPTH)]
+    tip = [(-0.15, -0.4), (0.15, -0.4), (0.0, 0.1)]
+    length = (THUMB_WIDE_D - THUMB_TIP_D) * 1.4142
+    taper = (
+        cq.Workplane(plane)
+        .polyline(wide)
+        .close()
+        .workplane(offset=-length)
+        .polyline(tip)
+        .close()
+        .loft()
+    )
+    run = abs(OUT_X_MIN - HUMP_X_MIN)
+    stub_len = (run - THUMB_WIDE_D) * 1.4142 - 1.0
+    stub = cq.Workplane(plane).polyline(wide).close().extrude(stub_len)
+    return taper.union(stub)
 
 
 def front_shell() -> cq.Workplane:
@@ -517,19 +541,6 @@ def back_shell() -> cq.Workplane:
             shell = shell.cut(
                 _xcyl(by, (HUMP_OUT + HUMP_IN) / 2, 0.8, ax - 0.6, ax + 0.6)
             )
-    # thumb notch: lofted scoop pointing at the hatch, deep and
-    # narrow at the plate edge, fading to the surface away from it
-    shell = shell.cut(
-        cq.Workplane(
-            "XZ",
-            origin=(THUMB_CX, THUMB_Y[0], HUMP_OUT - 0.1 + THUMB_DEPTH / 2),
-        )
-        .rect(THUMB_TIP_W, THUMB_DEPTH)
-        .workplane(offset=-(THUMB_Y[1] - THUMB_Y[0]))
-        .center(0, -(THUMB_DEPTH / 2 - 0.05))
-        .rect(THUMB_BASE_W, 0.1)
-        .loft()
-    )
     # SMA nut relief in the solid region behind the top wall
     shell = shell.cut(
         _ycyl(p.SMA_CENTER_X, p.SMA_CENTER_Z, SMA_NUT_POCKET_R,
@@ -567,12 +578,11 @@ def back_shell() -> cq.Workplane:
     shell = shell.union(_hook_tab(CAV_X_MIN, -1))
     shell = shell.union(_hook_tab(CAV_X_MAX, 1))
 
-    # Finger grooves down the button side slope, thumb groove on the
-    # opposite slope
+    # Finger grooves down the button side slope, thumb teardrop on
+    # the opposite slope
     for yc in FINGER_GROOVE_Y:
         shell = shell.cut(_slope_groove(yc, FINGER_GROOVE_HALF, 1))
-    for yc in THUMB_GROOVE_Y:
-        shell = shell.cut(_slope_groove(yc, THUMB_GROOVE_HALF, -1))
+    shell = shell.cut(_thumb_groove())
 
     # Horizontal grip grooves on both vertical side walls
     for zc in SIDE_GROOVE_Z:

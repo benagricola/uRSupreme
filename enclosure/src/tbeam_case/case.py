@@ -189,16 +189,19 @@ STRIPE_HALF = 0.5
 STRIPE_DEPTH = 0.6
 STRIPE_X = (0.3, 33.7)
 
-FINGER_GROOVE_Y = [30.0, 48.0, 66.0, 84.0]  # button side slope
+# Finger grooves spread the full length of the button side slope,
+# symmetric about the thumb groove on the opposite side.
+FINGER_GROOVE_Y = [18.0, 35.0, 52.0, 69.0, 86.0]
 FINGER_GROOVE_HALF = 7.0
 SLOPE_GROOVE_DEPTH = 2.0
 # Thumb groove on the opposite slope: a teardrop, wide and deep at
 # the case edge where the thumb pad wraps, tapering to a point that
 # aims down the slope at the battery compartment.
 THUMB_GROOVE_Y = 52.0
-THUMB_GROOVE_HALF = 9.0
+THUMB_GROOVE_HALF = 11.0
+THUMB_DEPTH = 3.2
 THUMB_WIDE_D = 4.2  # wide end: distance from the hump edge, up slope
-THUMB_TIP_D = 0.8  # taper ends here, pointing at the hump
+THUMB_TIP_D = 0.6  # taper ends here, pointing at the hump
 
 SIDE_GROOVE_Z = [-5.2, -8.0, -10.8]
 SIDE_GROOVE_HALF = 0.65
@@ -310,7 +313,7 @@ def _thumb_groove() -> cq.Workplane:
     g = (-0.7071, 0.0, 0.7071)
     plane = cq.Plane(origin=(x0, THUMB_GROOVE_Y, z0), xDir=(0, 1, 0), normal=g)
     wide = [(-THUMB_GROOVE_HALF, -2.0), (THUMB_GROOVE_HALF, -2.0),
-            (0.0, SLOPE_GROOVE_DEPTH)]
+            (0.0, THUMB_DEPTH)]
     tip = [(-0.15, -0.4), (0.15, -0.4), (0.0, 0.1)]
     length = (THUMB_WIDE_D - THUMB_TIP_D) * 1.4142
     taper = (

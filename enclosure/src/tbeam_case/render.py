@@ -56,6 +56,7 @@ PART_VIEWS = {
         ("outside", (120, -100, -180)),
         ("inside", (-100, 120, 180)),
         ("hull", (210, 60, -130)),
+        ("thumb", (-210, 40, -130)),
     ],
     "battery_hatch": [
         ("outside", (70, -70, -140)),
@@ -188,6 +189,12 @@ def render_parts(stl_dir: Path, out_dir: Path) -> list[Path]:
         for view_name, offset in views:
             ren = vtk.vtkRenderer()
             ren.SetBackground(0.96, 0.96, 0.97)
+            # ambient occlusion makes shallow surface features legible
+            ren.SetUseSSAO(True)
+            ren.SetSSAORadius(6.0)
+            ren.SetSSAOBias(0.05)
+            ren.SetSSAOKernelSize(128)
+            ren.SSAOBlurOn()
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
             prop = actor.GetProperty()
